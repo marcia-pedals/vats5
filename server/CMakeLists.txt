@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 include(FetchContent)
 
-project(hello_world 
+project(vats5
     VERSION 1.0.0
-    DESCRIPTION "A simple hello world application"
+    DESCRIPTION "Visit All The Stops!!!"
     LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -20,7 +20,6 @@ FetchContent_Declare(
 ) 
 FetchContent_MakeAvailable(csv)
 
-# Disable coverage for csv library to avoid linking issues
 if(TARGET csv)
     target_compile_options(csv PRIVATE -fno-profile-arcs -fno-test-coverage)
 endif()
@@ -36,9 +35,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
 
-add_executable(hello_world main.cpp src/gtfs/gtfs.cpp)
-target_link_libraries(hello_world PUBLIC Crow::Crow csv)
+# Create GTFS library target
+add_library(gtfs STATIC src/gtfs/gtfs.cpp)
+target_link_libraries(gtfs PUBLIC csv)
+target_include_directories(gtfs PUBLIC src/gtfs)
+
+add_executable(main_server main.cpp)
+target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
 # Add test executable
-add_executable(gtfs_test src/gtfs/gtfs_test.cpp src/gtfs/gtfs.cpp)
-target_link_libraries(gtfs_test PUBLIC gunit csv)
+add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
+target_link_libraries(gtfs_test PUBLIC gunit gtfs)
