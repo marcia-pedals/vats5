@@ -9,10 +9,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(Crow)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
 
 add_executable(hello_world main.cpp)
+target_link_libraries(hello_world PUBLIC Crow::Crow)
 
 target_compile_options(hello_world PRIVATE -Wall -Wextra -Wpedantic)
