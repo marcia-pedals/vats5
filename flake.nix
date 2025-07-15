@@ -14,11 +14,16 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            gcc
             cmake
             crow
+            gcc
             ninja
           ];
+
+          shellHook = ''
+            export CC=${pkgs.gcc}/bin/gcc
+            export CXX=${pkgs.gcc}/bin/g++
+          '';
         };
       });
 }
