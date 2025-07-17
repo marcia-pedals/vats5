@@ -3,8 +3,26 @@
 #include <csv.hpp>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 
 namespace vats5 {
+
+static TimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
+  std::istringstream ss(time_str);
+  std::string hours_str, minutes_str, seconds_str;
+  
+  if (!std::getline(ss, hours_str, ':') ||
+      !std::getline(ss, minutes_str, ':') ||
+      !std::getline(ss, seconds_str)) {
+    throw std::runtime_error("Invalid time format: " + time_str);
+  }
+  
+  int hours = std::stoi(hours_str);
+  int minutes = std::stoi(minutes_str);
+  int seconds = std::stoi(seconds_str);
+  
+  return TimeSinceServiceStart{hours * 3600 + minutes * 60 + seconds};
+}
 
 static std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
   std::vector<Stop> stops;
@@ -87,12 +105,20 @@ static std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_fil
     csv::CSVReader reader(stop_times_file_path);
 
     for (csv::CSVRow &row : reader) {
+      std::string arrival_time_str = row["arrival_time"].get<std::string>();
+      std::string departure_time_str = row["departure_time"].get<std::string>();
+      
+      // Skip this stop time if either arrival or departure time is empty
+      if (arrival_time_str.empty() || departure_time_str.empty()) {
+        continue;
+      }
+      
       StopTime &stop_time = stop_times.emplace_back();
       stop_time.trip_id = TripId{row["trip_id"].get<std::string>()};
       stop_time.stop_id = StopId{row["stop_id"].get<std::string>()};
       stop_time.stop_sequence = row["stop_sequence"].get<int>();
-      stop_time.arrival_time = row["arrival_time"].get<std::string>();
-      stop_time.departure_time = row["departure_time"].get<std::string>();
+      stop_time.arrival_time = ParseGtfsTime(arrival_time_str);
+      stop_time.departure_time = ParseGtfsTime(departure_time_str);
     }
   } catch (const std::exception &e) {
     throw std::runtime_error(

@@ -49,14 +49,14 @@ GTEST("GtfsLoad should work") {
     Field(&Calendar::end_date, Eq("20991231"))
   )));
 
-  // Check stop times
-  EXPECT_EQ(gtfs.stop_times.size(), 3489224);
+  // Check stop times (excluding entries with empty arrival/departure times)
+  EXPECT_EQ(gtfs.stop_times.size(), 3448431);
   EXPECT_THAT(gtfs.stop_times, Contains(AllOf(
     Field(&StopTime::trip_id, Field(&TripId::v, Eq("SR:198"))),
     Field(&StopTime::stop_id, Field(&StopId::v, Eq("80100"))),
     Field(&StopTime::stop_sequence, Eq(0)),
-    Field(&StopTime::arrival_time, Eq("07:00:00")),
-    Field(&StopTime::departure_time, Eq("07:00:00"))
+    Field(&StopTime::arrival_time, Field(&TimeSinceServiceStart::seconds, Eq(25200))),
+    Field(&StopTime::departure_time, Field(&TimeSinceServiceStart::seconds, Eq(25200)))
   )));
 
   // Check routes

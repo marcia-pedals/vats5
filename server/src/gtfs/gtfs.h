@@ -62,8 +62,8 @@ struct StopTime {
   TripId trip_id;
   StopId stop_id;
   int stop_sequence;
-  std::string arrival_time;
-  std::string departure_time;
+  TimeSinceServiceStart arrival_time;
+  TimeSinceServiceStart departure_time;
 };
 
 struct Route {
