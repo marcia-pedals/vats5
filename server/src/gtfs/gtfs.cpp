@@ -6,7 +6,7 @@
 
 namespace vats5 {
 
-std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
+static std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
   std::vector<Stop> stops;
 
   try {
@@ -33,7 +33,7 @@ std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
   return stops;
 }
 
-std::vector<Trip> GtfsLoadTrips(const std::string &trips_file_path) {
+static std::vector<Trip> GtfsLoadTrips(const std::string &trips_file_path) {
   std::vector<Trip> trips;
 
   try {
@@ -53,7 +53,7 @@ std::vector<Trip> GtfsLoadTrips(const std::string &trips_file_path) {
   return trips;
 }
 
-std::vector<Calendar> GtfsLoadCalendar(const std::string &calendar_file_path) {
+static std::vector<Calendar> GtfsLoadCalendar(const std::string &calendar_file_path) {
   std::vector<Calendar> calendars;
 
   try {
@@ -80,7 +80,7 @@ std::vector<Calendar> GtfsLoadCalendar(const std::string &calendar_file_path) {
   return calendars;
 }
 
-std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_file_path) {
+static std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_file_path) {
   std::vector<StopTime> stop_times;
 
   try {
@@ -102,7 +102,7 @@ std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_file_path)
   return stop_times;
 }
 
-std::vector<Route> GtfsLoadRoutes(const std::string &routes_file_path) {
+static std::vector<Route> GtfsLoadRoutes(const std::string &routes_file_path) {
   std::vector<Route> routes;
 
   try {
@@ -122,7 +122,7 @@ std::vector<Route> GtfsLoadRoutes(const std::string &routes_file_path) {
   return routes;
 }
 
-std::vector<Direction> GtfsLoadDirections(const std::string &directions_file_path) {
+static std::vector<Direction> GtfsLoadDirections(const std::string &directions_file_path) {
   std::vector<Direction> directions;
 
   try {
@@ -139,6 +139,19 @@ std::vector<Direction> GtfsLoadDirections(const std::string &directions_file_pat
   }
 
   return directions;
+}
+
+Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
+  Gtfs gtfs;
+  
+  gtfs.stops = GtfsLoadStops(gtfs_directory_path + "/stops.txt");
+  gtfs.trips = GtfsLoadTrips(gtfs_directory_path + "/trips.txt");
+  gtfs.calendar = GtfsLoadCalendar(gtfs_directory_path + "/calendar.txt");
+  gtfs.stop_times = GtfsLoadStopTimes(gtfs_directory_path + "/stop_times.txt");
+  gtfs.routes = GtfsLoadRoutes(gtfs_directory_path + "/routes.txt");
+  gtfs.directions = GtfsLoadDirections(gtfs_directory_path + "/directions.txt");
+  
+  return gtfs;
 }
 
 }  // namespace vats5

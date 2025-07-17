@@ -6,10 +6,10 @@
 int main() {
   crow::SimpleApp app;
 
-  std::vector<vats5::Stop> stops;
+  vats5::Gtfs gtfs;
   try {
-    stops = vats5::GtfsLoadStops("../data/RG/stops.txt");
-    std::cout << "Loaded " << stops.size() << " stops from GTFS data"
+    gtfs = vats5::GtfsLoad("../data/RG");
+    std::cout << "Loaded " << gtfs.stops.size() << " stops from GTFS data"
               << std::endl;
   } catch (const std::exception& e) {
     std::cerr << "Error loading GTFS data: " << e.what() << std::endl;
@@ -18,11 +18,11 @@ int main() {
 
   CROW_ROUTE(app, "/")([]() { return "Hello world oh yeah!"; });
 
-  CROW_ROUTE(app, "/stops")([&stops]() {
+  CROW_ROUTE(app, "/stops")([&gtfs]() {
     crow::json::wvalue json_stops = crow::json::wvalue::list();
 
-    for (size_t i = 0; i < stops.size(); ++i) {
-      const auto& stop = stops[i];
+    for (size_t i = 0; i < gtfs.stops.size(); ++i) {
+      const auto& stop = gtfs.stops[i];
       crow::json::wvalue stop_json;
       stop_json["stop_id"] = stop.stop_id.v;
       stop_json["stop_name"] = stop.stop_name;

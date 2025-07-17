@@ -73,22 +73,16 @@ struct Direction {
     std::string direction;
 };
 
-// Load all stops from the GTFS stops.txt file
-std::vector<Stop> GtfsLoadStops(const std::string& stops_file_path);
+struct Gtfs {
+    std::vector<Stop> stops;
+    std::vector<Trip> trips;
+    std::vector<Calendar> calendar;
+    std::vector<StopTime> stop_times;
+    std::vector<Route> routes;
+    std::vector<Direction> directions;
+};
 
-// Load all trips from the GTFS trips.txt file
-std::vector<Trip> GtfsLoadTrips(const std::string& trips_file_path);
-
-// Load all calendar entries from the GTFS calendar.txt file
-std::vector<Calendar> GtfsLoadCalendar(const std::string& calendar_file_path);
-
-// Load all stop times from the GTFS stop_times.txt file
-std::vector<StopTime> GtfsLoadStopTimes(const std::string& stop_times_file_path);
-
-// Load all routes from the GTFS routes.txt file
-std::vector<Route> GtfsLoadRoutes(const std::string& routes_file_path);
-
-// Load all directions from the GTFS directions.txt file
-std::vector<Direction> GtfsLoadDirections(const std::string& directions_file_path);
+// Load all GTFS data from a directory containing GTFS files
+Gtfs GtfsLoad(const std::string& gtfs_directory_path);
 
 } // namespace vats5
