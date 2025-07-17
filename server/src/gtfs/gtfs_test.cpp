@@ -16,7 +16,7 @@ GTEST("GtfsLoadStops should work") {
 
   // Check that the Sunnyvale stop exists
   EXPECT_THAT(stops, Contains(AllOf(
-    Field(&Stop::stop_id, Eq("sunnyvale")),
+    Field(&Stop::stop_id, Field(&StopId::v, Eq("sunnyvale"))),
     Field(&Stop::stop_name, Eq("Sunnyvale")),
     Field(&Stop::stop_lat, DoubleNear(37.37893, 1e-6)),
     Field(&Stop::stop_lon, DoubleNear(-122.0315, 1e-6)),

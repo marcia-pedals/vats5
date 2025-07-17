@@ -6,12 +6,16 @@
 
 namespace vats5 {
 
+struct StopId {
+    std::string v;
+};
+
 struct Stop {
-    std::string stop_id;
+    StopId stop_id;
     std::string stop_name;
     double stop_lat;
     double stop_lon;
-    std::optional<std::string> parent_station;
+    std::optional<StopId> parent_station;
 };
 
 // Load all stops from the GTFS stops.txt file

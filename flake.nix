@@ -18,6 +18,7 @@
             crow
             gcc
             ninja
+            nodejs
           ];
 
           shellHook = ''

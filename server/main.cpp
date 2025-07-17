@@ -24,12 +24,12 @@ int main() {
     for (size_t i = 0; i < stops.size(); ++i) {
       const auto& stop = stops[i];
       crow::json::wvalue stop_json;
-      stop_json["stop_id"] = stop.stop_id;
+      stop_json["stop_id"] = stop.stop_id.v;
       stop_json["stop_name"] = stop.stop_name;
       stop_json["stop_lat"] = stop.stop_lat;
       stop_json["stop_lon"] = stop.stop_lon;
       if (stop.parent_station.has_value()) {
-        stop_json["parent_station"] = stop.parent_station.value();
+        stop_json["parent_station"] = stop.parent_station.value().v;
       } else {
         stop_json["parent_station"] = nullptr;
       }
