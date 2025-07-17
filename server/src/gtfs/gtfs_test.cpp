@@ -24,3 +24,36 @@ GTEST("GtfsLoadStops should work") {
   )));
 
 }
+
+GTEST("GtfsLoadTrips should work") {
+  std::string trips_file_path = "../data/RG/trips.txt";
+  std::vector<Trip> trips = GtfsLoadTrips(trips_file_path);
+  EXPECT_EQ(trips.size(), 100391);
+
+  // Check that a specific trip exists
+  EXPECT_THAT(trips, Contains(AllOf(
+    Field(&Trip::route_id, Field(&RouteId::v, Eq("SR:3"))),
+    Field(&Trip::trip_id, Field(&TripId::v, Eq("SR:198"))),
+    Field(&Trip::service_id, Field(&ServiceId::v, Eq("SR:79233")))
+  )));
+}
+
+GTEST("GtfsLoadCalendar should work") {
+  std::string calendar_file_path = "../data/RG/calendar.txt";
+  std::vector<Calendar> calendars = GtfsLoadCalendar(calendar_file_path);
+  EXPECT_EQ(calendars.size(), 384);
+
+  // Check that a specific calendar entry exists
+  EXPECT_THAT(calendars, Contains(AllOf(
+    Field(&Calendar::service_id, Field(&ServiceId::v, Eq("SR:79276"))),
+    Field(&Calendar::monday, Eq(true)),
+    Field(&Calendar::tuesday, Eq(true)),
+    Field(&Calendar::wednesday, Eq(true)),
+    Field(&Calendar::thursday, Eq(true)),
+    Field(&Calendar::friday, Eq(true)),
+    Field(&Calendar::saturday, Eq(false)),
+    Field(&Calendar::sunday, Eq(false)),
+    Field(&Calendar::start_date, Eq("20241117")),
+    Field(&Calendar::end_date, Eq("20991231"))
+  )));
+}
