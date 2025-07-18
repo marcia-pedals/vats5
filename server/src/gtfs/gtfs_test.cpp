@@ -10,9 +10,18 @@ using ::testing::DoubleNear;
 using ::testing::Eq;
 using ::testing::Field;
 
+// Load GTFS data once for all tests
+static Gtfs* getGlobalGtfs() {
+  static Gtfs* gtfs = nullptr;
+  if (!gtfs) {
+    std::string gtfs_directory_path = "../data/RG";
+    gtfs = new Gtfs(GtfsLoad(gtfs_directory_path));
+  }
+  return gtfs;
+}
+
 GTEST("GtfsLoad should work") {
-  std::string gtfs_directory_path = "../data/RG";
-  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
+  const Gtfs& gtfs = *getGlobalGtfs();
   
   // Check stops
   EXPECT_EQ(gtfs.stops.size(), 21011);
@@ -80,8 +89,7 @@ GTEST("GtfsLoad should work") {
 }
 
 GTEST("GtfsFilterByDate should filter for weekday") {
-  std::string gtfs_directory_path = "../data/RG";
-  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
+  const Gtfs& gtfs = *getGlobalGtfs();
   
   // Test with a weekday (Tuesday, July 8, 2025)
   GtfsDay weekday_gtfs = GtfsFilterByDate(gtfs, "20250708");
@@ -127,8 +135,7 @@ GTEST("GtfsFilterByDate should filter for weekday") {
 }
 
 GTEST("GtfsFilterByDate should filter for weekend") {
-  std::string gtfs_directory_path = "../data/RG";
-  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
+  const Gtfs& gtfs = *getGlobalGtfs();
   
   // Test with a weekend day (Saturday, July 12, 2025)
   GtfsDay weekend_gtfs = GtfsFilterByDate(gtfs, "20250712");
@@ -179,8 +186,7 @@ GTEST("GtfsFilterByDate should filter for weekend") {
 }
 
 GTEST("GtfsFilterByDate should handle dates outside service period") {
-  std::string gtfs_directory_path = "../data/RG";
-  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
+  const Gtfs& gtfs = *getGlobalGtfs();
   
   // Test with a date far in the past (before any service starts)
   GtfsDay no_service_gtfs = GtfsFilterByDate(gtfs, "20200101");
