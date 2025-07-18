@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace vats5 {
@@ -100,5 +101,9 @@ Gtfs GtfsLoad(const std::string& gtfs_directory_path);
 // Filter GTFS data to only include services that run on the given date
 // Date should be in "YYYYMMDD" format (e.g., "20240315")
 GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
+
+// Filter GTFS data to only include the specified trips
+// All other fields are filtered to only include data associated with those trips
+GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<std::string>& trips_set);
 
 }  // namespace vats5

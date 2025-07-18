@@ -286,4 +286,55 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date) {
   return result;
 }
 
+GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<std::string>& trips_set) {
+  GtfsDay result;
+  
+  // Step 1: Filter trips to only include specified trips
+  std::unordered_set<std::string> used_route_direction_ids;
+  for (const auto& trip : gtfs_day.trips) {
+    if (trips_set.count(trip.trip_id.v)) {
+      result.trips.push_back(trip);
+      // Track route+direction combinations used
+      used_route_direction_ids.insert(trip.route_direction_id.route_id.v + ":" + std::to_string(trip.route_direction_id.direction_id));
+    }
+  }
+  
+  // Step 2: Filter stop times for specified trips
+  std::unordered_set<std::string> used_stop_ids;
+  for (const auto& stop_time : gtfs_day.stop_times) {
+    if (trips_set.count(stop_time.trip_id.v)) {
+      result.stop_times.push_back(stop_time);
+      used_stop_ids.insert(stop_time.stop_id.v);
+    }
+  }
+  
+  // Step 3: Include only used stops
+  for (const auto& stop : gtfs_day.stops) {
+    if (used_stop_ids.count(stop.stop_id.v)) {
+      result.stops.push_back(stop);
+    }
+  }
+  
+  // Step 4: Include only used routes
+  std::unordered_set<std::string> used_route_ids;
+  for (const auto& trip : result.trips) {
+    used_route_ids.insert(trip.route_direction_id.route_id.v);
+  }
+  for (const auto& route : gtfs_day.routes) {
+    if (used_route_ids.count(route.route_id.v)) {
+      result.routes.push_back(route);
+    }
+  }
+  
+  // Step 5: Include only used directions
+  for (const auto& direction : gtfs_day.directions) {
+    std::string route_dir_key = direction.route_direction_id.route_id.v + ":" + std::to_string(direction.route_direction_id.direction_id);
+    if (used_route_direction_ids.count(route_dir_key)) {
+      result.directions.push_back(direction);
+    }
+  }
+  
+  return result;
+}
+
 }  // namespace vats5

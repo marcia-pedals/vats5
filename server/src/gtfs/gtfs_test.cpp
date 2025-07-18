@@ -198,3 +198,11 @@ GTEST("GtfsFilterByDate should handle dates outside service period") {
   EXPECT_EQ(no_service_gtfs.directions.size(), 0);
   // Stops might still be included as they're not date-dependent
 }
+
+GTEST("GtfsFilterByTrips should filter by specific trip") {
+  const Gtfs& gtfs = *getGlobalGtfs();
+  GtfsDay gtfs_day = GtfsFilterByDate(gtfs, "20250718");
+  std::unordered_set<std::string> trips_set = {"CT:507"};
+  GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
+  EXPECT_EQ(filtered.trips.size(), 1);
+}
