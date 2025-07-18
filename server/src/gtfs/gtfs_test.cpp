@@ -1,4 +1,4 @@
-#include "gtfs.h"
+#include "gtfs/gtfs.h"
 
 #include <GUnit.h>
 #include <unordered_set>

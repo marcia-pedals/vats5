@@ -38,7 +38,12 @@ endif()
 # Create GTFS library target
 add_library(gtfs STATIC src/gtfs/gtfs.cpp)
 target_link_libraries(gtfs PUBLIC csv)
-target_include_directories(gtfs PUBLIC src/gtfs)
+target_include_directories(gtfs PUBLIC src)
+
+# Create data library target
+add_library(data STATIC src/solver/data.cpp)
+target_link_libraries(data PUBLIC gtfs)
+target_include_directories(data PUBLIC src)
 
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
@@ -46,3 +51,7 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 # Add test executable
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
 target_link_libraries(gtfs_test PUBLIC gunit gtfs)
+
+# Add data test executable
+add_executable(data_test src/solver/data_test.cpp)
+target_link_libraries(data_test PUBLIC gunit data)

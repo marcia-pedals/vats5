@@ -1,4 +1,4 @@
-#include "gtfs.h"
+#include "gtfs/gtfs.h"
 
 #include <csv.hpp>
 #include <iostream>

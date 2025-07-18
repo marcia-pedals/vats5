@@ -1,7 +1,7 @@
 #include <iostream>
 
 #include "crow.h"
-#include "src/gtfs/gtfs.h"
+#include "gtfs/gtfs.h"
 
 int main() {
   crow::SimpleApp app;
