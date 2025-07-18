@@ -43,25 +43,16 @@ struct Step {
 
     TripId origin_trip;
     TripId destination_trip;
-};
-
-// Bidirectional mappings between GtfsStopId<->StopId, etc.
-struct DataGtfsMapping {
-    // StopId mappings
-    std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
-    std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
     
-    // TripId mappings
-    std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
-    std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
+    bool operator==(const Step& other) const {
+        return origin_stop == other.origin_stop &&
+               destination_stop == other.destination_stop &&
+               origin_time == other.origin_time &&
+               destination_time == other.destination_time &&
+               origin_trip == other.origin_trip &&
+               destination_trip == other.destination_trip;
+    }
 };
-
-struct StepsFromGtfs {
-    DataGtfsMapping mapping;
-    std::vector<Step> steps;
-};
-
-StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs);
 
 }  // namespace vats5
 
@@ -88,3 +79,25 @@ struct hash<vats5::TimeSinceServiceStart> {
   }
 };
 }
+
+namespace vats5 {
+
+// Bidirectional mappings between GtfsStopId<->StopId, etc.
+struct DataGtfsMapping {
+    // StopId mappings
+    std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
+    std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
+    
+    // TripId mappings
+    std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
+    std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
+};
+
+struct StepsFromGtfs {
+    DataGtfsMapping mapping;
+    std::vector<Step> steps;
+};
+
+StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs);
+
+}  // namespace vats5
