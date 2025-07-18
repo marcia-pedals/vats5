@@ -4,6 +4,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
+#include <unordered_set>
+#include <ctime>
+#include <iomanip>
 
 namespace vats5 {
 
@@ -178,6 +181,109 @@ Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   gtfs.directions = GtfsLoadDirections(gtfs_directory_path + "/directions.txt");
   
   return gtfs;
+}
+
+static int GetDayOfWeek(const std::string& date) {
+  // Parse YYYYMMDD format
+  if (date.length() != 8) {
+    throw std::runtime_error("Invalid date format: " + date + " (expected YYYYMMDD)");
+  }
+  
+  int year = std::stoi(date.substr(0, 4));
+  int month = std::stoi(date.substr(4, 2));
+  int day = std::stoi(date.substr(6, 2));
+  
+  // Create tm structure
+  std::tm tm = {};
+  tm.tm_year = year - 1900;
+  tm.tm_mon = month - 1;
+  tm.tm_mday = day;
+  
+  // Convert to time_t and back to get day of week
+  std::time_t time = std::mktime(&tm);
+  std::tm* result = std::localtime(&time);
+  
+  // Return 0=Sunday, 1=Monday, ..., 6=Saturday
+  return result->tm_wday;
+}
+
+static bool IsServiceActiveOnDay(const Calendar& calendar, const std::string& date, int day_of_week) {
+  // Check if date is within the service period
+  if (date < calendar.start_date || date > calendar.end_date) {
+    return false;
+  }
+  
+  // Check if service runs on this day of week
+  switch (day_of_week) {
+    case 0: return calendar.sunday;    // Sunday
+    case 1: return calendar.monday;    // Monday
+    case 2: return calendar.tuesday;   // Tuesday
+    case 3: return calendar.wednesday; // Wednesday
+    case 4: return calendar.thursday;  // Thursday
+    case 5: return calendar.friday;    // Friday
+    case 6: return calendar.saturday;  // Saturday
+    default: return false;
+  }
+}
+
+GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date) {
+  GtfsDay result;
+  
+  // Get day of week for the given date
+  int day_of_week = GetDayOfWeek(date);
+  
+  // Step 1: Find all service IDs that are active on this date
+  std::unordered_set<std::string> active_service_ids;
+  for (const auto& calendar : gtfs.calendar) {
+    if (IsServiceActiveOnDay(calendar, date, day_of_week)) {
+      active_service_ids.insert(calendar.service_id.v);
+    }
+  }
+  
+  // Step 2: Filter trips that use active services
+  std::unordered_set<std::string> active_trip_ids;
+  std::unordered_set<std::string> used_route_direction_ids;
+  for (const auto& trip : gtfs.trips) {
+    if (active_service_ids.count(trip.service_id.v)) {
+      result.trips.push_back(trip);
+      active_trip_ids.insert(trip.trip_id.v);
+      // Track route+direction combinations used
+      used_route_direction_ids.insert(trip.route_direction_id.route_id.v + ":" + std::to_string(trip.route_direction_id.direction_id));
+    }
+  }
+  
+  // Step 3: Filter stop times for active trips
+  std::unordered_set<std::string> used_stop_ids;
+  for (const auto& stop_time : gtfs.stop_times) {
+    if (active_trip_ids.count(stop_time.trip_id.v)) {
+      result.stop_times.push_back(stop_time);
+      used_stop_ids.insert(stop_time.stop_id.v);
+    }
+  }
+  
+  // Step 4: Include all stops
+  result.stops = gtfs.stops;
+  
+  // Step 5: Include only used routes
+  std::unordered_set<std::string> used_route_ids;
+  for (const auto& trip : result.trips) {
+    used_route_ids.insert(trip.route_direction_id.route_id.v);
+  }
+  for (const auto& route : gtfs.routes) {
+    if (used_route_ids.count(route.route_id.v)) {
+      result.routes.push_back(route);
+    }
+  }
+  
+  // Step 6: Include only used directions
+  for (const auto& direction : gtfs.directions) {
+    std::string route_dir_key = direction.route_direction_id.route_id.v + ":" + std::to_string(direction.route_direction_id.direction_id);
+    if (used_route_direction_ids.count(route_dir_key)) {
+      result.directions.push_back(direction);
+    }
+  }
+  
+  return result;
 }
 
 }  // namespace vats5

@@ -86,7 +86,19 @@ struct Gtfs {
   std::vector<Direction> directions;
 };
 
+struct GtfsDay {
+  std::vector<Stop> stops;
+  std::vector<Trip> trips;
+  std::vector<StopTime> stop_times;
+  std::vector<Route> routes;
+  std::vector<Direction> directions;
+};
+
 // Load all GTFS data from a directory containing GTFS files
 Gtfs GtfsLoad(const std::string& gtfs_directory_path);
+
+// Filter GTFS data to only include services that run on the given date
+// Date should be in "YYYYMMDD" format (e.g., "20240315")
+GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
 
 }  // namespace vats5
