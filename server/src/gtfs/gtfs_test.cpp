@@ -26,65 +26,65 @@ GTEST("GtfsLoad should work") {
   // Check stops
   EXPECT_EQ(gtfs.stops.size(), 21011);
   EXPECT_THAT(gtfs.stops, Contains(AllOf(
-    Field(&Stop::stop_id, Field(&StopId::v, Eq("sunnyvale"))),
-    Field(&Stop::stop_name, Eq("Sunnyvale")),
-    Field(&Stop::stop_lat, DoubleNear(37.37893, 1e-6)),
-    Field(&Stop::stop_lon, DoubleNear(-122.0315, 1e-6)),
-    Field(&Stop::parent_station, Eq(std::nullopt))
+    Field(&GtfsStop::stop_id, Field(&GtfsStopId::v, Eq("sunnyvale"))),
+    Field(&GtfsStop::stop_name, Eq("Sunnyvale")),
+    Field(&GtfsStop::stop_lat, DoubleNear(37.37893, 1e-6)),
+    Field(&GtfsStop::stop_lon, DoubleNear(-122.0315, 1e-6)),
+    Field(&GtfsStop::parent_station, Eq(std::nullopt))
   )));
 
   // Check trips
   EXPECT_EQ(gtfs.trips.size(), 100391);
   EXPECT_THAT(gtfs.trips, Contains(AllOf(
-    Field(&Trip::route_direction_id, AllOf(
-      Field(&RouteDirectionId::route_id, Field(&RouteId::v, Eq("SR:3"))),
-      Field(&RouteDirectionId::direction_id, Eq(0))
+    Field(&GtfsTrip::route_direction_id, AllOf(
+      Field(&GtfsRouteDirectionId::route_id, Field(&GtfsRouteId::v, Eq("SR:3"))),
+      Field(&GtfsRouteDirectionId::direction_id, Eq(0))
     )),
-    Field(&Trip::trip_id, Field(&TripId::v, Eq("SR:198"))),
-    Field(&Trip::service_id, Field(&ServiceId::v, Eq("SR:79233")))
+    Field(&GtfsTrip::trip_id, Field(&GtfsTripId::v, Eq("SR:198"))),
+    Field(&GtfsTrip::service_id, Field(&GtfsServiceId::v, Eq("SR:79233")))
   )));
 
   // Check calendar
   EXPECT_EQ(gtfs.calendar.size(), 384);
   EXPECT_THAT(gtfs.calendar, Contains(AllOf(
-    Field(&Calendar::service_id, Field(&ServiceId::v, Eq("SR:79276"))),
-    Field(&Calendar::monday, Eq(true)),
-    Field(&Calendar::tuesday, Eq(true)),
-    Field(&Calendar::wednesday, Eq(true)),
-    Field(&Calendar::thursday, Eq(true)),
-    Field(&Calendar::friday, Eq(true)),
-    Field(&Calendar::saturday, Eq(false)),
-    Field(&Calendar::sunday, Eq(false)),
-    Field(&Calendar::start_date, Eq("20241117")),
-    Field(&Calendar::end_date, Eq("20991231"))
+    Field(&GtfsCalendar::service_id, Field(&GtfsServiceId::v, Eq("SR:79276"))),
+    Field(&GtfsCalendar::monday, Eq(true)),
+    Field(&GtfsCalendar::tuesday, Eq(true)),
+    Field(&GtfsCalendar::wednesday, Eq(true)),
+    Field(&GtfsCalendar::thursday, Eq(true)),
+    Field(&GtfsCalendar::friday, Eq(true)),
+    Field(&GtfsCalendar::saturday, Eq(false)),
+    Field(&GtfsCalendar::sunday, Eq(false)),
+    Field(&GtfsCalendar::start_date, Eq("20241117")),
+    Field(&GtfsCalendar::end_date, Eq("20991231"))
   )));
 
   // Check stop times (excluding entries with empty arrival/departure times)
   EXPECT_EQ(gtfs.stop_times.size(), 3448431);
   EXPECT_THAT(gtfs.stop_times, Contains(AllOf(
-    Field(&StopTime::trip_id, Field(&TripId::v, Eq("SR:198"))),
-    Field(&StopTime::stop_id, Field(&StopId::v, Eq("80100"))),
-    Field(&StopTime::stop_sequence, Eq(0)),
-    Field(&StopTime::arrival_time, Field(&TimeSinceServiceStart::seconds, Eq(25200))),
-    Field(&StopTime::departure_time, Field(&TimeSinceServiceStart::seconds, Eq(25200)))
+    Field(&GtfsStopTime::trip_id, Field(&GtfsTripId::v, Eq("SR:198"))),
+    Field(&GtfsStopTime::stop_id, Field(&GtfsStopId::v, Eq("80100"))),
+    Field(&GtfsStopTime::stop_sequence, Eq(0)),
+    Field(&GtfsStopTime::arrival_time, Field(&GtfsTimeSinceServiceStart::seconds, Eq(25200))),
+    Field(&GtfsStopTime::departure_time, Field(&GtfsTimeSinceServiceStart::seconds, Eq(25200)))
   )));
 
   // Check routes
   EXPECT_EQ(gtfs.routes.size(), 604);
   EXPECT_THAT(gtfs.routes, Contains(AllOf(
-    Field(&Route::route_id, Field(&RouteId::v, Eq("SR:3"))),
-    Field(&Route::route_short_name, Eq("3")),
-    Field(&Route::route_long_name, Eq("Santa Rosa Ave"))
+    Field(&GtfsRoute::route_id, Field(&GtfsRouteId::v, Eq("SR:3"))),
+    Field(&GtfsRoute::route_short_name, Eq("3")),
+    Field(&GtfsRoute::route_long_name, Eq("Santa Rosa Ave"))
   )));
 
   // Check directions
   EXPECT_EQ(gtfs.directions.size(), 1074);
   EXPECT_THAT(gtfs.directions, Contains(AllOf(
-    Field(&Direction::route_direction_id, AllOf(
-      Field(&RouteDirectionId::route_id, Field(&RouteId::v, Eq("SR:3"))),
-      Field(&RouteDirectionId::direction_id, Eq(0))
+    Field(&GtfsDirection::route_direction_id, AllOf(
+      Field(&GtfsRouteDirectionId::route_id, Field(&GtfsRouteId::v, Eq("SR:3"))),
+      Field(&GtfsRouteDirectionId::direction_id, Eq(0))
     )),
-    Field(&Direction::direction, Eq("Loop"))
+    Field(&GtfsDirection::direction, Eq("Loop"))
   )));
 }
 

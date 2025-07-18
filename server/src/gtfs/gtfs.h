@@ -6,47 +6,47 @@
 
 namespace vats5 {
 
-struct StopId {
+struct GtfsStopId {
   std::string v;
 };
 
-struct RouteId {
+struct GtfsRouteId {
   std::string v;
 };
 
-struct TripId {
+struct GtfsTripId {
   std::string v;
 };
 
-struct ServiceId {
+struct GtfsServiceId {
   std::string v;
 };
 
-struct TimeSinceServiceStart {
+struct GtfsTimeSinceServiceStart {
   int seconds;
 };
 
-struct RouteDirectionId {
-  RouteId route_id;
+struct GtfsRouteDirectionId {
+  GtfsRouteId route_id;
   int direction_id;
 };
 
-struct Stop {
-  StopId stop_id;
+struct GtfsStop {
+  GtfsStopId stop_id;
   std::string stop_name;
   double stop_lat;
   double stop_lon;
-  std::optional<StopId> parent_station;
+  std::optional<GtfsStopId> parent_station;
 };
 
-struct Trip {
-  RouteDirectionId route_direction_id;
-  TripId trip_id;
-  ServiceId service_id;
+struct GtfsTrip {
+  GtfsRouteDirectionId route_direction_id;
+  GtfsTripId trip_id;
+  GtfsServiceId service_id;
 };
 
-struct Calendar {
-  ServiceId service_id;
+struct GtfsCalendar {
+  GtfsServiceId service_id;
   bool monday;
   bool tuesday;
   bool wednesday;
@@ -58,40 +58,40 @@ struct Calendar {
   std::string end_date;
 };
 
-struct StopTime {
-  TripId trip_id;
-  StopId stop_id;
+struct GtfsStopTime {
+  GtfsTripId trip_id;
+  GtfsStopId stop_id;
   int stop_sequence;
-  TimeSinceServiceStart arrival_time;
-  TimeSinceServiceStart departure_time;
+  GtfsTimeSinceServiceStart arrival_time;
+  GtfsTimeSinceServiceStart departure_time;
 };
 
-struct Route {
-  RouteId route_id;
+struct GtfsRoute {
+  GtfsRouteId route_id;
   std::string route_short_name;
   std::string route_long_name;
 };
 
-struct Direction {
-  RouteDirectionId route_direction_id;
+struct GtfsDirection {
+  GtfsRouteDirectionId route_direction_id;
   std::string direction;
 };
 
 struct Gtfs {
-  std::vector<Stop> stops;
-  std::vector<Trip> trips;
-  std::vector<Calendar> calendar;
-  std::vector<StopTime> stop_times;
-  std::vector<Route> routes;
-  std::vector<Direction> directions;
+  std::vector<GtfsStop> stops;
+  std::vector<GtfsTrip> trips;
+  std::vector<GtfsCalendar> calendar;
+  std::vector<GtfsStopTime> stop_times;
+  std::vector<GtfsRoute> routes;
+  std::vector<GtfsDirection> directions;
 };
 
 struct GtfsDay {
-  std::vector<Stop> stops;
-  std::vector<Trip> trips;
-  std::vector<StopTime> stop_times;
-  std::vector<Route> routes;
-  std::vector<Direction> directions;
+  std::vector<GtfsStop> stops;
+  std::vector<GtfsTrip> trips;
+  std::vector<GtfsStopTime> stop_times;
+  std::vector<GtfsRoute> routes;
+  std::vector<GtfsDirection> directions;
 };
 
 // Load all GTFS data from a directory containing GTFS files

@@ -10,7 +10,7 @@
 
 namespace vats5 {
 
-static TimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
+static GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
   std::istringstream ss(time_str);
   std::string hours_str, minutes_str, seconds_str;
   
@@ -24,18 +24,18 @@ static TimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
   int minutes = std::stoi(minutes_str);
   int seconds = std::stoi(seconds_str);
   
-  return TimeSinceServiceStart{hours * 3600 + minutes * 60 + seconds};
+  return GtfsTimeSinceServiceStart{hours * 3600 + minutes * 60 + seconds};
 }
 
-static std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
-  std::vector<Stop> stops;
+static std::vector<GtfsStop> GtfsLoadStops(const std::string &stops_file_path) {
+  std::vector<GtfsStop> stops;
 
   try {
     csv::CSVReader reader(stops_file_path);
 
     for (csv::CSVRow &row : reader) {
-      Stop &stop = stops.emplace_back();
-      stop.stop_id = StopId{row["stop_id"].get<std::string>()};
+      GtfsStop &stop = stops.emplace_back();
+      stop.stop_id = GtfsStopId{row["stop_id"].get<std::string>()};
       stop.stop_name = row["stop_name"].get<std::string>();
       stop.stop_lat = row["stop_lat"].get<double>();
       stop.stop_lon = row["stop_lon"].get<double>();
@@ -43,7 +43,7 @@ static std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
       if (parent_station_str.empty()) {
         stop.parent_station = std::nullopt;
       } else {
-        stop.parent_station = StopId{std::move(parent_station_str)};
+        stop.parent_station = GtfsStopId{std::move(parent_station_str)};
       }
     }
   } catch (const std::exception &e) {
@@ -54,17 +54,17 @@ static std::vector<Stop> GtfsLoadStops(const std::string &stops_file_path) {
   return stops;
 }
 
-static std::vector<Trip> GtfsLoadTrips(const std::string &trips_file_path) {
-  std::vector<Trip> trips;
+static std::vector<GtfsTrip> GtfsLoadTrips(const std::string &trips_file_path) {
+  std::vector<GtfsTrip> trips;
 
   try {
     csv::CSVReader reader(trips_file_path);
 
     for (csv::CSVRow &row : reader) {
-      Trip &trip = trips.emplace_back();
-      trip.route_direction_id = RouteDirectionId{RouteId{row["route_id"].get<std::string>()}, row["direction_id"].get<int>()};
-      trip.trip_id = TripId{row["trip_id"].get<std::string>()};
-      trip.service_id = ServiceId{row["service_id"].get<std::string>()};
+      GtfsTrip &trip = trips.emplace_back();
+      trip.route_direction_id = GtfsRouteDirectionId{GtfsRouteId{row["route_id"].get<std::string>()}, row["direction_id"].get<int>()};
+      trip.trip_id = GtfsTripId{row["trip_id"].get<std::string>()};
+      trip.service_id = GtfsServiceId{row["service_id"].get<std::string>()};
     }
   } catch (const std::exception &e) {
     throw std::runtime_error(
@@ -74,15 +74,15 @@ static std::vector<Trip> GtfsLoadTrips(const std::string &trips_file_path) {
   return trips;
 }
 
-static std::vector<Calendar> GtfsLoadCalendar(const std::string &calendar_file_path) {
-  std::vector<Calendar> calendars;
+static std::vector<GtfsCalendar> GtfsLoadCalendar(const std::string &calendar_file_path) {
+  std::vector<GtfsCalendar> calendars;
 
   try {
     csv::CSVReader reader(calendar_file_path);
 
     for (csv::CSVRow &row : reader) {
-      Calendar &calendar = calendars.emplace_back();
-      calendar.service_id = ServiceId{row["service_id"].get<std::string>()};
+      GtfsCalendar &calendar = calendars.emplace_back();
+      calendar.service_id = GtfsServiceId{row["service_id"].get<std::string>()};
       calendar.monday = row["monday"].get<std::string>() == "1";
       calendar.tuesday = row["tuesday"].get<std::string>() == "1";
       calendar.wednesday = row["wednesday"].get<std::string>() == "1";
@@ -101,8 +101,8 @@ static std::vector<Calendar> GtfsLoadCalendar(const std::string &calendar_file_p
   return calendars;
 }
 
-static std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_file_path) {
-  std::vector<StopTime> stop_times;
+static std::vector<GtfsStopTime> GtfsLoadStopTimes(const std::string &stop_times_file_path) {
+  std::vector<GtfsStopTime> stop_times;
 
   try {
     csv::CSVReader reader(stop_times_file_path);
@@ -116,9 +116,9 @@ static std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_fil
         continue;
       }
       
-      StopTime &stop_time = stop_times.emplace_back();
-      stop_time.trip_id = TripId{row["trip_id"].get<std::string>()};
-      stop_time.stop_id = StopId{row["stop_id"].get<std::string>()};
+      GtfsStopTime &stop_time = stop_times.emplace_back();
+      stop_time.trip_id = GtfsTripId{row["trip_id"].get<std::string>()};
+      stop_time.stop_id = GtfsStopId{row["stop_id"].get<std::string>()};
       stop_time.stop_sequence = row["stop_sequence"].get<int>();
       stop_time.arrival_time = ParseGtfsTime(arrival_time_str);
       stop_time.departure_time = ParseGtfsTime(departure_time_str);
@@ -131,15 +131,15 @@ static std::vector<StopTime> GtfsLoadStopTimes(const std::string &stop_times_fil
   return stop_times;
 }
 
-static std::vector<Route> GtfsLoadRoutes(const std::string &routes_file_path) {
-  std::vector<Route> routes;
+static std::vector<GtfsRoute> GtfsLoadRoutes(const std::string &routes_file_path) {
+  std::vector<GtfsRoute> routes;
 
   try {
     csv::CSVReader reader(routes_file_path);
 
     for (csv::CSVRow &row : reader) {
-      Route &route = routes.emplace_back();
-      route.route_id = RouteId{row["route_id"].get<std::string>()};
+      GtfsRoute &route = routes.emplace_back();
+      route.route_id = GtfsRouteId{row["route_id"].get<std::string>()};
       route.route_short_name = row["route_short_name"].get<std::string>();
       route.route_long_name = row["route_long_name"].get<std::string>();
     }
@@ -151,15 +151,15 @@ static std::vector<Route> GtfsLoadRoutes(const std::string &routes_file_path) {
   return routes;
 }
 
-static std::vector<Direction> GtfsLoadDirections(const std::string &directions_file_path) {
-  std::vector<Direction> directions;
+static std::vector<GtfsDirection> GtfsLoadDirections(const std::string &directions_file_path) {
+  std::vector<GtfsDirection> directions;
 
   try {
     csv::CSVReader reader(directions_file_path);
 
     for (csv::CSVRow &row : reader) {
-      Direction &direction = directions.emplace_back();
-      direction.route_direction_id = RouteDirectionId{RouteId{row["route_id"].get<std::string>()}, row["direction_id"].get<int>()};
+      GtfsDirection &direction = directions.emplace_back();
+      direction.route_direction_id = GtfsRouteDirectionId{GtfsRouteId{row["route_id"].get<std::string>()}, row["direction_id"].get<int>()};
       direction.direction = row["direction"].get<std::string>();
     }
   } catch (const std::exception &e) {
@@ -207,7 +207,7 @@ static int GetDayOfWeek(const std::string& date) {
   return result->tm_wday;
 }
 
-static bool IsServiceActiveOnDay(const Calendar& calendar, const std::string& date, int day_of_week) {
+static bool IsServiceActiveOnDay(const GtfsCalendar& calendar, const std::string& date, int day_of_week) {
   // Check if date is within the service period
   if (date < calendar.start_date || date > calendar.end_date) {
     return false;
