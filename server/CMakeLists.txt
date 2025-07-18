@@ -45,6 +45,11 @@ add_library(data STATIC src/solver/data.cpp)
 target_link_libraries(data PUBLIC gtfs)
 target_include_directories(data PUBLIC src)
 
+# Create step_merge library target
+add_library(step_merge STATIC src/solver/step_merge.cpp)
+target_link_libraries(step_merge PUBLIC data)
+target_include_directories(step_merge PUBLIC src)
+
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
@@ -55,3 +60,7 @@ target_link_libraries(gtfs_test PUBLIC gunit gtfs)
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)
 target_link_libraries(data_test PUBLIC gunit data)
+
+# Add step_merge test executable
+add_executable(step_merge_test src/solver/step_merge_test.cpp)
+target_link_libraries(step_merge_test PUBLIC gunit step_merge)
