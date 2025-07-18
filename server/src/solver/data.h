@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <unordered_map>
 
 #include "gtfs/gtfs.h"
 
@@ -46,7 +47,13 @@ struct Step {
 
 // Bidirectional mappings between GtfsStopId<->StopId, etc.
 struct DataGtfsMapping {
-    // TODO: Fill in.
+    // StopId mappings
+    std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
+    std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
+    
+    // TripId mappings
+    std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
+    std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
 };
 
 struct StepsFromGtfs {

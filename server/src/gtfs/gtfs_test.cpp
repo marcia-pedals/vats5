@@ -9,6 +9,7 @@ using ::testing::Contains;
 using ::testing::DoubleNear;
 using ::testing::Eq;
 using ::testing::Field;
+using ::testing::UnorderedElementsAre;
 
 // Load GTFS data once for all tests
 static Gtfs* getGlobalGtfs() {
@@ -202,7 +203,234 @@ GTEST("GtfsFilterByDate should handle dates outside service period") {
 GTEST("GtfsFilterByTrips should filter by specific trip") {
   const Gtfs& gtfs = *getGlobalGtfs();
   GtfsDay gtfs_day = GtfsFilterByDate(gtfs, "20250718");
-  std::unordered_set<GtfsTripId> trips_set = {GtfsTripId{"CT:507"}};
+  const GtfsTripId trip_id{"CT:507"};
+  const GtfsRouteId route_id{"CT:Express"};
+  const GtfsServiceId service_id{"CT:72982"};
+  
+  // Child stop IDs (northbound platforms) in order of the trip
+  const GtfsStopId san_jose_diridon_northbound{"70261"};
+  const GtfsStopId sunnyvale_northbound{"70221"};
+  const GtfsStopId mountain_view_northbound{"70211"};
+  const GtfsStopId palo_alto_northbound{"70171"};
+  const GtfsStopId redwood_city_northbound{"70141"};
+  const GtfsStopId hillsdale_northbound{"70111"};
+  const GtfsStopId san_mateo_northbound{"70091"};
+  const GtfsStopId millbrae_northbound{"70061"};
+  const GtfsStopId south_sf_northbound{"70041"};
+  const GtfsStopId sf_22nd_street_northbound{"70021"};
+  const GtfsStopId sf_4th_king_northbound{"70011"};
+  
+  // Parent station IDs
+  const GtfsStopId caltrain_4th_king{"mtc:caltrain-4th-&-king"};
+  const GtfsStopId palo_alto_station{"mtc:palo-alto-station"};
+  const GtfsStopId millbrae_bart{"mtc:millbrae-bart"};
+  const GtfsStopId mountain_view_station{"mtc:mountain-view-station"};
+  const GtfsStopId san_jose_diridon_station{"mtc:san-jose-diridon-station"};
+  const GtfsStopId sf_22nd_street{"22nd_street"};
+  const GtfsStopId hillsdale{"hillsdale"};
+  const GtfsStopId redwood_city{"redwood_city"};
+  const GtfsStopId san_mateo{"san_mateo"};
+  const GtfsStopId south_sf{"south_sf"};
+  const GtfsStopId sunnyvale{"sunnyvale"};
+  
+  std::unordered_set<GtfsTripId> trips_set = {trip_id};
   GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
-  EXPECT_EQ(filtered.trips.size(), 1);
+  
+  // Check trips
+  std::vector<GtfsTrip> expected_trips = {
+    GtfsTrip{
+      GtfsRouteDirectionId{route_id, 0},
+      trip_id,
+      service_id
+    }
+  };
+  EXPECT_EQ(filtered.trips, expected_trips);
+  
+  // Check routes
+  std::vector<GtfsRoute> expected_routes = {
+    GtfsRoute{route_id, "Express", ""}
+  };
+  EXPECT_EQ(filtered.routes, expected_routes);
+  
+  // Check directions
+  std::vector<GtfsDirection> expected_directions = {
+    GtfsDirection{GtfsRouteDirectionId{route_id, 0}, "North"}
+  };
+  EXPECT_EQ(filtered.directions, expected_directions);
+  
+  // Check stops (all expected stops with floating point tolerance)
+  EXPECT_THAT(filtered.stops, UnorderedElementsAre(
+    // Northbound platform stops
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(sf_4th_king_northbound)),
+      Field(&GtfsStop::stop_name, Eq("San Francisco Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.7764, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.395, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(caltrain_4th_king))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(palo_alto_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Palo Alto Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.4434, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.165, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(palo_alto_station))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(mountain_view_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Mountain View Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3945, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.076, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(mountain_view_station))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(san_jose_diridon_northbound)),
+      Field(&GtfsStop::stop_name, Eq("San Jose Diridon Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3292, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-121.903, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(san_jose_diridon_station))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(millbrae_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Millbrae Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.5999, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.387, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(millbrae_bart))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(sf_22nd_street_northbound)),
+      Field(&GtfsStop::stop_name, Eq("22nd Street Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.7576, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.392, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(sf_22nd_street))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(hillsdale_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Hillsdale Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.5426, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.302, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(hillsdale))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(redwood_city_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Redwood City Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.4862, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.232, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(redwood_city))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(san_mateo_northbound)),
+      Field(&GtfsStop::stop_name, Eq("San Mateo Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.5681, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.324, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(san_mateo))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(south_sf_northbound)),
+      Field(&GtfsStop::stop_name, Eq("South San Francisco Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.6559, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.405, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(south_sf))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(sunnyvale_northbound)),
+      Field(&GtfsStop::stop_name, Eq("Sunnyvale Caltrain Station Northbound")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3789, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.031, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(sunnyvale))
+    ),
+    // Parent station stops
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(caltrain_4th_king)),
+      Field(&GtfsStop::stop_name, Eq("Caltrain 4th & King")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.7765, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.395, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(palo_alto_station)),
+      Field(&GtfsStop::stop_name, Eq("Palo Alto Station")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.4432, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.164, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(millbrae_bart)),
+      Field(&GtfsStop::stop_name, Eq("Millbrae BART")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.6001, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.387, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(mountain_view_station)),
+      Field(&GtfsStop::stop_name, Eq("Mountain View Station")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3943, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.076, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(san_jose_diridon_station)),
+      Field(&GtfsStop::stop_name, Eq("San Jose Diridon Station")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3299, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-121.903, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(sf_22nd_street)),
+      Field(&GtfsStop::stop_name, Eq("22nd Street")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.757, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.392, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(hillsdale)),
+      Field(&GtfsStop::stop_name, Eq("Hillsdale")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.5424, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.302, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(redwood_city)),
+      Field(&GtfsStop::stop_name, Eq("Redwood City")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.4859, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.231, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(san_mateo)),
+      Field(&GtfsStop::stop_name, Eq("San Mateo")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.5682, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.324, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(south_sf)),
+      Field(&GtfsStop::stop_name, Eq("South San Francisco Caltrain Station")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.6559, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.405, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    ),
+    AllOf(
+      Field(&GtfsStop::stop_id, Eq(sunnyvale)),
+      Field(&GtfsStop::stop_name, Eq("Sunnyvale")),
+      Field(&GtfsStop::stop_lat, DoubleNear(37.3789, 1e-4)),
+      Field(&GtfsStop::stop_lon, DoubleNear(-122.031, 1e-3)),
+      Field(&GtfsStop::parent_station, Eq(std::nullopt))
+    )
+  ));
+  
+  // Check stop times
+  std::vector<GtfsStopTime> expected_stop_times = {
+    GtfsStopTime{trip_id, san_jose_diridon_northbound, 1, ParseGtfsTime("07:22:00"), ParseGtfsTime("07:22:00")},
+    GtfsStopTime{trip_id, sunnyvale_northbound, 2, ParseGtfsTime("07:32:00"), ParseGtfsTime("07:32:00")},
+    GtfsStopTime{trip_id, mountain_view_northbound, 3, ParseGtfsTime("07:36:00"), ParseGtfsTime("07:36:00")},
+    GtfsStopTime{trip_id, palo_alto_northbound, 4, ParseGtfsTime("07:43:00"), ParseGtfsTime("07:43:00")},
+    GtfsStopTime{trip_id, redwood_city_northbound, 5, ParseGtfsTime("07:49:00"), ParseGtfsTime("07:49:00")},
+    GtfsStopTime{trip_id, hillsdale_northbound, 6, ParseGtfsTime("07:56:00"), ParseGtfsTime("07:56:00")},
+    GtfsStopTime{trip_id, san_mateo_northbound, 7, ParseGtfsTime("07:59:00"), ParseGtfsTime("07:59:00")},
+    GtfsStopTime{trip_id, millbrae_northbound, 8, ParseGtfsTime("08:04:00"), ParseGtfsTime("08:04:00")},
+    GtfsStopTime{trip_id, south_sf_northbound, 9, ParseGtfsTime("08:09:00"), ParseGtfsTime("08:09:00")},
+    GtfsStopTime{trip_id, sf_22nd_street_northbound, 10, ParseGtfsTime("08:16:00"), ParseGtfsTime("08:16:00")},
+    GtfsStopTime{trip_id, sf_4th_king_northbound, 11, ParseGtfsTime("08:22:00"), ParseGtfsTime("08:22:00")}
+  };
+  EXPECT_EQ(filtered.stop_times, expected_stop_times);
 }

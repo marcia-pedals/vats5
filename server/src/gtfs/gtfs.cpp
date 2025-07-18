@@ -10,7 +10,7 @@
 
 namespace vats5 {
 
-static GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
+GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
   std::istringstream ss(time_str);
   std::string hours_str, minutes_str, seconds_str;
   
@@ -308,9 +308,27 @@ GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<Gtfs
     }
   }
   
-  // Step 3: Include only used stops
+  // Step 3: Include only used stops and recursively include parent stations
+  std::unordered_set<std::string> stops_to_include = used_stop_ids;
+  
+  // Recursively add parent stations
+  bool added_new_stops = true;
+  while (added_new_stops) {
+    added_new_stops = false;
+    for (const auto& stop : gtfs_day.stops) {
+      if (stops_to_include.count(stop.stop_id.v)) {
+        // If this stop has a parent station, add it to the set
+        if (stop.parent_station && !stops_to_include.count(stop.parent_station->v)) {
+          stops_to_include.insert(stop.parent_station->v);
+          added_new_stops = true;
+        }
+      }
+    }
+  }
+  
+  // Now include all stops that are in the final set
   for (const auto& stop : gtfs_day.stops) {
-    if (used_stop_ids.count(stop.stop_id.v)) {
+    if (stops_to_include.count(stop.stop_id.v)) {
       result.stops.push_back(stop);
     }
   }

@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <iostream>
+#include <iomanip>
 
 namespace vats5 {
 
@@ -62,12 +64,23 @@ struct GtfsStop {
   double stop_lat;
   double stop_lon;
   std::optional<GtfsStopId> parent_station;
+  
+  bool operator==(const GtfsStop& other) const {
+    return stop_id == other.stop_id && stop_name == other.stop_name && 
+           stop_lat == other.stop_lat && stop_lon == other.stop_lon && 
+           parent_station == other.parent_station;
+  }
 };
 
 struct GtfsTrip {
   GtfsRouteDirectionId route_direction_id;
   GtfsTripId trip_id;
   GtfsServiceId service_id;
+  
+  bool operator==(const GtfsTrip& other) const {
+    return route_direction_id == other.route_direction_id && 
+           trip_id == other.trip_id && service_id == other.service_id;
+  }
 };
 
 struct GtfsCalendar {
@@ -81,6 +94,14 @@ struct GtfsCalendar {
   bool sunday;
   std::string start_date;
   std::string end_date;
+  
+  bool operator==(const GtfsCalendar& other) const {
+    return service_id == other.service_id && monday == other.monday && 
+           tuesday == other.tuesday && wednesday == other.wednesday && 
+           thursday == other.thursday && friday == other.friday && 
+           saturday == other.saturday && sunday == other.sunday && 
+           start_date == other.start_date && end_date == other.end_date;
+  }
 };
 
 struct GtfsStopTime {
@@ -89,17 +110,32 @@ struct GtfsStopTime {
   int stop_sequence;
   GtfsTimeSinceServiceStart arrival_time;
   GtfsTimeSinceServiceStart departure_time;
+  
+  bool operator==(const GtfsStopTime& other) const {
+    return trip_id == other.trip_id && stop_id == other.stop_id && 
+           stop_sequence == other.stop_sequence && 
+           arrival_time == other.arrival_time && departure_time == other.departure_time;
+  }
 };
 
 struct GtfsRoute {
   GtfsRouteId route_id;
   std::string route_short_name;
   std::string route_long_name;
+  
+  bool operator==(const GtfsRoute& other) const {
+    return route_id == other.route_id && route_short_name == other.route_short_name && 
+           route_long_name == other.route_long_name;
+  }
 };
 
 struct GtfsDirection {
   GtfsRouteDirectionId route_direction_id;
   std::string direction;
+  
+  bool operator==(const GtfsDirection& other) const {
+    return route_direction_id == other.route_direction_id && direction == other.direction;
+  }
 };
 
 struct Gtfs {
@@ -129,6 +165,95 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
 // Filter GTFS data to only include the specified trips
 // All other fields are filtered to only include data associated with those trips
 GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set);
+
+// Parse GTFS time string (HH:MM:SS format) to GtfsTimeSinceServiceStart
+GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str);
+
+// Pretty printing for Google Test
+inline void PrintTo(const GtfsStopId& stop_id, std::ostream* os) {
+  *os << "GtfsStopId{\"" << stop_id.v << "\"}";
+}
+
+inline void PrintTo(const GtfsRouteId& route_id, std::ostream* os) {
+  *os << "GtfsRouteId{\"" << route_id.v << "\"}";
+}
+
+inline void PrintTo(const GtfsTripId& trip_id, std::ostream* os) {
+  *os << "GtfsTripId{\"" << trip_id.v << "\"}";
+}
+
+inline void PrintTo(const GtfsServiceId& service_id, std::ostream* os) {
+  *os << "GtfsServiceId{\"" << service_id.v << "\"}";
+}
+
+inline void PrintTo(const GtfsTimeSinceServiceStart& time, std::ostream* os) {
+  int hours = time.seconds / 3600;
+  int minutes = (time.seconds % 3600) / 60;
+  int seconds = time.seconds % 60;
+  *os << "ParseGtfsTime(\"" << std::setfill('0') << std::setw(2) << hours << ":" 
+      << std::setw(2) << minutes << ":" << std::setw(2) << seconds << "\")";
+}
+
+inline void PrintTo(const GtfsRouteDirectionId& route_dir_id, std::ostream* os) {
+  *os << "GtfsRouteDirectionId{";
+  PrintTo(route_dir_id.route_id, os);
+  *os << ", " << route_dir_id.direction_id << "}";
+}
+
+inline void PrintTo(const GtfsTrip& trip, std::ostream* os) {
+  *os << "GtfsTrip{";
+  PrintTo(trip.route_direction_id, os);
+  *os << ", ";
+  PrintTo(trip.trip_id, os);
+  *os << ", ";
+  PrintTo(trip.service_id, os);
+  *os << "}";
+}
+
+inline void PrintTo(const GtfsStop& stop, std::ostream* os) {
+  *os << "GtfsStop{";
+  PrintTo(stop.stop_id, os);
+  *os << ", \"" << stop.stop_name << "\", " << stop.stop_lat << ", " << stop.stop_lon;
+  if (stop.parent_station) {
+    *os << ", ";
+    PrintTo(*stop.parent_station, os);
+  } else {
+    *os << ", nullopt";
+  }
+  *os << "}";
+}
+
+inline void PrintTo(const GtfsRoute& route, std::ostream* os) {
+  *os << "GtfsRoute{";
+  PrintTo(route.route_id, os);
+  *os << ", \"" << route.route_short_name << "\", \"" << route.route_long_name << "\"}";
+}
+
+inline void PrintTo(const GtfsDirection& direction, std::ostream* os) {
+  *os << "GtfsDirection{";
+  PrintTo(direction.route_direction_id, os);
+  *os << ", \"" << direction.direction << "\"}";
+}
+
+inline void PrintTo(const GtfsStopTime& stop_time, std::ostream* os) {
+  *os << "GtfsStopTime{";
+  PrintTo(stop_time.trip_id, os);
+  *os << ", ";
+  PrintTo(stop_time.stop_id, os);
+  *os << ", " << stop_time.stop_sequence << ", ";
+  PrintTo(stop_time.arrival_time, os);
+  *os << ", ";
+  PrintTo(stop_time.departure_time, os);
+  *os << "}";
+}
+
+inline void PrintTo(const GtfsCalendar& calendar, std::ostream* os) {
+  *os << "GtfsCalendar{";
+  PrintTo(calendar.service_id, os);
+  *os << ", " << calendar.monday << ", " << calendar.tuesday << ", " << calendar.wednesday
+      << ", " << calendar.thursday << ", " << calendar.friday << ", " << calendar.saturday
+      << ", " << calendar.sunday << ", \"" << calendar.start_date << "\", \"" << calendar.end_date << "\"}";
+}
 
 }  // namespace vats5
 
