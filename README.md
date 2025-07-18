@@ -57,3 +57,15 @@ lower bound that lets us quickly disprove it. Chosing an arbitrary segment from 
 bound route seems like a good heuristic for this, because the current upper bound route is probably
 close to the optimal route and therefore many of its segments are "good ones" that are costly to
 avoid.
+
+## TODOs
+
+Write the Step struct.
+
+Write a thing that turns GTFS data into Steps.
+
+Write the sliding pointer combiner.
+
+Write an all pairs shortest path computer.
+
+Write a thing for viewing some data and intermediate computations.
