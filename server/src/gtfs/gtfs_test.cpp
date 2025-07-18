@@ -202,7 +202,7 @@ GTEST("GtfsFilterByDate should handle dates outside service period") {
 GTEST("GtfsFilterByTrips should filter by specific trip") {
   const Gtfs& gtfs = *getGlobalGtfs();
   GtfsDay gtfs_day = GtfsFilterByDate(gtfs, "20250718");
-  std::unordered_set<std::string> trips_set = {"CT:507"};
+  std::unordered_set<GtfsTripId> trips_set = {GtfsTripId{"CT:507"}};
   GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
   EXPECT_EQ(filtered.trips.size(), 1);
 }
