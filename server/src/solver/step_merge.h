@@ -12,8 +12,8 @@ namespace vats5 {
 // This is "minimal" in the sense that: TODO explain.
 bool CheckSortedAndMinimal(const std::vector<Step>& steps);
 
-// Sorts steps in place by origin_time ascending.
-void SortByOriginTime(std::vector<Step>& steps);
+// Sorts steps in place by origin_time ascending, then by destination_time descending.
+void SortByOriginAndDestinationTime(std::vector<Step>& steps);
 
 // Return a dominating set of steps from stop A to stop C that are made of a step from ab followed by a step from bc.
 //

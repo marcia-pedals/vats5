@@ -104,8 +104,8 @@ TEST(StepMergeTest, MergeStepsTest) {
     }
     
     // Sort by origin_time ascending
-    SortByOriginTime(ab);
-    SortByOriginTime(bc);
+    SortByOriginAndDestinationTime(ab);
+    SortByOriginAndDestinationTime(bc);
     
     // Call MergeSteps
     std::vector<Step> merged_steps = MergeSteps(ab, bc);
@@ -113,8 +113,34 @@ TEST(StepMergeTest, MergeStepsTest) {
     // No expectations for now, as requested
 }
 
-TEST(StepMergeTest, RapidCheckSortByOriginTimeTest) {
-    rc::check("SortByOriginTime sorts vector by origin_time ascending", [](std::vector<int> time_values) {
+TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
+    // Test case with same origin times but different destination times
+    std::vector<Step> steps = {
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}, TripId{1}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{2}, TripId{2}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{400}, TripId{3}, TripId{3}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{4}, TripId{4}}
+    };
+    
+    SortByOriginAndDestinationTime(steps);
+    
+    // Verify primary sort by origin_time ascending
+    for (size_t i = 1; i < steps.size(); ++i) {
+        EXPECT_LE(steps[i-1].origin_time.seconds, steps[i].origin_time.seconds);
+    }
+    
+    // Verify secondary sort by destination_time descending when origin times are equal
+    EXPECT_EQ(steps[0].origin_time.seconds, 100);
+    EXPECT_EQ(steps[0].destination_time.seconds, 400); // highest destination time first
+    EXPECT_EQ(steps[1].origin_time.seconds, 100);
+    EXPECT_EQ(steps[1].destination_time.seconds, 300);
+    EXPECT_EQ(steps[2].origin_time.seconds, 100);
+    EXPECT_EQ(steps[2].destination_time.seconds, 200); // lowest destination time last
+    EXPECT_EQ(steps[3].origin_time.seconds, 150);
+}
+
+TEST(StepMergeTest, RapidCheckSortByOriginAndDestinationTimeTest) {
+    rc::check("SortByOriginAndDestinationTime sorts vector by origin_time ascending", [](std::vector<int> time_values) {
         // Create Step vector with random origin times
         std::vector<Step> steps;
         for (size_t i = 0; i < time_values.size(); ++i) {
@@ -129,7 +155,7 @@ TEST(StepMergeTest, RapidCheckSortByOriginTimeTest) {
         }
         
         // Sort using our function
-        SortByOriginTime(steps);
+        SortByOriginAndDestinationTime(steps);
         
         // Verify it's sorted by origin_time
         for (size_t i = 1; i < steps.size(); ++i) {

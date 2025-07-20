@@ -4,9 +4,12 @@
 
 namespace vats5 {
 
-void SortByOriginTime(std::vector<Step>& steps) {
+void SortByOriginAndDestinationTime(std::vector<Step>& steps) {
     std::sort(steps.begin(), steps.end(), [](const Step& a, const Step& b) {
-        return a.origin_time.seconds < b.origin_time.seconds;
+        if (a.origin_time.seconds != b.origin_time.seconds) {
+            return a.origin_time.seconds < b.origin_time.seconds;
+        }
+        return a.destination_time.seconds > b.destination_time.seconds;
     });
 }
 
