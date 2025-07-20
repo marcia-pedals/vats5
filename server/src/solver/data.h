@@ -98,6 +98,21 @@ struct hash<vats5::TimeSinceServiceStart> {
     return hash<int>()(time.seconds);
   }
 };
+
+template<>
+struct hash<vats5::Step> {
+  size_t operator()(const vats5::Step& step) const {
+    size_t h1 = hash<vats5::StopId>()(step.origin_stop);
+    size_t h2 = hash<vats5::StopId>()(step.destination_stop);
+    size_t h3 = hash<vats5::TimeSinceServiceStart>()(step.origin_time);
+    size_t h4 = hash<vats5::TimeSinceServiceStart>()(step.destination_time);
+    size_t h5 = hash<vats5::TripId>()(step.origin_trip);
+    size_t h6 = hash<vats5::TripId>()(step.destination_trip);
+    
+    // Combine hashes using a simple hash combiner
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5);
+  }
+};
 }
 
 namespace vats5 {

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <unordered_set>
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
 #include "solver/step_merge.h"
@@ -250,17 +251,9 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo
     RC_LOG() << "Minimal cover: " << rc::toString(minimal_cover) << "\n";
     
     // Property 1: minimal cover is a subset of original steps
+    std::unordered_set<Step> original_steps_set(steps.begin(), steps.end());
     for (const auto& step : minimal_cover) {
-        bool found = false;
-        for (const auto& orig_step : steps) {
-            if (step.origin_time.seconds == orig_step.origin_time.seconds &&
-                step.destination_time.seconds == orig_step.destination_time.seconds &&
-                step.origin_trip.v == orig_step.origin_trip.v) {
-                found = true;
-                break;
-            }
-        }
-        RC_ASSERT(found);
+        RC_ASSERT(original_steps_set.count(step) > 0);
     }
     
     // Property 2: satisfies CheckSortedAndMinimal
