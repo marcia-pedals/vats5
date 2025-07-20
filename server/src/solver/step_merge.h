@@ -22,12 +22,12 @@ void SortByOriginAndDestinationTime(std::vector<Step>& steps);
 // Precondition: steps is sorted by origin_time ascending, then by destination_time descending.
 void MakeMinimalCover(std::vector<Step>& steps);
 
-// Return a dominating set of steps from stop A to stop C that are made of a step from ab followed by a step from bc.
+// Return a minimal set of steps from stop A to stop C that are made of a step from ab followed by a step from bc.
 //
-// ab: All the steps from stop A to stop B, sorted by origin_time ascending.
-// bc: All the steps from stop B to stop C, sorted by origin_time ascending.
+// ab: All the steps from stop A to stop B, must be minimal
+// bc: All the steps from stop B to stop C, must be minimal.
 //
-// See the top-level README.md for explanation of what a dominating set of steps is.
+// Minimal is in the sense of CheckSortedAndMinimal above.
 std::vector<Step> MergeSteps(const std::vector<Step>& ab, const std::vector<Step>& bc);
 
 }  // namespace vats5
