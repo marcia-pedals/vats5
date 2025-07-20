@@ -5,7 +5,7 @@
 
 namespace vats5 {
 
-TEST(DataTest, GetStepsFromGtfsPlaceholder) {
+TEST(DataTest, GetStepsFromGtfs) {
     // Load pre-filtered GTFS data (contains all CT: trips from 20250718)
     std::string gtfs_directory_path = "../data/RG_20250718_CT";
     Gtfs gtfs = GtfsLoad(gtfs_directory_path);
