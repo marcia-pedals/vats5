@@ -61,6 +61,10 @@ target_include_directories(step_merge PUBLIC src)
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
+# Add GTFS filter tool
+add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
+target_link_libraries(gtfs_filter_tool PUBLIC gtfs)
+
 # Add test executable
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
 target_link_libraries(gtfs_test PUBLIC gunit gtfs)
