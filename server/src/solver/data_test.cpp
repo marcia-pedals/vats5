@@ -8,23 +8,27 @@ namespace vats5 {
 static Gtfs* getGlobalGtfs() {
   static Gtfs* gtfs = nullptr;
   if (!gtfs) {
-    std::string gtfs_directory_path = "../data/RG";
+    std::string gtfs_directory_path = "../data/RG_20250718_CT507";
     gtfs = new Gtfs(GtfsLoad(gtfs_directory_path));
   }
   return gtfs;
 }
 
 TEST(DataTest, GetStepsFromGtfsPlaceholder) {
+    // Load pre-filtered GTFS data (contains only CT:507 trip from 20250718)
     const Gtfs& gtfs = *getGlobalGtfs();
-    GtfsDay gtfs_day = GtfsFilterByDate(gtfs, "20250718");
+    // Convert Gtfs to GtfsDay for GetStepsFromGtfs (data is already filtered)
+    GtfsDay gtfs_day;
+    gtfs_day.stops = gtfs.stops;
+    gtfs_day.trips = gtfs.trips;
+    gtfs_day.stop_times = gtfs.stop_times;
+    gtfs_day.routes = gtfs.routes;
+    gtfs_day.directions = gtfs.directions;
+    
     const GtfsTripId trip_id{"CT:507"};
     
-    std::unordered_set<GtfsTripId> trips_set = {trip_id};
-    GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
+    StepsFromGtfs result = GetStepsFromGtfs(gtfs_day);
     
-    StepsFromGtfs result = GetStepsFromGtfs(filtered);
-    
-    // Based on the stop_times from gtfs_test.cpp, we expect 10 steps connecting consecutive stops
     // Trip CT:507 has 11 stops, so there should be 10 steps between them
     EXPECT_EQ(result.steps.size(), 10);
     
