@@ -1,6 +1,14 @@
 #include "step_merge.h"
+#include <algorithm>
+#include <limits>
 
 namespace vats5 {
+
+void SortByOriginTime(std::vector<Step>& steps) {
+    std::sort(steps.begin(), steps.end(), [](const Step& a, const Step& b) {
+        return a.origin_time.seconds < b.origin_time.seconds;
+    });
+}
 
 bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
     for (size_t i = 1; i < steps.size(); i++) {

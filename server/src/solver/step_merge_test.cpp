@@ -104,17 +104,38 @@ TEST(StepMergeTest, MergeStepsTest) {
     }
     
     // Sort by origin_time ascending
-    std::sort(ab.begin(), ab.end(), [](const Step& a, const Step& b) {
-        return a.origin_time.seconds < b.origin_time.seconds;
-    });
-    std::sort(bc.begin(), bc.end(), [](const Step& a, const Step& b) {
-        return a.origin_time.seconds < b.origin_time.seconds;
-    });
+    SortByOriginTime(ab);
+    SortByOriginTime(bc);
     
     // Call MergeSteps
     std::vector<Step> merged_steps = MergeSteps(ab, bc);
     
     // No expectations for now, as requested
+}
+
+TEST(StepMergeTest, RapidCheckSortByOriginTimeTest) {
+    rc::check("SortByOriginTime sorts vector by origin_time ascending", [](std::vector<int> time_values) {
+        // Create Step vector with random origin times
+        std::vector<Step> steps;
+        for (size_t i = 0; i < time_values.size(); ++i) {
+            steps.push_back({
+                StopId{1}, 
+                StopId{2}, 
+                TimeSinceServiceStart{time_values[i]}, 
+                TimeSinceServiceStart{time_values[i] + 100}, 
+                TripId{static_cast<int>(i)}, 
+                TripId{static_cast<int>(i)}
+            });
+        }
+        
+        // Sort using our function
+        SortByOriginTime(steps);
+        
+        // Verify it's sorted by origin_time
+        for (size_t i = 1; i < steps.size(); ++i) {
+            RC_ASSERT(steps[i-1].origin_time.seconds <= steps[i].origin_time.seconds);
+        }
+    });
 }
 
 TEST(StepMergeTest, RapidCheckExampleTest) {
