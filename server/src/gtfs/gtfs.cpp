@@ -7,22 +7,21 @@
 #include <unordered_set>
 #include <ctime>
 #include <iomanip>
+#include <future>
+#include <filesystem>
 
 namespace vats5 {
 
 GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
-  std::istringstream ss(time_str);
-  std::string hours_str, minutes_str, seconds_str;
-  
-  if (!std::getline(ss, hours_str, ':') ||
-      !std::getline(ss, minutes_str, ':') ||
-      !std::getline(ss, seconds_str)) {
+  // Highly optimized parsing for HH:MM:SS format without string operations
+  if (time_str.size() < 8 || time_str[2] != ':' || time_str[5] != ':') {
     throw std::runtime_error("Invalid time format: " + time_str);
   }
   
-  int hours = std::stoi(hours_str);
-  int minutes = std::stoi(minutes_str);
-  int seconds = std::stoi(seconds_str);
+  // Parse directly from characters to avoid substr and stoi overhead
+  int hours = (time_str[0] - '0') * 10 + (time_str[1] - '0');
+  int minutes = (time_str[3] - '0') * 10 + (time_str[4] - '0');
+  int seconds = (time_str[6] - '0') * 10 + (time_str[7] - '0');
   
   return GtfsTimeSinceServiceStart{hours * 3600 + minutes * 60 + seconds};
 }
@@ -32,6 +31,10 @@ static std::vector<GtfsStop> GtfsLoadStops(const std::string &stops_file_path) {
 
   try {
     csv::CSVReader reader(stops_file_path);
+    
+    // Estimate capacity based on file size
+    auto file_size = std::filesystem::file_size(stops_file_path);
+    stops.reserve(file_size / 100);  // Rough estimate: ~100 bytes per record
 
     for (csv::CSVRow &row : reader) {
       GtfsStop &stop = stops.emplace_back();
@@ -59,6 +62,10 @@ static std::vector<GtfsTrip> GtfsLoadTrips(const std::string &trips_file_path) {
 
   try {
     csv::CSVReader reader(trips_file_path);
+    
+    // Estimate capacity based on file size
+    auto file_size = std::filesystem::file_size(trips_file_path);
+    trips.reserve(file_size / 80);  // Rough estimate: ~80 bytes per record
 
     for (csv::CSVRow &row : reader) {
       GtfsTrip &trip = trips.emplace_back();
@@ -79,6 +86,10 @@ static std::vector<GtfsCalendar> GtfsLoadCalendar(const std::string &calendar_fi
 
   try {
     csv::CSVReader reader(calendar_file_path);
+    
+    // Estimate capacity based on file size
+    auto file_size = std::filesystem::file_size(calendar_file_path);
+    calendars.reserve(file_size / 60);  // Rough estimate: ~60 bytes per record
 
     for (csv::CSVRow &row : reader) {
       GtfsCalendar &calendar = calendars.emplace_back();
@@ -106,6 +117,10 @@ static std::vector<GtfsStopTime> GtfsLoadStopTimes(const std::string &stop_times
 
   try {
     csv::CSVReader reader(stop_times_file_path);
+    
+    // Estimate capacity based on file size - this is the largest file
+    auto file_size = std::filesystem::file_size(stop_times_file_path);
+    stop_times.reserve(file_size / 70);  // Rough estimate: ~70 bytes per record
 
     for (csv::CSVRow &row : reader) {
       std::string arrival_time_str = row["arrival_time"].get<std::string>();
@@ -136,6 +151,10 @@ static std::vector<GtfsRoute> GtfsLoadRoutes(const std::string &routes_file_path
 
   try {
     csv::CSVReader reader(routes_file_path);
+    
+    // Estimate capacity based on file size
+    auto file_size = std::filesystem::file_size(routes_file_path);
+    routes.reserve(file_size / 120);  // Rough estimate: ~120 bytes per record
 
     for (csv::CSVRow &row : reader) {
       GtfsRoute &route = routes.emplace_back();
@@ -156,6 +175,10 @@ static std::vector<GtfsDirection> GtfsLoadDirections(const std::string &directio
 
   try {
     csv::CSVReader reader(directions_file_path);
+    
+    // Estimate capacity based on file size
+    auto file_size = std::filesystem::file_size(directions_file_path);
+    directions.reserve(file_size / 50);  // Rough estimate: ~50 bytes per record
 
     for (csv::CSVRow &row : reader) {
       GtfsDirection &direction = directions.emplace_back();
@@ -173,12 +196,21 @@ static std::vector<GtfsDirection> GtfsLoadDirections(const std::string &directio
 Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   Gtfs gtfs;
   
-  gtfs.stops = GtfsLoadStops(gtfs_directory_path + "/stops.txt");
-  gtfs.trips = GtfsLoadTrips(gtfs_directory_path + "/trips.txt");
-  gtfs.calendar = GtfsLoadCalendar(gtfs_directory_path + "/calendar.txt");
-  gtfs.stop_times = GtfsLoadStopTimes(gtfs_directory_path + "/stop_times.txt");
-  gtfs.routes = GtfsLoadRoutes(gtfs_directory_path + "/routes.txt");
-  gtfs.directions = GtfsLoadDirections(gtfs_directory_path + "/directions.txt");
+  // Load files in parallel using async tasks
+  auto stops_future = std::async(std::launch::async, GtfsLoadStops, gtfs_directory_path + "/stops.txt");
+  auto trips_future = std::async(std::launch::async, GtfsLoadTrips, gtfs_directory_path + "/trips.txt");
+  auto calendar_future = std::async(std::launch::async, GtfsLoadCalendar, gtfs_directory_path + "/calendar.txt");
+  auto stop_times_future = std::async(std::launch::async, GtfsLoadStopTimes, gtfs_directory_path + "/stop_times.txt");
+  auto routes_future = std::async(std::launch::async, GtfsLoadRoutes, gtfs_directory_path + "/routes.txt");
+  auto directions_future = std::async(std::launch::async, GtfsLoadDirections, gtfs_directory_path + "/directions.txt");
+  
+  // Wait for all tasks to complete and collect results
+  gtfs.stops = stops_future.get();
+  gtfs.trips = trips_future.get();
+  gtfs.calendar = calendar_future.get();
+  gtfs.stop_times = stop_times_future.get();
+  gtfs.routes = routes_future.get();
+  gtfs.directions = directions_future.get();
   
   return gtfs;
 }
