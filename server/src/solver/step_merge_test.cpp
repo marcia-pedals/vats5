@@ -59,15 +59,6 @@ struct Arbitrary<StepFromTo<Origin, Destination>> {
 
 namespace vats5 {
 
-static Gtfs* getGlobalGtfs() {
-    static Gtfs* gtfs = nullptr;
-    if (!gtfs) {
-        std::string gtfs_directory_path = "../data/RG";
-        gtfs = new Gtfs(GtfsLoad(gtfs_directory_path));
-    }
-    return gtfs;
-}
-
 TEST(StepMergeTest, CheckSortedAndMinimalEmptyVector) {
     std::vector<Step> empty_steps;
     EXPECT_TRUE(CheckSortedAndMinimal(empty_steps));
@@ -122,13 +113,20 @@ TEST(StepMergeTest, CheckSortedAndMinimalEqualDestinationTimes) {
 }
 
 TEST(StepMergeTest, MergeStepsTest) {
-    const Gtfs& gtfs = *getGlobalGtfs();
+    // Load pre-filtered GTFS data (contains all CT: trips from 20250718)
+    std::string gtfs_directory_path = "../data/RG_20250718_CT";
+    Gtfs gtfs = GtfsLoad(gtfs_directory_path);
     
-    // Test with a weekday (Tuesday, July 8, 2025)
-    GtfsDay weekday_gtfs = GtfsFilterByDate(gtfs, "20250708");
+    // Convert Gtfs to GtfsDay for GetStepsFromGtfs (data is already filtered)
+    GtfsDay gtfs_day;
+    gtfs_day.stops = gtfs.stops;
+    gtfs_day.trips = gtfs.trips;
+    gtfs_day.stop_times = gtfs.stop_times;
+    gtfs_day.routes = gtfs.routes;
+    gtfs_day.directions = gtfs.directions;
     
     // Get steps from GTFS
-    StepsFromGtfs result = GetStepsFromGtfs(weekday_gtfs);
+    StepsFromGtfs result = GetStepsFromGtfs(gtfs_day);
     
     // Define the three stops
     const GtfsStopId san_jose_diridon_northbound{"70261"};
