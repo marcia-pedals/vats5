@@ -7,7 +7,6 @@
 #include <unordered_set>
 #include <ctime>
 #include <iomanip>
-#include <future>
 #include <filesystem>
 
 namespace vats5 {
@@ -196,21 +195,12 @@ static std::vector<GtfsDirection> GtfsLoadDirections(const std::string &directio
 Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   Gtfs gtfs;
   
-  // Load files in parallel using async tasks
-  auto stops_future = std::async(std::launch::async, GtfsLoadStops, gtfs_directory_path + "/stops.txt");
-  auto trips_future = std::async(std::launch::async, GtfsLoadTrips, gtfs_directory_path + "/trips.txt");
-  auto calendar_future = std::async(std::launch::async, GtfsLoadCalendar, gtfs_directory_path + "/calendar.txt");
-  auto stop_times_future = std::async(std::launch::async, GtfsLoadStopTimes, gtfs_directory_path + "/stop_times.txt");
-  auto routes_future = std::async(std::launch::async, GtfsLoadRoutes, gtfs_directory_path + "/routes.txt");
-  auto directions_future = std::async(std::launch::async, GtfsLoadDirections, gtfs_directory_path + "/directions.txt");
-  
-  // Wait for all tasks to complete and collect results
-  gtfs.stops = stops_future.get();
-  gtfs.trips = trips_future.get();
-  gtfs.calendar = calendar_future.get();
-  gtfs.stop_times = stop_times_future.get();
-  gtfs.routes = routes_future.get();
-  gtfs.directions = directions_future.get();
+  gtfs.stops = GtfsLoadStops(gtfs_directory_path + "/stops.txt");
+  gtfs.trips = GtfsLoadTrips(gtfs_directory_path + "/trips.txt");
+  gtfs.calendar = GtfsLoadCalendar(gtfs_directory_path + "/calendar.txt");
+  gtfs.stop_times = GtfsLoadStopTimes(gtfs_directory_path + "/stop_times.txt");
+  gtfs.routes = GtfsLoadRoutes(gtfs_directory_path + "/routes.txt");
+  gtfs.directions = GtfsLoadDirections(gtfs_directory_path + "/directions.txt");
   
   return gtfs;
 }
