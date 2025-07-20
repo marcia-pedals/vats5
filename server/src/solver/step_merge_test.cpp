@@ -5,6 +5,75 @@
 #include "solver/step_merge.h"
 #include "gtfs/gtfs.h"
 
+template<int Origin, int Destination>
+struct StepFromTo : public vats5::Step {};
+
+namespace rc {
+
+template<>
+struct Arbitrary<vats5::StopId> {
+    static Gen<vats5::StopId> arbitrary() {
+        return gen::map(gen::inRange(1, 100), [](int v) {
+            return vats5::StopId{v};
+        });
+    }
+};
+
+template<>
+struct Arbitrary<vats5::TimeSinceServiceStart> {
+    static Gen<vats5::TimeSinceServiceStart> arbitrary() {
+        return gen::map(gen::inRange(0, 3600), [](int v) {
+            return vats5::TimeSinceServiceStart{v};
+        });
+    }
+};
+
+template<>
+struct Arbitrary<vats5::TripId> {
+    static Gen<vats5::TripId> arbitrary() {
+        return gen::map(gen::inRange(0, 50), [](int v) {
+            return vats5::TripId{v};
+        });
+    }
+};
+
+template<int Origin, int Destination>
+struct Arbitrary<StepFromTo<Origin, Destination>> {
+    static Gen<StepFromTo<Origin, Destination>> arbitrary() {
+        return gen::apply(
+            [](vats5::TimeSinceServiceStart origin_time, vats5::TimeSinceServiceStart dest_time,
+               vats5::TripId trip_id) {
+                return StepFromTo<Origin, Destination>{Origin, Destination, origin_time, dest_time, trip_id};
+            },
+            gen::arbitrary<vats5::TimeSinceServiceStart>(),
+            gen::arbitrary<vats5::TimeSinceServiceStart>(),
+            gen::arbitrary<vats5::TripId>()
+        );
+    }
+};
+
+} // namespace rc
+
+// Stream operators for RapidCheck display
+std::ostream& operator<<(std::ostream& os, const vats5::StopId& value) {
+    return os << "StopId{" << value.v << "}";
+}
+
+std::ostream& operator<<(std::ostream& os, const vats5::TimeSinceServiceStart& value) {
+    return os << "Time{" << value.seconds << "}";
+}
+
+std::ostream& operator<<(std::ostream& os, const vats5::TripId& value) {
+    return os << "TripId{" << value.v << "}";
+}
+
+std::ostream& operator<<(std::ostream& os, const vats5::Step& value) {
+    return os << "Step{" 
+              << value.origin_stop << " -> " << value.destination_stop << ", "
+              << value.origin_time << " -> " << value.destination_time << ", "
+              << value.origin_trip << " -> " << value.destination_trip << "}";
+}
+
 namespace vats5 {
 
 static Gtfs* getGlobalGtfs() {
@@ -186,23 +255,7 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
     EXPECT_EQ(single_step.size(), 1);
 }
 
-RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<int> origin_times, std::vector<int> destination_times)) {
-    RC_PRE(origin_times.size() == destination_times.size());
-    RC_PRE(!origin_times.empty());
-    
-    // Create Step vector with random times
-    std::vector<Step> original_steps;
-    for (size_t i = 0; i < origin_times.size(); ++i) {
-        original_steps.push_back({
-            StopId{1}, 
-            StopId{2}, 
-            TimeSinceServiceStart{origin_times[i]}, 
-            TimeSinceServiceStart{destination_times[i]}, 
-            TripId{static_cast<int>(i)}, 
-            TripId{static_cast<int>(i)}
-        });
-    }
-    
+RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo<1, 2>> original_steps)) {
     // Sort as precondition
     SortByOriginAndDestinationTime(original_steps);
     
@@ -242,26 +295,20 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<int> origi
     }
 }
 
-RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty, (std::vector<int> time_values)) {
-    // Create Step vector with random origin times
-    std::vector<Step> steps;
-    for (size_t i = 0; i < time_values.size(); ++i) {
-        steps.push_back({
-            StopId{1}, 
-            StopId{2}, 
-            TimeSinceServiceStart{time_values[i]}, 
-            TimeSinceServiceStart{time_values[i] + 100}, 
-            TripId{static_cast<int>(i)}, 
-            TripId{static_cast<int>(i)}
-        });
-    }
-    
+RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty, (std::vector<StepFromTo<1, 2>> steps)) {
     // Sort using our function
     SortByOriginAndDestinationTime(steps);
     
-    // Verify it's sorted by origin_time
+    // Verify it's sorted by origin_time ascending
     for (size_t i = 1; i < steps.size(); ++i) {
         RC_ASSERT(steps[i-1].origin_time.seconds <= steps[i].origin_time.seconds);
+    }
+    
+    // Verify secondary sort by destination_time descending for equal origin times
+    for (size_t i = 1; i < steps.size(); ++i) {
+        if (steps[i-1].origin_time.seconds == steps[i].origin_time.seconds) {
+            RC_ASSERT(steps[i-1].destination_time.seconds >= steps[i].destination_time.seconds);
+        }
     }
 }
 
