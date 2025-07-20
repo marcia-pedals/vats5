@@ -36,6 +36,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
   GIT_TAG        master
 )
+set(RC_ENABLE_GTEST ON CACHE BOOL "Enable RapidCheck GTest integration")
 FetchContent_MakeAvailable(rapidcheck)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -70,4 +71,4 @@ target_link_libraries(data_test PUBLIC gunit data)
 
 # Add step_merge test executable
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
-target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck)
+target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck rapidcheck_gtest)
