@@ -5,6 +5,7 @@
 #include "solver/step_merge.h"
 #include "gtfs/gtfs.h"
 
+// Phantom type allowing us to specify fixed Origin and Destination values in properties.
 template<int Origin, int Destination>
 struct StepFromTo : public vats5::Step {};
 
@@ -255,18 +256,20 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
     EXPECT_EQ(single_step.size(), 1);
 }
 
-RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo<1, 2>> original_steps)) {
+RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo<1, 2>> phantom_steps)) {
+    std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
+
     // Sort as precondition
-    SortByOriginAndDestinationTime(original_steps);
+    SortByOriginAndDestinationTime(steps);
     
     // Make a copy for the minimal cover
-    std::vector<Step> minimal_cover = original_steps;
+    std::vector<Step> minimal_cover = steps;
     MakeMinimalCover(minimal_cover);
     
     // Property 1: minimal cover is a subset of original steps
     for (const auto& step : minimal_cover) {
         bool found = false;
-        for (const auto& orig_step : original_steps) {
+        for (const auto& orig_step : steps) {
             if (step.origin_time.seconds == orig_step.origin_time.seconds &&
                 step.destination_time.seconds == orig_step.destination_time.seconds &&
                 step.origin_trip.v == orig_step.origin_trip.v) {
@@ -282,7 +285,7 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo
     
     // Property 3: for any original step, there is a step in minimal cover with
     // origin_time no later and destination_time no later
-    for (const auto& orig_step : original_steps) {
+    for (const auto& orig_step : steps) {
         bool dominated_or_kept = false;
         for (const auto& cover_step : minimal_cover) {
             if (cover_step.origin_time.seconds <= orig_step.origin_time.seconds &&
@@ -295,7 +298,9 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo
     }
 }
 
-RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty, (std::vector<StepFromTo<1, 2>> steps)) {
+RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty, (std::vector<StepFromTo<1, 2>> phantom_steps)) {
+    std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
+    
     // Sort using our function
     SortByOriginAndDestinationTime(steps);
     
