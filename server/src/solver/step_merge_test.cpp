@@ -258,11 +258,11 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo
     RC_ASSERT(CheckSortedAndMinimal(minimal_cover));
     
     // Property 3: for any original step, there is a step in minimal cover with
-    // origin_time no later and destination_time no later
+    // origin_time no earlier and destination_time no later
     for (const auto& orig_step : steps) {
         bool dominated_or_kept = false;
         for (const auto& cover_step : minimal_cover) {
-            if (cover_step.origin_time.seconds <= orig_step.origin_time.seconds &&
+            if (cover_step.origin_time.seconds >= orig_step.origin_time.seconds &&
                 cover_step.destination_time.seconds <= orig_step.destination_time.seconds) {
                 dominated_or_kept = true;
                 break;
