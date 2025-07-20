@@ -69,11 +69,11 @@ std::ostream& operator<<(std::ostream& os, const vats5::TripId& value) {
 }
 
 std::ostream& operator<<(std::ostream& os, const vats5::Step& value) {
-    return os << "Step{" 
-              << value.origin_stop << " -> " << value.destination_stop << ", "
-              << value.origin_time << " -> " << value.destination_time << ", "
-              << value.origin_trip << " -> " << value.destination_trip << "}";
+    return os << "Step{stop: " << value.origin_stop.v << " -> " << value.destination_stop.v 
+              << ", trip: " << value.origin_trip.v << " -> " << value.destination_trip.v
+              << ", time: " << value.origin_time.seconds << " -> " << value.destination_time.seconds << "}";
 }
+
 
 namespace vats5 {
 
@@ -261,10 +261,12 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties, (std::vector<StepFromTo
 
     // Sort as precondition
     SortByOriginAndDestinationTime(steps);
+    RC_LOG() << "Sorted steps: " << rc::toString(steps) << "\n";
     
     // Make a copy for the minimal cover
     std::vector<Step> minimal_cover = steps;
     MakeMinimalCover(minimal_cover);
+    RC_LOG() << "Minimal cover: " << rc::toString(minimal_cover) << "\n";
     
     // Property 1: minimal cover is a subset of original steps
     for (const auto& step : minimal_cover) {
