@@ -2,6 +2,9 @@
 
 #include <GUnit.h>
 #include <unordered_set>
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 using namespace vats5;
 using ::testing::AllOf;
@@ -184,6 +187,110 @@ GTEST("GtfsFilterByDate should filter for weekend") {
   for (const auto& stop_time : weekend_gtfs.stop_times) {
     EXPECT_TRUE(trip_ids_from_trips.count(stop_time.trip_id.v));
   }
+}
+
+GTEST("GtfsSave round-trip should preserve data") {
+  const Gtfs& gtfs = *getGlobalGtfs();
+  
+  // Filter by a specific weekday
+  GtfsDay original_gtfs_day = GtfsFilterByDate(gtfs, "20250708");
+
+  // Check that everything is non-empty so that this test actually tests something.
+  EXPECT_GT(original_gtfs_day.stops.size(), 100);
+  EXPECT_GT(original_gtfs_day.trips.size(), 100);
+  EXPECT_GT(original_gtfs_day.stop_times.size(), 100);
+  EXPECT_GT(original_gtfs_day.routes.size(), 100);
+  EXPECT_GT(original_gtfs_day.directions.size(), 100);
+  
+  // Save to a temporary directory
+  std::string temp_dir = std::filesystem::temp_directory_path() / "gtfs_test_save";
+  std::filesystem::remove_all(temp_dir);  // Clean up any existing directory
+  
+  GtfsSave(original_gtfs_day, temp_dir);
+  
+  // Load back from the saved directory
+  Gtfs reloaded_gtfs = GtfsLoad(temp_dir);
+  
+  // Compare the relevant fields (GtfsDay contains the same fields as Gtfs except calendar)
+  EXPECT_EQ(original_gtfs_day.stops.size(), reloaded_gtfs.stops.size());
+  EXPECT_EQ(original_gtfs_day.trips.size(), reloaded_gtfs.trips.size());
+  EXPECT_EQ(original_gtfs_day.stop_times.size(), reloaded_gtfs.stop_times.size());
+  EXPECT_EQ(original_gtfs_day.routes.size(), reloaded_gtfs.routes.size());
+  EXPECT_EQ(original_gtfs_day.directions.size(), reloaded_gtfs.directions.size());
+  
+  // Sort both vectors for reliable comparison (file order might differ)
+  auto sort_stops = [](std::vector<GtfsStop>& stops) {
+    std::sort(stops.begin(), stops.end(), [](const GtfsStop& a, const GtfsStop& b) {
+      return a.stop_id.v < b.stop_id.v;
+    });
+  };
+  
+  auto sort_trips = [](std::vector<GtfsTrip>& trips) {
+    std::sort(trips.begin(), trips.end(), [](const GtfsTrip& a, const GtfsTrip& b) {
+      return a.trip_id.v < b.trip_id.v;
+    });
+  };
+  
+  auto sort_stop_times = [](std::vector<GtfsStopTime>& stop_times) {
+    std::sort(stop_times.begin(), stop_times.end(), [](const GtfsStopTime& a, const GtfsStopTime& b) {
+      if (a.trip_id.v != b.trip_id.v) return a.trip_id.v < b.trip_id.v;
+      return a.stop_sequence < b.stop_sequence;
+    });
+  };
+  
+  auto sort_routes = [](std::vector<GtfsRoute>& routes) {
+    std::sort(routes.begin(), routes.end(), [](const GtfsRoute& a, const GtfsRoute& b) {
+      return a.route_id.v < b.route_id.v;
+    });
+  };
+  
+  auto sort_directions = [](std::vector<GtfsDirection>& directions) {
+    std::sort(directions.begin(), directions.end(), [](const GtfsDirection& a, const GtfsDirection& b) {
+      if (a.route_direction_id.route_id.v != b.route_direction_id.route_id.v) {
+        return a.route_direction_id.route_id.v < b.route_direction_id.route_id.v;
+      }
+      return a.route_direction_id.direction_id < b.route_direction_id.direction_id;
+    });
+  };
+  
+  // Create copies for sorting
+  std::vector<GtfsStop> original_stops = original_gtfs_day.stops;
+  std::vector<GtfsStop> reloaded_stops = reloaded_gtfs.stops;
+  sort_stops(original_stops);
+  sort_stops(reloaded_stops);
+  
+  std::vector<GtfsTrip> original_trips = original_gtfs_day.trips;
+  std::vector<GtfsTrip> reloaded_trips = reloaded_gtfs.trips;
+  sort_trips(original_trips);
+  sort_trips(reloaded_trips);
+  
+  std::vector<GtfsStopTime> original_stop_times = original_gtfs_day.stop_times;
+  std::vector<GtfsStopTime> reloaded_stop_times = reloaded_gtfs.stop_times;
+  sort_stop_times(original_stop_times);
+  sort_stop_times(reloaded_stop_times);
+  
+  std::vector<GtfsRoute> original_routes = original_gtfs_day.routes;
+  std::vector<GtfsRoute> reloaded_routes = reloaded_gtfs.routes;
+  sort_routes(original_routes);
+  sort_routes(reloaded_routes);
+  
+  std::vector<GtfsDirection> original_directions = original_gtfs_day.directions;
+  std::vector<GtfsDirection> reloaded_directions = reloaded_gtfs.directions;
+  sort_directions(original_directions);
+  sort_directions(reloaded_directions);
+  
+  // Compare the sorted data
+  EXPECT_EQ(original_stops, reloaded_stops);
+  EXPECT_EQ(original_trips, reloaded_trips);
+  EXPECT_EQ(original_stop_times, reloaded_stop_times);
+  EXPECT_EQ(original_routes, reloaded_routes);
+  EXPECT_EQ(original_directions, reloaded_directions);
+  
+  // Verify calendar.txt exists but is empty (just headers)
+  EXPECT_EQ(reloaded_gtfs.calendar.size(), 0);
+  
+  // Clean up
+  std::filesystem::remove_all(temp_dir);
 }
 
 GTEST("GtfsFilterByDate should handle dates outside service period") {

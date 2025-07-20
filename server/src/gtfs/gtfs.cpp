@@ -8,6 +8,7 @@
 #include <ctime>
 #include <iomanip>
 #include <filesystem>
+#include <fstream>
 
 namespace vats5 {
 
@@ -385,6 +386,91 @@ GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<Gtfs
   }
   
   return result;
+}
+
+static std::string FormatGtfsTime(const GtfsTimeSinceServiceStart& time) {
+  int total_seconds = time.seconds;
+  int hours = total_seconds / 3600;
+  int minutes = (total_seconds % 3600) / 60;
+  int seconds = total_seconds % 60;
+  
+  std::ostringstream oss;
+  oss << std::setfill('0') << std::setw(2) << hours << ":"
+      << std::setw(2) << minutes << ":"
+      << std::setw(2) << seconds;
+  return oss.str();
+}
+
+void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path) {
+  // Create directory if it doesn't exist
+  std::filesystem::create_directories(gtfs_directory_path);
+  
+  // Save stops.txt
+  if (!gtfs_day.stops.empty()) {
+    std::ofstream stops_file(gtfs_directory_path + "/stops.txt");
+    stops_file << "stop_id,stop_name,stop_lat,stop_lon,parent_station\n";
+    for (const auto& stop : gtfs_day.stops) {
+      stops_file << stop.stop_id.v << ","
+                << "\"" << stop.stop_name << "\","
+                << std::fixed << std::setprecision(6) << stop.stop_lat << ","
+                << std::fixed << std::setprecision(6) << stop.stop_lon << ",";
+      if (stop.parent_station) {
+        stops_file << stop.parent_station->v;
+      }
+      stops_file << "\n";
+    }
+  }
+  
+  // Save trips.txt
+  if (!gtfs_day.trips.empty()) {
+    std::ofstream trips_file(gtfs_directory_path + "/trips.txt");
+    trips_file << "route_id,direction_id,trip_id,service_id\n";
+    for (const auto& trip : gtfs_day.trips) {
+      trips_file << trip.route_direction_id.route_id.v << ","
+                << trip.route_direction_id.direction_id << ","
+                << trip.trip_id.v << ","
+                << trip.service_id.v << "\n";
+    }
+  }
+  
+  // Save stop_times.txt
+  if (!gtfs_day.stop_times.empty()) {
+    std::ofstream stop_times_file(gtfs_directory_path + "/stop_times.txt");
+    stop_times_file << "trip_id,stop_id,stop_sequence,arrival_time,departure_time\n";
+    for (const auto& stop_time : gtfs_day.stop_times) {
+      stop_times_file << stop_time.trip_id.v << ","
+                     << stop_time.stop_id.v << ","
+                     << stop_time.stop_sequence << ","
+                     << FormatGtfsTime(stop_time.arrival_time) << ","
+                     << FormatGtfsTime(stop_time.departure_time) << "\n";
+    }
+  }
+  
+  // Save routes.txt
+  if (!gtfs_day.routes.empty()) {
+    std::ofstream routes_file(gtfs_directory_path + "/routes.txt");
+    routes_file << "route_id,route_short_name,route_long_name\n";
+    for (const auto& route : gtfs_day.routes) {
+      routes_file << route.route_id.v << ","
+                 << "\"" << route.route_short_name << "\","
+                 << "\"" << route.route_long_name << "\"\n";
+    }
+  }
+  
+  // Save directions.txt
+  if (!gtfs_day.directions.empty()) {
+    std::ofstream directions_file(gtfs_directory_path + "/directions.txt");
+    directions_file << "route_id,direction_id,direction\n";
+    for (const auto& direction : gtfs_day.directions) {
+      directions_file << direction.route_direction_id.route_id.v << ","
+                     << direction.route_direction_id.direction_id << ","
+                     << "\"" << direction.direction << "\"\n";
+    }
+  }
+  
+  // Create a blank calendar.txt file
+  std::ofstream calendar_file(gtfs_directory_path + "/calendar.txt");
+  calendar_file << "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n";
 }
 
 }  // namespace vats5
