@@ -12,8 +12,15 @@ namespace vats5 {
 // This is "minimal" in the sense that: TODO explain.
 bool CheckSortedAndMinimal(const std::vector<Step>& steps);
 
-// Sorts steps in place by origin_time ascending, then by destination_time descending.
+// Sorts steps in-place by origin_time ascending, then by destination_time descending.
 void SortByOriginAndDestinationTime(std::vector<Step>& steps);
+
+// Updates steps in-place to be a minimal cover.
+// A minimal cover (1) is a subset of the original steps, (2) satisfies CheckSortedAndMinimal, and
+// (3) for any original step, there is a step in the minimal cover with origin_time no earlier and
+// destination_time no later.
+// Precondition: steps is sorted by origin_time ascending, then by destination_time descending.
+void MakeMinimalCover(std::vector<Step>& steps);
 
 // Return a dominating set of steps from stop A to stop C that are made of a step from ab followed by a step from bc.
 //

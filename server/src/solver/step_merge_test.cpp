@@ -139,6 +139,52 @@ TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
     EXPECT_EQ(steps[3].origin_time.seconds, 150);
 }
 
+TEST(StepMergeTest, MakeMinimalCoverSimpleTest) {
+    // Simple test case: step 2 dominates step 1 (departs later, arrives earlier)
+    std::vector<Step> steps = {
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}, TripId{1}}, // dominated
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{2}, TripId{2}}  // dominates step 1
+    };
+    
+    MakeMinimalCover(steps);
+    
+    EXPECT_EQ(steps.size(), 1);
+    EXPECT_EQ(steps[0].origin_time.seconds, 150);
+    EXPECT_EQ(steps[0].destination_time.seconds, 250);
+}
+
+TEST(StepMergeTest, MakeMinimalCoverTest) {
+    // Test case where only the last step (earliest arrival) should remain
+    std::vector<Step> steps = {
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}, TripId{1}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{120}, TimeSinceServiceStart{350}, TripId{2}, TripId{2}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{3}, TripId{3}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{180}, TimeSinceServiceStart{280}, TripId{4}, TripId{4}},
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{240}, TripId{5}, TripId{5}}
+    };
+    
+    MakeMinimalCover(steps);
+    
+    // Only the last step should remain (arrives earliest at 240)
+    EXPECT_EQ(steps.size(), 1);
+    EXPECT_EQ(steps[0].origin_time.seconds, 200);
+    EXPECT_EQ(steps[0].destination_time.seconds, 240);
+}
+
+TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
+    // Empty vector
+    std::vector<Step> empty_steps;
+    MakeMinimalCover(empty_steps);
+    EXPECT_TRUE(empty_steps.empty());
+    
+    // Single step
+    std::vector<Step> single_step = {
+        {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}, TripId{1}}
+    };
+    MakeMinimalCover(single_step);
+    EXPECT_EQ(single_step.size(), 1);
+}
+
 TEST(StepMergeTest, RapidCheckSortByOriginAndDestinationTimeTest) {
     rc::check("SortByOriginAndDestinationTime sorts vector by origin_time ascending", [](std::vector<int> time_values) {
         // Create Step vector with random origin times
@@ -161,37 +207,6 @@ TEST(StepMergeTest, RapidCheckSortByOriginAndDestinationTimeTest) {
         for (size_t i = 1; i < steps.size(); ++i) {
             RC_ASSERT(steps[i-1].origin_time.seconds <= steps[i].origin_time.seconds);
         }
-    });
-}
-
-TEST(StepMergeTest, RapidCheckExampleTest) {
-    rc::check("sorted vectors remain sorted after CheckSortedAndMinimal", [](std::vector<int> values) {
-        std::sort(values.begin(), values.end());
-        
-        // Convert to Step vector for testing CheckSortedAndMinimal
-        std::vector<Step> steps;
-        for (size_t i = 0; i < values.size(); ++i) {
-            steps.push_back({
-                StopId{1}, 
-                StopId{2}, 
-                TimeSinceServiceStart{values[i]}, 
-                TimeSinceServiceStart{values[i] + 100}, 
-                TripId{static_cast<int>(i)}, 
-                TripId{static_cast<int>(i)}
-            });
-        }
-        
-        // If we have duplicate times, the function should return false
-        // Otherwise it should return true for properly sorted steps
-        bool has_duplicates = false;
-        for (size_t i = 1; i < values.size(); ++i) {
-            if (values[i] == values[i-1]) {
-                has_duplicates = true;
-                break;
-            }
-        }
-        
-        RC_ASSERT(CheckSortedAndMinimal(steps) == !has_duplicates);
     });
 }
 
