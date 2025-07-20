@@ -42,38 +42,19 @@ template<int Origin, int Destination>
 struct Arbitrary<StepFromTo<Origin, Destination>> {
     static Gen<StepFromTo<Origin, Destination>> arbitrary() {
         return gen::apply(
-            [](vats5::TimeSinceServiceStart origin_time, vats5::TimeSinceServiceStart dest_time,
+            [](vats5::TimeSinceServiceStart origin_time, int duration_offset,
                vats5::TripId trip_id) {
+                vats5::TimeSinceServiceStart dest_time{origin_time.seconds + duration_offset + 1};
                 return StepFromTo<Origin, Destination>{Origin, Destination, origin_time, dest_time, trip_id};
             },
             gen::arbitrary<vats5::TimeSinceServiceStart>(),
-            gen::arbitrary<vats5::TimeSinceServiceStart>(),
+            gen::inRange(0, 3600),
             gen::arbitrary<vats5::TripId>()
         );
     }
 };
 
 } // namespace rc
-
-// Stream operators for RapidCheck display
-std::ostream& operator<<(std::ostream& os, const vats5::StopId& value) {
-    return os << "StopId{" << value.v << "}";
-}
-
-std::ostream& operator<<(std::ostream& os, const vats5::TimeSinceServiceStart& value) {
-    return os << "Time{" << value.seconds << "}";
-}
-
-std::ostream& operator<<(std::ostream& os, const vats5::TripId& value) {
-    return os << "TripId{" << value.v << "}";
-}
-
-std::ostream& operator<<(std::ostream& os, const vats5::Step& value) {
-    return os << "Step{stop: " << value.origin_stop.v << " -> " << value.destination_stop.v 
-              << ", trip: " << value.origin_trip.v << " -> " << value.destination_trip.v
-              << ", time: " << value.origin_time.seconds << " -> " << value.destination_time.seconds << "}";
-}
-
 
 namespace vats5 {
 

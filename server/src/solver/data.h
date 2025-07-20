@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <ostream>
 
 #include "gtfs/gtfs.h"
 
@@ -53,6 +54,25 @@ struct Step {
                destination_trip == other.destination_trip;
     }
 };
+
+// Output operators for debugging/logging
+inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
+    return os << "StopId{" << value.v << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& os, const TimeSinceServiceStart& value) {
+    return os << "Time{" << value.seconds << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& os, const TripId& value) {
+    return os << "TripId{" << value.v << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Step& value) {
+    return os << "Step{stop: " << value.origin_stop.v << " -> " << value.destination_stop.v 
+              << ", trip: " << value.origin_trip.v << " -> " << value.destination_trip.v
+              << ", time: " << value.origin_time.seconds << " -> " << value.destination_time.seconds << "}";
+}
 
 }  // namespace vats5
 
