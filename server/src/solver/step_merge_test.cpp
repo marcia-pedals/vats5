@@ -185,6 +185,64 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
     EXPECT_EQ(single_step.size(), 1);
 }
 
+TEST(StepMergeTest, RapidCheckMakeMinimalCoverTest) {
+    rc::check("MakeMinimalCover satisfies all 3 properties", [](std::vector<int> origin_times, std::vector<int> destination_times) {
+        RC_PRE(origin_times.size() == destination_times.size());
+        RC_PRE(!origin_times.empty());
+        
+        // Create Step vector with random times
+        std::vector<Step> original_steps;
+        for (size_t i = 0; i < origin_times.size(); ++i) {
+            original_steps.push_back({
+                StopId{1}, 
+                StopId{2}, 
+                TimeSinceServiceStart{origin_times[i]}, 
+                TimeSinceServiceStart{destination_times[i]}, 
+                TripId{static_cast<int>(i)}, 
+                TripId{static_cast<int>(i)}
+            });
+        }
+        
+        // Sort as precondition
+        SortByOriginAndDestinationTime(original_steps);
+        
+        // Make a copy for the minimal cover
+        std::vector<Step> minimal_cover = original_steps;
+        MakeMinimalCover(minimal_cover);
+        
+        // Property 1: minimal cover is a subset of original steps
+        for (const auto& step : minimal_cover) {
+            bool found = false;
+            for (const auto& orig_step : original_steps) {
+                if (step.origin_time.seconds == orig_step.origin_time.seconds &&
+                    step.destination_time.seconds == orig_step.destination_time.seconds &&
+                    step.origin_trip.v == orig_step.origin_trip.v) {
+                    found = true;
+                    break;
+                }
+            }
+            RC_ASSERT(found);
+        }
+        
+        // Property 2: satisfies CheckSortedAndMinimal
+        RC_ASSERT(CheckSortedAndMinimal(minimal_cover));
+        
+        // Property 3: for any original step, there is a step in minimal cover with
+        // origin_time no later and destination_time no later
+        for (const auto& orig_step : original_steps) {
+            bool dominated_or_kept = false;
+            for (const auto& cover_step : minimal_cover) {
+                if (cover_step.origin_time.seconds <= orig_step.origin_time.seconds &&
+                    cover_step.destination_time.seconds <= orig_step.destination_time.seconds) {
+                    dominated_or_kept = true;
+                    break;
+                }
+            }
+            RC_ASSERT(dominated_or_kept);
+        }
+    });
+}
+
 TEST(StepMergeTest, RapidCheckSortByOriginAndDestinationTimeTest) {
     rc::check("SortByOriginAndDestinationTime sorts vector by origin_time ascending", [](std::vector<int> time_values) {
         // Create Step vector with random origin times
