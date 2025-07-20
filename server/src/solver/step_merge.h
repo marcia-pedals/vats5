@@ -7,7 +7,10 @@
 
 namespace vats5 {
 
-int dummy_merge_function(int a, int b);
+// Checks that steps is sorted by origin_time ascending and also by desintation_time ascending.
+//
+// This is "minimal" in the sense that: TODO explain.
+bool CheckSortedAndMinimal(const std::vector<Step>& steps);
 
 // Return a dominating set of steps from stop A to stop C that are made of a step from ab followed by a step from bc.
 //

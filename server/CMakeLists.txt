@@ -31,6 +31,13 @@ FetchContent_Declare(
 )
 FETCHCONTENT_MAKEAVAILABLE(gunit)
 
+FetchContent_Declare(
+  rapidcheck
+  GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
+  GIT_TAG        master
+)
+FetchContent_MakeAvailable(rapidcheck)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
@@ -63,4 +70,4 @@ target_link_libraries(data_test PUBLIC gunit data)
 
 # Add step_merge test executable
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
-target_link_libraries(step_merge_test PUBLIC gunit step_merge)
+target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck)
