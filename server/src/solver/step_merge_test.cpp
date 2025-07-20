@@ -367,4 +367,51 @@ RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty,
   }
 }
 
+RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
+              (std::vector<StepFromTo<1, 2>> phantom_steps_12,
+               std::vector<StepFromTo<2, 3>> phantom_steps_23)) {
+  std::vector<Step> steps_12(phantom_steps_12.begin(), phantom_steps_12.end());
+  std::vector<Step> steps_23(phantom_steps_23.begin(), phantom_steps_23.end());
+
+  // Sort both vectors
+  SortByOriginAndDestinationTime(steps_12);
+  SortByOriginAndDestinationTime(steps_23);
+
+  // Get minimal covers
+  MakeMinimalCover(steps_12);
+  MakeMinimalCover(steps_23);
+  RC_LOG() << "Minimal steps 1->2: " << rc::toString(steps_12) << "\n";
+  RC_LOG() << "Minimal steps 2->3: " << rc::toString(steps_23) << "\n";
+
+  // Merge the steps
+  std::vector<Step> merged_steps = MergeSteps(steps_12, steps_23);
+  RC_LOG() << "Merged steps: " << rc::toString(merged_steps) << "\n";
+
+  // Property 1: the result satisfies CheckSortedAndMinimal
+  RC_ASSERT(CheckSortedAndMinimal(merged_steps));
+
+  // Property 2: for every valid connection (where transfer is possible),
+  // there is a merged step that dominates or equals the connection
+  for (const auto& step_12 : steps_12) {
+    for (const auto& step_23 : steps_23) {
+      // Check if this is a valid connection (can transfer)
+      if (step_12.destination_time.seconds <= step_23.origin_time.seconds) {
+        // There should be a merged step that dominates this connection
+        bool found_dominating_step = false;
+        for (const auto& merged_step : merged_steps) {
+          if (merged_step.origin_time.seconds >= step_12.origin_time.seconds &&
+              merged_step.destination_time.seconds <= step_23.destination_time.seconds) {
+            found_dominating_step = true;
+            break;
+          }
+        }
+        if (!found_dominating_step) {
+            RC_LOG() << "No merged step dominates the pair " << step_12 << ", " << step_23;
+        }
+        RC_ASSERT(found_dominating_step);
+      }
+    }
+  }
+}
+
 }  // namespace vats5
