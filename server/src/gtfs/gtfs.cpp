@@ -11,10 +11,20 @@
 
 namespace vats5 {
 
-GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str) {
+GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str) {
   // Highly optimized parsing for HH:MM:SS format without string operations
   if (time_str.size() < 8 || time_str[2] != ':' || time_str[5] != ':') {
-    throw std::runtime_error("Invalid time format: " + time_str);
+    throw std::runtime_error("Invalid time format: " + std::string(time_str));
+  }
+  
+  // Validate that all time characters are digits
+  if (time_str[0] < '0' || time_str[0] > '9' ||
+      time_str[1] < '0' || time_str[1] > '9' ||
+      time_str[3] < '0' || time_str[3] > '9' ||
+      time_str[4] < '0' || time_str[4] > '9' ||
+      time_str[6] < '0' || time_str[6] > '9' ||
+      time_str[7] < '0' || time_str[7] > '9') {
+    throw std::runtime_error("Invalid time format - non-digit characters: " + std::string(time_str));
   }
   
   // Parse directly from characters to avoid substr and stoi overhead
@@ -122,8 +132,8 @@ static std::vector<GtfsStopTime> GtfsLoadStopTimes(const std::string &stop_times
     stop_times.reserve(file_size / 70);  // Rough estimate: ~70 bytes per record
 
     for (csv::CSVRow &row : reader) {
-      std::string arrival_time_str = row["arrival_time"].get<std::string>();
-      std::string departure_time_str = row["departure_time"].get<std::string>();
+      std::string_view arrival_time_str = row["arrival_time"].get<std::string_view>();
+      std::string_view departure_time_str = row["departure_time"].get<std::string_view>();
       
       // Skip this stop time if either arrival or departure time is empty
       if (arrival_time_str.empty() || departure_time_str.empty()) {

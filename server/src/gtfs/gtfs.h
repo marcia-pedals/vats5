@@ -167,7 +167,7 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
 GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set);
 
 // Parse GTFS time string (HH:MM:SS format) to GtfsTimeSinceServiceStart
-GtfsTimeSinceServiceStart ParseGtfsTime(const std::string& time_str);
+GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str);
 
 // Pretty printing for Google Test
 inline void PrintTo(const GtfsStopId& stop_id, std::ostream* os) {
