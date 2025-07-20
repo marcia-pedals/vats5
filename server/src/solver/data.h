@@ -39,6 +39,7 @@ struct Step {
 
     // origin_time = -1 is a special marker indicating that this trip can happen at any time. In
     // this case, `destination_time` is the trip duration.
+    // TODO: Actually handle the special marker in all the step_merge logic.
     TimeSinceServiceStart origin_time;
     TimeSinceServiceStart destination_time;
 
