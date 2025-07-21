@@ -217,6 +217,24 @@ Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   return gtfs;
 }
 
+GtfsDay GtfsLoadDay(const std::string& gtfs_directory_path) {
+  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
+  
+  if (!gtfs.calendar.empty()) {
+    throw std::runtime_error("GtfsLoadDay expects pre-filtered data with no calendar entries, but found " + 
+                           std::to_string(gtfs.calendar.size()) + " calendar entries");
+  }
+  
+  GtfsDay gtfs_day;
+  gtfs_day.stops = gtfs.stops;
+  gtfs_day.trips = gtfs.trips;
+  gtfs_day.stop_times = gtfs.stop_times;
+  gtfs_day.routes = gtfs.routes;
+  gtfs_day.directions = gtfs.directions;
+  
+  return gtfs_day;
+}
+
 static int GetDayOfWeek(const std::string& date) {
   // Parse YYYYMMDD format
   if (date.length() != 8) {

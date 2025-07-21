@@ -8,15 +8,7 @@ namespace vats5 {
 TEST(DataTest, GetStepsFromGtfs) {
     // Load pre-filtered GTFS data (contains all CT: trips from 20250718)
     std::string gtfs_directory_path = "../data/RG_20250718_CT";
-    Gtfs gtfs = GtfsLoad(gtfs_directory_path);
-    
-    // Convert Gtfs to GtfsDay for GetStepsFromGtfs (data is already filtered)
-    GtfsDay gtfs_day;
-    gtfs_day.stops = gtfs.stops;
-    gtfs_day.trips = gtfs.trips;
-    gtfs_day.stop_times = gtfs.stop_times;
-    gtfs_day.routes = gtfs.routes;
-    gtfs_day.directions = gtfs.directions;
+    GtfsDay gtfs_day = GtfsLoadDay(gtfs_directory_path);
     
     // Filter to just CT:507 for this specific test
     const GtfsTripId trip_id{"CT:507"};

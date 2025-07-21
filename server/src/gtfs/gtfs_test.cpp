@@ -544,13 +544,7 @@ auto StopMatcher(const std::string& stop_id, const std::string& stop_name) {
 GTEST("GtfsNormalizeStops should replace child stops with parents") {
   // Load the RG_20250718_BA data as requested
   std::string gtfs_directory_path = "../data/RG_20250718_BA";
-  Gtfs gtfs = GtfsLoad(gtfs_directory_path);
-  GtfsDay gtfs_day;
-  gtfs_day.stops = gtfs.stops;
-  gtfs_day.directions = gtfs.directions;
-  gtfs_day.routes = gtfs.routes;
-  gtfs_day.stop_times = gtfs.stop_times;
-  gtfs_day.trips = gtfs.trips;
+  GtfsDay gtfs_day = GtfsLoadDay(gtfs_directory_path);
 
   GtfsDay normalized = GtfsNormalizeStops(gtfs_day);
   EXPECT_EQ(normalized.trips.size(), gtfs_day.trips.size());

@@ -158,6 +158,9 @@ struct GtfsDay {
 // Load all GTFS data from a directory containing GTFS files
 Gtfs GtfsLoad(const std::string& gtfs_directory_path);
 
+// Load GTFS data from a directory and return as GtfsDay
+GtfsDay GtfsLoadDay(const std::string& gtfs_directory_path);
+
 // Filter GTFS data to only include services that run on the given date
 // Date should be in "YYYYMMDD" format (e.g., "20240315")
 GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
