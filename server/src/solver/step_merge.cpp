@@ -19,16 +19,15 @@ void MakeMinimalCover(std::vector<Step>& steps) {
     return;
   }
 
-  // Mark dominated steps for deletion using backwards sweep
-  std::vector<bool> to_delete(steps.size(), false);
-  int earliest_destination_time = std::numeric_limits<int>::max();
+  const int deletion_marker = -0xdee;
 
   // Backwards sweep: a step is dominated if there's a later-departing step that
   // arrives earlier
+  int earliest_destination_time = std::numeric_limits<int>::max();
   for (int i = static_cast<int>(steps.size()) - 1; i >= 0; i--) {
     if (steps[i].destination_time.seconds >= earliest_destination_time) {
       // This step is dominated (arrives no earlier than a later-departing step)
-      to_delete[i] = true;
+      steps[i].origin_time.seconds = deletion_marker;
     } else {
       // This step is not dominated, update earliest destination time
       earliest_destination_time = steps[i].destination_time.seconds;
@@ -38,7 +37,7 @@ void MakeMinimalCover(std::vector<Step>& steps) {
   // Remove marked steps in-place using two-pointer technique
   size_t write_pos = 0;
   for (size_t read_pos = 0; read_pos < steps.size(); read_pos++) {
-    if (!to_delete[read_pos]) {
+    if (steps[read_pos].origin_time.seconds != deletion_marker) {
       if (write_pos != read_pos) {
         steps[write_pos] = std::move(steps[read_pos]);
       }
