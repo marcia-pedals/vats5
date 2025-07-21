@@ -58,6 +58,11 @@ add_library(step_merge STATIC src/solver/step_merge.cpp)
 target_link_libraries(step_merge PUBLIC data)
 target_include_directories(step_merge PUBLIC src)
 
+# Create shortest_path library target
+add_library(shortest_path STATIC src/solver/shortest_path.cpp)
+target_link_libraries(shortest_path PUBLIC step_merge)
+target_include_directories(shortest_path PUBLIC src)
+
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
@@ -76,3 +81,7 @@ target_link_libraries(data_test PUBLIC gunit data)
 # Add step_merge test executable
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
 target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck rapidcheck_gtest)
+
+# Add shortest_path test executable
+add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
+target_link_libraries(shortest_path_test PUBLIC gunit shortest_path)

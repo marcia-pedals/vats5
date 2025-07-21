@@ -14,6 +14,10 @@ struct StopId {
     bool operator==(const StopId& other) const {
         return v == other.v;
     }
+    
+    bool operator<(const StopId& other) const {
+        return v < other.v;
+    }
 };
 
 // id -1 is a special marker indicating walking.
@@ -30,6 +34,10 @@ struct TimeSinceServiceStart {
     
     bool operator==(const TimeSinceServiceStart& other) const {
         return seconds == other.seconds;
+    }
+    
+    bool operator<(const TimeSinceServiceStart& other) const {
+        return seconds < other.seconds;
     }
 };
 
