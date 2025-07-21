@@ -62,8 +62,17 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
       continue;
     }
 
-    if (current_step_it != best_step.end() && destinations.find(current_stop) != destinations.end()) {
-      result[current_stop] = current_step_it->second;
+    // Check if current stop is a destination and we have a way to reach it
+    if (destinations.find(current_stop) != destinations.end()) {
+      if (current_step_it != best_step.end()) {
+        result[current_stop] = current_step_it->second;
+      } else if (current_stop == origin) {
+        // Special case for origin being a destination - create a "stay here" step
+        // TODO: Kinda hacky. Maybe just forbid this.
+        result[current_stop] = Step{
+          current_stop, current_stop, time, time, TripId{-1}, TripId{-1}
+        };
+      }
       if (result.size() == destinations.size()) {
         return result;
       }
@@ -87,11 +96,14 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
       const Step& next_step = *lower_bound_it;
       auto existing_step_it = best_step.find(next_step.destination_stop);
       if (existing_step_it == best_step.end() || existing_step_it->second.destination_time > next_step.destination_time) {
+        Step new_step;
         if (current_step_it == best_step.end()) {
-          best_step[next_step.destination_stop] = next_step;
+          // Direct step from origin
+          new_step = next_step;
         } else {
+          // Chained step
           const Step& current_step = current_step_it->second;
-          best_step[next_step.destination_stop] = Step{
+          new_step = Step{
             current_step.origin_stop,
             next_step.destination_stop,
             current_step.origin_time,
@@ -100,6 +112,8 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
             next_step.destination_trip,
           };
         }
+        best_step[next_step.destination_stop] = new_step;
+        frontier.push({new_step.destination_time, next_step.destination_stop});
       }
     }
   }
