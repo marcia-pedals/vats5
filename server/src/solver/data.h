@@ -35,9 +35,11 @@ struct TimeSinceServiceStart {
     bool operator==(const TimeSinceServiceStart& other) const {
         return seconds == other.seconds;
     }
-    
     bool operator<(const TimeSinceServiceStart& other) const {
         return seconds < other.seconds;
+    }
+    bool operator>(const TimeSinceServiceStart& other) const {
+        return seconds > other.seconds;
     }
 };
 

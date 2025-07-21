@@ -37,31 +37,42 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-static std::vector<Step> FindShortestPathsAtTime(
+static std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list, 
     TimeSinceServiceStart time, 
     StopId origin,
-    std::vector<StopId> destinations
+    std::unordered_set<StopId> destinations
 ) {
-  std::unordered_map<StopId, TimeSinceServiceStart> best_time;
+  std::unordered_map<StopId, Step> result;
   std::unordered_map<StopId, Step> best_step;
   
   using QueueEntry = std::pair<TimeSinceServiceStart, StopId>;
   std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> frontier;
   
-  best_time[origin] = time;
+  // TODO: There's a bit of weirdness about the origin because you can't represent a "do nothing
+  // stay here" step. I wonder if it causes any problems. Try to find something more elegant.
   frontier.push({time, origin});
   
   while (!frontier.empty()) {
     auto [current_time, current_stop] = frontier.top();
     frontier.pop();
-    
-    if (best_time[current_stop].seconds < current_time.seconds) {
+
+    auto current_step_it = best_step.find(current_stop);
+    if (current_step_it != best_step.end() && current_time > current_step_it->second.destination_time) {
       continue;
+    }
+
+    if (current_step_it != best_step.end() && destinations.find(current_stop) != destinations.end()) {
+      result[current_stop] = current_step_it->second;
+      if (result.size() == destinations.size()) {
+        return result;
+      }
     }
     
     auto adj_it = adjacency_list.adjacent.find(current_stop);
-    if (adj_it == adjacency_list.adjacent.end()) continue;
+    if (adj_it == adjacency_list.adjacent.end()) {
+      continue;
+    }
     
     for (const std::vector<Step>& step_group : adj_it->second) {
       auto lower_bound_it = std::lower_bound(
@@ -69,28 +80,27 @@ static std::vector<Step> FindShortestPathsAtTime(
         [](const Step& step, TimeSinceServiceStart target_time) {
           return step.origin_time.seconds < target_time.seconds;
         });
-      
-      if (lower_bound_it != step_group.end()) {
-        const Step& next_step = *lower_bound_it;
-        StopId next_stop = next_step.destination_stop;
-        TimeSinceServiceStart next_time = next_step.destination_time;
-        
-        auto existing_time_it = best_time.find(next_stop);
-        if (existing_time_it == best_time.end() || 
-            next_time.seconds < existing_time_it->second.seconds) {
-          best_time[next_stop] = next_time;
-          best_step[next_stop] = next_step;
-          frontier.push({next_time, next_stop});
+      if (lower_bound_it == step_group.end()) {
+        continue;
+      }
+ 
+      const Step& next_step = *lower_bound_it;
+      auto existing_step_it = best_step.find(next_step.destination_stop);
+      if (existing_step_it == best_step.end() || existing_step_it->second.destination_time > next_step.destination_time) {
+        if (current_step_it == best_step.end()) {
+          best_step[next_step.destination_stop] = next_step;
+        } else {
+          const Step& current_step = current_step_it->second;
+          best_step[next_step.destination_stop] = Step{
+            current_step.origin_stop,
+            next_step.destination_stop,
+            current_step.origin_time,
+            next_step.destination_time,
+            current_step.origin_trip,
+            next_step.destination_trip,
+          };
         }
       }
-    }
-  }
-  
-  std::vector<Step> result;
-  for (StopId dest : destinations) {
-    auto step_it = best_step.find(dest);
-    if (step_it != best_step.end()) {
-      result.push_back(step_it->second);
     }
   }
   
