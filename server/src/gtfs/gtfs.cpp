@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <unordered_set>
+#include <unordered_map>
 #include <ctime>
 #include <iomanip>
 #include <filesystem>
@@ -471,6 +472,63 @@ void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path) {
   // Create a blank calendar.txt file
   std::ofstream calendar_file(gtfs_directory_path + "/calendar.txt");
   calendar_file << "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n";
+}
+
+GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day) {
+  GtfsDay result = gtfs_day;  // Start with a copy
+  
+  // Step 1: Build a map from stop_id to stop for efficient lookup
+  std::unordered_map<std::string, const GtfsStop*> stop_lookup;
+  for (const auto& stop : gtfs_day.stops) {
+    stop_lookup[stop.stop_id.v] = &stop;
+  }
+  
+  // Step 2: Create a function to find the ultimate parent of a stop
+  auto find_ultimate_parent = [&stop_lookup](const std::string& stop_id) -> std::string {
+    std::string current_id = stop_id;
+    std::unordered_set<std::string> visited;  // Prevent infinite loops
+    
+    while (true) {
+      // Check for cycles
+      if (visited.count(current_id)) {
+        // Cycle detected, return the original stop_id
+        return stop_id;
+      }
+      visited.insert(current_id);
+      
+      auto it = stop_lookup.find(current_id);
+      if (it == stop_lookup.end()) {
+        // Stop not found, return current_id
+        return current_id;
+      }
+      
+      const GtfsStop* stop = it->second;
+      if (!stop->parent_station) {
+        // This stop has no parent, it's the ultimate parent
+        return current_id;
+      }
+      
+      // Move to the parent
+      current_id = stop->parent_station->v;
+    }
+  };
+  
+  // Step 3: Replace all stop_ids in stop_times with their ultimate parents
+  for (auto& stop_time : result.stop_times) {
+    std::string ultimate_parent = find_ultimate_parent(stop_time.stop_id.v);
+    stop_time.stop_id = GtfsStopId{ultimate_parent};
+  }
+  
+  // Step 4: Remove all stops that have parents from the stops list
+  result.stops.clear();
+  for (const auto& stop : gtfs_day.stops) {
+    if (!stop.parent_station) {
+      // This stop has no parent, keep it
+      result.stops.push_back(stop);
+    }
+  }
+  
+  return result;
 }
 
 }  // namespace vats5

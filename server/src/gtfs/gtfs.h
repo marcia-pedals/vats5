@@ -172,6 +172,11 @@ GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str);
 // Save GtfsDay to GTFS text files in the specified directory
 void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path);
 
+// Normalize stops by replacing child stops with their ultimate parent stations
+// (1) All stop_ids in stop_times are replaced with their ultimate parent (recursively)
+// (2) All stops that have parents are removed from the stops list
+GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day);
+
 // Pretty printing for Google Test
 inline void PrintTo(const GtfsStopId& stop_id, std::ostream* os) {
   *os << "GtfsStopId{\"" << stop_id.v << "\"}";
