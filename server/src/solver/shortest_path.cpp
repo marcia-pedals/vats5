@@ -37,7 +37,7 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-static std::unordered_map<StopId, Step> FindShortestPathsAtTime(
+std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list, 
     TimeSinceServiceStart time, 
     StopId origin,
