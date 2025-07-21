@@ -20,18 +20,26 @@ struct StopId {
     }
 };
 
-// id -1 is a special marker indicating walking.
 struct TripId {
     int v;
+
+    // A special marker indicating that a Step is just staying put.
+    static const TripId NOOP;
     
     bool operator==(const TripId& other) const {
         return v == other.v;
     }
 };
 
+inline const TripId TripId::NOOP = TripId{-1};
+
 struct TimeSinceServiceStart {
     int seconds;
-    
+
+    // A special marker indicating that a Step can happen at any time.
+    // When a Step's origin time is this, the destination time is the duration of the step.
+    static const TimeSinceServiceStart FLEX_STEP_MARKER;
+
     bool operator==(const TimeSinceServiceStart& other) const {
         return seconds == other.seconds;
     }
@@ -43,19 +51,21 @@ struct TimeSinceServiceStart {
     }
 };
 
+inline const TimeSinceServiceStart TimeSinceServiceStart::FLEX_STEP_MARKER = TimeSinceServiceStart{-1};
+
 struct Step {
     StopId origin_stop;
     StopId destination_stop;
 
     // origin_time = -1 is a special marker indicating that this trip can happen at any time. In
     // this case, `destination_time` is the trip duration.
-    // TODO: Actually handle the special marker in all the step_merge logic.
+    // TODO: Actually handle the special marker in all the step_merge and shortest_path logic.
     TimeSinceServiceStart origin_time;
     TimeSinceServiceStart destination_time;
 
     TripId origin_trip;
     TripId destination_trip;
-    
+
     bool operator==(const Step& other) const {
         return origin_stop == other.origin_stop &&
                destination_stop == other.destination_stop &&

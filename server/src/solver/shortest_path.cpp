@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <queue>
+
 #include "solver/step_merge.h"
 
 namespace vats5 {
@@ -37,92 +38,96 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
+struct StepOriginTimeComparator {
+  bool operator()(const Step& a, const Step& b) const {
+    if (a.destination_time.seconds != b.destination_time.seconds) {
+      return a.destination_time.seconds > b.destination_time.seconds;
+    }
+    return a.destination_stop.v > b.destination_stop.v;
+  }
+};
+
 std::unordered_map<StopId, Step> FindShortestPathsAtTime(
-    const StepsAdjacencyList& adjacency_list, 
-    TimeSinceServiceStart time, 
-    StopId origin,
-    std::unordered_set<StopId> destinations
-) {
+    const StepsAdjacencyList& adjacency_list, TimeSinceServiceStart origin_time,
+    StopId origin_stop, std::unordered_set<StopId> destinations) {
   std::unordered_map<StopId, Step> result;
-  std::unordered_map<StopId, Step> best_step;
-  
-  using QueueEntry = std::pair<TimeSinceServiceStart, StopId>;
-  std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> frontier;
-  
-  // TODO: There's a bit of weirdness about the origin because you can't represent a "do nothing
-  // stay here" step. I wonder if it causes any problems. Try to find something more elegant.
-  frontier.push({time, origin});
-  
+  std::unordered_set<StopId> visited;
+
+  std::priority_queue<Step, std::vector<Step>, StepOriginTimeComparator>
+      frontier;
+
+  frontier.emplace(Step{
+      origin_stop,
+      origin_stop,
+      origin_time,
+      origin_time,
+      TripId::NOOP,
+      TripId::NOOP,
+  });
+
   while (!frontier.empty()) {
-    auto [current_time, current_stop] = frontier.top();
+    const Step current_step = frontier.top();
+    const StopId current_stop = current_step.destination_stop;
+    const TimeSinceServiceStart current_time = current_step.destination_time;
     frontier.pop();
 
-    auto current_step_it = best_step.find(current_stop);
-    if (current_step_it != best_step.end() && current_time > current_step_it->second.destination_time) {
+    if (visited.find(current_stop) != visited.end()) {
       continue;
     }
+    visited.insert(current_stop);
 
-    // Check if current stop is a destination and we have a way to reach it
     if (destinations.find(current_stop) != destinations.end()) {
-      if (current_step_it != best_step.end()) {
-        result[current_stop] = current_step_it->second;
-      } else if (current_stop == origin) {
-        // Special case for origin being a destination - create a "stay here" step
-        // TODO: Kinda hacky. Maybe just forbid this.
-        result[current_stop] = Step{
-          current_stop, current_stop, time, time, TripId{-1}, TripId{-1}
-        };
-      }
+      result[current_stop] = current_step;
       if (result.size() == destinations.size()) {
         return result;
       }
     }
-    
+
     auto adj_it = adjacency_list.adjacent.find(current_stop);
     if (adj_it == adjacency_list.adjacent.end()) {
       continue;
     }
-    
+
     for (const std::vector<Step>& step_group : adj_it->second) {
       auto lower_bound_it = std::lower_bound(
-        step_group.begin(), step_group.end(), current_time,
-        [](const Step& step, TimeSinceServiceStart target_time) {
-          return step.origin_time.seconds < target_time.seconds;
-        });
+          step_group.begin(), step_group.end(), current_time,
+          [](const Step& step, TimeSinceServiceStart target_time) {
+            return step.origin_time.seconds < target_time.seconds;
+          });
       if (lower_bound_it == step_group.end()) {
         continue;
       }
- 
+
       const Step& next_step = *lower_bound_it;
-      auto existing_step_it = best_step.find(next_step.destination_stop);
-      if (existing_step_it == best_step.end() || existing_step_it->second.destination_time > next_step.destination_time) {
-        Step new_step;
-        if (current_step_it == best_step.end()) {
-          // Direct step from origin
-          new_step = next_step;
-        } else {
-          // Chained step
-          const Step& current_step = current_step_it->second;
-          new_step = Step{
-            current_step.origin_stop,
-            next_step.destination_stop,
-            current_step.origin_time,
-            next_step.destination_time,
-            current_step.origin_trip,
-            next_step.destination_trip,
-          };
-        }
-        best_step[next_step.destination_stop] = new_step;
-        frontier.push({new_step.destination_time, next_step.destination_stop});
+      const StopId next_stop = next_step.destination_stop;
+      if (visited.find(next_stop) != visited.end()) {
+        continue;
+      }
+
+      if (current_step.origin_trip == TripId::NOOP) {
+        // If our current step is just staying in place, then "start" the path outwards with the
+        // whole next step.
+        frontier.push(next_step);
+      } else {
+        // If we have a current step that involves actually moving around, combine the "starting"
+        // part of the current step with the "finishing" part of the next step.
+        frontier.push(Step{
+          current_step.origin_stop,
+          next_step.destination_stop,
+          current_step.origin_time,
+          next_step.destination_time,
+          current_step.origin_trip,
+          next_step.destination_trip
+        });
       }
     }
   }
-  
+
   return result;
 }
 
 std::vector<std::vector<Step>> FindShortestPaths(
-    const StepsAdjacencyList& adjacency_list, StopId origin,
+    const StepsAdjacencyList& adjacency_list, StopId origin_stop,
     std::vector<StopId> destinations) {
   // TODO
   return {};
