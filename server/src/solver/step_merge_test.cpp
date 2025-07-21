@@ -412,6 +412,38 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
       }
     }
   }
+
+  // Property 3: every merged step has origin_ fields from a single steps_12 
+  // and destination_ fields from a single steps_23, with valid transfer time
+  for (const auto& merged_step : merged_steps) {
+    // Find the corresponding steps_12 and steps_23 that this merged step is based on
+    const Step* source_step_12 = nullptr;
+    const Step* source_step_23 = nullptr;
+
+    for (const auto& step_12 : steps_12) {
+      if (step_12.origin_stop == merged_step.origin_stop &&
+          step_12.origin_time == merged_step.origin_time &&
+          step_12.origin_trip == merged_step.origin_trip) {
+        source_step_12 = &step_12;
+        break;
+      }
+    }
+
+    for (const auto& step_23 : steps_23) {
+      if (step_23.destination_stop == merged_step.destination_stop &&
+          step_23.destination_time == merged_step.destination_time &&
+          step_23.destination_trip == merged_step.destination_trip) {
+        source_step_23 = &step_23;
+        break;
+      }
+    }
+
+    RC_ASSERT(source_step_12 != nullptr);
+    RC_ASSERT(source_step_23 != nullptr);
+
+    // Check that the destination_time of steps_12 <= origin_time of steps_23
+    RC_ASSERT(source_step_12->destination_time.seconds <= source_step_23->origin_time.seconds);
+  }
 }
 
 }  // namespace vats5
