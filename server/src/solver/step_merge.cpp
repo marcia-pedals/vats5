@@ -66,9 +66,38 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
 std::vector<Step> MergeSteps(const std::vector<Step>& ab,
                              const std::vector<Step>& bc) {
   std::vector<Step> result;
-
   size_t ab_idx = 0;
   size_t bc_idx = 0;
+
+  while (ab_idx < ab.size()) {
+    // Advance bc_idx to the first step that can be reached by ab_idx.
+    while (bc_idx < bc.size() && bc[bc_idx].origin_time.seconds <
+                                     ab[ab_idx].destination_time.seconds) {
+      bc_idx += 1;
+    }
+
+    // If we reached the end of bc, we are done.
+    if (bc_idx == bc.size()) {
+      return result;
+    }
+
+    // Advance ab_idx to the last ab step that arrives in time to catch bc_idx.
+    while (ab_idx < ab.size() - 1 && ab[ab_idx + 1].destination_time.seconds <=
+                                         bc[bc_idx].origin_time.seconds) {
+      ab_idx += 1;
+    }
+
+    result.emplace_back(Step{
+        ab[ab_idx].origin_stop,
+        bc[bc_idx].destination_stop,
+        ab[ab_idx].origin_time,
+        bc[bc_idx].destination_time,
+        ab[ab_idx].origin_trip,
+        bc[bc_idx].destination_trip,
+    });
+
+    ab_idx += 1;
+  }
 
   return result;
 }
