@@ -27,7 +27,7 @@ struct Arbitrary<vats5::StopId> {
 template <>
 struct Arbitrary<vats5::TimeSinceServiceStart> {
   static Gen<vats5::TimeSinceServiceStart> arbitrary() {
-    return gen::map(gen::inRange(0, 3600),
+    return gen::map(gen::inRange(-1, 3600),
                     [](int v) { return vats5::TimeSinceServiceStart{v}; });
   }
 };
@@ -44,15 +44,16 @@ template <int Origin, int Destination>
 struct Arbitrary<StepFromTo<Origin, Destination>> {
   static Gen<StepFromTo<Origin, Destination>> arbitrary() {
     return gen::apply(
-        [](vats5::TimeSinceServiceStart origin_time, int duration_offset,
-           vats5::TripId trip_id) {
-          vats5::TimeSinceServiceStart dest_time{origin_time.seconds +
-                                                 duration_offset + 1};
+        [](vats5::TimeSinceServiceStart origin_time, int duration_offset) {
+          vats5::TimeSinceServiceStart dest_time{
+              origin_time == vats5::TimeSinceServiceStart::FLEX_STEP_MARKER
+                  ? duration_offset
+                  : origin_time.seconds + duration_offset};
           return StepFromTo<Origin, Destination>{
-              Origin, Destination, origin_time, dest_time, trip_id};
+              Origin,    Destination,      origin_time,
+              dest_time, vats5::TripId{0}, vats5::TripId{0}};
         },
-        gen::arbitrary<vats5::TimeSinceServiceStart>(), gen::inRange(0, 3600),
-        gen::arbitrary<vats5::TripId>());
+        gen::arbitrary<vats5::TimeSinceServiceStart>(), gen::inRange(1, 3600));
   }
 };
 
@@ -322,11 +323,30 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties,
   // Property 2: satisfies CheckSortedAndMinimal
   RC_ASSERT(CheckSortedAndMinimal(minimal_cover));
 
-  // Property 3: for any original step, there is a step in minimal cover with
-  // origin_time no earlier and destination_time no later
+  // Property 3: for any original step, there is a step in minimal cover that dominates it.
   for (const auto& orig_step : steps) {
     bool dominated_or_kept = false;
     for (const auto& cover_step : minimal_cover) {
+      if (cover_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
+        // Flex steps dominate flex steps by duration.
+        if (orig_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER &&
+            orig_step.destination_time.seconds >=
+                cover_step.destination_time.seconds) {
+          dominated_or_kept = true;
+          break;
+        }
+
+        // Flex steps dominate non-flex steps by duration.
+        if (orig_step.origin_time != TimeSinceServiceStart::FLEX_STEP_MARKER &&
+            orig_step.destination_time.seconds -
+                    orig_step.origin_time.seconds >=
+                cover_step.destination_time.seconds) {
+          dominated_or_kept = true;
+          break;
+        }
+        continue;
+      }
+
       if (cover_step.origin_time.seconds >= orig_step.origin_time.seconds &&
           cover_step.destination_time.seconds <=
               orig_step.destination_time.seconds) {
@@ -392,23 +412,26 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
         bool found_dominating_step = false;
         for (const auto& merged_step : merged_steps) {
           if (merged_step.origin_time.seconds >= step_12.origin_time.seconds &&
-              merged_step.destination_time.seconds <= step_23.destination_time.seconds) {
+              merged_step.destination_time.seconds <=
+                  step_23.destination_time.seconds) {
             found_dominating_step = true;
             break;
           }
         }
         if (!found_dominating_step) {
-            RC_LOG() << "No merged step dominates the pair " << step_12 << ", " << step_23;
+          RC_LOG() << "No merged step dominates the pair " << step_12 << ", "
+                   << step_23;
         }
         RC_ASSERT(found_dominating_step);
       }
     }
   }
 
-  // Property 3: every merged step has origin_ fields from a single steps_12 
+  // Property 3: every merged step has origin_ fields from a single steps_12
   // and destination_ fields from a single steps_23, with valid transfer time
   for (const auto& merged_step : merged_steps) {
-    // Find the corresponding steps_12 and steps_23 that this merged step is based on
+    // Find the corresponding steps_12 and steps_23 that this merged step is
+    // based on
     const Step* source_step_12 = nullptr;
     const Step* source_step_23 = nullptr;
 
@@ -434,7 +457,8 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
     RC_ASSERT(source_step_23 != nullptr);
 
     // Check that the destination_time of steps_12 <= origin_time of steps_23
-    RC_ASSERT(source_step_12->destination_time.seconds <= source_step_23->origin_time.seconds);
+    RC_ASSERT(source_step_12->destination_time.seconds <=
+              source_step_23->origin_time.seconds);
   }
 }
 

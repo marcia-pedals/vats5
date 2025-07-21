@@ -14,7 +14,9 @@ struct StopId {
     bool operator==(const StopId& other) const {
         return v == other.v;
     }
-    
+    bool operator!=(const StopId& other) const {
+        return v != other.v;
+    }
     bool operator<(const StopId& other) const {
         return v < other.v;
     }
@@ -34,6 +36,8 @@ struct TripId {
 inline const TripId TripId::NOOP = TripId{-1};
 
 struct TimeSinceServiceStart {
+    // Other than origin_time == FLEX_STEP_MARKER, this must be >= 0. A lot of algorithms assume
+    // this, so be careful if you add any other negative values.
     int seconds;
 
     // A special marker indicating that a Step can happen at any time.
@@ -42,6 +46,9 @@ struct TimeSinceServiceStart {
 
     bool operator==(const TimeSinceServiceStart& other) const {
         return seconds == other.seconds;
+    }
+    bool operator!=(const TimeSinceServiceStart& other) const {
+        return seconds != other.seconds;
     }
     bool operator<(const TimeSinceServiceStart& other) const {
         return seconds < other.seconds;
@@ -57,9 +64,6 @@ struct Step {
     StopId origin_stop;
     StopId destination_stop;
 
-    // origin_time = -1 is a special marker indicating that this trip can happen at any time. In
-    // this case, `destination_time` is the trip duration.
-    // TODO: Actually handle the special marker in all the step_merge and shortest_path logic.
     TimeSinceServiceStart origin_time;
     TimeSinceServiceStart destination_time;
 
