@@ -110,8 +110,9 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
   return true;
 }
 
-std::vector<Step> MergeSteps(const std::vector<Step>& ab,
-                             const std::vector<Step>& bc) {
+std::vector<Step> MergeSteps(
+    const std::vector<Step>& ab, const std::vector<Step>& bc
+) {
   std::vector<Step> result;
   if (ab.empty() || bc.empty()) {
     return result;
@@ -130,8 +131,9 @@ std::vector<Step> MergeSteps(const std::vector<Step>& ab,
         ab[0].origin_stop,
         bc[0].destination_stop,
         TimeSinceServiceStart::FLEX_STEP_MARKER,
-        TimeSinceServiceStart{ab[0].destination_time.seconds +
-                              bc[0].destination_time.seconds},
+        TimeSinceServiceStart{
+            ab[0].destination_time.seconds + bc[0].destination_time.seconds
+        },
         ab[0].origin_trip,
         bc[0].destination_trip,
     });
@@ -174,8 +176,10 @@ std::vector<Step> MergeSteps(const std::vector<Step>& ab,
               ab[ab_idx].origin_stop,
               bc[0].destination_stop,
               ab[ab_idx].origin_time,
-              TimeSinceServiceStart{ab[ab_idx].origin_time.seconds +
-                                    bc[0].destination_time.seconds},
+              TimeSinceServiceStart{
+                  ab[ab_idx].origin_time.seconds +
+                  bc[0].destination_time.seconds
+              },
               ab[ab_idx].origin_trip,
               bc[0].destination_trip,
           });

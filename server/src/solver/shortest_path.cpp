@@ -48,8 +48,11 @@ struct StepOriginTimeComparator {
 };
 
 std::unordered_map<StopId, Step> FindShortestPathsAtTime(
-    const StepsAdjacencyList& adjacency_list, TimeSinceServiceStart origin_time,
-    StopId origin_stop, std::unordered_set<StopId> destinations) {
+    const StepsAdjacencyList& adjacency_list,
+    TimeSinceServiceStart origin_time,
+    StopId origin_stop,
+    std::unordered_set<StopId> destinations
+) {
   std::unordered_map<StopId, Step> result;
   std::unordered_set<StopId> visited;
 
@@ -90,10 +93,13 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 
     for (const std::vector<Step>& step_group : adj_it->second) {
       auto lower_bound_it = std::lower_bound(
-          step_group.begin(), step_group.end(), current_time,
+          step_group.begin(),
+          step_group.end(),
+          current_time,
           [](const Step& step, TimeSinceServiceStart target_time) {
             return step.origin_time.seconds < target_time.seconds;
-          });
+          }
+      );
       if (lower_bound_it == step_group.end()) {
         continue;
       }
@@ -112,10 +118,14 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
         // If we have a current step that involves actually moving around,
         // combine the "starting" part of the current step with the "finishing"
         // part of the next step.
-        frontier.push(Step{current_step.origin_stop, next_step.destination_stop,
-                           current_step.origin_time, next_step.destination_time,
-                           current_step.origin_trip,
-                           next_step.destination_trip});
+        frontier.push(Step{
+            current_step.origin_stop,
+            next_step.destination_stop,
+            current_step.origin_time,
+            next_step.destination_time,
+            current_step.origin_trip,
+            next_step.destination_trip
+        });
       }
     }
   }
@@ -124,8 +134,10 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 }
 
 std::vector<std::vector<Step>> FindShortestPaths(
-    const StepsAdjacencyList& adjacency_list, StopId origin_stop,
-    std::vector<StopId> destinations) {
+    const StepsAdjacencyList& adjacency_list,
+    StopId origin_stop,
+    std::vector<StopId> destinations
+) {
   // TODO
   return {};
 }

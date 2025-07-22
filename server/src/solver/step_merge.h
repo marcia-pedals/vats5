@@ -37,7 +37,8 @@ void MakeMinimalCover(std::vector<Step>& steps);
 //
 // ab: All the steps from stop A to stop B, must satisfy CheckSortedAndMinimal.
 // bc: All the steps from stop B to stop C, must satisfy CheckSortedAndMinimal.
-std::vector<Step> MergeSteps(const std::vector<Step>& ab,
-                             const std::vector<Step>& bc);
+std::vector<Step> MergeSteps(
+    const std::vector<Step>& ab, const std::vector<Step>& bc
+);
 
 }  // namespace vats5

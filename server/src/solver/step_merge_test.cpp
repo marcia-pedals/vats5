@@ -19,24 +19,27 @@ namespace rc {
 template <>
 struct Arbitrary<vats5::StopId> {
   static Gen<vats5::StopId> arbitrary() {
-    return gen::map(gen::inRange(1, 100),
-                    [](int v) { return vats5::StopId{v}; });
+    return gen::map(gen::inRange(1, 100), [](int v) {
+      return vats5::StopId{v};
+    });
   }
 };
 
 template <>
 struct Arbitrary<vats5::TimeSinceServiceStart> {
   static Gen<vats5::TimeSinceServiceStart> arbitrary() {
-    return gen::map(gen::inRange(-1, 3600),
-                    [](int v) { return vats5::TimeSinceServiceStart{v}; });
+    return gen::map(gen::inRange(-1, 3600), [](int v) {
+      return vats5::TimeSinceServiceStart{v};
+    });
   }
 };
 
 template <>
 struct Arbitrary<vats5::TripId> {
   static Gen<vats5::TripId> arbitrary() {
-    return gen::map(gen::inRange(0, 50),
-                    [](int v) { return vats5::TripId{v}; });
+    return gen::map(gen::inRange(0, 50), [](int v) {
+      return vats5::TripId{v};
+    });
   }
 };
 
@@ -48,12 +51,20 @@ struct Arbitrary<StepFromTo<Origin, Destination>> {
           vats5::TimeSinceServiceStart dest_time{
               origin_time == vats5::TimeSinceServiceStart::FLEX_STEP_MARKER
                   ? duration_offset
-                  : origin_time.seconds + duration_offset};
+                  : origin_time.seconds + duration_offset
+          };
           return StepFromTo<Origin, Destination>{
-              Origin,    Destination,      origin_time,
-              dest_time, vats5::TripId{0}, vats5::TripId{0}};
+              Origin,
+              Destination,
+              origin_time,
+              dest_time,
+              vats5::TripId{0},
+              vats5::TripId{0}
+          };
         },
-        gen::arbitrary<vats5::TimeSinceServiceStart>(), gen::inRange(1, 3600));
+        gen::arbitrary<vats5::TimeSinceServiceStart>(),
+        gen::inRange(1, 3600)
+    );
   }
 };
 
@@ -67,56 +78,110 @@ TEST(StepMergeTest, CheckSortedAndMinimalEmptyVector) {
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalSingleStep) {
-  std::vector<Step> steps = {{StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-                              TimeSinceServiceStart{200}, TripId{1},
-                              TripId{1}}};
+  std::vector<Step> steps = {
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{1},
+       TripId{1}}
+  };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalSortedByOriginTime) {
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250}, TripId{2}, TripId{2}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{300}, TripId{3}, TripId{3}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{250},
+       TripId{2},
+       TripId{2}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{200},
+       TimeSinceServiceStart{300},
+       TripId{3},
+       TripId{3}}
+  };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByOriginTime) {
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{250}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{2}, TripId{2}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{200},
+       TimeSinceServiceStart{250},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300},
+       TripId{2},
+       TripId{2}}
+  };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByDestinationTime) {
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{200}, TripId{2}, TripId{2}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{200},
+       TripId{2},
+       TripId{2}}
+  };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalEqualOriginTimes) {
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{250}, TripId{2}, TripId{2}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{250},
+       TripId{2},
+       TripId{2}}
+  };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalEqualDestinationTimes) {
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{200}, TripId{2}, TripId{2}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{200},
+       TripId{2},
+       TripId{2}}
+  };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
@@ -184,34 +249,62 @@ TEST(StepMergeTest, MergeStepsTest) {
       result.mapping.gtfs_trip_id_to_trip_id.at(GtfsTripId{"CT:527"});
 
   std::vector<Step> expected_ac = {
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("06:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("06:36:00").seconds}, ct503,
-           ct503},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, ct507,
-           ct507},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("08:36:00").seconds}, ct511,
-           ct511},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("15:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("15:36:00").seconds}, ct515,
-           ct515},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("16:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("16:36:00").seconds}, ct519,
-           ct519},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("17:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("17:36:00").seconds}, ct523,
-           ct523},
-      Step{stop_a, stop_c,
-           TimeSinceServiceStart{ParseGtfsTime("18:22:00").seconds},
-           TimeSinceServiceStart{ParseGtfsTime("18:36:00").seconds}, ct527,
-           ct527},
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("06:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("06:36:00").seconds},
+          ct503,
+          ct503
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
+          ct507,
+          ct507
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("08:36:00").seconds},
+          ct511,
+          ct511
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("15:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("15:36:00").seconds},
+          ct515,
+          ct515
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("16:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("16:36:00").seconds},
+          ct519,
+          ct519
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("17:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("17:36:00").seconds},
+          ct523,
+          ct523
+      },
+      Step{
+          stop_a,
+          stop_c,
+          TimeSinceServiceStart{ParseGtfsTime("18:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("18:36:00").seconds},
+          ct527,
+          ct527
+      },
   };
 
   EXPECT_EQ(ac, expected_ac);
@@ -220,14 +313,31 @@ TEST(StepMergeTest, MergeStepsTest) {
 TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
   // Test case with same origin times but different destination times
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{2}, TripId{2}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{400}, TripId{3}, TripId{3}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250}, TripId{4}, TripId{4}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{2},
+       TripId{2}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{400},
+       TripId{3},
+       TripId{3}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{250},
+       TripId{4},
+       TripId{4}}
+  };
 
   SortByOriginAndDestinationTime(steps);
 
@@ -239,23 +349,35 @@ TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
   // Verify secondary sort by destination_time descending when origin times are
   // equal
   EXPECT_EQ(steps[0].origin_time.seconds, 100);
-  EXPECT_EQ(steps[0].destination_time.seconds,
-            400);  // highest destination time first
+  EXPECT_EQ(
+      steps[0].destination_time.seconds,
+      400
+  );  // highest destination time first
   EXPECT_EQ(steps[1].origin_time.seconds, 100);
   EXPECT_EQ(steps[1].destination_time.seconds, 300);
   EXPECT_EQ(steps[2].origin_time.seconds, 100);
-  EXPECT_EQ(steps[2].destination_time.seconds,
-            200);  // lowest destination time last
+  EXPECT_EQ(
+      steps[2].destination_time.seconds,
+      200
+  );  // lowest destination time last
   EXPECT_EQ(steps[3].origin_time.seconds, 150);
 }
 
 TEST(StepMergeTest, MakeMinimalCoverSimpleTest) {
   // Simple test case: step 2 dominates step 1 (departs later, arrives earlier)
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{1}, TripId{1}},  // dominated
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250}, TripId{2}, TripId{2}}  // dominates step 1
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300},
+       TripId{1},
+       TripId{1}},  // dominated
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{250},
+       TripId{2},
+       TripId{2}}  // dominates step 1
   };
 
   MakeMinimalCover(steps);
@@ -268,16 +390,37 @@ TEST(StepMergeTest, MakeMinimalCoverSimpleTest) {
 TEST(StepMergeTest, MakeMinimalCoverTest) {
   // Test case where only the last step (earliest arrival) should remain
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{1}, TripId{1}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{120},
-       TimeSinceServiceStart{350}, TripId{2}, TripId{2}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250}, TripId{3}, TripId{3}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{180},
-       TimeSinceServiceStart{280}, TripId{4}, TripId{4}},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{240}, TripId{5}, TripId{5}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300},
+       TripId{1},
+       TripId{1}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{120},
+       TimeSinceServiceStart{350},
+       TripId{2},
+       TripId{2}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{150},
+       TimeSinceServiceStart{250},
+       TripId{3},
+       TripId{3}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{180},
+       TimeSinceServiceStart{280},
+       TripId{4},
+       TripId{4}},
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{200},
+       TimeSinceServiceStart{240},
+       TripId{5},
+       TripId{5}}
+  };
 
   MakeMinimalCover(steps);
 
@@ -295,14 +438,22 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
 
   // Single step
   std::vector<Step> single_step = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{1}, TripId{1}}};
+      {StopId{1},
+       StopId{2},
+       TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200},
+       TripId{1},
+       TripId{1}}
+  };
   MakeMinimalCover(single_step);
   EXPECT_EQ(single_step.size(), 1);
 }
 
-RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties,
-              (std::vector<StepFromTo<1, 2>> phantom_steps)) {
+RC_GTEST_PROP(
+    StepMergeTest,
+    MakeMinimalCoverProperties,
+    (std::vector<StepFromTo<1, 2>> phantom_steps)
+) {
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
   // Sort as precondition
@@ -359,8 +510,11 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties,
   }
 }
 
-RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty,
-              (std::vector<StepFromTo<1, 2>> phantom_steps)) {
+RC_GTEST_PROP(
+    StepMergeTest,
+    SortByOriginAndDestinationTimeProperty,
+    (std::vector<StepFromTo<1, 2>> phantom_steps)
+) {
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
   // Sort using our function
@@ -374,15 +528,20 @@ RC_GTEST_PROP(StepMergeTest, SortByOriginAndDestinationTimeProperty,
   // Verify secondary sort by destination_time descending for equal origin times
   for (size_t i = 1; i < steps.size(); ++i) {
     if (steps[i - 1].origin_time.seconds == steps[i].origin_time.seconds) {
-      RC_ASSERT(steps[i - 1].destination_time.seconds >=
-                steps[i].destination_time.seconds);
+      RC_ASSERT(
+          steps[i - 1].destination_time.seconds >=
+          steps[i].destination_time.seconds
+      );
     }
   }
 }
 
-RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
-              (std::vector<StepFromTo<1, 2>> phantom_steps_12,
-               std::vector<StepFromTo<2, 3>> phantom_steps_23)) {
+RC_GTEST_PROP(
+    StepMergeTest,
+    MergeStepsProperty,
+    (std::vector<StepFromTo<1, 2>> phantom_steps_12,
+     std::vector<StepFromTo<2, 3>> phantom_steps_23)
+) {
   std::vector<Step> steps_12(phantom_steps_12.begin(), phantom_steps_12.end());
   std::vector<Step> steps_23(phantom_steps_23.begin(), phantom_steps_23.end());
 
@@ -415,16 +574,19 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
       // If both steps are flex, check that the first step of the result is a
       // flex combining them.
       if (step_12_flex && step_23_flex) {
-        RC_ASSERT(merged_steps[0] ==
-                  (Step{
-                      step_12.origin_stop,
-                      step_23.destination_stop,
-                      TimeSinceServiceStart::FLEX_STEP_MARKER,
-                      TimeSinceServiceStart{step_12.destination_time.seconds +
-                                            step_23.destination_time.seconds},
-                      step_12.origin_trip,
-                      step_23.destination_trip,
-                  }));
+        RC_ASSERT(
+            merged_steps[0] == (Step{
+                                   step_12.origin_stop,
+                                   step_23.destination_stop,
+                                   TimeSinceServiceStart::FLEX_STEP_MARKER,
+                                   TimeSinceServiceStart{
+                                       step_12.destination_time.seconds +
+                                       step_23.destination_time.seconds
+                                   },
+                                   step_12.origin_trip,
+                                   step_23.destination_trip,
+                               })
+        );
         continue;
       }
 
@@ -466,9 +628,11 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
   // and destination_ fields from a single steps_23, with valid transfer time
   for (const auto& merged_step : merged_steps) {
     if (merged_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
-      RC_ASSERT(merged_step.destination_time.seconds ==
-                steps_12[0].destination_time.seconds +
-                    steps_23[0].destination_time.seconds);
+      RC_ASSERT(
+          merged_step.destination_time.seconds ==
+          steps_12[0].destination_time.seconds +
+              steps_23[0].destination_time.seconds
+      );
     }
 
     // Find the corresponding steps_12 and steps_23 that this merged step is
@@ -497,17 +661,23 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
     if (source_step_12 == nullptr && source_step_23 == nullptr) {
       RC_FAIL("both source steps nullptr");
     } else if (source_step_12 == nullptr) {
-      RC_ASSERT(merged_step.origin_time.seconds +
-                    steps_12[0].destination_time.seconds ==
-                source_step_23->origin_time.seconds);
+      RC_ASSERT(
+          merged_step.origin_time.seconds +
+              steps_12[0].destination_time.seconds ==
+          source_step_23->origin_time.seconds
+      );
     } else if (source_step_23 == nullptr) {
-      RC_ASSERT(source_step_12->destination_time.seconds +
-                    steps_23[0].destination_time.seconds ==
-                merged_step.destination_time.seconds);
+      RC_ASSERT(
+          source_step_12->destination_time.seconds +
+              steps_23[0].destination_time.seconds ==
+          merged_step.destination_time.seconds
+      );
     } else {
       // Check that the destination_time of steps_12 <= origin_time of steps_23
-      RC_ASSERT(source_step_12->destination_time.seconds <=
-                source_step_23->origin_time.seconds);
+      RC_ASSERT(
+          source_step_12->destination_time.seconds <=
+          source_step_23->origin_time.seconds
+      );
     }
   }
 }

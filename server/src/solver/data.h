@@ -84,8 +84,9 @@ inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
   return os << "StopId{" << value.v << "}";
 }
 
-inline std::ostream& operator<<(std::ostream& os,
-                                const TimeSinceServiceStart& value) {
+inline std::ostream& operator<<(
+    std::ostream& os, const TimeSinceServiceStart& value
+) {
   return os << "Time{" << value.seconds << "}";
 }
 
@@ -161,8 +162,9 @@ struct DataGtfsMapping {
       throw std::runtime_error("Stop name '" + stop_name + "' not found");
     }
     if (it->second.size() > 1) {
-      throw std::runtime_error("Stop name '" + stop_name +
-                               "' is ambiguous (multiple stops)");
+      throw std::runtime_error(
+          "Stop name '" + stop_name + "' is ambiguous (multiple stops)"
+      );
     }
     return it->second[0];
   }

@@ -163,8 +163,9 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
 // Filter GTFS data to only include the specified trips
 // All other fields are filtered to only include data associated with those
 // trips
-GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day,
-                          const std::unordered_set<GtfsTripId>& trips_set);
+GtfsDay GtfsFilterByTrips(
+    const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set
+);
 
 // Parse GTFS time string (HH:MM:SS format) to GtfsTimeSinceServiceStart
 GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str);
@@ -202,8 +203,9 @@ inline void PrintTo(const GtfsTimeSinceServiceStart& time, std::ostream* os) {
       << std::setw(2) << minutes << ":" << std::setw(2) << seconds << "\")";
 }
 
-inline void PrintTo(const GtfsRouteDirectionId& route_dir_id,
-                    std::ostream* os) {
+inline void PrintTo(
+    const GtfsRouteDirectionId& route_dir_id, std::ostream* os
+) {
   *os << "GtfsRouteDirectionId{";
   PrintTo(route_dir_id.route_id, os);
   *os << ", " << route_dir_id.direction_id << "}";

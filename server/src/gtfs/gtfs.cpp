@@ -24,8 +24,9 @@ GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str) {
       time_str[1] > '9' || time_str[3] < '0' || time_str[3] > '9' ||
       time_str[4] < '0' || time_str[4] > '9' || time_str[6] < '0' ||
       time_str[6] > '9' || time_str[7] < '0' || time_str[7] > '9') {
-    throw std::runtime_error("Invalid time format - non-digit characters: " +
-                             std::string(time_str));
+    throw std::runtime_error(
+        "Invalid time format - non-digit characters: " + std::string(time_str)
+    );
   }
 
   // Parse directly from characters to avoid substr and stoi overhead
@@ -61,7 +62,8 @@ static std::vector<GtfsStop> GtfsLoadStops(const std::string& stops_file_path) {
     }
   } catch (const std::exception& e) {
     throw std::runtime_error(
-        "Could not open or parse file: " + stops_file_path + " - " + e.what());
+        "Could not open or parse file: " + stops_file_path + " - " + e.what()
+    );
   }
 
   return stops;
@@ -79,22 +81,25 @@ static std::vector<GtfsTrip> GtfsLoadTrips(const std::string& trips_file_path) {
 
     for (csv::CSVRow& row : reader) {
       GtfsTrip& trip = trips.emplace_back();
-      trip.route_direction_id =
-          GtfsRouteDirectionId{GtfsRouteId{row["route_id"].get<std::string>()},
-                               row["direction_id"].get<int>()};
+      trip.route_direction_id = GtfsRouteDirectionId{
+          GtfsRouteId{row["route_id"].get<std::string>()},
+          row["direction_id"].get<int>()
+      };
       trip.trip_id = GtfsTripId{row["trip_id"].get<std::string>()};
       trip.service_id = GtfsServiceId{row["service_id"].get<std::string>()};
     }
   } catch (const std::exception& e) {
     throw std::runtime_error(
-        "Could not open or parse file: " + trips_file_path + " - " + e.what());
+        "Could not open or parse file: " + trips_file_path + " - " + e.what()
+    );
   }
 
   return trips;
 }
 
 static std::vector<GtfsCalendar> GtfsLoadCalendar(
-    const std::string& calendar_file_path) {
+    const std::string& calendar_file_path
+) {
   std::vector<GtfsCalendar> calendars;
 
   try {
@@ -118,15 +123,17 @@ static std::vector<GtfsCalendar> GtfsLoadCalendar(
       calendar.end_date = row["end_date"].get<std::string>();
     }
   } catch (const std::exception& e) {
-    throw std::runtime_error("Could not open or parse file: " +
-                             calendar_file_path + " - " + e.what());
+    throw std::runtime_error(
+        "Could not open or parse file: " + calendar_file_path + " - " + e.what()
+    );
   }
 
   return calendars;
 }
 
 static std::vector<GtfsStopTime> GtfsLoadStopTimes(
-    const std::string& stop_times_file_path) {
+    const std::string& stop_times_file_path
+) {
   std::vector<GtfsStopTime> stop_times;
 
   try {
@@ -155,15 +162,17 @@ static std::vector<GtfsStopTime> GtfsLoadStopTimes(
       stop_time.departure_time = ParseGtfsTime(departure_time_str);
     }
   } catch (const std::exception& e) {
-    throw std::runtime_error("Could not open or parse file: " +
-                             stop_times_file_path + " - " + e.what());
+    throw std::runtime_error(
+        "Could not open or parse file: " + stop_times_file_path + " - " +
+        e.what()
+    );
   }
 
   return stop_times;
 }
 
-static std::vector<GtfsRoute> GtfsLoadRoutes(
-    const std::string& routes_file_path) {
+static std::vector<GtfsRoute> GtfsLoadRoutes(const std::string& routes_file_path
+) {
   std::vector<GtfsRoute> routes;
 
   try {
@@ -181,14 +190,16 @@ static std::vector<GtfsRoute> GtfsLoadRoutes(
     }
   } catch (const std::exception& e) {
     throw std::runtime_error(
-        "Could not open or parse file: " + routes_file_path + " - " + e.what());
+        "Could not open or parse file: " + routes_file_path + " - " + e.what()
+    );
   }
 
   return routes;
 }
 
 static std::vector<GtfsDirection> GtfsLoadDirections(
-    const std::string& directions_file_path) {
+    const std::string& directions_file_path
+) {
   std::vector<GtfsDirection> directions;
 
   try {
@@ -200,14 +211,17 @@ static std::vector<GtfsDirection> GtfsLoadDirections(
 
     for (csv::CSVRow& row : reader) {
       GtfsDirection& direction = directions.emplace_back();
-      direction.route_direction_id =
-          GtfsRouteDirectionId{GtfsRouteId{row["route_id"].get<std::string>()},
-                               row["direction_id"].get<int>()};
+      direction.route_direction_id = GtfsRouteDirectionId{
+          GtfsRouteId{row["route_id"].get<std::string>()},
+          row["direction_id"].get<int>()
+      };
       direction.direction = row["direction"].get<std::string>();
     }
   } catch (const std::exception& e) {
-    throw std::runtime_error("Could not open or parse file: " +
-                             directions_file_path + " - " + e.what());
+    throw std::runtime_error(
+        "Could not open or parse file: " + directions_file_path + " - " +
+        e.what()
+    );
   }
 
   return directions;
@@ -233,7 +247,8 @@ GtfsDay GtfsLoadDay(const std::string& gtfs_directory_path) {
     throw std::runtime_error(
         "GtfsLoadDay expects pre-filtered data with no calendar entries, but "
         "found " +
-        std::to_string(gtfs.calendar.size()) + " calendar entries");
+        std::to_string(gtfs.calendar.size()) + " calendar entries"
+    );
   }
 
   GtfsDay gtfs_day;
@@ -249,8 +264,9 @@ GtfsDay GtfsLoadDay(const std::string& gtfs_directory_path) {
 static int GetDayOfWeek(const std::string& date) {
   // Parse YYYYMMDD format
   if (date.length() != 8) {
-    throw std::runtime_error("Invalid date format: " + date +
-                             " (expected YYYYMMDD)");
+    throw std::runtime_error(
+        "Invalid date format: " + date + " (expected YYYYMMDD)"
+    );
   }
 
   int year = std::stoi(date.substr(0, 4));
@@ -271,8 +287,9 @@ static int GetDayOfWeek(const std::string& date) {
   return result->tm_wday;
 }
 
-static bool IsServiceActiveOnDay(const GtfsCalendar& calendar,
-                                 const std::string& date, int day_of_week) {
+static bool IsServiceActiveOnDay(
+    const GtfsCalendar& calendar, const std::string& date, int day_of_week
+) {
   // Check if date is within the service period
   if (date < calendar.start_date || date > calendar.end_date) {
     return false;
@@ -323,7 +340,8 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date) {
       // Track route+direction combinations used
       used_route_direction_ids.insert(
           trip.route_direction_id.route_id.v + ":" +
-          std::to_string(trip.route_direction_id.direction_id));
+          std::to_string(trip.route_direction_id.direction_id)
+      );
     }
   }
 
@@ -363,8 +381,9 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date) {
   return result;
 }
 
-GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day,
-                          const std::unordered_set<GtfsTripId>& trips_set) {
+GtfsDay GtfsFilterByTrips(
+    const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set
+) {
   GtfsDay result;
 
   // Step 1: Filter trips to only include specified trips
@@ -375,7 +394,8 @@ GtfsDay GtfsFilterByTrips(const GtfsDay& gtfs_day,
       // Track route+direction combinations used
       used_route_direction_ids.insert(
           trip.route_direction_id.route_id.v + ":" +
-          std::to_string(trip.route_direction_id.direction_id));
+          std::to_string(trip.route_direction_id.direction_id)
+      );
     }
   }
 
@@ -532,8 +552,8 @@ GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day) {
   }
 
   // Step 2: Create a function to find the ultimate parent of a stop
-  auto find_ultimate_parent =
-      [&stop_lookup](const std::string& stop_id) -> std::string {
+  auto find_ultimate_parent = [&stop_lookup](const std::string& stop_id
+                              ) -> std::string {
     std::string current_id = stop_id;
     std::unordered_set<std::string> visited;  // Prevent infinite loops
 
