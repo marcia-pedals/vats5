@@ -323,7 +323,8 @@ RC_GTEST_PROP(StepMergeTest, MakeMinimalCoverProperties,
   // Property 2: satisfies CheckSortedAndMinimal
   RC_ASSERT(CheckSortedAndMinimal(minimal_cover));
 
-  // Property 3: for any original step, there is a step in minimal cover that dominates it.
+  // Property 3: for any original step, there is a step in minimal cover that
+  // dominates it.
   for (const auto& orig_step : steps) {
     bool dominated_or_kept = false;
     for (const auto& cover_step : minimal_cover) {
@@ -406,30 +407,70 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
   // there is a merged step that dominates or equals the connection
   for (const auto& step_12 : steps_12) {
     for (const auto& step_23 : steps_23) {
-      // Check if this is a valid connection (can transfer)
-      if (step_12.destination_time.seconds <= step_23.origin_time.seconds) {
-        // There should be a merged step that dominates this connection
-        bool found_dominating_step = false;
-        for (const auto& merged_step : merged_steps) {
-          if (merged_step.origin_time.seconds >= step_12.origin_time.seconds &&
-              merged_step.destination_time.seconds <=
-                  step_23.destination_time.seconds) {
-            found_dominating_step = true;
-            break;
-          }
-        }
-        if (!found_dominating_step) {
-          RC_LOG() << "No merged step dominates the pair " << step_12 << ", "
-                   << step_23;
-        }
-        RC_ASSERT(found_dominating_step);
+      bool step_12_flex =
+          step_12.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+      bool step_23_flex =
+          step_23.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+
+      // If both steps are flex, check that the first step of the result is a
+      // flex combining them.
+      if (step_12_flex && step_23_flex) {
+        RC_ASSERT(merged_steps[0] ==
+                  (Step{
+                      step_12.origin_stop,
+                      step_23.destination_stop,
+                      TimeSinceServiceStart::FLEX_STEP_MARKER,
+                      TimeSinceServiceStart{step_12.destination_time.seconds +
+                                            step_23.destination_time.seconds},
+                      step_12.origin_trip,
+                      step_23.destination_trip,
+                  }));
+        continue;
       }
+
+      // If this is an invalid connection, don't need to check that it is
+      // dominated.
+      if (!step_12_flex && !step_23_flex &&
+          step_12.destination_time.seconds > step_23.origin_time.seconds) {
+        continue;
+      }
+
+      // Compute the origin and destination times for the pair.
+      int origin_time_seconds =
+          step_12_flex
+              ? step_23.origin_time.seconds - step_12.destination_time.seconds
+              : step_12.origin_time.seconds;
+      int destination_time_seconds = step_23_flex
+                                         ? step_12.destination_time.seconds +
+                                               step_23.destination_time.seconds
+                                         : step_23.destination_time.seconds;
+
+      // There should be a merged step that dominates this connection
+      bool found_dominating_step = false;
+      for (const auto& merged_step : merged_steps) {
+        if (merged_step.origin_time.seconds >= origin_time_seconds &&
+            merged_step.destination_time.seconds <= destination_time_seconds) {
+          found_dominating_step = true;
+          break;
+        }
+      }
+      if (!found_dominating_step) {
+        RC_LOG() << "No merged step dominates the pair " << step_12 << ", "
+                 << step_23;
+      }
+      RC_ASSERT(found_dominating_step);
     }
   }
 
   // Property 3: every merged step has origin_ fields from a single steps_12
   // and destination_ fields from a single steps_23, with valid transfer time
   for (const auto& merged_step : merged_steps) {
+    if (merged_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
+      RC_ASSERT(merged_step.destination_time.seconds ==
+                steps_12[0].destination_time.seconds +
+                    steps_23[0].destination_time.seconds);
+    }
+
     // Find the corresponding steps_12 and steps_23 that this merged step is
     // based on
     const Step* source_step_12 = nullptr;
@@ -453,12 +494,21 @@ RC_GTEST_PROP(StepMergeTest, MergeStepsProperty,
       }
     }
 
-    RC_ASSERT(source_step_12 != nullptr);
-    RC_ASSERT(source_step_23 != nullptr);
-
-    // Check that the destination_time of steps_12 <= origin_time of steps_23
-    RC_ASSERT(source_step_12->destination_time.seconds <=
-              source_step_23->origin_time.seconds);
+    if (source_step_12 == nullptr && source_step_23 == nullptr) {
+      RC_FAIL("both source steps nullptr");
+    } else if (source_step_12 == nullptr) {
+      RC_ASSERT(merged_step.origin_time.seconds +
+                    steps_12[0].destination_time.seconds ==
+                source_step_23->origin_time.seconds);
+    } else if (source_step_23 == nullptr) {
+      RC_ASSERT(source_step_12->destination_time.seconds +
+                    steps_23[0].destination_time.seconds ==
+                merged_step.destination_time.seconds);
+    } else {
+      // Check that the destination_time of steps_12 <= origin_time of steps_23
+      RC_ASSERT(source_step_12->destination_time.seconds <=
+                source_step_23->origin_time.seconds);
+    }
   }
 }
 

@@ -3,6 +3,7 @@
 #include <vector>
 #include <unordered_map>
 #include <ostream>
+#include <limits>
 
 #include "gtfs/gtfs.h"
 
@@ -36,8 +37,6 @@ struct TripId {
 inline const TripId TripId::NOOP = TripId{-1};
 
 struct TimeSinceServiceStart {
-    // Other than origin_time == FLEX_STEP_MARKER, this must be >= 0. A lot of algorithms assume
-    // this, so be careful if you add any other negative values.
     int seconds;
 
     // A special marker indicating that a Step can happen at any time.
@@ -58,7 +57,7 @@ struct TimeSinceServiceStart {
     }
 };
 
-inline const TimeSinceServiceStart TimeSinceServiceStart::FLEX_STEP_MARKER = TimeSinceServiceStart{-1};
+inline const TimeSinceServiceStart TimeSinceServiceStart::FLEX_STEP_MARKER = TimeSinceServiceStart{std::numeric_limits<int>::min()};
 
 struct Step {
     StopId origin_stop;
