@@ -70,18 +70,25 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
 target_link_libraries(gtfs_filter_tool PUBLIC gtfs)
 
+# Enable CMake testing
+enable_testing()
+
 # Add test executable
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
 target_link_libraries(gtfs_test PUBLIC gunit gtfs)
+add_test(NAME gtfs_test COMMAND gtfs_test)
 
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)
 target_link_libraries(data_test PUBLIC gunit data)
+add_test(NAME data_test COMMAND data_test)
 
 # Add step_merge test executable
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
 target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck rapidcheck_gtest)
+add_test(NAME step_merge_test COMMAND step_merge_test)
 
 # Add shortest_path test executable
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
 target_link_libraries(shortest_path_test PUBLIC gunit shortest_path)
+add_test(NAME shortest_path_test COMMAND shortest_path_test)
