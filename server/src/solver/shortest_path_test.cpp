@@ -35,160 +35,133 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
   EXPECT_EQ(adjacency_list.adjacent[StopId{1}][0].size(), 2);
 }
 
+namespace {
+
+struct ProcessedGtfsData {
+  StepsFromGtfs steps_from_gtfs;
+  StepsAdjacencyList adjacency_list;
+};
+
+ProcessedGtfsData LoadAndProcessGtfsData() {
+  std::cout << "Loading GTFS data from ../data/RG_20250718_BA..." << std::endl;
+  GtfsDay gtfs_day = GtfsLoadDay("../data/RG_20250718_BA");
+  std::cout << "Loaded " << gtfs_day.stop_times.size() << " stop times" << std::endl;
+  
+  std::cout << "Normalizing stops..." << std::endl;
+  gtfs_day = GtfsNormalizeStops(gtfs_day);
+  std::cout << "After normalization: " << gtfs_day.stop_times.size() << " stop times" << std::endl;
+  
+  std::cout << "Converting GTFS data to steps..." << std::endl;
+  StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
+  std::cout << "Generated " << steps_from_gtfs.steps.size() << " steps" << std::endl;
+  
+  std::cout << "Creating adjacency list..." << std::endl;
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  std::cout << "Adjacency list has " << adjacency_list.adjacent.size() << " origin stops" << std::endl;
+  
+  return {std::move(steps_from_gtfs), std::move(adjacency_list)};
+}
+
+StopId FindStopId(const StepsFromGtfs& steps_from_gtfs, const GtfsStopId& gtfs_id, const std::string& stop_name) {
+  auto it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_id);
+  if (it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+    std::cout << "Found " << stop_name << " stop: GTFS ID " << gtfs_id.v << " -> Internal ID " << it->second.v << std::endl;
+    return it->second;
+  } else {
+    std::cout << stop_name << " stop " << gtfs_id.v << " not found in mapping" << std::endl;
+    EXPECT_TRUE(false) << stop_name << " stop not found";
+    return StopId{0};
+  }
+}
+
+struct TestStops {
+  StopId berryessa;
+  StopId powell;
+  StopId dublin;
+  StopId bayfair;
+  StopId antioch;
+  StopId millbrae;
+};
+
+TestStops FindTestStops(const StepsFromGtfs& steps_from_gtfs) {
+  TestStops stops;
+  stops.berryessa = FindStopId(steps_from_gtfs, GtfsStopId{"909509"}, "Berryessa");
+  stops.powell = FindStopId(steps_from_gtfs, GtfsStopId{"mtc:powell"}, "Powell");
+  stops.dublin = FindStopId(steps_from_gtfs, GtfsStopId{"mtc:dublin-pleasanton-bart"}, "Dublin/Pleasanton");
+  stops.bayfair = FindStopId(steps_from_gtfs, GtfsStopId{"902509"}, "Bay Fair");
+  stops.antioch = FindStopId(steps_from_gtfs, GtfsStopId{"908309"}, "Antioch");
+  stops.millbrae = FindStopId(steps_from_gtfs, GtfsStopId{"mtc:millbrae-bart"}, "Millbrae");
+  return stops;
+}
+
+void VerifyPathResult(const std::unordered_map<StopId, Step>& shortest_paths, 
+                     const StepsFromGtfs& steps_from_gtfs,
+                     StopId destination_stop, 
+                     const std::string& destination_name,
+                     int expected_origin_time,
+                     int expected_destination_time) {
+  auto path_it = shortest_paths.find(destination_stop);
+  ASSERT_NE(path_it, shortest_paths.end()) << destination_name << " path not found";
+  
+  const Step& step = path_it->second;
+  auto gtfs_destination_id = steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.at(destination_stop);
+  
+  std::cout << "\nPath to " << gtfs_destination_id.v << " (internal ID " << destination_stop.v << "):" << std::endl;
+  std::cout << "  " << step << std::endl;
+  std::cout << "  Travel time: " << (step.destination_time.seconds - step.origin_time.seconds) << " seconds" << std::endl;
+  
+  EXPECT_EQ(step.origin_time.seconds, expected_origin_time) << destination_name << " departure time";
+  EXPECT_EQ(step.destination_time.seconds, expected_destination_time) << destination_name << " arrival time";
+}
+
+void VerifyAllPaths(const std::unordered_map<StopId, Step>& shortest_paths,
+                   const StepsFromGtfs& steps_from_gtfs,
+                   const TestStops& stops) {
+  std::cout << "\nResults:" << std::endl;
+  std::cout << "Found " << shortest_paths.size() << " paths" << std::endl;
+  
+  EXPECT_EQ(shortest_paths.size(), 5);
+  
+  VerifyPathResult(shortest_paths, steps_from_gtfs, stops.powell, "Powell", 
+                   TimeSinceServiceStart::Parse("08:05:00").seconds, 
+                   TimeSinceServiceStart::Parse("09:11:00").seconds);
+  VerifyPathResult(shortest_paths, steps_from_gtfs, stops.dublin, "Dublin", 
+                   TimeSinceServiceStart::Parse("08:05:00").seconds, 
+                   TimeSinceServiceStart::Parse("09:08:00").seconds);
+  VerifyPathResult(shortest_paths, steps_from_gtfs, stops.bayfair, "Bay Fair", 
+                   TimeSinceServiceStart::Parse("08:05:00").seconds, 
+                   TimeSinceServiceStart::Parse("08:40:00").seconds);
+  VerifyPathResult(shortest_paths, steps_from_gtfs, stops.antioch, "Antioch", 
+                   TimeSinceServiceStart::Parse("08:05:00").seconds, 
+                   TimeSinceServiceStart::Parse("10:14:00").seconds);
+  VerifyPathResult(shortest_paths, steps_from_gtfs, stops.millbrae, "Millbrae", 
+                   TimeSinceServiceStart::Parse("08:05:00").seconds, 
+                   TimeSinceServiceStart::Parse("10:07:00").seconds);
+}
+
+}  // namespace
+
 TEST(ShortestPathTest, FindShortestPathsAtTimeWithRealData) {
   try {
-    // Load GTFS data
-    std::cout << "Loading GTFS data from ../data/RG_20250718_BA..." << std::endl;
-    GtfsDay gtfs_day = GtfsLoadDay("../data/RG_20250718_BA");
-    std::cout << "Loaded " << gtfs_day.stop_times.size() << " stop times" << std::endl;
+    auto processed_data = LoadAndProcessGtfsData();
+    TestStops stops = FindTestStops(processed_data.steps_from_gtfs);
     
-    // Normalize stops to handle parent-child relationships
-    std::cout << "Normalizing stops..." << std::endl;
-    gtfs_day = GtfsNormalizeStops(gtfs_day);
-    std::cout << "After normalization: " << gtfs_day.stop_times.size() << " stop times" << std::endl;
+    TimeSinceServiceStart query_time = TimeSinceServiceStart::Parse("08:00:00");
+    std::unordered_set<StopId> destinations = {
+        stops.powell, stops.dublin, stops.bayfair, stops.antioch, stops.millbrae
+    };
     
-    // Convert to steps
-    std::cout << "Converting GTFS data to steps..." << std::endl;
-    StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
-    std::cout << "Generated " << steps_from_gtfs.steps.size() << " steps" << std::endl;
-    
-    // Create adjacency list
-    std::cout << "Creating adjacency list..." << std::endl;
-    StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
-    std::cout << "Adjacency list has " << adjacency_list.adjacent.size() << " origin stops" << std::endl;
-    
-    
-    // Find stop IDs for the query
-    StopId berryessa_stop_id;
-    StopId powell_stop_id;
-    StopId dublin_stop_id;
-    StopId bayfair_stop_id;
-    StopId antioch_stop_id;
-    StopId millbrae_stop_id;
-    
-    // Look for Berryessa stop (909509)
-    auto berryessa_gtfs_id = GtfsStopId{"909509"};
-    auto berryessa_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(berryessa_gtfs_id);
-    if (berryessa_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      berryessa_stop_id = berryessa_it->second;
-      std::cout << "Found Berryessa stop: GTFS ID 909509 -> Internal ID " << berryessa_stop_id.v << std::endl;
-    } else {
-      std::cout << "Berryessa stop 909509 not found in mapping" << std::endl;
-      FAIL() << "Berryessa stop not found";
-    }
-    
-    // Look for Powell stop
-    auto powell_gtfs_id = GtfsStopId{"mtc:powell"};
-    auto powell_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(powell_gtfs_id);
-    if (powell_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      powell_stop_id = powell_it->second;
-      std::cout << "Found Powell stop: GTFS ID mtc:powell -> Internal ID " << powell_stop_id.v << std::endl;
-    } else {
-      std::cout << "Powell stop mtc:powell not found in mapping" << std::endl;
-      FAIL() << "Powell stop not found";
-    }
-    
-    // Look for Dublin/Pleasanton stop
-    auto dublin_gtfs_id = GtfsStopId{"mtc:dublin-pleasanton-bart"};
-    auto dublin_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(dublin_gtfs_id);
-    if (dublin_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      dublin_stop_id = dublin_it->second;
-      std::cout << "Found Dublin/Pleasanton stop: GTFS ID mtc:dublin-pleasanton-bart -> Internal ID " << dublin_stop_id.v << std::endl;
-    } else {
-      std::cout << "Dublin/Pleasanton stop mtc:dublin-pleasanton-bart not found in mapping" << std::endl;
-      FAIL() << "Dublin/Pleasanton stop not found";
-    }
-    
-    // Look for Bay Fair stop (902509)
-    auto bayfair_gtfs_id = GtfsStopId{"902509"};
-    auto bayfair_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(bayfair_gtfs_id);
-    if (bayfair_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      bayfair_stop_id = bayfair_it->second;
-      std::cout << "Found Bay Fair stop: GTFS ID 902509 -> Internal ID " << bayfair_stop_id.v << std::endl;
-    } else {
-      std::cout << "Bay Fair stop 902509 not found in mapping" << std::endl;
-      FAIL() << "Bay Fair stop not found";
-    }
-    
-    // Look for Antioch stop (908309)
-    auto antioch_gtfs_id = GtfsStopId{"908309"};
-    auto antioch_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(antioch_gtfs_id);
-    if (antioch_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      antioch_stop_id = antioch_it->second;
-      std::cout << "Found Antioch stop: GTFS ID 908309 -> Internal ID " << antioch_stop_id.v << std::endl;
-    } else {
-      std::cout << "Antioch stop 908309 not found in mapping" << std::endl;
-      FAIL() << "Antioch stop not found";
-    }
-    
-    // Look for Millbrae stop
-    auto millbrae_gtfs_id = GtfsStopId{"mtc:millbrae-bart"};
-    auto millbrae_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(millbrae_gtfs_id);
-    if (millbrae_it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      millbrae_stop_id = millbrae_it->second;
-      std::cout << "Found Millbrae stop: GTFS ID mtc:millbrae-bart -> Internal ID " << millbrae_stop_id.v << std::endl;
-    } else {
-      std::cout << "Millbrae stop mtc:millbrae-bart not found in mapping" << std::endl;
-      FAIL() << "Millbrae stop not found";
-    }
-    
-    // Query shortest paths at 8:00 AM (8 * 3600 = 28800 seconds)
-    TimeSinceServiceStart query_time{28800};
-    std::unordered_set<StopId> destinations = {powell_stop_id, dublin_stop_id, bayfair_stop_id, antioch_stop_id, millbrae_stop_id};
-    
-    std::cout << "\nQuerying shortest paths from Berryessa (stop " << berryessa_stop_id.v 
-              << ") at 8:00 AM (28800 seconds)..." << std::endl;
+    std::cout << "\nQuerying shortest paths from Berryessa (stop " << stops.berryessa.v 
+              << ") at 8:00 AM..." << std::endl;
     
     auto shortest_paths = FindShortestPathsAtTime(
-        adjacency_list, 
+        processed_data.adjacency_list, 
         query_time, 
-        berryessa_stop_id, 
+        stops.berryessa, 
         destinations
     );
     
-    std::cout << "\nResults:" << std::endl;
-    std::cout << "Found " << shortest_paths.size() << " paths" << std::endl;
-    
-    // Verify we found all 5 destinations
-    EXPECT_EQ(shortest_paths.size(), 5);
-    
-    for (const auto& [destination_stop, step] : shortest_paths) {
-      auto gtfs_destination_id = steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id[destination_stop];
-      std::cout << "\nPath to " << gtfs_destination_id.v << " (internal ID " << destination_stop.v << "):" << std::endl;
-      std::cout << "  " << step << std::endl;
-      std::cout << "  Travel time: " << (step.destination_time.seconds - step.origin_time.seconds) << " seconds" << std::endl;
-    }
-    
-    // Verify specific path expectations
-    auto powell_path = shortest_paths.find(powell_stop_id);
-    ASSERT_NE(powell_path, shortest_paths.end()) << "Powell path not found";
-    EXPECT_EQ(powell_path->second.origin_time.seconds, 29100) << "Powell departure time";
-    EXPECT_EQ(powell_path->second.destination_time.seconds, 33060) << "Powell arrival time";
-    EXPECT_EQ(powell_path->second.destination_time.seconds - powell_path->second.origin_time.seconds, 3960) << "Powell travel time";
-    
-    auto dublin_path = shortest_paths.find(dublin_stop_id);
-    ASSERT_NE(dublin_path, shortest_paths.end()) << "Dublin/Pleasanton path not found";
-    EXPECT_EQ(dublin_path->second.origin_time.seconds, 29100) << "Dublin departure time";
-    EXPECT_EQ(dublin_path->second.destination_time.seconds, 32880) << "Dublin arrival time";
-    EXPECT_EQ(dublin_path->second.destination_time.seconds - dublin_path->second.origin_time.seconds, 3780) << "Dublin travel time";
-    
-    auto bayfair_path = shortest_paths.find(bayfair_stop_id);
-    ASSERT_NE(bayfair_path, shortest_paths.end()) << "Bay Fair path not found";
-    EXPECT_EQ(bayfair_path->second.origin_time.seconds, 29100) << "Bay Fair departure time";
-    EXPECT_EQ(bayfair_path->second.destination_time.seconds, 31200) << "Bay Fair arrival time";
-    EXPECT_EQ(bayfair_path->second.destination_time.seconds - bayfair_path->second.origin_time.seconds, 2100) << "Bay Fair travel time";
-    
-    auto antioch_path = shortest_paths.find(antioch_stop_id);
-    ASSERT_NE(antioch_path, shortest_paths.end()) << "Antioch path not found";
-    EXPECT_EQ(antioch_path->second.origin_time.seconds, 29100) << "Antioch departure time";
-    EXPECT_EQ(antioch_path->second.destination_time.seconds, 36840) << "Antioch arrival time";
-    EXPECT_EQ(antioch_path->second.destination_time.seconds - antioch_path->second.origin_time.seconds, 7740) << "Antioch travel time";
-    
-    auto millbrae_path = shortest_paths.find(millbrae_stop_id);
-    ASSERT_NE(millbrae_path, shortest_paths.end()) << "Millbrae path not found";
-    EXPECT_EQ(millbrae_path->second.origin_time.seconds, 29100) << "Millbrae departure time";
-    EXPECT_EQ(millbrae_path->second.destination_time.seconds, 36420) << "Millbrae arrival time";
-    EXPECT_EQ(millbrae_path->second.destination_time.seconds - millbrae_path->second.origin_time.seconds, 7320) << "Millbrae travel time";
+    VerifyAllPaths(shortest_paths, processed_data.steps_from_gtfs, stops);
     
   } catch (const std::exception& e) {
     FAIL() << "Exception: " << e.what();

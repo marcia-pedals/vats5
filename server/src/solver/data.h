@@ -43,6 +43,11 @@ struct TimeSinceServiceStart {
     // When a Step's origin time is this, the destination time is the duration of the step.
     static const TimeSinceServiceStart FLEX_STEP_MARKER;
 
+    static TimeSinceServiceStart Parse(const std::string& time_str) {
+        GtfsTimeSinceServiceStart gtfs_time = ParseGtfsTime(time_str);
+        return TimeSinceServiceStart{gtfs_time.seconds};
+    }
+
     bool operator==(const TimeSinceServiceStart& other) const {
         return seconds == other.seconds;
     }
