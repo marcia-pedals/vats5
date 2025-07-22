@@ -47,7 +47,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
   for (const auto& gtfs_trip_id : unique_trips) {
     TripId trip_id{next_trip_id++};
     result.mapping.gtfs_trip_id_to_trip_id[gtfs_trip_id] = trip_id;
-    result.mapping.trip_id_to_gtfs_trip_id[trip_id] = gtfs_trip_id;
+    result.mapping.trip_id_to_trip_info[trip_id] = gtfs_trip_id;
   }
 
   // Build route description mapping for trips

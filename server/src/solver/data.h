@@ -4,6 +4,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "gtfs/gtfs.h"
@@ -154,6 +155,12 @@ struct hash<vats5::Step> {
 
 namespace vats5 {
 
+struct FlexTrip {
+  StopId origin;
+  StopId destination;
+  int duration_seconds;
+};
+
 // Bidirectional mappings between GtfsStopId<->StopId, etc.
 struct DataGtfsMapping {
   // StopId mappings
@@ -163,7 +170,8 @@ struct DataGtfsMapping {
 
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
-  std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
+  std::unordered_map<TripId, std::variant<GtfsTripId, FlexTrip>>
+      trip_id_to_trip_info;
   std::unordered_map<TripId, std::string> trip_id_to_route_desc;
 
   StopId GetStopIdFromName(const std::string& stop_name) const {

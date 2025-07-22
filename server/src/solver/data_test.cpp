@@ -30,7 +30,7 @@ TEST(DataTest, GetStepsFromGtfs) {
   );  // 11 unique stops
   EXPECT_EQ(result.mapping.stop_id_to_gtfs_stop_id.size(), 11);
   EXPECT_EQ(result.mapping.gtfs_trip_id_to_trip_id.size(), 1);  // 1 unique trip
-  EXPECT_EQ(result.mapping.trip_id_to_gtfs_trip_id.size(), 1);
+  EXPECT_EQ(result.mapping.trip_id_to_trip_info.size(), 1);
 
   // Get the mapped IDs for constructing expected steps
   const GtfsStopId san_jose_diridon_northbound{"70261"};
