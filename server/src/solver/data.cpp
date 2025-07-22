@@ -1,6 +1,7 @@
 #include "solver/data.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace vats5 {
@@ -128,6 +129,121 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
       };
 
       result.steps.push_back(step);
+    }
+  }
+
+  // Add walking connections between stops within 500m
+  // First create a struct to store stop positions in meters
+  struct StopPosition {
+    StopId stop_id;
+    double x_meters;  // approximate x position in meters
+    double y_meters;  // approximate y position in meters
+  };
+
+  // Create vector of stop positions and convert lat/lon to meters
+  // Using approximate conversion: 1 degree lat ≈ 111,000m, 1 degree lon ≈
+  // 111,000m * cos(lat)
+  std::vector<StopPosition> stop_positions;
+  for (const auto& gtfs_stop : gtfs.stops) {
+    auto it = result.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop.stop_id);
+    if (it != result.mapping.gtfs_stop_id_to_stop_id.end()) {
+      double lat_rad = gtfs_stop.stop_lat * M_PI / 180.0;
+      double x_meters = gtfs_stop.stop_lon * 111000.0 * std::cos(lat_rad);
+      double y_meters = gtfs_stop.stop_lat * 111000.0;
+
+      stop_positions.push_back({
+          it->second,  // stop_id
+          x_meters,    // x_meters
+          y_meters     // y_meters
+      });
+    }
+  }
+
+  // Sort stops by x_meters (longitude equivalent) for sliding window
+  std::sort(
+      stop_positions.begin(),
+      stop_positions.end(),
+      [](const StopPosition& a, const StopPosition& b) {
+        return a.x_meters < b.x_meters;
+      }
+  );
+
+  // Sliding window to find stops within 500m
+  const double MAX_DISTANCE_METERS = 500.0;
+  const double WALKING_SPEED_MS = 1.0;  // 1 meter per second
+
+  for (size_t i = 0; i < stop_positions.size(); ++i) {
+    const auto& current_stop = stop_positions[i];
+
+    // Find window of stops within x-coordinate range (500m in x direction)
+    size_t window_start = i;
+    size_t window_end = i;
+
+    // Extend window to include all stops within x-coordinate range
+    while (window_end < stop_positions.size() &&
+           stop_positions[window_end].x_meters <=
+               current_stop.x_meters + MAX_DISTANCE_METERS) {
+      window_end++;
+    }
+
+    // Check actual distances within the window
+    for (size_t j = window_start; j < window_end; ++j) {
+      if (i == j) continue;  // Skip same stop
+
+      const auto& other_stop = stop_positions[j];
+
+      // Calculate actual Euclidean distance in meters
+      double dx = current_stop.x_meters - other_stop.x_meters;
+      double dy = current_stop.y_meters - other_stop.y_meters;
+      double distance = std::sqrt(dx * dx + dy * dy);
+
+      if (distance <= MAX_DISTANCE_METERS) {
+        // Create FlexTrip and add to trip mapping
+        TripId walk_trip_id{next_trip_id++};
+        FlexTrip flex_trip{
+            current_stop.stop_id,
+            other_stop.stop_id,
+            static_cast<int>(
+                distance / WALKING_SPEED_MS
+            )  // duration in seconds
+        };
+
+        result.mapping.trip_id_to_trip_info[walk_trip_id] = flex_trip;
+
+        // Create route description for walking - lookup stop names
+        GtfsStopId current_gtfs_stop_id =
+            result.mapping.stop_id_to_gtfs_stop_id[current_stop.stop_id];
+        GtfsStopId other_gtfs_stop_id =
+            result.mapping.stop_id_to_gtfs_stop_id[other_stop.stop_id];
+
+        std::string current_stop_name;
+        std::string other_stop_name;
+        for (const auto& gtfs_stop : gtfs.stops) {
+          if (gtfs_stop.stop_id == current_gtfs_stop_id) {
+            current_stop_name = gtfs_stop.stop_name;
+          }
+          if (gtfs_stop.stop_id == other_gtfs_stop_id) {
+            other_stop_name = gtfs_stop.stop_name;
+          }
+        }
+
+        std::string walk_desc =
+            "Walk from " + current_stop_name + " to " + other_stop_name;
+        result.mapping.trip_id_to_route_desc[walk_trip_id] = walk_desc;
+
+        // Create walking step with flex time markers
+        Step walk_step{
+            current_stop.stop_id,
+            other_stop.stop_id,
+            TimeSinceServiceStart::FLEX_STEP_MARKER,  // origin time
+            TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
+            },  // duration as destination time
+            walk_trip_id,
+            walk_trip_id
+        };
+
+        result.steps.push_back(walk_step);
+      }
     }
   }
 
