@@ -20,10 +20,6 @@ FetchContent_Declare(
 ) 
 FetchContent_MakeAvailable(csv)
 
-if(TARGET csv)
-    target_compile_options(csv PRIVATE -fno-profile-arcs -fno-test-coverage)
-endif()
-
 FetchContent_Declare(
   gunit
   GIT_REPOSITORY https://github.com/cpp-testing/GUnit.git
@@ -45,7 +41,7 @@ endif()
 
 # Create GTFS library target
 add_library(gtfs STATIC src/gtfs/gtfs.cpp)
-target_link_libraries(gtfs PUBLIC csv)
+target_link_libraries(gtfs PUBLIC csv gcov)
 target_include_directories(gtfs PUBLIC src)
 
 # Create data library target
