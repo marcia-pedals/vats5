@@ -50,6 +50,47 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
     result.mapping.trip_id_to_gtfs_trip_id[trip_id] = gtfs_trip_id;
   }
 
+  // Build route description mapping for trips
+  for (const auto& trip : gtfs.trips) {
+    auto trip_id_it = result.mapping.gtfs_trip_id_to_trip_id.find(trip.trip_id);
+    if (trip_id_it == result.mapping.gtfs_trip_id_to_trip_id.end()) {
+      continue;  // Skip trips not in unique_trips (shouldn't happen)
+    }
+
+    TripId trip_id = trip_id_it->second;
+
+    // Find the route for this trip
+    const GtfsRoute* route = nullptr;
+    for (const auto& r : gtfs.routes) {
+      if (r.route_id == trip.route_direction_id.route_id) {
+        route = &r;
+        break;
+      }
+    }
+
+    // Find the direction for this trip
+    const GtfsDirection* direction = nullptr;
+    for (const auto& d : gtfs.directions) {
+      if (d.route_direction_id.route_id == trip.route_direction_id.route_id &&
+          d.route_direction_id.direction_id ==
+              trip.route_direction_id.direction_id) {
+        direction = &d;
+        break;
+      }
+    }
+
+    // Build the route description
+    std::string route_desc;
+    if (route && direction) {
+      route_desc = route->route_short_name + " " + direction->direction;
+    } else {
+      // Fallback to trip_id if route or direction not found
+      route_desc = trip.trip_id.v;
+    }
+
+    result.mapping.trip_id_to_route_desc[trip_id] = route_desc;
+  }
+
   // Sort stop_times by trip_id and stop_sequence to ensure correct order
   std::vector<GtfsStopTime> sorted_stop_times = gtfs.stop_times;
   std::sort(

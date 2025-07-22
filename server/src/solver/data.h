@@ -54,6 +54,15 @@ struct TimeSinceServiceStart {
   bool operator>(const TimeSinceServiceStart& other) const {
     return seconds > other.seconds;
   }
+
+  std::string ToString() const {
+    int hours = seconds / 3600;
+    int minutes = (seconds % 3600) / 60;
+    int secs = seconds % 60;
+    return (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
+           (minutes < 10 ? "0" : "") + std::to_string(minutes) + ":" +
+           (secs < 10 ? "0" : "") + std::to_string(secs);
+  }
 };
 
 inline const TimeSinceServiceStart TimeSinceServiceStart::FLEX_STEP_MARKER =
@@ -155,6 +164,7 @@ struct DataGtfsMapping {
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
   std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
+  std::unordered_map<TripId, std::string> trip_id_to_route_desc;
 
   StopId GetStopIdFromName(const std::string& stop_name) const {
     auto it = stop_name_to_stop_ids.find(stop_name);
@@ -167,6 +177,14 @@ struct DataGtfsMapping {
       );
     }
     return it->second[0];
+  }
+
+  std::string GetRouteDescFromTrip(TripId trip_id) const {
+    auto it = trip_id_to_route_desc.find(trip_id);
+    if (it == trip_id_to_route_desc.end()) {
+      throw std::runtime_error("TripId not found in route description mapping");
+    }
+    return it->second;
   }
 };
 

@@ -46,14 +46,12 @@ void VerifyPathResult(
     const StepsFromGtfs& steps_from_gtfs,
     const std::string& destination_stop_name,
     const std::string& expected_origin_time_str,
-    const std::string& expected_destination_time_str
+    const std::string& expected_destination_time_str,
+    const std::string& expected_origin_route_desc,
+    const std::string& expected_destination_route_desc
 ) {
   StopId destination_stop =
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
-  int expected_origin_time =
-      TimeSinceServiceStart::Parse(expected_origin_time_str).seconds;
-  int expected_destination_time =
-      TimeSinceServiceStart::Parse(expected_destination_time_str).seconds;
 
   auto path_it = shortest_paths.find(destination_stop);
   ASSERT_NE(path_it, shortest_paths.end())
@@ -61,16 +59,32 @@ void VerifyPathResult(
 
   const Step& step = path_it->second;
 
-  EXPECT_EQ(step.origin_time.seconds, expected_origin_time)
+  EXPECT_EQ(step.origin_time.ToString(), expected_origin_time_str)
       << destination_stop_name << " departure time";
-  EXPECT_EQ(step.destination_time.seconds, expected_destination_time)
+  EXPECT_EQ(step.destination_time.ToString(), expected_destination_time_str)
       << destination_stop_name << " arrival time";
+
+  if (!expected_origin_route_desc.empty()) {
+    std::string actual_origin_route_desc =
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip);
+    EXPECT_EQ(actual_origin_route_desc, expected_origin_route_desc)
+        << destination_stop_name << " origin route desc";
+  }
+
+  if (!expected_destination_route_desc.empty()) {
+    std::string actual_destination_route_desc =
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.destination_trip);
+    EXPECT_EQ(actual_destination_route_desc, expected_destination_route_desc)
+        << destination_stop_name << " destination route desc";
+  }
 }
 
 struct ExpectedPath {
   std::string destination_stop_name;
   std::string expected_departure_time;
   std::string expected_arrival_time;
+  std::string expected_origin_route_desc;
+  std::string expected_destination_route_desc;
 };
 
 struct ShortestPathTestCase {
@@ -120,7 +134,9 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
           steps_from_gtfs,
           expected_path.destination_stop_name,
           expected_path.expected_departure_time,
-          expected_path.expected_arrival_time
+          expected_path.expected_arrival_time,
+          expected_path.expected_origin_route_desc,
+          expected_path.expected_destination_route_desc
       );
     }
 
@@ -133,18 +149,52 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
 INSTANTIATE_TEST_SUITE_P(
     ShortestPathRealDataTests,
     ShortestPathParameterizedTest,
-    ::testing::Values(ShortestPathTestCase{
-        .test_name = "BerryessaTo5Destinations",
-        .gtfs_path = "../data/RG_20250718_BA",
-        .origin_stop_name = "Berryessa / North San Jose",
-        .origin_time = "08:00:00",
-        .expected_paths =
-            {{"Powell", "08:05:00", "09:11:00"},
-             {"Dublin / Pleasanton BART", "08:05:00", "09:08:00"},
-             {"Bay Fair", "08:05:00", "08:40:00"},
-             {"Antioch", "08:05:00", "10:14:00"},
-             {"Millbrae BART", "08:05:00", "10:07:00"}}
-    }),
+    ::testing::Values(
+        ShortestPathTestCase{
+            .test_name = "BerryessaTo5Destinations",
+            .gtfs_path = "../data/RG_20250718_BA",
+            .origin_stop_name = "Berryessa / North San Jose",
+            .origin_time = "08:00:00",
+            .expected_paths =
+                {{"Powell",
+                  "08:05:00",
+                  "09:11:00",
+                  "Green-S South",
+                  "Green-S South"},
+                 {"Dublin / Pleasanton BART",
+                  "08:05:00",
+                  "09:08:00",
+                  "Green-S South",
+                  "Blue-N North"},
+                 {"Bay Fair",
+                  "08:05:00",
+                  "08:40:00",
+                  "Green-S South",
+                  "Green-S South"},
+                 {"Antioch",
+                  "08:05:00",
+                  "10:14:00",
+                  "Green-S South",
+                  "Yellow-N North"},
+                 {"Millbrae BART",
+                  "08:05:00",
+                  "10:07:00",
+                  "Green-S South",
+                  "Red-S South"}}
+        },
+        ShortestPathTestCase{
+            .test_name = "BerryessaToMillbraeWithCaltrain",
+            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .origin_stop_name = "Berryessa / North San Jose",
+            .origin_time = "08:00:00",
+            .expected_paths =
+                {{"Millbrae BART",
+                  "08:05:00",
+                  "09:33:00",
+                  "Green-S South",
+                  "Limited North"}}
+        }
+    ),
     [](const ::testing::TestParamInfo<ShortestPathTestCase>& info) {
       return info.param.test_name;
     }
