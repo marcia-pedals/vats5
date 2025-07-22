@@ -243,6 +243,34 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
         };
 
         result.steps.push_back(walk_step);
+
+        // Create the reverse walking step (bidirectional walking)
+        TripId reverse_walk_trip_id{next_trip_id++};
+        FlexTrip reverse_flex_trip{
+            other_stop.stop_id,
+            current_stop.stop_id,
+            static_cast<int>(distance / WALKING_SPEED_MS)  // same duration
+        };
+
+        result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
+            reverse_flex_trip;
+
+        std::string reverse_walk_desc =
+            "Walk from " + other_stop_name + " to " + current_stop_name;
+        result.mapping.trip_id_to_route_desc[reverse_walk_trip_id] =
+            reverse_walk_desc;
+
+        Step reverse_walk_step{
+            other_stop.stop_id,
+            current_stop.stop_id,
+            TimeSinceServiceStart::FLEX_STEP_MARKER,  // origin time
+            TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
+            },  // duration as destination time
+            reverse_walk_trip_id,
+            reverse_walk_trip_id
+        };
+
+        result.steps.push_back(reverse_walk_step);
       }
     }
   }
