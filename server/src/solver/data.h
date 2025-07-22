@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <ostream>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -148,10 +149,23 @@ struct DataGtfsMapping {
   // StopId mappings
   std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
   std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
+  std::unordered_map<std::string, std::vector<StopId>> stop_name_to_stop_ids;
 
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
   std::unordered_map<TripId, GtfsTripId> trip_id_to_gtfs_trip_id;
+
+  StopId GetStopIdFromName(const std::string& stop_name) const {
+    auto it = stop_name_to_stop_ids.find(stop_name);
+    if (it == stop_name_to_stop_ids.end() || it->second.empty()) {
+      throw std::runtime_error("Stop name '" + stop_name + "' not found");
+    }
+    if (it->second.size() > 1) {
+      throw std::runtime_error("Stop name '" + stop_name +
+                               "' is ambiguous (multiple stops)");
+    }
+    return it->second[0];
+  }
 };
 
 struct StepsFromGtfs {

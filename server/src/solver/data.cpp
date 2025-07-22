@@ -27,6 +27,15 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
     result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop_id;
   }
 
+  // Populate stop name to stop IDs mapping
+  for (const auto& gtfs_stop : gtfs.stops) {
+    auto it = result.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop.stop_id);
+    if (it != result.mapping.gtfs_stop_id_to_stop_id.end()) {
+      result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(
+          it->second);
+    }
+  }
+
   // Collect all unique trips from stop_times
   std::unordered_set<GtfsTripId> unique_trips;
   for (const auto& stop_time : gtfs.stop_times) {
