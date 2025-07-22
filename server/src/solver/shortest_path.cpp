@@ -92,40 +92,87 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     }
 
     for (const std::vector<Step>& step_group : adj_it->second) {
-      auto lower_bound_it = std::lower_bound(
-          step_group.begin(),
-          step_group.end(),
-          current_time,
-          [](const Step& step, TimeSinceServiceStart target_time) {
-            return step.origin_time.seconds < target_time.seconds;
-          }
-      );
-      if (lower_bound_it == step_group.end()) {
-        continue;
-      }
+      // Check if this is a flex trip (first step has FLEX_STEP_MARKER)
+      bool is_flex_trip =
+          !step_group.empty() &&
+          step_group[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
 
-      const Step& next_step = *lower_bound_it;
-      const StopId next_stop = next_step.destination_stop;
-      if (visited.find(next_stop) != visited.end()) {
-        continue;
-      }
+      if (is_flex_trip) {
+        // For flex trips, we can take them at any time
+        // The destination_time contains the duration
+        const Step& flex_step =
+            step_group[0];  // Should be only one step in flex group
+        const StopId next_stop = flex_step.destination_stop;
+        if (visited.find(next_stop) != visited.end()) {
+          continue;
+        }
 
-      if (current_step.origin_trip == TripId::NOOP) {
-        // If our current step is just staying in place, then "start" the path
-        // outwards with the whole next step.
-        frontier.push(next_step);
+        // Calculate arrival time based on current time + duration
+        TimeSinceServiceStart arrival_time{
+            current_time.seconds + flex_step.destination_time.seconds
+        };
+
+        if (current_step.origin_trip == TripId::NOOP) {
+          // If our current step is just staying in place, start the path with
+          // flex step
+          Step flex_path_step{
+              flex_step.origin_stop,
+              flex_step.destination_stop,
+              current_time,  // Start immediately
+              arrival_time,  // Arrive after duration
+              flex_step.origin_trip,
+              flex_step.destination_trip
+          };
+          frontier.push(flex_path_step);
+        } else {
+          // Combine current step with flex step
+          Step combined_flex_step{
+              current_step.origin_stop,
+              flex_step.destination_stop,
+              current_step.origin_time,
+              arrival_time,  // Arrive after walking duration
+              current_step.origin_trip,
+              flex_step.destination_trip
+          };
+          frontier.push(combined_flex_step);
+        }
       } else {
-        // If we have a current step that involves actually moving around,
-        // combine the "starting" part of the current step with the "finishing"
-        // part of the next step.
-        frontier.push(Step{
-            current_step.origin_stop,
-            next_step.destination_stop,
-            current_step.origin_time,
-            next_step.destination_time,
-            current_step.origin_trip,
-            next_step.destination_trip
-        });
+        // Regular fixed-time trip handling (original logic)
+        auto lower_bound_it = std::lower_bound(
+            step_group.begin(),
+            step_group.end(),
+            current_time,
+            [](const Step& step, TimeSinceServiceStart target_time) {
+              return step.origin_time.seconds < target_time.seconds;
+            }
+        );
+        if (lower_bound_it == step_group.end()) {
+          continue;
+        }
+
+        const Step& next_step = *lower_bound_it;
+        const StopId next_stop = next_step.destination_stop;
+        if (visited.find(next_stop) != visited.end()) {
+          continue;
+        }
+
+        if (current_step.origin_trip == TripId::NOOP) {
+          // If our current step is just staying in place, then "start" the path
+          // outwards with the whole next step.
+          frontier.push(next_step);
+        } else {
+          // If we have a current step that involves actually moving around,
+          // combine the "starting" part of the current step with the
+          // "finishing" part of the next step.
+          frontier.push(Step{
+              current_step.origin_stop,
+              next_step.destination_stop,
+              current_step.origin_time,
+              next_step.destination_time,
+              current_step.origin_trip,
+              next_step.destination_trip
+          });
+        }
       }
     }
   }
