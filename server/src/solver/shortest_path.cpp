@@ -105,20 +105,17 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
       }
 
       if (current_step.origin_trip == TripId::NOOP) {
-        // If our current step is just staying in place, then "start" the path outwards with the
-        // whole next step.
+        // If our current step is just staying in place, then "start" the path
+        // outwards with the whole next step.
         frontier.push(next_step);
       } else {
-        // If we have a current step that involves actually moving around, combine the "starting"
-        // part of the current step with the "finishing" part of the next step.
-        frontier.push(Step{
-          current_step.origin_stop,
-          next_step.destination_stop,
-          current_step.origin_time,
-          next_step.destination_time,
-          current_step.origin_trip,
-          next_step.destination_trip
-        });
+        // If we have a current step that involves actually moving around,
+        // combine the "starting" part of the current step with the "finishing"
+        // part of the next step.
+        frontier.push(Step{current_step.origin_stop, next_step.destination_stop,
+                           current_step.origin_time, next_step.destination_time,
+                           current_step.origin_trip,
+                           next_step.destination_trip});
       }
     }
   }

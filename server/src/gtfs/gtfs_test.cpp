@@ -557,8 +557,10 @@ GTEST("GtfsNormalizeStops should replace child stops with parents") {
       UnorderedElementsAre(
           StopMatcher("mtc:powell", "Powell"),
           StopMatcher("mtc:fruitvale", "Fruitvale"),
-          StopMatcher("mtc:warm-springs-south-fremont-bart", "Warm Springs South Fremont BART"),
-          StopMatcher("mtc:el-cerrito-del-norte-bart", "El Cerrito Del Norte BART"),
+          StopMatcher("mtc:warm-springs-south-fremont-bart",
+                      "Warm Springs South Fremont BART"),
+          StopMatcher("mtc:el-cerrito-del-norte-bart",
+                      "El Cerrito Del Norte BART"),
           StopMatcher("mtc:walnut-creek-bart", "Walnut Creek BART"),
           StopMatcher("mtc:richmond-bart-amtrak", "Richmond BART/Amtrak"),
           StopMatcher("mtc:macarthur-bart", "MacArthur BART"),
@@ -567,7 +569,8 @@ GTEST("GtfsNormalizeStops should replace child stops with parents") {
           StopMatcher("mtc:pleasant-hill-bart", "Pleasant Hill BART"),
           StopMatcher("mtc:daly-city-bart", "Daly City BART"),
           StopMatcher("mtc:oakland-coliseum-bart", "Oakland Coliseum BART"),
-          StopMatcher("mtc:12th-st-oakland-city-center-bart", "12th St Oakland City Center BART"),
+          StopMatcher("mtc:12th-st-oakland-city-center-bart",
+                      "12th St Oakland City Center BART"),
           StopMatcher("mtc:19th-st-oakland-bart", "19TH St Oakland BART"),
           StopMatcher("mtc:embarcadero-bart", "Embarcadero BART"),
           StopMatcher("mtc:civic-center-bart", "Civic Center BART"),
@@ -575,23 +578,20 @@ GTEST("GtfsNormalizeStops should replace child stops with parents") {
           StopMatcher("mtc:sfo", "SFO"),
           StopMatcher("mtc:union-city-bart", "Union City BART"),
           StopMatcher("mtc:dublin-pleasanton-bart", "Dublin / Pleasanton BART"),
-          StopMatcher("mtc:great-mall-milpitas-bart", "Great Mall/Milpitas BART"),
+          StopMatcher("mtc:great-mall-milpitas-bart",
+                      "Great Mall/Milpitas BART"),
           StopMatcher("901509", "16th Street / Mission"),
           StopMatcher("901609", "24th Street / Mission"),
-          StopMatcher("908309", "Antioch"),
-          StopMatcher("904109", "Ashby"),
+          StopMatcher("908309", "Antioch"), StopMatcher("904109", "Ashby"),
           StopMatcher("901809", "Balboa Park"),
           StopMatcher("902509", "Bay Fair"),
           StopMatcher("909509", "Berryessa / North San Jose"),
           StopMatcher("905109", "Castro Valley"),
-          StopMatcher("906109", "Colma"),
-          StopMatcher("903609", "Concord"),
+          StopMatcher("906109", "Colma"), StopMatcher("903609", "Concord"),
           StopMatcher("904209", "Downtown Berkeley"),
           StopMatcher("904409", "El Cerrito Plaza"),
-          StopMatcher("902909", "Fremont"),
-          StopMatcher("901709", "Glen Park"),
-          StopMatcher("902609", "Hayward"),
-          StopMatcher("903309", "Lafayette"),
+          StopMatcher("902909", "Fremont"), StopMatcher("901709", "Glen Park"),
+          StopMatcher("902609", "Hayward"), StopMatcher("903309", "Lafayette"),
           StopMatcher("902109", "Lake Merritt"),
           StopMatcher("904309", "North Berkeley"),
           StopMatcher("903709", "North Concord / Martinez"),
@@ -614,7 +614,7 @@ GTEST("GtfsNormalizeStops should replace child stops with parents") {
 
   for (const auto& stop_time : normalized.stop_times) {
     EXPECT_TRUE(normalized_stop_ids.count(stop_time.stop_id.v))
-        << "Stop time refers to stop " << stop_time.stop_id.v 
+        << "Stop time refers to stop " << stop_time.stop_id.v
         << " which is not in the normalized stops list";
   }
 }
