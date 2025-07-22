@@ -193,6 +193,18 @@ INSTANTIATE_TEST_SUITE_P(
                   "09:33:00",
                   "Green-S South",
                   "Limited North"}}
+        },
+        ShortestPathTestCase{
+            .test_name = "WalkToCaltrainMillbrae",
+            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .origin_stop_name = "Sunnyvale & Hendy",
+            .origin_time = "08:00:00",
+            .expected_paths =
+                {{"Millbrae BART",
+                  "08:00:00",
+                  "08:54:00",
+                  "Walk from Sunnyvale & Hendy to Sunnyvale",
+                  "Local Weekday North"}}
         }
     ),
     [](const ::testing::TestParamInfo<ShortestPathTestCase>& info) {
