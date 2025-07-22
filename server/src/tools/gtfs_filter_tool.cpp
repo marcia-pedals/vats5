@@ -34,8 +34,10 @@ void printUsage(const char* program_name) {
       << "  Default (--trips): Comma-separated list of specific trip IDs\n"
       << "                     Example: \"CT:507,SR:198\"\n"
       << "\n"
-      << "  Prefix (--prefix): Single prefix string to match trip IDs\n"
-      << "                     Example: \"CT:\" (includes all Caltrain trips)\n"
+      << "  Prefix (--prefix): Comma-separated list of prefixes to match trip "
+         "IDs\n"
+      << "                     Example: \"CT:,SR:\" (includes all Caltrain and "
+         "Santa Rosa trips)\n"
       << "\n"
       << "Examples:\n"
       << "  # Filter specific trips\n"
@@ -158,7 +160,13 @@ int main(int argc, char* argv[]) {
   std::cout << "Loading GTFS data from: " << input_dir << std::endl;
   std::cout << "Filtering for date: " << date << std::endl;
   if (use_prefix) {
-    std::cout << "Using prefix filter: \"" << trip_filter << "\"" << std::endl;
+    std::vector<std::string> prefix_list = split(trip_filter, ',');
+    std::cout << "Using prefix filter(s): ";
+    for (size_t i = 0; i < prefix_list.size(); ++i) {
+      std::cout << "\"" << prefix_list[i] << "\"";
+      if (i < prefix_list.size() - 1) std::cout << ", ";
+    }
+    std::cout << std::endl;
   } else {
     std::vector<std::string> trip_id_list = split(trip_filter, ',');
     std::cout << "Including " << trip_id_list.size() << " specific trip(s): ";
@@ -201,20 +209,23 @@ int main(int argc, char* argv[]) {
     std::unordered_set<GtfsTripId> trip_ids_set;
 
     if (use_prefix) {
-      std::cout << "Finding trips with prefix \"" << trip_filter << "\"..."
-                << std::endl;
+      std::vector<std::string> prefix_list = split(trip_filter, ',');
+      std::cout << "Finding trips with prefix(es)..." << std::endl;
       int matching_count = 0;
       for (const auto& trip : gtfs_day.trips) {
-        if (trip.trip_id.v.substr(0, trip_filter.length()) == trip_filter) {
-          trip_ids_set.insert(trip.trip_id);
-          matching_count++;
+        for (const auto& prefix : prefix_list) {
+          if (trip.trip_id.v.substr(0, prefix.length()) == prefix) {
+            trip_ids_set.insert(trip.trip_id);
+            matching_count++;
+            break;  // Don't count the same trip multiple times
+          }
         }
       }
-      std::cout << "Found " << matching_count << " trips matching prefix."
+      std::cout << "Found " << matching_count << " trips matching prefix(es)."
                 << std::endl;
 
       if (matching_count == 0) {
-        std::cerr << "Warning: No trips found with prefix \"" << trip_filter
+        std::cerr << "Warning: No trips found with prefix(es) \"" << trip_filter
                   << "\" for date " << date << "." << std::endl;
       }
     } else {
@@ -241,8 +252,8 @@ int main(int argc, char* argv[]) {
 
     if (filtered_gtfs.trips.empty()) {
       if (use_prefix) {
-        std::cerr << "Warning: No trips found matching prefix \"" << trip_filter
-                  << "\" for date " << date << "." << std::endl;
+        std::cerr << "Warning: No trips found matching prefix(es) \""
+                  << trip_filter << "\" for date " << date << "." << std::endl;
       } else {
         std::cerr << "Warning: No trips found matching the specified trip IDs "
                      "for date "
