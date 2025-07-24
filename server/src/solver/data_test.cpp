@@ -1,17 +1,35 @@
 #include "solver/data.h"
 
+#include <gmock/gmock-matchers.h>
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <set>
 #include <unordered_set>
+#include <variant>
 
 #include "gtfs/gtfs.h"
 
+using ::testing::AllOf;
+using ::testing::Contains;
+using ::testing::DoubleNear;
+using ::testing::Eq;
+using ::testing::Field;
+using ::testing::UnorderedElementsAre;
+
 namespace vats5 {
+
+MATCHER_P3(WalkingStep, origin, destination, seconds, "") {
+  return arg.origin_stop.v == origin && arg.destination_stop.v == destination &&
+         arg.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER &&
+         (arg.destination_time.seconds > seconds - 5) &&
+         (arg.destination_time.seconds < seconds + 5);
+}
 
 TEST(DataTest, GetStepsFromGtfs) {
   // Load pre-filtered GTFS data (contains all CT: trips from 20250718)
   std::string gtfs_directory_path = "../data/RG_20250718_CT";
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_directory_path);
+  GtfsDay gtfs_day = GtfsNormalizeStops(GtfsLoadDay(gtfs_directory_path));
 
   // Filter to just CT:507 for this specific test
   const GtfsTripId trip_id{"CT:507"};
@@ -33,41 +51,35 @@ TEST(DataTest, GetStepsFromGtfs) {
   EXPECT_EQ(result.mapping.trip_id_to_trip_info.size(), 1);
 
   // Get the mapped IDs for constructing expected steps
-  const GtfsStopId san_jose_diridon_northbound{"70261"};
-  const GtfsStopId sunnyvale_northbound{"70221"};
-  const GtfsStopId mountain_view_northbound{"70211"};
-  const GtfsStopId palo_alto_northbound{"70171"};
-  const GtfsStopId redwood_city_northbound{"70141"};
-  const GtfsStopId hillsdale_northbound{"70111"};
-  const GtfsStopId san_mateo_northbound{"70091"};
-  const GtfsStopId millbrae_northbound{"70061"};
-  const GtfsStopId south_sf_northbound{"70041"};
-  const GtfsStopId sf_22nd_street_northbound{"70021"};
-  const GtfsStopId sf_4th_king_northbound{"70011"};
+  const GtfsStopId san_jose_diridon{"mtc:san-jose-diridon-station"};
+  const GtfsStopId sunnyvale{"sunnyvale"};
+  const GtfsStopId mountain_view{"mtc:mountain-view-station"};
+  const GtfsStopId palo_alto{"mtc:palo-alto-station"};
+  const GtfsStopId redwood_city{"redwood_city"};
+  const GtfsStopId hillsdale{"hillsdale"};
+  const GtfsStopId san_mateo{"san_mateo"};
+  const GtfsStopId millbrae{"mtc:millbrae-bart"};
+  const GtfsStopId south_sf{"south_sf"};
+  const GtfsStopId sf_22nd_street{"22nd_street"};
+  const GtfsStopId sf_4th_king{"mtc:caltrain-4th-&-king"};
 
   // Look up the mapped stop IDs
   StopId san_jose_diridon_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(san_jose_diridon_northbound);
-  StopId sunnyvale_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(sunnyvale_northbound);
+      result.mapping.gtfs_stop_id_to_stop_id.at(san_jose_diridon);
+  StopId sunnyvale_id = result.mapping.gtfs_stop_id_to_stop_id.at(sunnyvale);
   StopId mountain_view_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(mountain_view_northbound);
-  StopId palo_alto_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(palo_alto_northbound);
+      result.mapping.gtfs_stop_id_to_stop_id.at(mountain_view);
+  StopId palo_alto_id = result.mapping.gtfs_stop_id_to_stop_id.at(palo_alto);
   StopId redwood_city_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(redwood_city_northbound);
-  StopId hillsdale_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(hillsdale_northbound);
-  StopId san_mateo_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(san_mateo_northbound);
-  StopId millbrae_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(millbrae_northbound);
-  StopId south_sf_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(south_sf_northbound);
+      result.mapping.gtfs_stop_id_to_stop_id.at(redwood_city);
+  StopId hillsdale_id = result.mapping.gtfs_stop_id_to_stop_id.at(hillsdale);
+  StopId san_mateo_id = result.mapping.gtfs_stop_id_to_stop_id.at(san_mateo);
+  StopId millbrae_id = result.mapping.gtfs_stop_id_to_stop_id.at(millbrae);
+  StopId south_sf_id = result.mapping.gtfs_stop_id_to_stop_id.at(south_sf);
   StopId sf_22nd_street_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(sf_22nd_street_northbound);
+      result.mapping.gtfs_stop_id_to_stop_id.at(sf_22nd_street);
   StopId sf_4th_king_id =
-      result.mapping.gtfs_stop_id_to_stop_id.at(sf_4th_king_northbound);
+      result.mapping.gtfs_stop_id_to_stop_id.at(sf_4th_king);
 
   // Look up the mapped trip ID
   TripId mapped_trip_id = result.mapping.gtfs_trip_id_to_trip_id.at(trip_id);
@@ -177,6 +189,103 @@ TEST(DataTest, GetStepsFromGtfs) {
 
   // Assert that the actual steps match the expected steps
   EXPECT_EQ(result.steps, expected_steps);
+}
+
+TEST(DataTest, WalkingStepsGrid3x3) {
+  // Create a 3x3 grid of stops with 300m spacing
+  // With 500m max walking distance, stops should connect to adjacent neighbors
+  // (including diagonals) Adjacent: 300m, Diagonal: ~424m (both under 500m
+  // limit)
+
+  GtfsDay gtfs_day;
+
+  const double BASE_LAT = 37.0;
+  const double BASE_LON = -122.0;
+  const double LAT_SPACING_DEGREES =
+      300.0 / 111000.0;  // ~300m in degrees for latitude
+  const double LON_SPACING_DEGREES =
+      300.0 / (111000.0 * std::cos(BASE_LAT * M_PI / 180.0)
+              );  // ~300m in degrees for longitude at this latitude
+
+  // Create 3x3 stops
+  int stop_id = 1;
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      GtfsStop stop;
+      stop.stop_id = GtfsStopId{std::to_string(stop_id++)};
+      stop.stop_name =
+          "Stop_" + std::to_string(row) + "_" + std::to_string(col);
+      stop.stop_lat = BASE_LAT + row * LAT_SPACING_DEGREES;
+      stop.stop_lon = BASE_LON + col * LON_SPACING_DEGREES;
+      gtfs_day.stops.push_back(stop);
+    }
+  }
+
+  // Generate steps
+  StepsFromGtfs result = GetStepsFromGtfs(gtfs_day);
+
+  EXPECT_THAT(
+      result.steps,
+      UnorderedElementsAre(
+          // From stop 1 (top-left): can walk to 2, 4, 5
+          WalkingStep(1, 2, 300),
+          WalkingStep(1, 4, 300),
+          WalkingStep(1, 5, 424),
+
+          // From stop 2 (top-center): can walk to 1, 3, 4, 5, 6
+          WalkingStep(2, 1, 300),
+          WalkingStep(2, 3, 300),
+          WalkingStep(2, 4, 424),
+          WalkingStep(2, 5, 300),
+          WalkingStep(2, 6, 424),
+
+          // From stop 3 (top-right): can walk to 2, 5, 6
+          WalkingStep(3, 2, 300),
+          WalkingStep(3, 5, 424),
+          WalkingStep(3, 6, 300),
+
+          // From stop 4 (middle-left): can walk to 1, 2, 5, 7, 8
+          WalkingStep(4, 1, 300),
+          WalkingStep(4, 2, 424),
+          WalkingStep(4, 5, 300),
+          WalkingStep(4, 7, 300),
+          WalkingStep(4, 8, 424),
+
+          // From stop 5 (middle-center): can walk to 1, 2, 3, 4, 6, 7, 8, 9
+          WalkingStep(5, 1, 424),
+          WalkingStep(5, 2, 300),
+          WalkingStep(5, 3, 424),
+          WalkingStep(5, 4, 300),
+          WalkingStep(5, 6, 300),
+          WalkingStep(5, 7, 424),
+          WalkingStep(5, 8, 300),
+          WalkingStep(5, 9, 424),
+
+          // From stop 6 (middle-right): can walk to 2, 3, 5, 8, 9
+          WalkingStep(6, 2, 424),
+          WalkingStep(6, 3, 300),
+          WalkingStep(6, 5, 300),
+          WalkingStep(6, 8, 424),
+          WalkingStep(6, 9, 300),
+
+          // From stop 7 (bottom-left): can walk to 4, 5, 8
+          WalkingStep(7, 4, 300),
+          WalkingStep(7, 5, 424),
+          WalkingStep(7, 8, 300),
+
+          // From stop 8 (bottom-center): can walk to 4, 5, 6, 7, 9
+          WalkingStep(8, 4, 424),
+          WalkingStep(8, 5, 300),
+          WalkingStep(8, 6, 424),
+          WalkingStep(8, 7, 300),
+          WalkingStep(8, 9, 300),
+
+          // From stop 9 (bottom-right): can walk to 5, 6, 8
+          WalkingStep(9, 5, 424),
+          WalkingStep(9, 6, 300),
+          WalkingStep(9, 8, 300)
+      )
+  );
 }
 
 }  // namespace vats5

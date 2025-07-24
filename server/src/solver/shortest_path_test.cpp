@@ -183,15 +183,15 @@ INSTANTIATE_TEST_SUITE_P(
                   "Red-S South"}}
         },
         ShortestPathTestCase{
-            .test_name = "BerryessaToMillbraeWithCaltrain",
+            .test_name = "WarmSpringsToMillbraeWithCaltrain",
             .gtfs_path = "../data/RG_20250718_BA_CT_SC",
-            .origin_stop_name = "Berryessa / North San Jose",
-            .origin_time = "08:00:00",
+            .origin_stop_name = "Warm Springs South Fremont BART",
+            .origin_time = "07:49:00",
             .expected_paths =
                 {{"Millbrae BART",
-                  "08:05:00",
+                  "07:52:00",
                   "09:33:00",
-                  "Green-S South",
+                  "Orange-S South",
                   "Limited North"}}
         },
         ShortestPathTestCase{

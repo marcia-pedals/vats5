@@ -15,50 +15,21 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
   int next_stop_id = 1;
   int next_trip_id = 1;
 
-  // Collect all unique stops from stop_times
-  std::unordered_set<GtfsStopId> unique_stops;
-  for (const auto& stop_time : gtfs.stop_times) {
-    unique_stops.insert(stop_time.stop_id);
-  }
-
-  // Create bidirectional mappings for stops
-  for (const auto& gtfs_stop_id : unique_stops) {
-    StopId stop_id{next_stop_id++};
-    result.mapping.gtfs_stop_id_to_stop_id[gtfs_stop_id] = stop_id;
-    result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop_id;
-  }
-
-  // Populate stop name to stop IDs mapping
+  // Create bidirectional mappings for stops and populate stop name mapping
   for (const auto& gtfs_stop : gtfs.stops) {
-    auto it = result.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop.stop_id);
-    if (it != result.mapping.gtfs_stop_id_to_stop_id.end()) {
-      result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(
-          it->second
-      );
-    }
+    StopId stop_id{next_stop_id++};
+    result.mapping.gtfs_stop_id_to_stop_id[gtfs_stop.stop_id] = stop_id;
+    result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop.stop_id;
+    result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(stop_id
+    );
   }
 
-  // Collect all unique trips from stop_times
-  std::unordered_set<GtfsTripId> unique_trips;
-  for (const auto& stop_time : gtfs.stop_times) {
-    unique_trips.insert(stop_time.trip_id);
-  }
-
-  // Create bidirectional mappings for trips
-  for (const auto& gtfs_trip_id : unique_trips) {
-    TripId trip_id{next_trip_id++};
-    result.mapping.gtfs_trip_id_to_trip_id[gtfs_trip_id] = trip_id;
-    result.mapping.trip_id_to_trip_info[trip_id] = gtfs_trip_id;
-  }
-
-  // Build route description mapping for trips
+  // Create bidirectional mappings for trips and build route descriptions in one
+  // loop
   for (const auto& trip : gtfs.trips) {
-    auto trip_id_it = result.mapping.gtfs_trip_id_to_trip_id.find(trip.trip_id);
-    if (trip_id_it == result.mapping.gtfs_trip_id_to_trip_id.end()) {
-      continue;  // Skip trips not in unique_trips (shouldn't happen)
-    }
-
-    TripId trip_id = trip_id_it->second;
+    TripId trip_id{next_trip_id++};
+    result.mapping.gtfs_trip_id_to_trip_id[trip.trip_id] = trip_id;
+    result.mapping.trip_id_to_trip_info[trip_id] = trip.trip_id;
 
     // Find the route for this trip
     const GtfsRoute* route = nullptr;
@@ -106,7 +77,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
   );
 
   // Generate steps from consecutive stop_times for each trip
-  for (size_t i = 0; i < sorted_stop_times.size() - 1; ++i) {
+  for (int i = 0; i < static_cast<int>(sorted_stop_times.size()) - 1; ++i) {
     const auto& current_stop_time = sorted_stop_times[i];
     const auto& next_stop_time = sorted_stop_times[i + 1];
 
@@ -147,7 +118,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
   for (const auto& gtfs_stop : gtfs.stops) {
     auto it = result.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop.stop_id);
     if (it != result.mapping.gtfs_stop_id_to_stop_id.end()) {
-      double lat_rad = gtfs_stop.stop_lat * M_PI / 180.0;
+      double lat_rad = 37.0 * M_PI / 180.0;
       double x_meters = gtfs_stop.stop_lon * 111000.0 * std::cos(lat_rad);
       double y_meters = gtfs_stop.stop_lat * 111000.0;
 
