@@ -353,4 +353,99 @@ RC_GTEST_PROP(ShortestPathPropertyTest, OptimalDepartureTime, ()) {
   }
 }
 
+TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
+  // This test exposes a potential issue with the shortest path algorithm:
+  // When there are frequent connections A->B and infrequent connections B->C,
+  // the algorithm might find a path that departs early but has to wait a long
+  // time at B, when a later departure from A could result in less total travel
+  // time.
+
+  std::vector<Step> steps = {
+      // Frequent trips from A (stop 1) to B (stop 2)
+      // Trip 1: A->B departing at 100, arriving at 110
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{100},
+          .destination_time = TimeSinceServiceStart{110},
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1}
+      },
+      // Trip 2: A->B departing at 120, arriving at 130
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{120},
+          .destination_time = TimeSinceServiceStart{130},
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2}
+      },
+      // Trip 3: A->B departing at 180, arriving at 190
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{180},
+          .destination_time = TimeSinceServiceStart{190},
+          .origin_trip = TripId{3},
+          .destination_trip = TripId{3}
+      },
+
+      // Infrequent trips from B (stop 2) to C (stop 3)
+      // Only one trip: B->C departing at 200, arriving at 210
+      Step{
+          .origin_stop = StopId{2},
+          .destination_stop = StopId{3},
+          .origin_time = TimeSinceServiceStart{200},
+          .destination_time = TimeSinceServiceStart{210},
+          .origin_trip = TripId{4},
+          .destination_trip = TripId{4}
+      }
+  };
+
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+
+  // Query at time 90 (before any departures)
+  TimeSinceServiceStart query_time{90};
+  StopId origin_stop{1};                               // Stop A
+  std::unordered_set<StopId> destinations{StopId{3}};  // Stop C
+
+  auto shortest_paths = FindShortestPathsAtTime(
+      adjacency_list, query_time, origin_stop, destinations
+  );
+
+  ASSERT_EQ(shortest_paths.size(), 1);
+  const Step& result = shortest_paths[StopId{3}];
+
+  // The algorithm will likely choose:
+  // - Depart A at 100, arrive B at 110
+  // - Wait at B from 110 to 200 (90 seconds of waiting!)
+  // - Depart B at 200, arrive C at 210
+  // Total travel time: 210 - 100 = 110 seconds (with 90 seconds waiting)
+  //
+  // But a better choice would be:
+  // - Depart A at 180, arrive B at 190
+  // - Wait at B from 190 to 200 (only 10 seconds of waiting)
+  // - Depart B at 200, arrive C at 210
+  // Total travel time: 210 - 180 = 30 seconds (with only 10 seconds waiting)
+  //
+  // However, once the algorithm reaches B at time 110, it won't consider
+  // the later departure from A at 180.
+
+  std::cout << "Departure time from A: " << result.origin_time.ToString()
+            << std::endl;
+  std::cout << "Arrival time at C: " << result.destination_time.ToString()
+            << std::endl;
+  std::cout << "Total travel time: "
+            << (result.destination_time.seconds - result.origin_time.seconds)
+            << " seconds" << std::endl;
+
+  // This test will likely show the suboptimal behavior - the algorithm
+  // will choose to depart at 100 instead of the more efficient 180
+  // If the algorithm were optimal, it would choose origin_time = 180
+  EXPECT_EQ(result.origin_time.seconds, 180)
+      << "Algorithm should choose later departure (180) to minimize waiting "
+         "time, "
+      << "but actually chose " << result.origin_time.seconds;
+}
+
 }  // namespace vats5
