@@ -142,43 +142,17 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
             frontier.push(combined_flex_step);
           }
         }
+      }
 
-        // Also process non-flex steps in the same group (skip the first flex
-        // step)
-        for (size_t i = 1; i < step_group.size(); ++i) {
-          const Step& next_step = step_group[i];
-          // Skip if this is also a flex step (shouldn't happen but be safe)
-          if (next_step.origin_time ==
-              TimeSinceServiceStart::FLEX_STEP_MARKER) {
-            continue;
-          }
-          // Skip if departure time is too early
-          if (next_step.origin_time.seconds < current_time.seconds) {
-            continue;
-          }
+      // Regular fixed-time trip handling (original logic)
+      // This now runs for both flex and non-flex groups
+      {
+        // Skip flex trips in the search - they're at the beginning if present
+        auto search_begin =
+            has_flex_trip ? step_group.begin() + 1 : step_group.begin();
 
-          const StopId next_stop = next_step.destination_stop;
-          if (visited.find(next_stop) != visited.end()) {
-            continue;
-          }
-
-          if (current_step.origin_trip == TripId::NOOP) {
-            frontier.push(next_step);
-          } else {
-            frontier.push(Step{
-                current_step.origin_stop,
-                next_step.destination_stop,
-                current_step.origin_time,
-                next_step.destination_time,
-                current_step.origin_trip,
-                next_step.destination_trip
-            });
-          }
-        }
-      } else {
-        // Regular fixed-time trip handling (original logic)
         auto lower_bound_it = std::lower_bound(
-            step_group.begin(),
+            search_begin,
             step_group.end(),
             current_time,
             [](const Step& step, TimeSinceServiceStart target_time) {
