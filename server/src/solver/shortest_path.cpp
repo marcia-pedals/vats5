@@ -144,8 +144,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
         }
       }
 
-      // Regular fixed-time trip handling (original logic)
-      // This now runs for both flex and non-flex groups
+      // Regular fixed-time trip handling
       {
         // Skip flex trips in the search - they're at the beginning if present
         auto search_begin =
