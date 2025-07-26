@@ -237,6 +237,61 @@ INSTANTIATE_TEST_SUITE_P(
     }
 );
 
+TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
+  // Create a scenario where a stop has both flex trip (walking) and regular
+  // scheduled trips The bug is that when is_flex_trip is true, it only
+  // considers the flex edge and skips regular edges But it should consider both
+  // when has_flex_trip is true
+
+  std::vector<Step> steps = {
+      // Regular scheduled trip from stop 1 to stop 2
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{100},       // Departs at 100
+          .destination_time = TimeSinceServiceStart{200},  // Arrives at 200
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1}
+      },
+      // Flex trip (walking) from stop 1 to stop 2 - should be first in group to
+      // trigger bug
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time =
+              TimeSinceServiceStart::FLEX_STEP_MARKER,  // Flex marker
+          .destination_time = TimeSinceServiceStart{300
+          },  // Duration of 300 seconds (5 minutes)
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2}
+      }
+  };
+
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+
+  // Query at time 50 - before the scheduled trip departs
+  // With the bug: only considers flex trip, arrives at 50+300=350
+  // Without the bug: should consider both, and take scheduled trip arriving at
+  // 200
+  TimeSinceServiceStart query_time{50};
+  StopId origin_stop{1};
+  std::unordered_set<StopId> destinations{StopId{2}};
+
+  auto shortest_paths = FindShortestPathsAtTime(
+      adjacency_list, query_time, origin_stop, destinations
+  );
+
+  ASSERT_EQ(shortest_paths.size(), 1);
+  const Step& result = shortest_paths[StopId{2}];
+
+  // With the bug, this will be 350 (50 + 300 flex duration)
+  // Without the bug, this should be 200 (scheduled trip arrival)
+  EXPECT_EQ(
+      result.destination_time.seconds, 200
+  ) << "Should take scheduled trip arriving at 200, not flex trip arriving at "
+    << result.destination_time.seconds;
+}
+
 RC_GTEST_PROP(ShortestPathPropertyTest, OptimalDepartureTime, ()) {
   const std::string gtfs_path = "../data/RG_20250718_BA_CT_SC";
 

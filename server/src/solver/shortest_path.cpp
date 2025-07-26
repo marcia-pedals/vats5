@@ -100,49 +100,80 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     }
 
     for (const std::vector<Step>& step_group : adj_it->second) {
-      // Check if this is a flex trip (first step has FLEX_STEP_MARKER)
-      bool is_flex_trip =
+      // Check if this group has a flex trip (first step has FLEX_STEP_MARKER)
+      bool has_flex_trip =
           !step_group.empty() &&
           step_group[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
 
-      if (is_flex_trip) {
+      if (has_flex_trip) {
         // For flex trips, we can take them at any time
         // The destination_time contains the duration
         const Step& flex_step =
             step_group[0];  // Should be only one step in flex group
         const StopId next_stop = flex_step.destination_stop;
-        if (visited.find(next_stop) != visited.end()) {
-          continue;
+        if (visited.find(next_stop) == visited.end()) {
+          // Calculate arrival time based on current time + duration
+          TimeSinceServiceStart arrival_time{
+              current_time.seconds + flex_step.destination_time.seconds
+          };
+
+          if (current_step.origin_trip == TripId::NOOP) {
+            // If our current step is just staying in place, start the path with
+            // flex step
+            Step flex_path_step{
+                flex_step.origin_stop,
+                flex_step.destination_stop,
+                current_time,  // Start immediately
+                arrival_time,  // Arrive after duration
+                flex_step.origin_trip,
+                flex_step.destination_trip
+            };
+            frontier.push(flex_path_step);
+          } else {
+            // Combine current step with flex step
+            Step combined_flex_step{
+                current_step.origin_stop,
+                flex_step.destination_stop,
+                current_step.origin_time,
+                arrival_time,  // Arrive after walking duration
+                current_step.origin_trip,
+                flex_step.destination_trip
+            };
+            frontier.push(combined_flex_step);
+          }
         }
 
-        // Calculate arrival time based on current time + duration
-        TimeSinceServiceStart arrival_time{
-            current_time.seconds + flex_step.destination_time.seconds
-        };
+        // Also process non-flex steps in the same group (skip the first flex
+        // step)
+        for (size_t i = 1; i < step_group.size(); ++i) {
+          const Step& next_step = step_group[i];
+          // Skip if this is also a flex step (shouldn't happen but be safe)
+          if (next_step.origin_time ==
+              TimeSinceServiceStart::FLEX_STEP_MARKER) {
+            continue;
+          }
+          // Skip if departure time is too early
+          if (next_step.origin_time.seconds < current_time.seconds) {
+            continue;
+          }
 
-        if (current_step.origin_trip == TripId::NOOP) {
-          // If our current step is just staying in place, start the path with
-          // flex step
-          Step flex_path_step{
-              flex_step.origin_stop,
-              flex_step.destination_stop,
-              current_time,  // Start immediately
-              arrival_time,  // Arrive after duration
-              flex_step.origin_trip,
-              flex_step.destination_trip
-          };
-          frontier.push(flex_path_step);
-        } else {
-          // Combine current step with flex step
-          Step combined_flex_step{
-              current_step.origin_stop,
-              flex_step.destination_stop,
-              current_step.origin_time,
-              arrival_time,  // Arrive after walking duration
-              current_step.origin_trip,
-              flex_step.destination_trip
-          };
-          frontier.push(combined_flex_step);
+          const StopId next_stop = next_step.destination_stop;
+          if (visited.find(next_stop) != visited.end()) {
+            continue;
+          }
+
+          if (current_step.origin_trip == TripId::NOOP) {
+            frontier.push(next_step);
+          } else {
+            frontier.push(Step{
+                current_step.origin_stop,
+                next_step.destination_stop,
+                current_step.origin_time,
+                next_step.destination_time,
+                current_step.origin_trip,
+                next_step.destination_trip
+            });
+          }
         }
       } else {
         // Regular fixed-time trip handling (original logic)
