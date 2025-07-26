@@ -652,6 +652,12 @@ RC_GTEST_PROP(
               ? step_12.destination_time.seconds + step_23.FlexDurationSeconds()
               : step_23.destination_time.seconds;
 
+      if (origin_time_seconds < 0) {
+        // MergeSteps only finds origin times >= 0, so we don't need to check
+        // combined steps with origin time <0.
+        continue;
+      }
+
       // There should be a merged step that dominates this connection
       bool found_dominating_step = false;
       for (const auto& merged_step : merged_steps) {
