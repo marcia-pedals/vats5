@@ -1,6 +1,7 @@
 #include "shortest_path.h"
 
 #include <algorithm>
+#include <cassert>
 #include <queue>
 
 #include "solver/step_merge.h"
@@ -155,6 +156,9 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
             step_group.end(),
             current_time,
             [](const Step& step, TimeSinceServiceStart target_time) {
+              assert(
+                  step.origin_time != TimeSinceServiceStart::FLEX_STEP_MARKER
+              );
               return step.origin_time.seconds < target_time.seconds;
             }
         );
