@@ -96,7 +96,8 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
           TimeSinceServiceStart{current_stop_time.departure_time.seconds},
           TimeSinceServiceStart{next_stop_time.arrival_time.seconds},
           trip_id,
-          trip_id
+          trip_id,
+          false  // is_flex
       };
 
       result.steps.push_back(step);
@@ -206,11 +207,12 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
         Step walk_step{
             current_stop.stop_id,
             other_stop.stop_id,
-            TimeSinceServiceStart::FLEX_STEP_MARKER,  // origin time
+            TimeSinceServiceStart{0},  // origin time
             TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
             },  // duration as destination time
             walk_trip_id,
-            walk_trip_id
+            walk_trip_id,
+            true  // is_flex
         };
 
         result.steps.push_back(walk_step);
@@ -234,11 +236,12 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
         Step reverse_walk_step{
             other_stop.stop_id,
             current_stop.stop_id,
-            TimeSinceServiceStart::FLEX_STEP_MARKER,  // origin time
+            TimeSinceServiceStart{0},  // origin time
             TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
             },  // duration as destination time
             reverse_walk_trip_id,
-            reverse_walk_trip_id
+            reverse_walk_trip_id,
+            true  // is_flex
         };
 
         result.steps.push_back(reverse_walk_step);

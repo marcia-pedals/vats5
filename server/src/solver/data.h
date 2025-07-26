@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <limits>
 #include <ostream>
 #include <stdexcept>
@@ -33,11 +34,6 @@ inline const TripId TripId::NOOP = TripId{-1};
 struct TimeSinceServiceStart {
   int seconds;
 
-  // A special marker indicating that a Step can happen at any time.
-  // When a Step's origin time is this, the destination time is the duration of
-  // the step.
-  static const TimeSinceServiceStart FLEX_STEP_MARKER;
-
   static TimeSinceServiceStart Parse(const std::string& time_str) {
     GtfsTimeSinceServiceStart gtfs_time = ParseGtfsTime(time_str);
     return TimeSinceServiceStart{gtfs_time.seconds};
@@ -66,9 +62,6 @@ struct TimeSinceServiceStart {
   }
 };
 
-inline const TimeSinceServiceStart TimeSinceServiceStart::FLEX_STEP_MARKER =
-    TimeSinceServiceStart{std::numeric_limits<int>::min()};
-
 struct Step {
   StopId origin_stop;
   StopId destination_stop;
@@ -79,13 +72,21 @@ struct Step {
   TripId origin_trip;
   TripId destination_trip;
 
+  bool is_flex;
+
+  int FlexDurationSeconds() const {
+    assert(is_flex);
+    return destination_time.seconds - origin_time.seconds;
+  }
+
   bool operator==(const Step& other) const {
     return origin_stop == other.origin_stop &&
            destination_stop == other.destination_stop &&
            origin_time == other.origin_time &&
            destination_time == other.destination_time &&
            origin_trip == other.origin_trip &&
-           destination_trip == other.destination_trip;
+           destination_trip == other.destination_trip &&
+           is_flex == other.is_flex;
   }
 };
 
@@ -109,7 +110,8 @@ inline std::ostream& operator<<(std::ostream& os, const Step& value) {
             << value.destination_stop.v << ", trip: " << value.origin_trip.v
             << " -> " << value.destination_trip.v
             << ", time: " << value.origin_time.seconds << " -> "
-            << value.destination_time.seconds << "}";
+            << value.destination_time.seconds << (value.is_flex ? ", flex" : "")
+            << "}";
 }
 
 }  // namespace vats5
@@ -146,9 +148,11 @@ struct hash<vats5::Step> {
     size_t h4 = hash<vats5::TimeSinceServiceStart>()(step.destination_time);
     size_t h5 = hash<vats5::TripId>()(step.origin_trip);
     size_t h6 = hash<vats5::TripId>()(step.destination_trip);
+    size_t h7 = hash<bool>()(step.is_flex);
 
     // Combine hashes using a simple hash combiner
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5);
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5) ^
+           (h7 << 6);
   }
 };
 }  // namespace std

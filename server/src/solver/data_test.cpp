@@ -21,8 +21,7 @@ namespace vats5 {
 
 MATCHER_P3(WalkingStep, origin, destination, seconds, "") {
   return arg.origin_stop.v == origin && arg.destination_stop.v == destination &&
-         arg.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER &&
-         (arg.destination_time.seconds > seconds - 5) &&
+         arg.is_flex && (arg.destination_time.seconds > seconds - 5) &&
          (arg.destination_time.seconds < seconds + 5);
 }
 
@@ -93,7 +92,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Sunnyvale (07:32:00) -> Mountain View (07:36:00)
@@ -103,7 +103,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Mountain View (07:36:00) -> Palo Alto (07:43:00)
@@ -113,7 +114,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Palo Alto (07:43:00) -> Redwood City (07:49:00)
@@ -123,7 +125,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Redwood City (07:49:00) -> Hillsdale (07:56:00)
@@ -133,7 +136,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Hillsdale (07:56:00) -> San Mateo (07:59:00)
@@ -143,7 +147,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // San Mateo (07:59:00) -> Millbrae (08:04:00)
@@ -153,7 +158,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // Millbrae (08:04:00) -> South SF (08:09:00)
@@ -163,7 +169,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // South SF (08:09:00) -> 22nd Street (08:16:00)
@@ -173,7 +180,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       },
 
       // 22nd Street (08:16:00) -> 4th & King (08:22:00)
@@ -183,7 +191,8 @@ TEST(DataTest, GetStepsFromGtfs) {
           TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
           mapped_trip_id,
-          mapped_trip_id
+          mapped_trip_id,
+          false  // is_flex
       }
   };
 

@@ -19,17 +19,16 @@ namespace vats5 {
 // - The steps are sorted by destination time ascending.
 bool CheckSortedAndMinimal(const std::vector<Step>& steps);
 
-// Sorts steps in-place by origin_time ascending, then by destination_time
+// Sorts steps in-place: flex steps first (ordered by duration ascending),
+// then non-flex steps by origin_time ascending, then by destination_time
 // descending.
-void SortByOriginAndDestinationTime(std::vector<Step>& steps);
+void SortSteps(std::vector<Step>& steps);
 
 // Updates steps in-place to be a minimal cover.
 // A minimal cover (1) is a subset of the original steps, (2) satisfies
 // CheckSortedAndMinimal, and (3) for any original step, there is a step in the
 // minimal cover with origin_time no earlier and destination_time no later.
-// Precondition: steps is sorted by origin_time ascending, then by
-// destination_time descending. Precondition: FLEX_STEP_MARKER steps come before
-// everything else.
+// Precondition: steps is sorted in accordance with `SortSteps`.
 void MakeMinimalCover(std::vector<Step>& steps);
 
 // Return a set of steps from stop A to stop C satisfying CheckSortedAndMinimal

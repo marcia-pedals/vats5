@@ -21,7 +21,8 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
           .origin_time = TimeSinceServiceStart{100},
           .destination_time = TimeSinceServiceStart{200},
           .origin_trip = TripId{1},
-          .destination_trip = TripId{1}
+          .destination_trip = TripId{1},
+          .is_flex = false
       },
       Step{
           .origin_stop = StopId{1},
@@ -29,7 +30,8 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
           .origin_time = TimeSinceServiceStart{150},
           .destination_time = TimeSinceServiceStart{250},
           .origin_trip = TripId{2},
-          .destination_trip = TripId{2}
+          .destination_trip = TripId{2},
+          .is_flex = false
       }
   };
 
@@ -251,19 +253,20 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
           .origin_time = TimeSinceServiceStart{100},       // Departs at 100
           .destination_time = TimeSinceServiceStart{200},  // Arrives at 200
           .origin_trip = TripId{1},
-          .destination_trip = TripId{1}
+          .destination_trip = TripId{1},
+          .is_flex = false
       },
       // Flex trip (walking) from stop 1 to stop 2 - should be first in group to
       // trigger bug
       Step{
           .origin_stop = StopId{1},
           .destination_stop = StopId{2},
-          .origin_time =
-              TimeSinceServiceStart::FLEX_STEP_MARKER,  // Flex marker
+          .origin_time = TimeSinceServiceStart{0},  // origin time for flex
           .destination_time = TimeSinceServiceStart{300
           },  // Duration of 300 seconds (5 minutes)
           .origin_trip = TripId{2},
-          .destination_trip = TripId{2}
+          .destination_trip = TripId{2},
+          .is_flex = true
       }
   };
 
@@ -310,7 +313,8 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
           .origin_time = TimeSinceServiceStart{100},
           .destination_time = TimeSinceServiceStart{110},
           .origin_trip = TripId{1},
-          .destination_trip = TripId{1}
+          .destination_trip = TripId{1},
+          .is_flex = false
       },
       // Trip 2: A->B departing at 120, arriving at 130
       Step{
@@ -319,7 +323,8 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
           .origin_time = TimeSinceServiceStart{120},
           .destination_time = TimeSinceServiceStart{130},
           .origin_trip = TripId{2},
-          .destination_trip = TripId{2}
+          .destination_trip = TripId{2},
+          .is_flex = false
       },
       // Trip 3: A->B departing at 180, arriving at 190
       Step{
@@ -328,7 +333,8 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
           .origin_time = TimeSinceServiceStart{180},
           .destination_time = TimeSinceServiceStart{190},
           .origin_trip = TripId{3},
-          .destination_trip = TripId{3}
+          .destination_trip = TripId{3},
+          .is_flex = false
       },
 
       // Infrequent trips from B (stop 2) to C (stop 3)
@@ -339,7 +345,8 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
           .origin_time = TimeSinceServiceStart{200},
           .destination_time = TimeSinceServiceStart{210},
           .origin_trip = TripId{4},
-          .destination_trip = TripId{4}
+          .destination_trip = TripId{4},
+          .is_flex = false
       }
   };
 

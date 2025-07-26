@@ -24,7 +24,7 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
     std::vector<std::vector<Step>> sorted_minimal_groups;
 
     for (auto& [destination_stop, step_group] : destination_map) {
-      SortByOriginAndDestinationTime(step_group);
+      SortSteps(step_group);
       MakeMinimalCover(step_group);
       if (!step_group.empty()) {
         sorted_minimal_groups.push_back(std::move(step_group));
@@ -75,6 +75,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
       origin_time,
       TripId::NOOP,
       TripId::NOOP,
+      false  // is_flex
   });
 
   while (!frontier.empty()) {
@@ -101,10 +102,8 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     }
 
     for (const std::vector<Step>& step_group : adj_it->second) {
-      // Check if this group has a flex trip (first step has FLEX_STEP_MARKER)
-      bool has_flex_trip =
-          !step_group.empty() &&
-          step_group[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+      // Check if this group has a flex trip (first step is flex)
+      bool has_flex_trip = !step_group.empty() && step_group[0].is_flex;
 
       if (has_flex_trip) {
         // For flex trips, we can take them at any time
@@ -115,7 +114,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
         if (visited.find(next_stop) == visited.end()) {
           // Calculate arrival time based on current time + duration
           TimeSinceServiceStart arrival_time{
-              current_time.seconds + flex_step.destination_time.seconds
+              current_time.seconds + flex_step.FlexDurationSeconds()
           };
 
           if (current_step.origin_trip == TripId::NOOP) {
@@ -127,7 +126,8 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
                 current_time,  // Start immediately
                 arrival_time,  // Arrive after duration
                 flex_step.origin_trip,
-                flex_step.destination_trip
+                flex_step.destination_trip,
+                false  // is_flex
             };
             frontier.push(flex_path_step);
           } else {
@@ -138,7 +138,8 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
                 current_step.origin_time,
                 arrival_time,  // Arrive after walking duration
                 current_step.origin_trip,
-                flex_step.destination_trip
+                flex_step.destination_trip,
+                false  // is_flex
             };
             frontier.push(combined_flex_step);
           }
@@ -156,9 +157,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
             step_group.end(),
             current_time,
             [](const Step& step, TimeSinceServiceStart target_time) {
-              assert(
-                  step.origin_time != TimeSinceServiceStart::FLEX_STEP_MARKER
-              );
+              assert(!step.is_flex);
               return step.origin_time.seconds < target_time.seconds;
             }
         );
@@ -186,7 +185,8 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
               current_step.origin_time,
               next_step.destination_time,
               current_step.origin_trip,
-              next_step.destination_trip
+              next_step.destination_trip,
+              false  // is_flex
           });
         }
       }

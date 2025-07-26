@@ -48,19 +48,23 @@ struct Arbitrary<StepFromTo<Origin, Destination>> {
   static Gen<StepFromTo<Origin, Destination>> arbitrary() {
     return gen::apply(
         [](vats5::TimeSinceServiceStart origin_time, int duration_offset) {
+          bool is_flex =
+              (origin_time.seconds == -1);  // Use -1 as marker for flex
+          vats5::TimeSinceServiceStart actual_origin_time =
+              is_flex ? vats5::TimeSinceServiceStart{0} : origin_time;
           vats5::TimeSinceServiceStart dest_time{
-              origin_time == vats5::TimeSinceServiceStart::FLEX_STEP_MARKER
-                  ? duration_offset
-                  : origin_time.seconds + duration_offset
+              is_flex ? duration_offset : origin_time.seconds + duration_offset
           };
-          return StepFromTo<Origin, Destination>{
+          StepFromTo<Origin, Destination> step{
               Origin,
               Destination,
-              origin_time,
+              actual_origin_time,
               dest_time,
               vats5::TripId{0},
-              vats5::TripId{0}
+              vats5::TripId{0},
+              is_flex
           };
+          return step;
         },
         gen::arbitrary<vats5::TimeSinceServiceStart>(),
         gen::inRange(1, 3600)
@@ -84,7 +88,8 @@ TEST(StepMergeTest, CheckSortedAndMinimalSingleStep) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{1},
-       TripId{1}}
+       TripId{1},
+       false}
   };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
@@ -96,19 +101,22 @@ TEST(StepMergeTest, CheckSortedAndMinimalSortedByOriginTime) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{250},
        TripId{2},
-       TripId{2}},
+       TripId{2},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{200},
        TimeSinceServiceStart{300},
        TripId{3},
-       TripId{3}}
+       TripId{3},
+       false}
   };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
@@ -120,13 +128,15 @@ TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByOriginTime) {
        TimeSinceServiceStart{200},
        TimeSinceServiceStart{250},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{300},
        TripId{2},
-       TripId{2}}
+       TripId{2},
+       false}
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
@@ -138,13 +148,15 @@ TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByDestinationTime) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{300},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{200},
        TripId{2},
-       TripId{2}}
+       TripId{2},
+       false}
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
@@ -156,13 +168,15 @@ TEST(StepMergeTest, CheckSortedAndMinimalEqualOriginTimes) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{250},
        TripId{2},
-       TripId{2}}
+       TripId{2},
+       false}
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
@@ -174,13 +188,15 @@ TEST(StepMergeTest, CheckSortedAndMinimalEqualDestinationTimes) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{200},
        TripId{2},
-       TripId{2}}
+       TripId{2},
+       false}
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
@@ -223,8 +239,8 @@ TEST(StepMergeTest, MergeStepsTest) {
   }
 
   // Sort by origin_time ascending
-  SortByOriginAndDestinationTime(ab);
-  SortByOriginAndDestinationTime(bc);
+  SortSteps(ab);
+  SortSteps(bc);
 
   // These should be minimal because Caltrain doesn't have overtakes.
   EXPECT_TRUE(CheckSortedAndMinimal(ab));
@@ -255,7 +271,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("06:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("06:36:00").seconds},
           ct503,
-          ct503
+          ct503,
+          false
       },
       Step{
           stop_a,
@@ -263,7 +280,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
           ct507,
-          ct507
+          ct507,
+          false
       },
       Step{
           stop_a,
@@ -271,7 +289,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("08:36:00").seconds},
           ct511,
-          ct511
+          ct511,
+          false
       },
       Step{
           stop_a,
@@ -279,7 +298,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("15:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("15:36:00").seconds},
           ct515,
-          ct515
+          ct515,
+          false
       },
       Step{
           stop_a,
@@ -287,7 +307,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("16:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("16:36:00").seconds},
           ct519,
-          ct519
+          ct519,
+          false
       },
       Step{
           stop_a,
@@ -295,7 +316,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("17:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("17:36:00").seconds},
           ct523,
-          ct523
+          ct523,
+          false
       },
       Step{
           stop_a,
@@ -303,7 +325,8 @@ TEST(StepMergeTest, MergeStepsTest) {
           TimeSinceServiceStart{ParseGtfsTime("18:22:00").seconds},
           TimeSinceServiceStart{ParseGtfsTime("18:36:00").seconds},
           ct527,
-          ct527
+          ct527,
+          false
       },
   };
 
@@ -318,28 +341,32 @@ TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{300},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{2},
-       TripId{2}},
+       TripId{2},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{400},
        TripId{3},
-       TripId{3}},
+       TripId{3},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{250},
        TripId{4},
-       TripId{4}}
+       TripId{4},
+       false}
   };
 
-  SortByOriginAndDestinationTime(steps);
+  SortSteps(steps);
 
   // Verify primary sort by origin_time ascending
   for (size_t i = 1; i < steps.size(); ++i) {
@@ -371,13 +398,15 @@ TEST(StepMergeTest, MakeMinimalCoverSimpleTest) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{300},
        TripId{1},
-       TripId{1}},  // dominated
+       TripId{1},
+       false},  // dominated
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{250},
        TripId{2},
-       TripId{2}}  // dominates step 1
+       TripId{2},
+       false}  // dominates step 1
   };
 
   MakeMinimalCover(steps);
@@ -395,31 +424,36 @@ TEST(StepMergeTest, MakeMinimalCoverTest) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{300},
        TripId{1},
-       TripId{1}},
+       TripId{1},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{120},
        TimeSinceServiceStart{350},
        TripId{2},
-       TripId{2}},
+       TripId{2},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{150},
        TimeSinceServiceStart{250},
        TripId{3},
-       TripId{3}},
+       TripId{3},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{180},
        TimeSinceServiceStart{280},
        TripId{4},
-       TripId{4}},
+       TripId{4},
+       false},
       {StopId{1},
        StopId{2},
        TimeSinceServiceStart{200},
        TimeSinceServiceStart{240},
        TripId{5},
-       TripId{5}}
+       TripId{5},
+       false}
   };
 
   MakeMinimalCover(steps);
@@ -443,7 +477,8 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
        TimeSinceServiceStart{100},
        TimeSinceServiceStart{200},
        TripId{1},
-       TripId{1}}
+       TripId{1},
+       false}
   };
   MakeMinimalCover(single_step);
   EXPECT_EQ(single_step.size(), 1);
@@ -457,7 +492,7 @@ RC_GTEST_PROP(
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
   // Sort as precondition
-  SortByOriginAndDestinationTime(steps);
+  SortSteps(steps);
   RC_LOG() << "Sorted steps: " << rc::toString(steps) << "\n";
 
   // Make a copy for the minimal cover
@@ -479,20 +514,18 @@ RC_GTEST_PROP(
   for (const auto& orig_step : steps) {
     bool dominated_or_kept = false;
     for (const auto& cover_step : minimal_cover) {
-      if (cover_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
+      if (cover_step.is_flex) {
         // Flex steps dominate flex steps by duration.
-        if (orig_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER &&
-            orig_step.destination_time.seconds >=
-                cover_step.destination_time.seconds) {
+        if (orig_step.is_flex && cover_step.FlexDurationSeconds() <=
+                                     orig_step.FlexDurationSeconds()) {
           dominated_or_kept = true;
           break;
         }
 
         // Flex steps dominate non-flex steps by duration.
-        if (orig_step.origin_time != TimeSinceServiceStart::FLEX_STEP_MARKER &&
-            orig_step.destination_time.seconds -
-                    orig_step.origin_time.seconds >=
-                cover_step.destination_time.seconds) {
+        if (!orig_step.is_flex && orig_step.destination_time.seconds -
+                                          orig_step.origin_time.seconds >=
+                                      cover_step.FlexDurationSeconds()) {
           dominated_or_kept = true;
           break;
         }
@@ -518,15 +551,29 @@ RC_GTEST_PROP(
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
   // Sort using our function
-  SortByOriginAndDestinationTime(steps);
+  SortSteps(steps);
 
-  // Verify it's sorted by origin_time ascending
-  for (size_t i = 1; i < steps.size(); ++i) {
+  // Verify the new sorting order: flex steps first, then non-flex steps
+  size_t first_non_flex = 0;
+  while (first_non_flex < steps.size() && steps[first_non_flex].is_flex) {
+    first_non_flex++;
+  }
+
+  // Verify flex steps are sorted by duration ascending
+  for (size_t i = 1; i < first_non_flex; ++i) {
+    RC_ASSERT(
+        steps[i - 1].FlexDurationSeconds() <= steps[i].FlexDurationSeconds()
+    );
+  }
+
+  // Verify non-flex steps are sorted by origin_time ascending
+  for (size_t i = first_non_flex + 1; i < steps.size(); ++i) {
     RC_ASSERT(steps[i - 1].origin_time.seconds <= steps[i].origin_time.seconds);
   }
 
   // Verify secondary sort by destination_time descending for equal origin times
-  for (size_t i = 1; i < steps.size(); ++i) {
+  // (non-flex only)
+  for (size_t i = first_non_flex + 1; i < steps.size(); ++i) {
     if (steps[i - 1].origin_time.seconds == steps[i].origin_time.seconds) {
       RC_ASSERT(
           steps[i - 1].destination_time.seconds >=
@@ -546,8 +593,8 @@ RC_GTEST_PROP(
   std::vector<Step> steps_23(phantom_steps_23.begin(), phantom_steps_23.end());
 
   // Sort both vectors
-  SortByOriginAndDestinationTime(steps_12);
-  SortByOriginAndDestinationTime(steps_23);
+  SortSteps(steps_12);
+  SortSteps(steps_23);
 
   // Get minimal covers
   MakeMinimalCover(steps_12);
@@ -566,10 +613,8 @@ RC_GTEST_PROP(
   // there is a merged step that dominates or equals the connection
   for (const auto& step_12 : steps_12) {
     for (const auto& step_23 : steps_23) {
-      bool step_12_flex =
-          step_12.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
-      bool step_23_flex =
-          step_23.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+      bool step_12_flex = step_12.is_flex;
+      bool step_23_flex = step_23.is_flex;
 
       // If both steps are flex, check that the first step of the result is a
       // flex combining them.
@@ -578,13 +623,14 @@ RC_GTEST_PROP(
             merged_steps[0] == (Step{
                                    step_12.origin_stop,
                                    step_23.destination_stop,
-                                   TimeSinceServiceStart::FLEX_STEP_MARKER,
+                                   TimeSinceServiceStart{0},
                                    TimeSinceServiceStart{
-                                       step_12.destination_time.seconds +
-                                       step_23.destination_time.seconds
+                                       step_12.FlexDurationSeconds() +
+                                       step_23.FlexDurationSeconds()
                                    },
                                    step_12.origin_trip,
                                    step_23.destination_trip,
+                                   true
                                })
         );
         continue;
@@ -598,14 +644,13 @@ RC_GTEST_PROP(
       }
 
       // Compute the origin and destination times for the pair.
-      int origin_time_seconds =
-          step_12_flex
-              ? step_23.origin_time.seconds - step_12.destination_time.seconds
-              : step_12.origin_time.seconds;
-      int destination_time_seconds = step_23_flex
-                                         ? step_12.destination_time.seconds +
-                                               step_23.destination_time.seconds
-                                         : step_23.destination_time.seconds;
+      int origin_time_seconds = step_12_flex ? step_23.origin_time.seconds -
+                                                   step_12.FlexDurationSeconds()
+                                             : step_12.origin_time.seconds;
+      int destination_time_seconds =
+          step_23_flex
+              ? step_12.destination_time.seconds + step_23.FlexDurationSeconds()
+              : step_23.destination_time.seconds;
 
       // There should be a merged step that dominates this connection
       bool found_dominating_step = false;
@@ -627,11 +672,10 @@ RC_GTEST_PROP(
   // Property 3: every merged step has origin_ fields from a single steps_12
   // and destination_ fields from a single steps_23, with valid transfer time
   for (const auto& merged_step : merged_steps) {
-    if (merged_step.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
+    if (merged_step.is_flex) {
       RC_ASSERT(
-          merged_step.destination_time.seconds ==
-          steps_12[0].destination_time.seconds +
-              steps_23[0].destination_time.seconds
+          merged_step.FlexDurationSeconds() ==
+          steps_12[0].FlexDurationSeconds() + steps_23[0].FlexDurationSeconds()
       );
     }
 
@@ -662,22 +706,28 @@ RC_GTEST_PROP(
       RC_FAIL("both source steps nullptr");
     } else if (source_step_12 == nullptr) {
       RC_ASSERT(
-          merged_step.origin_time.seconds +
-              steps_12[0].destination_time.seconds ==
+          merged_step.origin_time.seconds + steps_12[0].FlexDurationSeconds() ==
           source_step_23->origin_time.seconds
       );
     } else if (source_step_23 == nullptr) {
       RC_ASSERT(
           source_step_12->destination_time.seconds +
-              steps_23[0].destination_time.seconds ==
+              steps_23[0].FlexDurationSeconds() ==
           merged_step.destination_time.seconds
       );
     } else {
-      // Check that the destination_time of steps_12 <= origin_time of steps_23
-      RC_ASSERT(
-          source_step_12->destination_time.seconds <=
-          source_step_23->origin_time.seconds
-      );
+      // Check that connection is valid
+      // For non-flex steps, destination_time of step_12 <= origin_time of
+      // step_23 For flex steps, they can connect at any time, so we need
+      // different logic
+      if (!source_step_12->is_flex && !source_step_23->is_flex) {
+        RC_ASSERT(
+            source_step_12->destination_time.seconds <=
+            source_step_23->origin_time.seconds
+        );
+      }
+      // For flex steps, the connection is always valid since they can be taken
+      // at any time
     }
   }
 }

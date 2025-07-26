@@ -5,8 +5,19 @@
 
 namespace vats5 {
 
-void SortByOriginAndDestinationTime(std::vector<Step>& steps) {
+void SortSteps(std::vector<Step>& steps) {
   std::sort(steps.begin(), steps.end(), [](const Step& a, const Step& b) {
+    // Flex steps come first
+    if (a.is_flex != b.is_flex) {
+      return a.is_flex > b.is_flex;  // flex first
+    }
+
+    // Among flex steps, sort by duration ascending
+    if (a.is_flex && b.is_flex) {
+      return a.FlexDurationSeconds() < b.FlexDurationSeconds();
+    }
+
+    // Among non-flex steps, sort by origin time then destination time
     if (a.origin_time.seconds != b.origin_time.seconds) {
       return a.origin_time.seconds < b.origin_time.seconds;
     }
@@ -21,29 +32,22 @@ void MakeMinimalCover(std::vector<Step>& steps) {
 
   const StopId deletion_marker = StopId{std::numeric_limits<int>::min()};
 
-  // Forward sweep through all the flex steps to delete all but the last
-  // (shortest) one and to record the duration of the last (shortest) one.
+  // Forward sweep through all the flex steps to delete all but the first
+  // (shortest) one and to record the duration of the first (shortest) one.
   int flex_step_duration = std::numeric_limits<int>::max();
-  for (int i = 0;
-       i < steps.size() &&
-       steps[i].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
-       ++i) {
-    if (i + 1 < steps.size() &&
-        steps[i + 1].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
-      // If the next step is flex, it's shorter, so mark the current one for
-      // deletion.
+  for (int i = 0; i < steps.size() && steps[i].is_flex; ++i) {
+    if (i == 0) {
+      flex_step_duration = steps[i].FlexDurationSeconds();
+    } else {
       steps[i].origin_stop = deletion_marker;
     }
-    flex_step_duration = steps[i].destination_time.seconds;
   }
 
   // Backwards sweep through the non-flex steps: a step is dominated if there's
   // a later-departing step that arrives earlier OR if the flex step is
   // equal-or-shorter.
   int earliest_destination_time = std::numeric_limits<int>::max();
-  for (int i = static_cast<int>(steps.size()) - 1;
-       i >= 0 &&
-       steps[i].origin_time != TimeSinceServiceStart::FLEX_STEP_MARKER;
+  for (int i = static_cast<int>(steps.size()) - 1; i >= 0 && !steps[i].is_flex;
        i--) {
     if (steps[i].destination_time.seconds >= earliest_destination_time ||
         steps[i].destination_time.seconds - steps[i].origin_time.seconds >=
@@ -74,16 +78,15 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
   if (steps.empty()) {
     return true;
   }
-  bool has_flex =
-      steps[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+  bool has_flex = steps[0].is_flex;
   size_t first_to_check = has_flex ? 1 : 0;
-  int flex_duration = has_flex ? steps[0].destination_time.seconds
+  int flex_duration = has_flex ? steps[0].FlexDurationSeconds()
                                : std::numeric_limits<int>::max();
   for (size_t i = first_to_check; i < steps.size(); i++) {
     const Step& curr = steps[i];
 
     // Only the first step is allowed to be flex.
-    if (curr.origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER) {
+    if (curr.is_flex) {
       return false;
     }
 
@@ -118,8 +121,8 @@ std::vector<Step> MergeSteps(
     return result;
   }
 
-  bool ab_flex = ab[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
-  bool bc_flex = bc[0].origin_time == TimeSinceServiceStart::FLEX_STEP_MARKER;
+  bool ab_flex = ab[0].is_flex;
+  bool bc_flex = bc[0].is_flex;
 
   size_t ab_idx = ab_flex ? 1 : 0;
   size_t bc_idx = bc_flex ? 1 : 0;
@@ -130,12 +133,13 @@ std::vector<Step> MergeSteps(
     result.emplace_back(Step{
         ab[0].origin_stop,
         bc[0].destination_stop,
-        TimeSinceServiceStart::FLEX_STEP_MARKER,
+        TimeSinceServiceStart{0},
         TimeSinceServiceStart{
-            ab[0].destination_time.seconds + bc[0].destination_time.seconds
+            ab[0].FlexDurationSeconds() + bc[0].FlexDurationSeconds()
         },
         ab[0].origin_trip,
         bc[0].destination_trip,
+        true  // is_flex
     });
   }
 
@@ -151,7 +155,7 @@ std::vector<Step> MergeSteps(
       // origin time, then it is worthwhile to do this, so add a step.
       if (ab_flex) {
         int flex_origin_time_seconds =
-            bc[bc_idx].origin_time.seconds - ab[0].destination_time.seconds;
+            bc[bc_idx].origin_time.seconds - ab[0].FlexDurationSeconds();
         if (flex_origin_time_seconds > prev_origin_time_seconds) {
           result.emplace_back(Step{
               ab[0].origin_stop,
@@ -160,6 +164,7 @@ std::vector<Step> MergeSteps(
               bc[bc_idx].destination_time,
               ab[0].origin_trip,
               bc[bc_idx].destination_trip,
+              false  // is_flex
           });
           prev_origin_time_seconds = flex_origin_time_seconds;
         }
@@ -177,11 +182,11 @@ std::vector<Step> MergeSteps(
               bc[0].destination_stop,
               ab[ab_idx].origin_time,
               TimeSinceServiceStart{
-                  ab[ab_idx].origin_time.seconds +
-                  bc[0].destination_time.seconds
+                  ab[ab_idx].origin_time.seconds + bc[0].FlexDurationSeconds()
               },
               ab[ab_idx].origin_trip,
               bc[0].destination_trip,
+              false  // is_flex
           });
           prev_origin_time_seconds = ab[ab_idx].origin_time.seconds;
           ab_idx += 1;
@@ -198,8 +203,7 @@ std::vector<Step> MergeSteps(
                                          bc[bc_idx].origin_time.seconds) {
       if (bc_flex) {
         int flex_destination_time_seconds =
-            ab[ab_idx].destination_time.seconds +
-            bc[0].destination_time.seconds;
+            ab[ab_idx].destination_time.seconds + bc[0].FlexDurationSeconds();
         if (flex_destination_time_seconds <
             bc[bc_idx].destination_time.seconds) {
           result.emplace_back(Step{
@@ -209,6 +213,7 @@ std::vector<Step> MergeSteps(
               TimeSinceServiceStart{flex_destination_time_seconds},
               ab[ab_idx].origin_trip,
               bc[0].destination_trip,
+              false  // is_flex
           });
           prev_origin_time_seconds = ab[ab_idx].origin_time.seconds;
         }
@@ -223,6 +228,7 @@ std::vector<Step> MergeSteps(
         bc[bc_idx].destination_time,
         ab[ab_idx].origin_trip,
         bc[bc_idx].destination_trip,
+        false  // is_flex
     });
     prev_origin_time_seconds = ab[ab_idx].origin_time.seconds;
 
