@@ -60,7 +60,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
     StopId origin_stop,
-    std::unordered_set<StopId> destinations
+    const std::unordered_set<StopId>& destinations
 ) {
   std::unordered_map<StopId, Step> result;
   std::unordered_set<StopId> visited;
@@ -196,13 +196,60 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
   return result;
 }
 
-std::vector<std::vector<Step>> FindShortestPaths(
-    const StepsAdjacencyList& adjacency_list,
-    StopId origin_stop,
-    std::vector<StopId> destinations
+std::vector<Step> FindMinimalPathSet(
+    const StepsAdjacencyList& adjacency_list, StopId origin, StopId destination
 ) {
-  // TODO
-  return {};
+  // Invariant: Sorted by origin_time ascending throughout.
+  std::vector<Step> result;
+  result.reserve(24);
+
+  std::unordered_set<StopId> dests;
+  dests.insert(destination);
+
+  // First query with origin times evenly spaced within the range of origin
+  // times.
+  for (auto origin_time = TimeSinceServiceStart{0};
+       origin_time.seconds <= 24 * 3600;
+       origin_time.seconds += 3600) {
+    auto r =
+        FindShortestPathsAtTime(adjacency_list, origin_time, origin, dests);
+    auto r_it = r.find(destination);
+    if (r_it == r.end()) {
+      continue;
+    }
+
+    // Insert the step while maintaining the sortedness invariant.
+    const Step& new_step = r_it->second;
+    if (result.empty() ||
+        new_step.origin_time.seconds >= result.back().origin_time.seconds) {
+      // Common case: new step belongs at the end
+      result.push_back(new_step);
+    } else {
+      // Find correct insertion position
+      auto insert_pos = std::upper_bound(
+          result.begin(),
+          result.end(),
+          new_step,
+          [](const Step& a, const Step& b) {
+            return a.origin_time.seconds < b.origin_time.seconds;
+          }
+      );
+      result.insert(insert_pos, new_step);
+    }
+  }
+
+  // TODO: Finish implementing.
+
+  return result;
 }
+
+// std::vector<std::vector<Step>> FindShortestPaths(
+//     const StepsAdjacencyList& adjacency_list,
+//     StopId origin_stop,
+//     std::vector<StopId> destinations
+// ) {
+//   // TODO
+//   return {};
+// }
 
 }  // namespace vats5
