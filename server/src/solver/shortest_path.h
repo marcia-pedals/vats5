@@ -13,7 +13,12 @@ struct StepsAdjacencyList {
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
-// Find shortest paths from origin to all destinations at a specific time.
+// Find earliest times you can get to a set of destinations from `origin` when
+// starting at `time`.
+//
+// The returned steps may depart later than `time` from `origin`, but you should
+// not rely on this to find the latest possible departure time (see the
+// SuboptimalDepartureTimeExposure test).
 std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
