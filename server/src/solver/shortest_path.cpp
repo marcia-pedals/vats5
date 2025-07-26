@@ -40,9 +40,17 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
 
 struct StepOriginTimeComparator {
   bool operator()(const Step& a, const Step& b) const {
+    // Highest priority is to arrive earliest.
     if (a.destination_time.seconds != b.destination_time.seconds) {
       return a.destination_time.seconds > b.destination_time.seconds;
     }
+
+    // Next priority is to depart latest.
+    if (a.origin_time.seconds != b.origin_time.seconds) {
+      return a.origin_time.seconds < b.origin_time.seconds;
+    }
+
+    // Break ties arbitrarily but consistently.
     return a.destination_stop.v > b.destination_stop.v;
   }
 };

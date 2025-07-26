@@ -1,8 +1,12 @@
 #include "solver/shortest_path.h"
 
 #include <gtest/gtest.h>
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
 
 #include <iostream>
+#include <random>
+#include <unordered_map>
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
@@ -98,17 +102,38 @@ struct ShortestPathTestCase {
 class ShortestPathParameterizedTest
     : public ::testing::TestWithParam<ShortestPathTestCase> {};
 
+struct CachedTestData {
+  StepsFromGtfs steps_from_gtfs;
+  StepsAdjacencyList adjacency_list;
+};
+
+CachedTestData GetCachedTestData(const std::string& gtfs_path) {
+  static std::unordered_map<std::string, CachedTestData> cache;
+
+  auto it = cache.find(gtfs_path);
+  if (it != cache.end()) {
+    return it->second;
+  }
+
+  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
+  gtfs_day = GtfsNormalizeStops(gtfs_day);
+  StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+
+  CachedTestData data{std::move(steps_from_gtfs), std::move(adjacency_list)};
+  cache[gtfs_path] = data;
+  return data;
+}
+
 }  // namespace
 
 TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
   const auto& test_case = GetParam();
 
   try {
-    GtfsDay gtfs_day = GtfsLoadDay(test_case.gtfs_path);
-    gtfs_day = GtfsNormalizeStops(gtfs_day);
-    StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
-    StepsAdjacencyList adjacency_list =
-        MakeAdjacencyList(steps_from_gtfs.steps);
+    auto cached_data = GetCachedTestData(test_case.gtfs_path);
+    const auto& steps_from_gtfs = cached_data.steps_from_gtfs;
+    const auto& adjacency_list = cached_data.adjacency_list;
 
     TimeSinceServiceStart query_time =
         TimeSinceServiceStart::Parse(test_case.origin_time);
@@ -211,5 +236,66 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.test_name;
     }
 );
+
+RC_GTEST_PROP(ShortestPathPropertyTest, OptimalDepartureTime, ()) {
+  const std::string gtfs_path = "../data/RG_20250718_BA_CT_SC";
+
+  try {
+    auto cached_data = GetCachedTestData(gtfs_path);
+    const auto& steps_from_gtfs = cached_data.steps_from_gtfs;
+    const auto& adjacency_list = cached_data.adjacency_list;
+
+    std::vector<StopId> all_stops;
+    for (const auto& [stop_id, _] :
+         steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id) {
+      all_stops.push_back(stop_id);
+    }
+
+    RC_PRE(!all_stops.empty());
+
+    StopId origin_stop = *rc::gen::noShrink(rc::gen::elementOf(all_stops));
+    StopId destination_stop = *rc::gen::noShrink(
+        rc::gen::distinctFrom(rc::gen::elementOf(all_stops), origin_stop)
+    );
+
+    TimeSinceServiceStart origin_time{
+        *rc::gen::noShrink(rc::gen::inRange(0, 75600))
+    };
+
+    std::unordered_set<StopId> destinations{destination_stop};
+
+    auto shortest_paths = FindShortestPathsAtTime(
+        adjacency_list, origin_time, origin_stop, destinations
+    );
+
+    auto original_step_it = shortest_paths.find(destination_stop);
+    RC_PRE(original_step_it != shortest_paths.end());
+
+    const Step& original_step = original_step_it->second;
+    TimeSinceServiceStart original_destination_time =
+        original_step.destination_time;
+
+    TimeSinceServiceStart later_origin_time{origin_time.seconds + 1};
+
+    auto later_shortest_paths = FindShortestPathsAtTime(
+        adjacency_list, later_origin_time, origin_stop, destinations
+    );
+
+    if (later_shortest_paths.find(destination_stop) ==
+        later_shortest_paths.end()) {
+      return;
+    }
+
+    const Step& later_step = later_shortest_paths[destination_stop];
+    TimeSinceServiceStart later_destination_time = later_step.destination_time;
+
+    RC_ASSERT(
+        later_destination_time.seconds >= original_destination_time.seconds
+    );
+
+  } catch (const std::exception& e) {
+    RC_FAIL(std::string("Exception in property test: ") + e.what());
+  }
+}
 
 }  // namespace vats5

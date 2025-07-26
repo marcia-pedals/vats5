@@ -86,5 +86,5 @@ add_test(NAME step_merge_test COMMAND step_merge_test)
 
 # Add shortest_path test executable
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
-target_link_libraries(shortest_path_test PUBLIC gunit shortest_path)
+target_link_libraries(shortest_path_test PUBLIC gunit shortest_path rapidcheck rapidcheck_gtest)
 add_test(NAME shortest_path_test COMMAND shortest_path_test)
