@@ -51,6 +51,12 @@ struct TimeSinceServiceStart {
   bool operator>(const TimeSinceServiceStart& other) const {
     return seconds > other.seconds;
   }
+  bool operator<=(const TimeSinceServiceStart& other) const {
+    return seconds <= other.seconds;
+  }
+  bool operator>=(const TimeSinceServiceStart& other) const {
+    return seconds >= other.seconds;
+  }
 
   std::string ToString() const {
     int hours = seconds / 3600;

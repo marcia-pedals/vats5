@@ -14,6 +14,18 @@
 template <int Origin, int Destination>
 struct StepFromTo : public vats5::Step {};
 
+// A utility for assigining distinct trip ids to multiple vectors of trips.
+struct DistinctTripIds {
+  int cur = 1;
+  void Assign(std::vector<vats5::Step>& steps) {
+    for (auto& step : steps) {
+      step.origin_trip.v = cur;
+      step.destination_trip.v = cur;
+      cur += 1;
+    }
+  }
+};
+
 namespace rc {
 
 template <>
@@ -491,6 +503,9 @@ RC_GTEST_PROP(
 ) {
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
+  DistinctTripIds d;
+  d.Assign(steps);
+
   // Sort as precondition
   SortSteps(steps);
   RC_LOG() << "Sorted steps: " << rc::toString(steps) << "\n";
@@ -550,6 +565,9 @@ RC_GTEST_PROP(
 ) {
   std::vector<Step> steps(phantom_steps.begin(), phantom_steps.end());
 
+  DistinctTripIds d;
+  d.Assign(steps);
+
   // Sort using our function
   SortSteps(steps);
 
@@ -591,6 +609,10 @@ RC_GTEST_PROP(
 ) {
   std::vector<Step> steps_12(phantom_steps_12.begin(), phantom_steps_12.end());
   std::vector<Step> steps_23(phantom_steps_23.begin(), phantom_steps_23.end());
+
+  DistinctTripIds d;
+  d.Assign(steps_12);
+  d.Assign(steps_23);
 
   // Sort both vectors
   SortSteps(steps_12);
@@ -651,12 +673,6 @@ RC_GTEST_PROP(
           step_23_flex
               ? step_12.destination_time.seconds + step_23.FlexDurationSeconds()
               : step_23.destination_time.seconds;
-
-      if (origin_time_seconds < 0) {
-        // MergeSteps only finds origin times >= 0, so we don't need to check
-        // combined steps with origin time <0.
-        continue;
-      }
 
       // There should be a merged step that dominates this connection
       bool found_dominating_step = false;
