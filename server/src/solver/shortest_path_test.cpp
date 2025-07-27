@@ -54,7 +54,8 @@ void VerifyPathResult(
     const std::string& expected_origin_time_str,
     const std::string& expected_destination_time_str,
     const std::string& expected_origin_route_desc,
-    const std::string& expected_destination_route_desc
+    const std::string& expected_destination_route_desc,
+    const bool expected_is_flex
 ) {
   StopId destination_stop =
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
@@ -83,6 +84,8 @@ void VerifyPathResult(
     EXPECT_EQ(actual_destination_route_desc, expected_destination_route_desc)
         << destination_stop_name << " destination route desc";
   }
+
+  EXPECT_EQ(step.is_flex, expected_is_flex);
 }
 
 struct ExpectedPath {
@@ -91,6 +94,7 @@ struct ExpectedPath {
   std::string expected_arrival_time;
   std::string expected_origin_route_desc;
   std::string expected_destination_route_desc;
+  bool expected_is_flex;
 };
 
 struct ShortestPathTestCase {
@@ -163,7 +167,8 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
           expected_path.expected_departure_time,
           expected_path.expected_arrival_time,
           expected_path.expected_origin_route_desc,
-          expected_path.expected_destination_route_desc
+          expected_path.expected_destination_route_desc,
+          expected_path.expected_is_flex
       );
     }
 
@@ -187,27 +192,32 @@ INSTANTIATE_TEST_SUITE_P(
                   "08:05:00",
                   "09:11:00",
                   "Green-S South",
-                  "Green-S South"},
+                  "Green-S South",
+                  false},
                  {"Dublin / Pleasanton BART",
                   "08:05:00",
                   "09:08:00",
                   "Green-S South",
-                  "Blue-N North"},
+                  "Blue-N North",
+                  false},
                  {"Bay Fair",
                   "08:05:00",
                   "08:40:00",
                   "Green-S South",
-                  "Green-S South"},
+                  "Green-S South",
+                  false},
                  {"Antioch",
                   "08:05:00",
                   "10:14:00",
                   "Green-S South",
-                  "Yellow-N North"},
+                  "Yellow-N North",
+                  false},
                  {"Millbrae BART",
                   "08:05:00",
                   "10:07:00",
                   "Green-S South",
-                  "Red-S South"}}
+                  "Red-S South",
+                  false}}
         },
         ShortestPathTestCase{
             .test_name = "WarmSpringsToMillbraeWithCaltrain",
@@ -219,7 +229,8 @@ INSTANTIATE_TEST_SUITE_P(
                   "07:52:00",
                   "09:33:00",
                   "Orange-S South",
-                  "Limited North"}}
+                  "Limited North",
+                  false}}
         },
         ShortestPathTestCase{
             .test_name = "WalkToCaltrainMillbrae",
@@ -231,8 +242,24 @@ INSTANTIATE_TEST_SUITE_P(
                   "08:00:00",
                   "08:54:00",
                   "Walk from Sunnyvale & Hendy to Sunnyvale",
-                  "Local Weekday North"}}
+                  "Local Weekday North",
+                  false}}
+        },
+
+        ShortestPathTestCase{
+            .test_name = "WarmSpringsToMillbraeVERYEARLY",
+            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .origin_stop_name = "Berryessa / North San Jose",
+            .origin_time = "00:00:00",
+            .expected_paths =
+                {{"Great Mall/Milpitas BART",
+                  "07:52:00",
+                  "09:33:00",
+                  "Orange-S South",
+                  "Limited North",
+                  true}}
         }
+
     ),
     [](const ::testing::TestParamInfo<ShortestPathTestCase>& info) {
       return info.param.test_name;
