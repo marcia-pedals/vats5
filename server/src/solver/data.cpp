@@ -6,7 +6,7 @@
 
 namespace vats5 {
 
-StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
+StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   StepsFromGtfs result;
   result.mapping = DataGtfsMapping{};
   result.steps = {};
@@ -140,8 +140,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
       }
   );
 
-  // Sliding window to find stops within 500m
-  const double MAX_DISTANCE_METERS = 500.0;
+  // Sliding window to find stops within specified walking distance
   const double WALKING_SPEED_MS = 1.0;  // 1 meter per second
 
   for (size_t i = 0; i < stop_positions.size(); ++i) {
@@ -154,7 +153,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
     // Extend window to include all stops within x-coordinate range
     while (window_end < stop_positions.size() &&
            stop_positions[window_end].x_meters <=
-               current_stop.x_meters + MAX_DISTANCE_METERS) {
+               current_stop.x_meters + options.max_walking_distance_meters) {
       window_end++;
     }
 
@@ -169,7 +168,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs) {
       double dy = current_stop.y_meters - other_stop.y_meters;
       double distance = std::sqrt(dx * dx + dy * dy);
 
-      if (distance <= MAX_DISTANCE_METERS) {
+      if (distance <= options.max_walking_distance_meters) {
         // Create FlexTrip and add to trip mapping
         TripId walk_trip_id{next_trip_id++};
         FlexTrip flex_trip{

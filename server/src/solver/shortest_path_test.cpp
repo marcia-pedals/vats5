@@ -123,7 +123,8 @@ CachedTestData GetCachedTestData(const std::string& gtfs_path) {
 
   GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
   gtfs_day = GtfsNormalizeStops(gtfs_day);
-  StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
+  StepsFromGtfs steps_from_gtfs =
+      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
 
   CachedTestData data{std::move(steps_from_gtfs), std::move(adjacency_list)};
@@ -253,10 +254,11 @@ INSTANTIATE_TEST_SUITE_P(
             .origin_time = "00:00:00",
             .expected_paths =
                 {{"Great Mall/Milpitas BART",
-                  "07:52:00",
-                  "09:33:00",
-                  "Orange-S South",
-                  "Limited North",
+                  "00:00:00",
+                  "01:23:21",
+                  "Walk from Berryessa / North San Jose to Berryessa Transit "
+                  "Center",
+                  "Walk from Lundy & Trade Zone to Great Mall/Milpitas BART",
                   true}}
         }
 

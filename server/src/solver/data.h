@@ -165,6 +165,10 @@ struct hash<vats5::Step> {
 
 namespace vats5 {
 
+struct GetStepsOptions {
+  double max_walking_distance_meters = 500.0;
+};
+
 struct FlexTrip {
   StopId origin;
   StopId destination;
@@ -211,6 +215,8 @@ struct StepsFromGtfs {
   std::vector<Step> steps;
 };
 
-StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs);
+StepsFromGtfs GetStepsFromGtfs(
+    GtfsDay gtfs, const GetStepsOptions& options = {}
+);
 
 }  // namespace vats5

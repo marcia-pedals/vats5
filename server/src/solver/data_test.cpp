@@ -35,7 +35,7 @@ TEST(DataTest, GetStepsFromGtfs) {
   std::unordered_set<GtfsTripId> trips_set = {trip_id};
   GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
 
-  StepsFromGtfs result = GetStepsFromGtfs(filtered);
+  StepsFromGtfs result = GetStepsFromGtfs(filtered, GetStepsOptions{500.0});
 
   // Trip CT:507 has 11 stops, so there should be 10 steps between them
   EXPECT_EQ(result.steps.size(), 10);
@@ -231,7 +231,7 @@ TEST(DataTest, WalkingStepsGrid3x3) {
   }
 
   // Generate steps
-  StepsFromGtfs result = GetStepsFromGtfs(gtfs_day);
+  StepsFromGtfs result = GetStepsFromGtfs(gtfs_day, GetStepsOptions{500.0});
 
   EXPECT_THAT(
       result.steps,

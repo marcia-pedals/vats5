@@ -219,7 +219,7 @@ TEST(StepMergeTest, MergeStepsTest) {
   GtfsDay gtfs_day = GtfsLoadDay(gtfs_directory_path);
 
   // Get steps from GTFS
-  StepsFromGtfs result = GetStepsFromGtfs(gtfs_day);
+  StepsFromGtfs result = GetStepsFromGtfs(gtfs_day, GetStepsOptions{500.0});
 
   // Define the three stops
   const GtfsStopId san_jose_diridon_northbound{"70261"};
