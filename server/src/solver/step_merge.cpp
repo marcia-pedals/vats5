@@ -181,22 +181,25 @@ std::vector<Step> MergeSteps(
       ab[0].is_flex ? bc_start : bc.size();  // Only use this if ab has flex.
   size_t bc_flex_ab_i =
       bc[0].is_flex ? ab_start : ab.size();  // Only use this if bc has flex.
-
-  // oh no i need to advance this to a valid and minimal connection
   size_t non_flex_ab_i = ab_start;
   size_t non_flex_bc_i = bc_start;
 
-  // first make the connection valid by advancing bc_i
-  while (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size() &&
-         ab[non_flex_ab_i].destination_time > bc[non_flex_bc_i].origin_time) {
-    non_flex_bc_i += 1;
-  }
-  // then make the conection minimal by advancing ab_i
-  while (non_flex_ab_i + 1 < ab.size() && non_flex_bc_i < bc.size() &&
-         ab[non_flex_ab_i + 1].destination_time <= bc[non_flex_bc_i].origin_time
-  ) {
-    non_flex_ab_i += 1;
-  }
+  const auto MakeNonFlexValidMinimal =
+      [&non_flex_ab_i, &non_flex_bc_i, &ab, &bc]() {
+        // first make the connection valid by advancing bc_i
+        while (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size() &&
+               ab[non_flex_ab_i].destination_time >
+                   bc[non_flex_bc_i].origin_time) {
+          non_flex_bc_i += 1;
+        }
+        // then make the conection minimal by advancing ab_i
+        while (non_flex_ab_i + 1 < ab.size() && non_flex_bc_i < bc.size() &&
+               ab[non_flex_ab_i + 1].destination_time <=
+                   bc[non_flex_bc_i].origin_time) {
+          non_flex_ab_i += 1;
+        }
+      };
+  MakeNonFlexValidMinimal();
 
   Step BAD_STEP{
       StopId{0},
@@ -208,51 +211,49 @@ std::vector<Step> MergeSteps(
       false
   };
 
-  Step ab_flex_step =
-      ab_flex_bc_i < bc.size() ? MergedStep(ab[0], bc[ab_flex_bc_i]) : BAD_STEP;
-  Step bc_flex_step =
-      bc_flex_ab_i < ab.size() ? MergedStep(ab[bc_flex_ab_i], bc[0]) : BAD_STEP;
-  Step non_flex_step = non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size()
-                           ? MergedStep(ab[non_flex_ab_i], bc[non_flex_bc_i])
-                           : BAD_STEP;
+  const auto GetABFlexStep = [&ab_flex_bc_i, &ab, &bc, &BAD_STEP]() {
+    return ab_flex_bc_i < bc.size() ? MergedStep(ab[0], bc[ab_flex_bc_i])
+                                    : BAD_STEP;
+  };
+  const auto GetBCFlexStep = [&bc_flex_ab_i, &ab, &bc, &BAD_STEP]() {
+    return bc_flex_ab_i < ab.size() ? MergedStep(ab[bc_flex_ab_i], bc[0])
+                                    : BAD_STEP;
+  };
+  const auto GetNonFlexStep =
+      [&non_flex_ab_i, &non_flex_bc_i, &ab, &bc, &BAD_STEP] {
+        return non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size()
+                   ? MergedStep(ab[non_flex_ab_i], bc[non_flex_bc_i])
+                   : BAD_STEP;
+      };
 
-  while (ab_flex_bc_i < bc.size() || bc_flex_ab_i < ab.size() ||
-         (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size())) {
+  Step ab_flex_step = GetABFlexStep();
+  Step bc_flex_step = GetBCFlexStep();
+  Step non_flex_step = GetNonFlexStep();
+
+  const auto StepGood = [](const Step& s) {
+    return s.origin_time.seconds != std::numeric_limits<int>::max();
+  };
+
+  while (StepGood(ab_flex_step) || StepGood(bc_flex_step) ||
+         StepGood(non_flex_step)) {
     if (SmallerStep(ab_flex_step, bc_flex_step) &&
         SmallerStep(ab_flex_step, non_flex_step)) {
       // ab_flex_step is smallest
       result.emplace_back(ab_flex_step);
       ab_flex_bc_i += 1;
-      ab_flex_step = ab_flex_bc_i < bc.size()
-                         ? MergedStep(ab[0], bc[ab_flex_bc_i])
-                         : BAD_STEP;
+      ab_flex_step = GetABFlexStep();
     } else if (SmallerStep(bc_flex_step, ab_flex_step) &&
                SmallerStep(bc_flex_step, non_flex_step)) {
       // bc_flex_step is smallest
       result.emplace_back(bc_flex_step);
       bc_flex_ab_i += 1;
-      bc_flex_step = bc_flex_ab_i < ab.size()
-                         ? MergedStep(ab[bc_flex_ab_i], bc[0])
-                         : BAD_STEP;
+      bc_flex_step = GetBCFlexStep();
     } else {
       // non_flex_step is smallest
       result.emplace_back(non_flex_step);
       non_flex_ab_i += 1;
-      // first make the connection valid by advancing bc_i
-      while (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size() &&
-             ab[non_flex_ab_i].destination_time > bc[non_flex_bc_i].origin_time
-      ) {
-        non_flex_bc_i += 1;
-      }
-      // then make the conection minimal by advancing ab_i
-      while (non_flex_ab_i + 1 < ab.size() && non_flex_bc_i < bc.size() &&
-             ab[non_flex_ab_i + 1].destination_time <=
-                 bc[non_flex_bc_i].origin_time) {
-        non_flex_ab_i += 1;
-      }
-      non_flex_step = non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size()
-                          ? MergedStep(ab[non_flex_ab_i], bc[non_flex_bc_i])
-                          : BAD_STEP;
+      MakeNonFlexValidMinimal();
+      non_flex_step = GetNonFlexStep();
     }
   }
 
