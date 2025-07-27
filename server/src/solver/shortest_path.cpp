@@ -127,7 +127,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
                 arrival_time,  // Arrive after duration
                 flex_step.origin_trip,
                 flex_step.destination_trip,
-                false  // is_flex
+                true  // is_flex
             };
             frontier.push(flex_path_step);
           } else {
@@ -139,7 +139,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
                 arrival_time,  // Arrive after walking duration
                 current_step.origin_trip,
                 flex_step.destination_trip,
-                false  // is_flex
+                current_step.is_flex  // is_flex
             };
             frontier.push(combined_flex_step);
           }
