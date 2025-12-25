@@ -324,6 +324,40 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
     << result.destination_time.seconds;
 }
 
+TEST(ShortestPathTest, FindMinimalPathSetMilpitasToFruitvale) {
+  std::string gtfs_path = "../data/RG_20250718";
+  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
+  gtfs_day = GtfsNormalizeStops(gtfs_day);
+  StepsFromGtfs steps_from_gtfs =
+      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+
+  StopId milpitas = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:great-mall-milpitas-bart"}
+  );
+  StopId fruitvale = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:fruitvale"}
+  );
+
+  std::vector<Step> minimal_path_set =
+      FindMinimalPathSet(adjacency_list, milpitas, fruitvale);
+
+  std::cout << "Minimal path set from Milpitas to Fruitvale:" << std::endl;
+  for (const Step& step : minimal_path_set) {
+    std::string origin_route_desc =
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip);
+    std::string destination_route_desc =
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.destination_trip);
+    std::cout << "  " << step.origin_stop << " @ "
+              << step.origin_time.ToString() << " -> " << step.destination_stop
+              << " @ " << step.destination_time.ToString()
+              << " (origin route: " << origin_route_desc
+              << ", destination route: " << destination_route_desc
+              << ", is_flex: " << step.is_flex << ")" << std::endl;
+  }
+  std::cout << "Total: " << minimal_path_set.size() << " steps" << std::endl;
+}
+
 TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   // This test exposes a case where `FindShortestPathsAtTime` does not find the
   // latest possible departure time from the origin.

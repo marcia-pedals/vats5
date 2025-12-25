@@ -201,8 +201,8 @@ std::vector<Step> FindMinimalPathSet(
 ) {
   std::vector<Step> result;
 
-  TimeSinceServiceStart current_origin_time(0);
-  const TimeSinceServiceStart latest_origin_time(24 * 3600);
+  TimeSinceServiceStart current_origin_time{0};
+  const TimeSinceServiceStart latest_origin_time{24 * 3600};
 
   while (current_origin_time < latest_origin_time) {
     const std::unordered_map<StopId, Step> steps = FindShortestPathsAtTime(
