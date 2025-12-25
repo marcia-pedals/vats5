@@ -199,46 +199,30 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 std::vector<Step> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list, StopId origin, StopId destination
 ) {
-  // Invariant: Sorted by origin_time ascending throughout.
   std::vector<Step> result;
-  result.reserve(24);
 
-  std::unordered_set<StopId> dests;
-  dests.insert(destination);
+  TimeSinceServiceStart current_origin_time(0);
+  const TimeSinceServiceStart latest_origin_time(24 * 3600);
 
-  // First query with origin times evenly spaced within the range of origin
-  // times.
-  for (auto origin_time = TimeSinceServiceStart{0};
-       origin_time.seconds <= 24 * 3600;
-       origin_time.seconds += 3600) {
-    auto r =
-        FindShortestPathsAtTime(adjacency_list, origin_time, origin, dests);
-    auto r_it = r.find(destination);
-    if (r_it == r.end()) {
-      continue;
+  while (current_origin_time < latest_origin_time) {
+    const std::unordered_map<StopId, Step> steps = FindShortestPathsAtTime(
+        adjacency_list, current_origin_time, origin, {destination}
+    );
+    const auto r_it = steps.find(destination);
+    if (r_it == steps.end()) {
+      // There are no steps any more.
+      break;
     }
+    const Step r = r_it->second;
 
-    // Insert the step while maintaining the sortedness invariant.
-    const Step& new_step = r_it->second;
-    if (result.empty() ||
-        new_step.origin_time.seconds >= result.back().origin_time.seconds) {
-      // Common case: new step belongs at the end
-      result.push_back(new_step);
-    } else {
-      // Find correct insertion position
-      auto insert_pos = std::upper_bound(
-          result.begin(),
-          result.end(),
-          new_step,
-          [](const Step& a, const Step& b) {
-            return a.origin_time.seconds < b.origin_time.seconds;
-          }
-      );
-      result.insert(insert_pos, new_step);
-    }
+    result.push_back(r);
+
+    current_origin_time = r.origin_time;
+    current_origin_time.seconds += 1;
   }
 
-  // TODO: Finish implementing.
+  SortSteps(result);
+  MakeMinimalCover(result);
 
   return result;
 }
