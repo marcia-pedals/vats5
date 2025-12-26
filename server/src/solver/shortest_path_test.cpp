@@ -121,11 +121,16 @@ CachedTestData GetCachedTestData(const std::string& gtfs_path) {
     return it->second;
   }
 
+  std::cout << "Loading for test: " << gtfs_path << "\n";
   GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
+  std::cout << "Normalizing stops...\n";
   gtfs_day = GtfsNormalizeStops(gtfs_day);
+  std::cout << "Getting steps...\n";
   StepsFromGtfs steps_from_gtfs =
       GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+  std::cout << "Making adjacency list...\n";
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  std::cout << "Done computing test data.\n";
 
   CachedTestData data{std::move(steps_from_gtfs), std::move(adjacency_list)};
   cache[gtfs_path] = data;
@@ -325,37 +330,92 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
 }
 
 TEST(ShortestPathTest, FindMinimalPathSetMilpitasToFruitvale) {
-  std::string gtfs_path = "../data/RG_20250718";
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
-  gtfs_day = GtfsNormalizeStops(gtfs_day);
-  StepsFromGtfs steps_from_gtfs =
-      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
-
-  StopId milpitas = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:great-mall-milpitas-bart"}
-  );
-  StopId fruitvale = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:fruitvale"}
-  );
+  const auto test_data =
+      GetCachedTestData("../data/RG_20250718_BA_CT_SC_SM_AC");
+  StopId milpitas =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"mtc:great-mall-milpitas-bart"}
+      );
+  StopId fruitvale =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"mtc:fruitvale"}
+      );
 
   std::vector<Step> minimal_path_set =
-      FindMinimalPathSet(adjacency_list, milpitas, fruitvale);
+      FindMinimalPathSet(test_data.adjacency_list, milpitas, fruitvale);
 
-  std::cout << "Minimal path set from Milpitas to Fruitvale:" << std::endl;
-  for (const Step& step : minimal_path_set) {
-    std::string origin_route_desc =
-        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip);
-    std::string destination_route_desc =
-        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.destination_trip);
-    std::cout << "  " << step.origin_stop << " @ "
-              << step.origin_time.ToString() << " -> " << step.destination_stop
-              << " @ " << step.destination_time.ToString()
-              << " (origin route: " << origin_route_desc
-              << ", destination route: " << destination_route_desc
-              << ", is_flex: " << step.is_flex << ")" << std::endl;
+  ASSERT_EQ(minimal_path_set.size(), 104);
+
+  // Expected: {origin_time, destination_time}
+  std::vector<std::pair<std::string, std::string>> expected = {
+      {"00:20:00", "05:00:00"}, {"01:00:00", "05:16:00"},
+      {"04:49:00", "05:31:00"}, {"05:01:00", "05:43:00"},
+      {"05:09:00", "05:51:00"}, {"05:21:00", "06:03:00"},
+      {"05:29:00", "06:11:00"}, {"05:41:00", "06:23:00"},
+      {"05:49:00", "06:31:00"}, {"06:01:00", "06:43:00"},
+      {"06:09:00", "06:51:00"}, {"06:21:00", "07:03:00"},
+      {"06:29:00", "07:11:00"}, {"06:41:00", "07:23:00"},
+      {"06:49:00", "07:31:00"}, {"07:01:00", "07:43:00"},
+      {"07:09:00", "07:51:00"}, {"07:21:00", "08:03:00"},
+      {"07:29:00", "08:11:00"}, {"07:41:00", "08:23:00"},
+      {"07:49:00", "08:31:00"}, {"08:01:00", "08:43:00"},
+      {"08:09:00", "08:51:00"}, {"08:21:00", "09:03:00"},
+      {"08:29:00", "09:11:00"}, {"08:41:00", "09:23:00"},
+      {"08:49:00", "09:31:00"}, {"09:01:00", "09:43:00"},
+      {"09:09:00", "09:51:00"}, {"09:21:00", "10:03:00"},
+      {"09:29:00", "10:11:00"}, {"09:41:00", "10:23:00"},
+      {"09:49:00", "10:31:00"}, {"10:01:00", "10:43:00"},
+      {"10:09:00", "10:51:00"}, {"10:21:00", "11:03:00"},
+      {"10:29:00", "11:11:00"}, {"10:41:00", "11:23:00"},
+      {"10:49:00", "11:31:00"}, {"11:01:00", "11:43:00"},
+      {"11:09:00", "11:51:00"}, {"11:21:00", "12:03:00"},
+      {"11:29:00", "12:11:00"}, {"11:41:00", "12:23:00"},
+      {"11:49:00", "12:31:00"}, {"12:01:00", "12:43:00"},
+      {"12:09:00", "12:51:00"}, {"12:21:00", "13:03:00"},
+      {"12:29:00", "13:11:00"}, {"12:41:00", "13:23:00"},
+      {"12:49:00", "13:31:00"}, {"13:01:00", "13:43:00"},
+      {"13:09:00", "13:51:00"}, {"13:21:00", "14:03:00"},
+      {"13:29:00", "14:11:00"}, {"13:41:00", "14:23:00"},
+      {"13:49:00", "14:31:00"}, {"14:01:00", "14:43:00"},
+      {"14:09:00", "14:51:00"}, {"14:21:00", "15:03:00"},
+      {"14:29:00", "15:11:00"}, {"14:41:00", "15:23:00"},
+      {"14:49:00", "15:31:00"}, {"15:01:00", "15:43:00"},
+      {"15:09:00", "15:51:00"}, {"15:21:00", "16:03:00"},
+      {"15:29:00", "16:11:00"}, {"15:41:00", "16:23:00"},
+      {"15:49:00", "16:31:00"}, {"16:01:00", "16:43:00"},
+      {"16:09:00", "16:51:00"}, {"16:21:00", "17:03:00"},
+      {"16:29:00", "17:11:00"}, {"16:41:00", "17:23:00"},
+      {"16:49:00", "17:31:00"}, {"17:01:00", "17:43:00"},
+      {"17:09:00", "17:51:00"}, {"17:21:00", "18:03:00"},
+      {"17:29:00", "18:11:00"}, {"17:41:00", "18:23:00"},
+      {"17:49:00", "18:31:00"}, {"18:01:00", "18:43:00"},
+      {"18:09:00", "18:51:00"}, {"18:21:00", "19:03:00"},
+      {"18:29:00", "19:11:00"}, {"18:41:00", "19:23:00"},
+      {"18:49:00", "19:31:00"}, {"19:01:00", "19:43:00"},
+      {"19:21:00", "20:03:00"}, {"19:41:00", "20:23:00"},
+      {"20:01:00", "20:43:00"}, {"20:21:00", "21:03:00"},
+      {"20:41:00", "21:23:00"}, {"21:01:00", "21:43:00"},
+      {"21:21:00", "22:03:00"}, {"21:41:00", "22:23:00"},
+      {"22:01:00", "22:43:00"}, {"22:21:00", "23:03:00"},
+      {"22:41:00", "23:23:00"}, {"23:01:00", "23:43:00"},
+      {"23:21:00", "24:03:00"}, {"23:38:00", "24:20:00"},
+      {"23:54:00", "24:36:00"}, {"24:20:00", "29:00:00"},
+  };
+
+  for (size_t i = 0; i < minimal_path_set.size(); ++i) {
+    EXPECT_EQ(minimal_path_set[i].origin_time.ToString(), expected[i].first)
+        << "Step " << i << " origin_time mismatch";
+    EXPECT_EQ(
+        minimal_path_set[i].destination_time.ToString(), expected[i].second
+    ) << "Step "
+      << i << " destination_time mismatch";
+    EXPECT_EQ(minimal_path_set[i].origin_stop, milpitas)
+        << "Step " << i << " origin_stop mismatch";
+    EXPECT_EQ(minimal_path_set[i].destination_stop, fruitvale)
+        << "Step " << i << " destination_stop mismatch";
+    EXPECT_FALSE(minimal_path_set[i].is_flex)
+        << "Step " << i << " is_flex mismatch";
   }
-  std::cout << "Total: " << minimal_path_set.size() << " steps" << std::endl;
 }
 
 TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
