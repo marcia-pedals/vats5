@@ -202,7 +202,7 @@ std::vector<Step> FindMinimalPathSet(
   std::vector<Step> result;
 
   TimeSinceServiceStart current_origin_time{0};
-  const TimeSinceServiceStart last_query_time{24 * 3600};
+  const TimeSinceServiceStart origin_time_ub{24 * 3600};
 
   std::optional<TimeSinceServiceStart> earliest_arrival_after_last_query_time;
 
@@ -215,22 +215,16 @@ std::vector<Step> FindMinimalPathSet(
       // There are no steps any more.
       break;
     }
-    const Step r = r_it->second;
 
-    if (current_origin_time >= last_query_time &&
-        !earliest_arrival_after_last_query_time.has_value()) {
-      earliest_arrival_after_last_query_time.emplace(r.destination_time);
-    }
-    if (earliest_arrival_after_last_query_time.has_value() &&
-        r.destination_time > *earliest_arrival_after_last_query_time) {
-      // The step we found arrives later than the first arrival time we found
-      // when querying from `last_query_time`, so stop now. Intentionally do not
-      // include this final step because it may not be the latest possible
-      // departure that arrives at its arrival time.
+    const Step r = r_it->second;
+    result.push_back(r);
+
+    if (!r.is_flex && r.origin_time >= origin_time_ub) {
+      // We've exhausted all paths that originate before `origin_time_ub`, so
+      // we're done. Temporarily include this path in `result`, so that it can
+      // dominate earlier paths while doing `MakeMinimalCover`,
       break;
     }
-
-    result.push_back(r);
 
     current_origin_time = r.origin_time;
     current_origin_time.seconds += 1;
@@ -238,6 +232,12 @@ std::vector<Step> FindMinimalPathSet(
 
   SortSteps(result);
   MakeMinimalCover(result);
+
+  // Remove the temporarily-included path that is past the ub.
+  if (result.size() > 0 && !result.back().is_flex &&
+      result.back().origin_time >= origin_time_ub) {
+    result.pop_back();
+  }
 
   return result;
 }

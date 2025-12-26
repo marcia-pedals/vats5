@@ -27,7 +27,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 );
 
 // Return a minimal set of steps from origin to destination, with origin times
-// between 00:00 and 24:00.
+// in [00:00, 24:00).
 std::vector<Step> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list, StopId origin, StopId destination
 );
