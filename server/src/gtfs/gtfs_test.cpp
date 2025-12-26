@@ -413,7 +413,7 @@ GTEST("GtfsFilterByTrips should filter by specific trip") {
   const GtfsStopId sunnyvale{"sunnyvale"};
 
   std::unordered_set<GtfsTripId> trips_set = {trip_id};
-  GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
+  GtfsDay filtered = GtfsDayFilterByTrips(gtfs_day, trips_set);
 
   // Check trips
   std::vector<GtfsTrip> expected_trips = {

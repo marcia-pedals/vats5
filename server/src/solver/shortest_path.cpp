@@ -202,9 +202,11 @@ std::vector<Step> FindMinimalPathSet(
   std::vector<Step> result;
 
   TimeSinceServiceStart current_origin_time{0};
-  const TimeSinceServiceStart latest_origin_time{24 * 3600};
+  const TimeSinceServiceStart last_query_time{24 * 3600};
 
-  while (current_origin_time < latest_origin_time) {
+  std::optional<TimeSinceServiceStart> earliest_arrival_after_last_query_time;
+
+  while (true) {
     const std::unordered_map<StopId, Step> steps = FindShortestPathsAtTime(
         adjacency_list, current_origin_time, origin, {destination}
     );
@@ -214,6 +216,19 @@ std::vector<Step> FindMinimalPathSet(
       break;
     }
     const Step r = r_it->second;
+
+    if (current_origin_time >= last_query_time &&
+        !earliest_arrival_after_last_query_time.has_value()) {
+      earliest_arrival_after_last_query_time.emplace(r.destination_time);
+    }
+    if (earliest_arrival_after_last_query_time.has_value() &&
+        r.destination_time > *earliest_arrival_after_last_query_time) {
+      // The step we found arrives later than the first arrival time we found
+      // when querying from `last_query_time`, so stop now. Intentionally do not
+      // include this final step because it may not be the latest possible
+      // departure that arrives at its arrival time.
+      break;
+    }
 
     result.push_back(r);
 

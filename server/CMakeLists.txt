@@ -6,7 +6,7 @@ project(vats5
     DESCRIPTION "Visit All The Stops!!!"
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -39,6 +39,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
 
+# Create date utility library target
+add_library(date STATIC src/util/date.cpp)
+target_include_directories(date PUBLIC src)
+
 # Create GTFS library target
 add_library(gtfs STATIC src/gtfs/gtfs.cpp)
 target_link_libraries(gtfs PUBLIC csv gcov)
@@ -64,7 +68,7 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
 # Add GTFS filter tool
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
-target_link_libraries(gtfs_filter_tool PUBLIC gtfs)
+target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 
 # Enable CMake testing
 enable_testing()
@@ -88,3 +92,8 @@ add_test(NAME step_merge_test COMMAND step_merge_test)
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
 target_link_libraries(shortest_path_test PUBLIC gunit shortest_path rapidcheck rapidcheck_gtest)
 add_test(NAME shortest_path_test COMMAND shortest_path_test)
+
+# Add date test executable
+add_executable(date_test src/util/date_test.cpp)
+target_link_libraries(date_test PUBLIC gunit date)
+add_test(NAME date_test COMMAND date_test)

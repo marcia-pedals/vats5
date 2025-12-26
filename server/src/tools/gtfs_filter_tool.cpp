@@ -6,51 +6,84 @@
 #include <vector>
 
 #include "gtfs/gtfs.h"
+#include "util/date.h"
 
 using namespace vats5;
+
+template <typename T>
+std::string formatGtfsSizes(const T& gtfs) {
+  std::ostringstream oss;
+  oss << gtfs.stops.size() << " stops, " << gtfs.trips.size() << " trips, "
+      << gtfs.stop_times.size() << " stop times, " << gtfs.routes.size()
+      << " routes, " << gtfs.directions.size() << " directions";
+  return oss.str();
+}
+
+// Removes trips not referenced by stop_times, then removes routes and
+// directions not referenced by remaining trips
+void RemoveUnreferencedTripsRoutesAndDirections(GtfsDay& gtfs_day) {
+  // Collect trip_ids referenced by stop_times
+  std::unordered_set<GtfsTripId> referenced_trip_ids;
+  for (const auto& st : gtfs_day.stop_times) {
+    referenced_trip_ids.insert(st.trip_id);
+  }
+
+  // Remove unreferenced trips and collect used route_direction_ids
+  std::unordered_set<GtfsRouteDirectionId> used_route_direction_ids;
+  std::unordered_set<GtfsRouteId> used_route_ids;
+  std::erase_if(gtfs_day.trips, [&](const GtfsTrip& trip) {
+    if (referenced_trip_ids.count(trip.trip_id)) {
+      used_route_direction_ids.insert(trip.route_direction_id);
+      used_route_ids.insert(trip.route_direction_id.route_id);
+      return false;
+    }
+    return true;
+  });
+
+  // Remove unreferenced routes
+  std::erase_if(gtfs_day.routes, [&](const GtfsRoute& route) {
+    return !used_route_ids.count(route.route_id);
+  });
+
+  // Remove unreferenced directions
+  std::erase_if(gtfs_day.directions, [&](const GtfsDirection& dir) {
+    return !used_route_direction_ids.count(dir.route_direction_id);
+  });
+}
 
 void printUsage(const char* program_name) {
   std::cout
       << "Usage: " << program_name
-      << " [OPTIONS] <input_dir> <date> <trip_filter> <output_dir>\n"
+      << " [--prefix <filter>] <input_dir> <date> <output_dir>\n"
       << "\n"
-      << "GTFS Filter Tool - Filters GTFS data by date and trip IDs or "
-         "prefixes\n"
+      << "GTFS Filter Tool - Filters GTFS data by date and optionally by trip "
+         "ID prefixes\n"
       << "\n"
       << "Arguments:\n"
       << "  input_dir    Directory containing GTFS files (stops.txt, "
          "trips.txt, etc.)\n"
       << "  date         Date in YYYYMMDD format (e.g., 20250708)\n"
-      << "  trip_filter  Trip filter specification (see options below)\n"
       << "  output_dir   Directory where filtered GTFS files will be saved\n"
       << "\n"
       << "Options:\n"
-      << "  --prefix     Filter by trip ID prefix (include all trips starting "
-         "with prefix)\n"
-      << "  --trips      Filter by specific trip IDs (default mode)\n"
-      << "  --help, -h   Show this help message\n"
-      << "\n"
-      << "Trip Filter Modes:\n"
-      << "  Default (--trips): Comma-separated list of specific trip IDs\n"
-      << "                     Example: \"CT:507,SR:198\"\n"
-      << "\n"
-      << "  Prefix (--prefix): Comma-separated list of prefixes to match trip "
-         "IDs\n"
+      << "  --prefix <filter>  Filter by trip ID prefix (comma-separated "
+         "list)\n"
       << "                     Example: \"CT:,SR:\" (includes all Caltrain and "
          "Santa Rosa trips)\n"
+      << "                     If not specified, all trips are included.\n"
+      << "  --help, -h         Show this help message\n"
       << "\n"
       << "Examples:\n"
-      << "  # Filter specific trips\n"
-      << "  " << program_name
-      << " ../data/RG 20250708 \"CT:507,SR:198\" ./filtered_gtfs\n"
+      << "  # Include all trips for the date\n"
+      << "  " << program_name << " ../data/RG 20250708 ./filtered_gtfs\n"
       << "\n"
       << "  # Filter all Caltrain trips (CT: prefix)\n"
       << "  " << program_name
-      << " --prefix ../data/RG 20250708 \"CT:\" ./filtered_gtfs\n"
+      << " --prefix \"CT:\" ../data/RG 20250708 ./filtered_gtfs\n"
       << "\n"
-      << "  # Filter all Santa Rosa trips (SR: prefix)\n"
+      << "  # Filter all Caltrain and Santa Rosa trips\n"
       << "  " << program_name
-      << " --prefix ../data/RG 20250708 \"SR:\" ./filtered_gtfs\n"
+      << " --prefix \"CT:,SR:\" ../data/RG 20250708 ./filtered_gtfs\n"
       << std::endl;
 }
 
@@ -91,10 +124,6 @@ bool isValidDate(const std::string& date) {
 }
 
 int main(int argc, char* argv[]) {
-  // Parse command line arguments
-  bool use_prefix = false;
-  std::string input_dir, date, trip_filter, output_dir;
-
   // Handle help first
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
@@ -103,35 +132,39 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // Parse options and arguments
-  std::vector<std::string> non_option_args;
+  // Parse options and positional arguments
+  std::string trip_filter;
+  std::vector<std::string> positional_args;
+
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--prefix") {
-      use_prefix = true;
-    } else if (arg == "--trips") {
-      use_prefix = false;
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --prefix requires an argument." << std::endl;
+        std::cerr << "Use --help for usage information." << std::endl;
+        return 1;
+      }
+      trip_filter = argv[++i];
     } else if (arg.substr(0, 2) == "--") {
       std::cerr << "Error: Unknown option '" << arg << "'" << std::endl;
       std::cerr << "Use --help for usage information." << std::endl;
       return 1;
     } else {
-      non_option_args.push_back(arg);
+      positional_args.push_back(arg);
     }
   }
 
-  // Check that we have exactly 4 non-option arguments
-  if (non_option_args.size() != 4) {
-    std::cerr << "Error: Expected 4 arguments, got " << non_option_args.size()
+  // Check that we have exactly 3 positional arguments
+  if (positional_args.size() != 3) {
+    std::cerr << "Error: Expected 3 arguments, got " << positional_args.size()
               << std::endl;
     std::cerr << "Use --help for usage information." << std::endl;
     return 1;
   }
 
-  input_dir = non_option_args[0];
-  date = non_option_args[1];
-  trip_filter = non_option_args[2];
-  output_dir = non_option_args[3];
+  std::string input_dir = positional_args[0];
+  std::string date = positional_args[1];
+  std::string output_dir = positional_args[2];
 
   // Validate arguments
   if (!std::filesystem::exists(input_dir)) {
@@ -152,27 +185,16 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (trip_filter.empty()) {
-    std::cerr << "Error: Trip filter cannot be empty." << std::endl;
-    return 1;
-  }
-
   std::cout << "Loading GTFS data from: " << input_dir << std::endl;
   std::cout << "Filtering for date: " << date << std::endl;
-  if (use_prefix) {
+  if (trip_filter.empty()) {
+    std::cout << "Including all trips (no prefix filter)" << std::endl;
+  } else {
     std::vector<std::string> prefix_list = split(trip_filter, ',');
     std::cout << "Using prefix filter(s): ";
     for (size_t i = 0; i < prefix_list.size(); ++i) {
       std::cout << "\"" << prefix_list[i] << "\"";
       if (i < prefix_list.size() - 1) std::cout << ", ";
-    }
-    std::cout << std::endl;
-  } else {
-    std::vector<std::string> trip_id_list = split(trip_filter, ',');
-    std::cout << "Including " << trip_id_list.size() << " specific trip(s): ";
-    for (size_t i = 0; i < trip_id_list.size(); ++i) {
-      std::cout << trip_id_list[i];
-      if (i < trip_id_list.size() - 1) std::cout << ", ";
     }
     std::cout << std::endl;
   }
@@ -184,90 +206,70 @@ int main(int argc, char* argv[]) {
     std::cout << "Loading GTFS data..." << std::endl;
     Gtfs gtfs = GtfsLoad(input_dir);
 
-    std::cout << "Loaded: " << gtfs.stops.size() << " stops, "
-              << gtfs.trips.size() << " trips, " << gtfs.stop_times.size()
-              << " stop times, " << gtfs.routes.size() << " routes, "
-              << gtfs.directions.size() << " directions" << std::endl;
+    std::cout << "Loaded: " << formatGtfsSizes(gtfs) << std::endl;
 
-    // Filter by date
-    std::cout << "Filtering by date: " << date << "..." << std::endl;
-    GtfsDay gtfs_day = GtfsFilterByDate(gtfs, date);
-
-    std::cout << "After date filter: " << gtfs_day.stops.size() << " stops, "
-              << gtfs_day.trips.size() << " trips, "
-              << gtfs_day.stop_times.size() << " stop times, "
-              << gtfs_day.routes.size() << " routes, "
-              << gtfs_day.directions.size() << " directions" << std::endl;
-
-    if (gtfs_day.trips.empty()) {
-      std::cerr << "Warning: No trips found for date " << date
-                << ". Check if the date is within the service period."
-                << std::endl;
-    }
-
-    // Filter by trip IDs or prefix
-    std::unordered_set<GtfsTripId> trip_ids_set;
-
-    if (use_prefix) {
+    // Filter by prefix.
+    if (!trip_filter.empty()) {
+      std::unordered_set<GtfsTripId> trip_ids_set;
       std::vector<std::string> prefix_list = split(trip_filter, ',');
-      std::cout << "Finding trips with prefix(es)..." << std::endl;
-      int matching_count = 0;
-      for (const auto& trip : gtfs_day.trips) {
+      for (const auto& trip : gtfs.trips) {
         for (const auto& prefix : prefix_list) {
           if (trip.trip_id.v.substr(0, prefix.length()) == prefix) {
             trip_ids_set.insert(trip.trip_id);
-            matching_count++;
-            break;  // Don't count the same trip multiple times
+            break;
           }
         }
       }
-      std::cout << "Found " << matching_count << " trips matching prefix(es)."
+      gtfs = GtfsFilterByTrips(gtfs, trip_ids_set);
+      std::cout << "After filtering trips: " << formatGtfsSizes(gtfs)
                 << std::endl;
-
-      if (matching_count == 0) {
-        std::cerr << "Warning: No trips found with prefix(es) \"" << trip_filter
-                  << "\" for date " << date << "." << std::endl;
-      }
-    } else {
-      std::cout << "Filtering by specific trip IDs..." << std::endl;
-      std::vector<std::string> trip_id_list = split(trip_filter, ',');
-      if (trip_id_list.empty()) {
-        std::cerr << "Error: No valid trip IDs found in '" << trip_filter
-                  << "'." << std::endl;
-        return 1;
-      }
-
-      for (const auto& trip_id_str : trip_id_list) {
-        trip_ids_set.insert(GtfsTripId{trip_id_str});
-      }
     }
 
-    GtfsDay filtered_gtfs = GtfsFilterByTrips(gtfs_day, trip_ids_set);
+    // Filter to the target date.
+    GtfsDay gtfs_day = GtfsFilterByDate(gtfs, date);
+    std::cout << "Target date (" << date << "): " << formatGtfsSizes(gtfs_day)
+              << std::endl;
 
-    std::cout << "After trip filter: " << filtered_gtfs.stops.size()
-              << " stops, " << filtered_gtfs.trips.size() << " trips, "
-              << filtered_gtfs.stop_times.size() << " stop times, "
-              << filtered_gtfs.routes.size() << " routes, "
-              << filtered_gtfs.directions.size() << " directions" << std::endl;
-
-    if (filtered_gtfs.trips.empty()) {
-      if (use_prefix) {
-        std::cerr << "Warning: No trips found matching prefix(es) \""
-                  << trip_filter << "\" for date " << date << "." << std::endl;
-      } else {
-        std::cerr << "Warning: No trips found matching the specified trip IDs "
-                     "for date "
-                  << date << "." << std::endl;
-        std::cerr
-            << "Make sure the trip IDs exist and are active on the given date."
-            << std::endl;
-      }
+    // Take all >=24:00 stop times from the day before and add them to
+    // `gtfs_day` with time -24:00.
+    constexpr int kSecondsPerDay = 24 * 3600;
+    const std::string prev_date = OffsetDate(date, -1);
+    GtfsDay prev_gtfs_day = GtfsFilterByDate(gtfs, prev_date);
+    prev_gtfs_day.AppendToTripIds(":prev-sd");
+    std::erase_if(prev_gtfs_day.stop_times, [](const GtfsStopTime& st) {
+      return st.arrival_time.seconds < kSecondsPerDay;
+    });
+    RemoveUnreferencedTripsRoutesAndDirections(prev_gtfs_day);
+    for (auto& stop_time : prev_gtfs_day.stop_times) {
+      stop_time.arrival_time.seconds -= kSecondsPerDay;
+      stop_time.departure_time.seconds -= kSecondsPerDay;
     }
+    std::cout << "Previous date (" << prev_date
+              << "): " << formatGtfsSizes(prev_gtfs_day) << std::endl;
+
+    // Take all <24:00 stop times from the next day and add them to `gtfs_day`
+    // with time +24:00.
+    const std::string next_date = OffsetDate(date, 1);
+    GtfsDay next_gtfs_day = GtfsFilterByDate(gtfs, next_date);
+    next_gtfs_day.AppendToTripIds(":next-sd");
+    std::erase_if(next_gtfs_day.stop_times, [](const GtfsStopTime& st) {
+      return st.arrival_time.seconds >= kSecondsPerDay;
+    });
+    RemoveUnreferencedTripsRoutesAndDirections(next_gtfs_day);
+    for (auto& stop_time : next_gtfs_day.stop_times) {
+      stop_time.arrival_time.seconds += kSecondsPerDay;
+      stop_time.departure_time.seconds += kSecondsPerDay;
+    }
+    std::cout << "Next date (" << next_date
+              << "): " << formatGtfsSizes(next_gtfs_day) << std::endl;
+
+    GtfsDay result = GtfsDayCombine({prev_gtfs_day, gtfs_day, next_gtfs_day});
+    std::cout << "Combined result: " << formatGtfsSizes(result) << std::endl;
 
     // Save to output directory
     std::cout << "Saving filtered data to: " << output_dir << "..."
               << std::endl;
-    GtfsSave(filtered_gtfs, output_dir);
+    GtfsSave(result, output_dir);
 
     std::cout << "Successfully saved filtered GTFS data!" << std::endl;
     std::cout << "Output files created in: " << output_dir << std::endl;

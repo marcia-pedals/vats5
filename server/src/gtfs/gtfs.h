@@ -148,6 +148,16 @@ struct GtfsDay {
   std::vector<GtfsStopTime> stop_times;
   std::vector<GtfsRoute> routes;
   std::vector<GtfsDirection> directions;
+
+  // Appends the given suffix to all trip_ids in this GtfsDay
+  void AppendToTripIds(const std::string& suffix) {
+    for (auto& trip : trips) {
+      trip.trip_id.v += suffix;
+    }
+    for (auto& stop_time : stop_times) {
+      stop_time.trip_id.v += suffix;
+    }
+  }
 };
 
 // Load all GTFS data from a directory containing GTFS files
@@ -163,8 +173,15 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date);
 // Filter GTFS data to only include the specified trips
 // All other fields are filtered to only include data associated with those
 // trips
-GtfsDay GtfsFilterByTrips(
+GtfsDay GtfsDayFilterByTrips(
     const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set
+);
+
+// Filter Gtfs data to only include the specified trips
+// All other fields are filtered to only include data associated with those
+// trips
+Gtfs GtfsFilterByTrips(
+    const Gtfs& gtfs, const std::unordered_set<GtfsTripId>& trips_set
 );
 
 // Parse GTFS time string (HH:MM:SS format) to GtfsTimeSinceServiceStart
@@ -177,6 +194,9 @@ void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path);
 // (1) All stop_ids in stop_times are replaced with their ultimate parent
 // (recursively) (2) All stops that have parents are removed from the stops list
 GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day);
+
+// Combine multiple GtfsDays into one, deduplicating elements by their IDs
+GtfsDay GtfsDayCombine(const std::vector<GtfsDay>& gtfs_days);
 
 // Pretty printing for Google Test
 inline void PrintTo(const GtfsStopId& stop_id, std::ostream* os) {

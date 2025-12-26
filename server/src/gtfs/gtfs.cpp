@@ -381,14 +381,15 @@ GtfsDay GtfsFilterByDate(const Gtfs& gtfs, const std::string& date) {
   return result;
 }
 
-GtfsDay GtfsFilterByTrips(
-    const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set
+template <typename T>
+T FilterByTripsImpl(
+    const T& gtfs, const std::unordered_set<GtfsTripId>& trips_set
 ) {
-  GtfsDay result;
+  T result;
 
   // Step 1: Filter trips to only include specified trips
   std::unordered_set<std::string> used_route_direction_ids;
-  for (const auto& trip : gtfs_day.trips) {
+  for (const auto& trip : gtfs.trips) {
     if (trips_set.count(trip.trip_id)) {
       result.trips.push_back(trip);
       // Track route+direction combinations used
@@ -401,7 +402,7 @@ GtfsDay GtfsFilterByTrips(
 
   // Step 2: Filter stop times for specified trips
   std::unordered_set<std::string> used_stop_ids;
-  for (const auto& stop_time : gtfs_day.stop_times) {
+  for (const auto& stop_time : gtfs.stop_times) {
     if (trips_set.count(stop_time.trip_id)) {
       result.stop_times.push_back(stop_time);
       used_stop_ids.insert(stop_time.stop_id.v);
@@ -415,7 +416,7 @@ GtfsDay GtfsFilterByTrips(
   bool added_new_stops = true;
   while (added_new_stops) {
     added_new_stops = false;
-    for (const auto& stop : gtfs_day.stops) {
+    for (const auto& stop : gtfs.stops) {
       if (stops_to_include.count(stop.stop_id.v)) {
         // If this stop has a parent station, add it to the set
         if (stop.parent_station &&
@@ -428,7 +429,7 @@ GtfsDay GtfsFilterByTrips(
   }
 
   // Now include all stops that are in the final set
-  for (const auto& stop : gtfs_day.stops) {
+  for (const auto& stop : gtfs.stops) {
     if (stops_to_include.count(stop.stop_id.v)) {
       result.stops.push_back(stop);
     }
@@ -439,14 +440,14 @@ GtfsDay GtfsFilterByTrips(
   for (const auto& trip : result.trips) {
     used_route_ids.insert(trip.route_direction_id.route_id.v);
   }
-  for (const auto& route : gtfs_day.routes) {
+  for (const auto& route : gtfs.routes) {
     if (used_route_ids.count(route.route_id.v)) {
       result.routes.push_back(route);
     }
   }
 
   // Step 5: Include only used directions
-  for (const auto& direction : gtfs_day.directions) {
+  for (const auto& direction : gtfs.directions) {
     std::string route_dir_key =
         direction.route_direction_id.route_id.v + ":" +
         std::to_string(direction.route_direction_id.direction_id);
@@ -455,6 +456,20 @@ GtfsDay GtfsFilterByTrips(
     }
   }
 
+  return result;
+}
+
+GtfsDay GtfsDayFilterByTrips(
+    const GtfsDay& gtfs_day, const std::unordered_set<GtfsTripId>& trips_set
+) {
+  return FilterByTripsImpl(gtfs_day, trips_set);
+}
+
+Gtfs GtfsFilterByTrips(
+    const Gtfs& gtfs, const std::unordered_set<GtfsTripId>& trips_set
+) {
+  Gtfs result = FilterByTripsImpl(gtfs, trips_set);
+  result.calendar = gtfs.calendar;
   return result;
 }
 
@@ -594,6 +609,65 @@ GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day) {
     if (!stop.parent_station) {
       // This stop has no parent, keep it
       result.stops.push_back(stop);
+    }
+  }
+
+  return result;
+}
+
+GtfsDay GtfsDayCombine(const std::vector<GtfsDay>& gtfs_days) {
+  GtfsDay result;
+
+  // Track seen IDs for deduplication
+  std::unordered_set<GtfsStopId> seen_stop_ids;
+  std::unordered_set<GtfsTripId> seen_trip_ids;
+  std::unordered_set<GtfsRouteId> seen_route_ids;
+  std::unordered_set<GtfsRouteDirectionId> seen_direction_ids;
+
+  // For stop_times, the unique key is (trip_id, stop_sequence)
+  std::unordered_set<std::string> seen_stop_time_keys;
+
+  for (const auto& gtfs_day : gtfs_days) {
+    // Combine stops
+    for (const auto& stop : gtfs_day.stops) {
+      if (!seen_stop_ids.count(stop.stop_id)) {
+        seen_stop_ids.insert(stop.stop_id);
+        result.stops.push_back(stop);
+      }
+    }
+
+    // Combine trips
+    for (const auto& trip : gtfs_day.trips) {
+      if (!seen_trip_ids.count(trip.trip_id)) {
+        seen_trip_ids.insert(trip.trip_id);
+        result.trips.push_back(trip);
+      }
+    }
+
+    // Combine stop_times
+    for (const auto& stop_time : gtfs_day.stop_times) {
+      std::string key =
+          stop_time.trip_id.v + ":" + std::to_string(stop_time.stop_sequence);
+      if (!seen_stop_time_keys.count(key)) {
+        seen_stop_time_keys.insert(key);
+        result.stop_times.push_back(stop_time);
+      }
+    }
+
+    // Combine routes
+    for (const auto& route : gtfs_day.routes) {
+      if (!seen_route_ids.count(route.route_id)) {
+        seen_route_ids.insert(route.route_id);
+        result.routes.push_back(route);
+      }
+    }
+
+    // Combine directions
+    for (const auto& direction : gtfs_day.directions) {
+      if (!seen_direction_ids.count(direction.route_direction_id)) {
+        seen_direction_ids.insert(direction.route_direction_id);
+        result.directions.push_back(direction);
+      }
     }
   }
 

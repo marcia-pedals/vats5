@@ -33,7 +33,7 @@ TEST(DataTest, GetStepsFromGtfs) {
   // Filter to just CT:507 for this specific test
   const GtfsTripId trip_id{"CT:507"};
   std::unordered_set<GtfsTripId> trips_set = {trip_id};
-  GtfsDay filtered = GtfsFilterByTrips(gtfs_day, trips_set);
+  GtfsDay filtered = GtfsDayFilterByTrips(gtfs_day, trips_set);
 
   StepsFromGtfs result = GetStepsFromGtfs(filtered, GetStepsOptions{500.0});
 
