@@ -56,6 +56,31 @@ struct StepOriginTimeComparator {
   }
 };
 
+// Return the first (non-flex) step departing >= `t`, if any.
+// Precondition: `steps` is sorted and minimal.
+std::optional<Step> FindDepartureAtOrAfter(
+    const std::vector<Step>& steps, TimeSinceServiceStart t
+) {
+  bool has_flex_trip = !steps.empty() && steps[0].is_flex;
+
+  // Skip flex trips in the search - they're at the beginning if present
+  auto search_begin = has_flex_trip ? steps.begin() + 1 : steps.begin();
+
+  auto lower_bound_it = std::lower_bound(
+      search_begin,
+      steps.end(),
+      t,
+      [](const Step& step, TimeSinceServiceStart target_time) {
+        assert(!step.is_flex);
+        return step.origin_time.seconds < target_time.seconds;
+      }
+  );
+  if (lower_bound_it == steps.end()) {
+    return std::nullopt;
+  }
+  return *lower_bound_it;
+}
+
 std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
@@ -148,24 +173,13 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 
       // Regular fixed-time trip handling
       {
-        // Skip flex trips in the search - they're at the beginning if present
-        auto search_begin =
-            has_flex_trip ? step_group.begin() + 1 : step_group.begin();
-
-        auto lower_bound_it = std::lower_bound(
-            search_begin,
-            step_group.end(),
-            current_time,
-            [](const Step& step, TimeSinceServiceStart target_time) {
-              assert(!step.is_flex);
-              return step.origin_time.seconds < target_time.seconds;
-            }
-        );
-        if (lower_bound_it == step_group.end()) {
+        const std::optional<Step> next_step_opt =
+            FindDepartureAtOrAfter(step_group, current_time);
+        if (!next_step_opt.has_value()) {
           continue;
         }
 
-        const Step& next_step = *lower_bound_it;
+        const Step& next_step = *next_step_opt;
         const StopId next_stop = next_step.destination_stop;
         if (visited.find(next_stop) != visited.end()) {
           continue;
@@ -179,10 +193,20 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
           // If we have a current step that involves actually moving around,
           // combine the "starting" part of the current step with the
           // "finishing" part of the next step.
+
+          TimeSinceServiceStart new_step_origin_time = current_step.origin_time;
+          if (current_step.is_flex) {
+            // If the current step is flex, we may be able to wait longer before
+            // starting and still catch this connection.
+            new_step_origin_time.seconds +=
+                next_step.origin_time.seconds -
+                current_step.destination_time.seconds;
+          }
+
           frontier.push(Step{
               current_step.origin_stop,
               next_step.destination_stop,
-              current_step.origin_time,
+              new_step_origin_time,
               next_step.destination_time,
               current_step.origin_trip,
               next_step.destination_trip,
@@ -196,59 +220,118 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
   return result;
 }
 
-std::vector<Step> FindMinimalPathSet(
-    const StepsAdjacencyList& adjacency_list, StopId origin, StopId destination
+std::unordered_map<StopId, std::vector<Step>> FindMinimalPathSet(
+    const StepsAdjacencyList& adjacency_list,
+    StopId origin,
+    std::vector<StopId> destinations
 ) {
-  std::vector<Step> result;
-
-  TimeSinceServiceStart current_origin_time{0};
   const TimeSinceServiceStart origin_time_ub{24 * 3600};
 
-  std::optional<TimeSinceServiceStart> earliest_arrival_after_last_query_time;
+  const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
+
+  std::unordered_map<StopId, std::vector<Step>> result;
+  std::unordered_map<StopId, TimeSinceServiceStart> current_origin_time;
+
+  // Sorted vector of all departure times from origin. This is optional because
+  // usually we don't need it. We compute it on demand.
+  std::optional<std::vector<TimeSinceServiceStart>> origin_departure_times;
 
   while (true) {
+    // Find the smallest `current_origin_time` and query from there. Include all
+    // destinations with that `current_origin_time` in the query.
+    std::unordered_set<StopId> destinations_to_query;
+    TimeSinceServiceStart query_time = big_time;
+    for (const auto& dest : destinations) {
+      if (current_origin_time[dest] < query_time) {
+        query_time = current_origin_time[dest];
+        destinations_to_query.clear();
+      }
+      if (current_origin_time[dest] == query_time) {
+        destinations_to_query.insert(dest);
+      }
+    }
+
+    if (query_time >= origin_time_ub) {
+      break;
+    }
+
+    // Do query.
     const std::unordered_map<StopId, Step> steps = FindShortestPathsAtTime(
-        adjacency_list, current_origin_time, origin, {destination}
+        adjacency_list, query_time, origin, destinations_to_query
     );
-    const auto r_it = steps.find(destination);
-    if (r_it == steps.end()) {
-      // There are no steps any more.
-      break;
+
+    // Push all results and update current origin times.
+    for (const auto& dest : destinations_to_query) {
+      const auto r_it = steps.find(dest);
+      if (r_it == steps.end()) {
+        // There are no more steps for this destination.
+        current_origin_time[dest] = big_time;
+        continue;
+      }
+      const Step r = r_it->second;
+      result[dest].push_back(r);
+
+      if (r.is_flex) {
+        // Flex step: The origin time is exactly the query time, but we know
+        // that this is still gonna be the best step up until the next departure
+        // from origin, so we can advance the current origin time to that.
+
+        if (!origin_departure_times.has_value()) {
+          // Need to compute origin departure times.
+          origin_departure_times.emplace(std::vector<TimeSinceServiceStart>());
+          if (adjacency_list.adjacent.contains(origin)) {
+            for (const std::vector<Step>& steps_from_origin :
+                 adjacency_list.adjacent.at(origin)) {
+              for (const Step step_from_origin : steps_from_origin) {
+                if (!step_from_origin.is_flex) {
+                  origin_departure_times->push_back(step_from_origin.origin_time
+                  );
+                }
+              }
+            }
+          }
+
+          // TODO: Since we're merging sorted lists, we could do that faster
+          // than sorting at the end.
+          std::sort(
+              origin_departure_times->begin(), origin_departure_times->end()
+          );
+        }
+
+        TimeSinceServiceStart want_departure_at_or_after = query_time;
+        want_departure_at_or_after.seconds += 1;
+        const auto next_departure_it = std::lower_bound(
+            origin_departure_times->begin(),
+            origin_departure_times->end(),
+            want_departure_at_or_after
+        );
+        if (next_departure_it != origin_departure_times->end()) {
+          current_origin_time[dest] = *next_departure_it;
+        } else {
+          current_origin_time[dest] = big_time;
+        }
+      } else {
+        // Non-flex step: This is the best step up until `r.origin_time`, so
+        // advance current origin time to 1 past that.
+        current_origin_time[dest] = r.origin_time;
+        current_origin_time[dest].seconds += 1;
+      }
     }
-
-    const Step r = r_it->second;
-    result.push_back(r);
-
-    if (!r.is_flex && r.origin_time >= origin_time_ub) {
-      // We've exhausted all paths that originate before `origin_time_ub`, so
-      // we're done. Temporarily include this path in `result`, so that it can
-      // dominate earlier paths while doing `MakeMinimalCover`,
-      break;
-    }
-
-    current_origin_time = r.origin_time;
-    current_origin_time.seconds += 1;
   }
 
-  SortSteps(result);
-  MakeMinimalCover(result);
+  for (const StopId dest : destinations) {
+    auto& dest_result = result[dest];
+    SortSteps(dest_result);
+    MakeMinimalCover(dest_result);
 
-  // Remove the temporarily-included path that is past the ub.
-  if (result.size() > 0 && !result.back().is_flex &&
-      result.back().origin_time >= origin_time_ub) {
-    result.pop_back();
+    // Remove any paths whose origin is after the ub.
+    if (dest_result.size() > 0 && !dest_result.back().is_flex &&
+        dest_result.back().origin_time >= origin_time_ub) {
+      dest_result.pop_back();
+    }
   }
 
   return result;
 }
-
-// std::vector<std::vector<Step>> FindShortestPaths(
-//     const StepsAdjacencyList& adjacency_list,
-//     StopId origin_stop,
-//     std::vector<StopId> destinations
-// ) {
-//   // TODO
-//   return {};
-// }
 
 }  // namespace vats5

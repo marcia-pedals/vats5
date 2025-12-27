@@ -28,15 +28,21 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 
 // Return a minimal set of steps from origin to destination, with origin times
 // in [00:00, 24:00).
-std::vector<Step> FindMinimalPathSet(
-    const StepsAdjacencyList& adjacency_list, StopId origin, StopId destination
+//
+// TODO: I probably want to use this to replace outgoing trips from e.g. BART
+// stations when reducing the system, but to be able to handle past-midnight
+// trips correctly, we'll actually need to include past-24:00 origin times,
+// because a minimal path from another station in a later reduction step might
+// use a minimal path from `origin` that departs `origin` after 24:00. I think I
+// basically will need to know the latest possible arrival time for any minimal
+// path in the sytem and set the ub to above that. Not sure if there's a quick
+// general way to figure that out, but proably like 36:00 will be plenty for
+// BART and also most other systems. Can probably detect situations where
+// whatever threshold we've set is insufficient, and error out of those.
+std::unordered_map<StopId, std::vector<Step>> FindMinimalPathSet(
+    const StepsAdjacencyList& adjacency_list,
+    StopId origin,
+    std::vector<StopId> destinations
 );
-
-// // Return all minimal steps from origin to destinations.
-// std::vector<std::vector<Step>> FindShortestPaths(
-//     const StepsAdjacencyList& adjacency_list,
-//     StopId origin,
-//     std::vector<StopId> destinations
-// );
 
 }  // namespace vats5

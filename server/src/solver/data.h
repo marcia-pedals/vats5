@@ -32,7 +32,7 @@ struct TripId {
 inline const TripId TripId::NOOP = TripId{-1};
 
 struct TimeSinceServiceStart {
-  int seconds;
+  int seconds = 0;
 
   static TimeSinceServiceStart Parse(const std::string& time_str) {
     GtfsTimeSinceServiceStart gtfs_time = ParseGtfsTime(time_str);
