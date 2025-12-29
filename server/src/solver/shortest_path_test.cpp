@@ -164,8 +164,6 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
         adjacency_list, query_time, origin_stop, destinations
     );
 
-    EXPECT_EQ(shortest_paths.size(), test_case.expected_paths.size());
-
     for (const auto& expected_path : test_case.expected_paths) {
       VerifyPathResult(
           shortest_paths,
@@ -319,7 +317,6 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  ASSERT_EQ(shortest_paths.size(), 1);
   const Step& result = shortest_paths[StopId{2}];
 
   // With the bug, this will be 350 (50 + 300 flex duration)
@@ -763,7 +760,6 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  ASSERT_EQ(shortest_paths.size(), 1);
   const Step& result = shortest_paths[StopId{3}];
 
   // The algorithm will likely choose:

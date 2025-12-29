@@ -88,7 +88,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const std::unordered_set<StopId>& destinations
 ) {
   std::unordered_map<StopId, Step> result;
-  std::unordered_set<StopId> visited;
+  std::unordered_set<StopId> reached_destinations;
 
   std::priority_queue<Step, std::vector<Step>, StepOriginTimeComparator>
       frontier;
@@ -109,14 +109,14 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
     const TimeSinceServiceStart current_time = current_step.destination_time;
     frontier.pop();
 
-    if (visited.find(current_stop) != visited.end()) {
+    if (result.find(current_stop) != result.end()) {
       continue;
     }
-    visited.insert(current_stop);
+    result[current_stop] = current_step;
 
     if (destinations.find(current_stop) != destinations.end()) {
-      result[current_stop] = current_step;
-      if (result.size() == destinations.size()) {
+      reached_destinations.insert(current_stop);
+      if (reached_destinations.size() == destinations.size()) {
         return result;
       }
     }
@@ -136,7 +136,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
         const Step& flex_step =
             step_group[0];  // Should be only one step in flex group
         const StopId next_stop = flex_step.destination_stop;
-        if (visited.find(next_stop) == visited.end()) {
+        if (result.find(next_stop) == result.end()) {
           // Calculate arrival time based on current time + duration
           TimeSinceServiceStart arrival_time{
               current_time.seconds + flex_step.FlexDurationSeconds()
@@ -181,7 +181,7 @@ std::unordered_map<StopId, Step> FindShortestPathsAtTime(
 
         const Step& next_step = *next_step_opt;
         const StopId next_stop = next_step.destination_stop;
-        if (visited.find(next_stop) != visited.end()) {
+        if (result.find(next_stop) != result.end()) {
           continue;
         }
 

@@ -13,8 +13,12 @@ struct StepsAdjacencyList {
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
-// Find earliest times you can get to a set of destinations from `origin` when
-// starting at `time`.
+// Find earliest times you can get to a set of stops from `origin` when starting
+// at `time`.
+//
+// The return includes at least values for `destinations` and for all
+// intermediate stops on the optimal routes to them. It may include values for
+// other stops visited during the search.
 //
 // The returned steps may depart later than `time` from `origin`, but you should
 // not rely on this to find the latest possible departure time (see the
