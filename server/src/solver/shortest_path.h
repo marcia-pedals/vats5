@@ -13,6 +13,23 @@ struct StepsAdjacencyList {
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
+// The data we keep at each stop along a shortest path search.
+//
+// Includes enough data to reconstruct a whole path if you have the state at
+// each stop along the path. Also includes various derived data useful during
+// the search and useful for using the search results.
+//
+// TODO: Some of this derived data may be redundant in an unecessary way. These
+// states are used in the hot path of the search and so shrinking them may give
+// good speedups.
+struct PathState {
+  // Represents the whole path from origin to current stop.
+  Step whole_step;
+
+  // The previous stop along this path.
+  StopId prev_stop;
+};
+
 // Find earliest times you can get to a set of stops from `origin` when starting
 // at `time`.
 //
@@ -23,7 +40,7 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 // The returned steps may depart later than `time` from `origin`, but you should
 // not rely on this to find the latest possible departure time (see the
 // SuboptimalDepartureTimeExposure test).
-std::unordered_map<StopId, Step> FindShortestPathsAtTime(
+std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,

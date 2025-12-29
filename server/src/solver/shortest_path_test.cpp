@@ -49,7 +49,7 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
 namespace {
 
 void VerifyPathResult(
-    const std::unordered_map<StopId, Step>& shortest_paths,
+    const std::unordered_map<StopId, PathState>& shortest_paths,
     const StepsFromGtfs& steps_from_gtfs,
     const std::string& destination_stop_name,
     const std::string& expected_origin_time_str,
@@ -65,7 +65,7 @@ void VerifyPathResult(
   ASSERT_NE(path_it, shortest_paths.end())
       << destination_stop_name << " path not found";
 
-  const Step& step = path_it->second;
+  const Step& step = path_it->second.whole_step;
 
   EXPECT_EQ(step.origin_time.ToString(), expected_origin_time_str)
       << destination_stop_name << " departure time";
@@ -317,7 +317,7 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  const Step& result = shortest_paths[StopId{2}];
+  const Step& result = shortest_paths[StopId{2}].whole_step;
 
   // With the bug, this will be 350 (50 + 300 flex duration)
   // Without the bug, this should be 200 (scheduled trip arrival)
@@ -760,7 +760,7 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  const Step& result = shortest_paths[StopId{3}];
+  const Step& result = shortest_paths[StopId{3}].whole_step;
 
   // The algorithm will likely choose:
   // - Depart A at 100, arrive B at 110
