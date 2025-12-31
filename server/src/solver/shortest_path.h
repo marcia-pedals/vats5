@@ -74,4 +74,9 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const std::unordered_set<StopId>& destinations
 );
 
+StepsAdjacencyList ReduceToMinimalSystemSteps(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
+);
+
 }  // namespace vats5

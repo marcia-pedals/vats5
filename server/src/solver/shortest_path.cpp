@@ -380,4 +380,32 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   return result_with_paths;
 }
 
+StepsAdjacencyList ReduceToMinimalSystemSteps(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
+) {
+  StepsAdjacencyList result;
+  result.adjacent.reserve(system_stops.size());
+
+  for (const StopId origin : system_stops) {
+    std::unordered_set<StopId> destinations = system_stops;
+    destinations.erase(origin);
+    std::unordered_map<StopId, std::vector<Path>> paths =
+        FindMinimalPathSet(adjacency_list, origin, destinations);
+    for (const StopId dest : destinations) {
+      const std::vector<Path>& paths_to_dest = paths[dest];
+      if (paths_to_dest.size() > 0) {
+        std::vector<Step> steps_to_dest;
+        steps_to_dest.reserve(paths_to_dest.size());
+        for (const Path& path : paths_to_dest) {
+          steps_to_dest.push_back(path.merged_step);
+        }
+        result.adjacent[origin].push_back(steps_to_dest);
+      }
+    }
+  }
+
+  return result;
+}
+
 }  // namespace vats5
