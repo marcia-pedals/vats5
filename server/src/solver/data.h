@@ -186,6 +186,7 @@ struct DataGtfsMapping {
   std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
   std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
   std::unordered_map<std::string, std::vector<StopId>> stop_name_to_stop_ids;
+  std::unordered_map<StopId, std::string> stop_id_to_stop_name;
 
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;

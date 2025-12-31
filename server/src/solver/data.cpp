@@ -22,6 +22,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
     result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop.stop_id;
     result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(stop_id
     );
+    result.mapping.stop_id_to_stop_name[stop_id] = gtfs_stop.stop_name;
   }
 
   // Create bidirectional mappings for trips and build route descriptions in one
