@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Crow)
+find_package(nlohmann_json REQUIRED)
 
 FetchContent_Declare(
   csv  
@@ -45,7 +46,7 @@ target_include_directories(date PUBLIC src)
 
 # Create GTFS library target
 add_library(gtfs STATIC src/gtfs/gtfs.cpp)
-target_link_libraries(gtfs PUBLIC csv gcov)
+target_link_libraries(gtfs PUBLIC csv gcov nlohmann_json::nlohmann_json)
 target_include_directories(gtfs PUBLIC src)
 
 # Create data library target

@@ -19,6 +19,7 @@
             crow
             gcc
             ninja
+            nlohmann_json
             nodejs
           ];
 

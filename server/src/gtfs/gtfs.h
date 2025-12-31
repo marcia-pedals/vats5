@@ -2,10 +2,13 @@
 
 #include <iomanip>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
+
+#include "serialization/optional.h"
 
 namespace vats5 {
 
@@ -14,24 +17,40 @@ struct GtfsStopId {
 
   bool operator==(const GtfsStopId& other) const { return v == other.v; }
 };
+inline void to_json(nlohmann::json& j, const GtfsStopId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, GtfsStopId& id) {
+  id.v = j.get<std::string>();
+}
 
 struct GtfsRouteId {
   std::string v;
 
   bool operator==(const GtfsRouteId& other) const { return v == other.v; }
 };
+inline void to_json(nlohmann::json& j, const GtfsRouteId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, GtfsRouteId& id) {
+  id.v = j.get<std::string>();
+}
 
 struct GtfsTripId {
   std::string v;
 
   bool operator==(const GtfsTripId& other) const { return v == other.v; }
 };
+inline void to_json(nlohmann::json& j, const GtfsTripId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, GtfsTripId& id) {
+  id.v = j.get<std::string>();
+}
 
 struct GtfsServiceId {
   std::string v;
 
   bool operator==(const GtfsServiceId& other) const { return v == other.v; }
 };
+inline void to_json(nlohmann::json& j, const GtfsServiceId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, GtfsServiceId& id) {
+  id.v = j.get<std::string>();
+}
 
 struct GtfsTimeSinceServiceStart {
   int seconds;
@@ -40,6 +59,12 @@ struct GtfsTimeSinceServiceStart {
     return seconds == other.seconds;
   }
 };
+inline void to_json(nlohmann::json& j, const GtfsTimeSinceServiceStart& t) {
+  j = t.seconds;
+}
+inline void from_json(const nlohmann::json& j, GtfsTimeSinceServiceStart& t) {
+  t.seconds = j.get<int>();
+}
 
 struct GtfsRouteDirectionId {
   GtfsRouteId route_id;
@@ -49,6 +74,7 @@ struct GtfsRouteDirectionId {
     return route_id == other.route_id && direction_id == other.direction_id;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GtfsRouteDirectionId, route_id, direction_id)
 
 struct GtfsStop {
   GtfsStopId stop_id;
@@ -63,6 +89,9 @@ struct GtfsStop {
            parent_station == other.parent_station;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsStop, stop_id, stop_name, stop_lat, stop_lon, parent_station
+)
 
 struct GtfsTrip {
   GtfsRouteDirectionId route_direction_id;
@@ -74,6 +103,9 @@ struct GtfsTrip {
            trip_id == other.trip_id && service_id == other.service_id;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsTrip, route_direction_id, trip_id, service_id
+)
 
 struct GtfsCalendar {
   GtfsServiceId service_id;
@@ -95,6 +127,19 @@ struct GtfsCalendar {
            start_date == other.start_date && end_date == other.end_date;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsCalendar,
+    service_id,
+    monday,
+    tuesday,
+    wednesday,
+    thursday,
+    friday,
+    saturday,
+    sunday,
+    start_date,
+    end_date
+)
 
 struct GtfsStopTime {
   GtfsTripId trip_id;
@@ -110,6 +155,9 @@ struct GtfsStopTime {
            departure_time == other.departure_time;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsStopTime, trip_id, stop_id, stop_sequence, arrival_time, departure_time
+)
 
 struct GtfsRoute {
   GtfsRouteId route_id;
@@ -122,6 +170,9 @@ struct GtfsRoute {
            route_long_name == other.route_long_name;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsRoute, route_id, route_short_name, route_long_name
+)
 
 struct GtfsDirection {
   GtfsRouteDirectionId route_direction_id;
@@ -132,6 +183,7 @@ struct GtfsDirection {
            direction == other.direction;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GtfsDirection, route_direction_id, direction)
 
 struct Gtfs {
   std::vector<GtfsStop> stops;
@@ -141,6 +193,9 @@ struct Gtfs {
   std::vector<GtfsRoute> routes;
   std::vector<GtfsDirection> directions;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    Gtfs, stops, trips, calendar, stop_times, routes, directions
+)
 
 struct GtfsDay {
   std::vector<GtfsStop> stops;
@@ -159,6 +214,9 @@ struct GtfsDay {
     }
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GtfsDay, stops, trips, stop_times, routes, directions
+)
 
 // Load all GTFS data from a directory containing GTFS files
 Gtfs GtfsLoad(const std::string& gtfs_directory_path);
