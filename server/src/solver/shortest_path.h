@@ -49,31 +49,27 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const std::unordered_set<StopId>& destinations
 );
 
-// Return a minimal set of steps from origin to destinations, with origin times
-// in [00:00, 24:00).
+// Return a minimal set of paths from `origin` to destinations, with origin
+// times in [00:00, 36:00). Return value is a map from destination to the paths
+// from `origin` to that destination.
 //
-// The result is minimal in two senses:
-// - Each std::vector<Step> in the result satisfies `CheckSortedAndMinimal`.
-// - Each Step in the result represents a path that does not touch any
-// `destinations` other than its
-//   ultimate destination.
-//
-// TODO: I probably want to use this to replace outgoing trips from e.g. BART
-// stations when reducing the system, but to be able to handle past-midnight
-// trips correctly, we'll actually need to include past-24:00 origin times,
-// because a minimal path from another station in a later reduction step might
-// use a minimal path from `origin` that departs `origin` after 24:00. I think I
-// basically will need to know the latest possible arrival time for any minimal
-// path in the sytem and set the ub to above that. Not sure if there's a quick
-// general way to figure that out, but proably like 36:00 will be plenty for
-// BART and also most other systems. Can probably detect situations where
-// whatever threshold we've set is insufficient, and error out of those.
+// Minimal means that these properties hold:
+// (a) Any path in `adjacency_list` from `origin` to a destination can be
+// matched or beat by a path in the return. (b) If you remove any path from the
+// return value, (a) no longer holds.
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
     const std::unordered_set<StopId>& destinations
 );
 
+// Return an adjacency list ("reduced list") with these properties:
+// (a) Any path in `adjacency_list` between two `system_stops` [1] can be
+// matched or beat by a path in the reduced list. (b) If you remove any step
+// from the reduced list, (a) no longer holds.
+//
+// [1] Usually-unimportant qualification: All departures from `system_stops` in
+// the path happen at <36:00.
 StepsAdjacencyList ReduceToMinimalSystemSteps(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops

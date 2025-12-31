@@ -240,7 +240,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     StopId origin,
     const std::unordered_set<StopId>& destinations
 ) {
-  const TimeSinceServiceStart origin_time_ub{24 * 3600};
+  const TimeSinceServiceStart origin_time_ub{36 * 3600};
 
   const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
 
@@ -373,7 +373,18 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
     auto& dest_paths = result_with_paths[dest];
     for (const Step whole_step : dest_result) {
-      dest_paths.push_back(full_paths[whole_step]);
+      Path path = full_paths[whole_step];
+      // Normalize flex steps: shift origin_time back to 00:00:00
+      if (path.merged_step.is_flex) {
+        int32_t offset = path.merged_step.origin_time.seconds;
+        path.merged_step.origin_time.seconds = 0;
+        path.merged_step.destination_time.seconds -= offset;
+        for (Step& step : path.steps) {
+          step.origin_time.seconds -= offset;
+          step.destination_time.seconds -= offset;
+        }
+      }
+      dest_paths.push_back(path);
     }
   }
 
