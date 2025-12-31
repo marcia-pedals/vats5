@@ -19,7 +19,7 @@ using ::testing::UnorderedElementsAre;
 static Gtfs* getGlobalGtfs() {
   static Gtfs* gtfs = nullptr;
   if (!gtfs) {
-    std::string gtfs_directory_path = "../data/RG";
+    std::string gtfs_directory_path = "../data/raw_RG_202506";
     gtfs = new Gtfs(GtfsLoad(gtfs_directory_path));
   }
   return gtfs;
