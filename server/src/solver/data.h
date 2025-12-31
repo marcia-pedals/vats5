@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <ostream>
 #include <stdexcept>
 #include <unordered_map>
@@ -19,6 +20,10 @@ struct StopId {
   bool operator!=(const StopId& other) const { return v != other.v; }
   bool operator<(const StopId& other) const { return v < other.v; }
 };
+inline void to_json(nlohmann::json& j, const StopId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, StopId& id) {
+  id.v = j.get<int>();
+}
 
 struct TripId {
   int v;
@@ -28,6 +33,10 @@ struct TripId {
 
   bool operator==(const TripId& other) const { return v == other.v; }
 };
+inline void to_json(nlohmann::json& j, const TripId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, TripId& id) {
+  id.v = j.get<int>();
+}
 
 inline const TripId TripId::NOOP = TripId{-1};
 
@@ -67,6 +76,12 @@ struct TimeSinceServiceStart {
            (secs < 10 ? "0" : "") + std::to_string(secs);
   }
 };
+inline void to_json(nlohmann::json& j, const TimeSinceServiceStart& t) {
+  j = t.seconds;
+}
+inline void from_json(const nlohmann::json& j, TimeSinceServiceStart& t) {
+  t.seconds = j.get<int>();
+}
 
 struct Step {
   StopId origin_stop;
@@ -95,11 +110,22 @@ struct Step {
            is_flex == other.is_flex;
   }
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    Step,
+    origin_stop,
+    destination_stop,
+    origin_time,
+    destination_time,
+    origin_trip,
+    destination_trip,
+    is_flex
+)
 
 struct Path {
   Step merged_step;
   std::vector<Step> steps;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)
 
 // Output operators for debugging/logging
 inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
@@ -173,12 +199,14 @@ namespace vats5 {
 struct GetStepsOptions {
   double max_walking_distance_meters = 500.0;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GetStepsOptions, max_walking_distance_meters)
 
 struct FlexTrip {
   StopId origin;
   StopId destination;
   int duration_seconds;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(FlexTrip, origin, destination, duration_seconds)
 
 // Bidirectional mappings between GtfsStopId<->StopId, etc.
 struct DataGtfsMapping {

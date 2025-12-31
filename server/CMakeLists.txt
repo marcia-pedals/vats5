@@ -71,6 +71,10 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
 target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 
+# Add visualization tool
+add_executable(visualization_tool src/tools/visualization_tool.cpp)
+target_link_libraries(visualization_tool PUBLIC shortest_path)
+
 # Enable CMake testing
 enable_testing()
 

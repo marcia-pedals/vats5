@@ -1,4 +1,6 @@
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "crow.h"
 #include "gtfs/gtfs.h"
@@ -21,6 +23,18 @@ int main() {
   CROW_ROUTE(app, "/stops")([&gtfs]() {
     nlohmann::json j = gtfs.stops;
     crow::response res(200, j.dump());
+    res.add_header("Content-Type", "application/json");
+    return res;
+  });
+
+  CROW_ROUTE(app, "/visualization")([]() {
+    std::ifstream file("../data/visualization.json");
+    if (!file.is_open()) {
+      return crow::response(500, "Failed to open visualization.json");
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    crow::response res(200, buffer.str());
     res.add_header("Content-Type", "application/json");
     return res;
   });
