@@ -297,4 +297,77 @@ TEST(DataTest, WalkingStepsGrid3x3) {
   );
 }
 
+TEST(DataTest, GetStopsForTripIdPrefix_BART) {
+  std::string gtfs_directory_path = "../data/RG_20250718_BA_CT_SC";
+  GtfsDay gtfs_day = GtfsNormalizeStops(GtfsLoadDay(gtfs_directory_path));
+
+  StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
+
+  std::unordered_set<StopId> bart_stops =
+      GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
+
+  std::vector<std::string> bart_stop_names;
+  for (const StopId& stop_id : bart_stops) {
+    bart_stop_names.push_back(
+        steps_from_gtfs.mapping.stop_id_to_stop_name.at(stop_id)
+    );
+  }
+
+  EXPECT_THAT(
+      bart_stop_names,
+      UnorderedElementsAre(
+          "Berryessa / North San Jose",
+          "Great Mall/Milpitas BART",
+          "Warm Springs South Fremont BART",
+          "Fremont",
+          "Union City BART",
+          "South Hayward",
+          "Hayward",
+          "Millbrae BART",
+          "Ashby",
+          "Downtown Berkeley",
+          "North Berkeley",
+          "El Cerrito Plaza",
+          "El Cerrito Del Norte BART",
+          "Richmond BART/Amtrak",
+          "OAK",
+          "Antioch",
+          "Pittsburg Center",
+          "Pittsburg / Bay Point",
+          "North Concord / Martinez",
+          "Concord",
+          "Pleasant Hill BART",
+          "Civic Center BART",
+          "Powell",
+          "Montgomery BART",
+          "Rockridge",
+          "West Oakland",
+          "Embarcadero BART",
+          "Orinda",
+          "Lake Merritt",
+          "Oakland Coliseum BART",
+          "Fruitvale",
+          "San Leandro",
+          "Bay Fair",
+          "Castro Valley",
+          "Walnut Creek BART",
+          "West Dublin / Pleasanton",
+          "Dublin / Pleasanton BART",
+          "South San Francisco",
+          "16th Street / Mission",
+          "24th Street / Mission",
+          "Glen Park",
+          "Balboa Park",
+          "Daly City BART",
+          "Lafayette",
+          "SFO",
+          "San Bruno",
+          "Colma",
+          "12th St Oakland City Center BART",
+          "19TH St Oakland BART",
+          "MacArthur BART"
+      )
+  );
+}
+
 }  // namespace vats5

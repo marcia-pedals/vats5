@@ -252,4 +252,32 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   return result;
 }
 
+std::unordered_set<StopId> GetStopsForTripIdPrefix(
+    const GtfsDay& gtfs,
+    const DataGtfsMapping& mapping,
+    const std::string& trip_id_prefix
+) {
+  std::unordered_set<StopId> result;
+
+  // Find all trip IDs that match the prefix
+  std::unordered_set<GtfsTripId> matching_trip_ids;
+  for (const auto& trip : gtfs.trips) {
+    if (trip.trip_id.v.substr(0, trip_id_prefix.size()) == trip_id_prefix) {
+      matching_trip_ids.insert(trip.trip_id);
+    }
+  }
+
+  // Collect all stops visited by matching trips
+  for (const auto& stop_time : gtfs.stop_times) {
+    if (matching_trip_ids.count(stop_time.trip_id) > 0) {
+      auto it = mapping.gtfs_stop_id_to_stop_id.find(stop_time.stop_id);
+      if (it != mapping.gtfs_stop_id_to_stop_id.end()) {
+        result.insert(it->second);
+      }
+    }
+  }
+
+  return result;
+}
+
 }  // namespace vats5

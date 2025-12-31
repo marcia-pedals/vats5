@@ -225,4 +225,15 @@ StepsFromGtfs GetStepsFromGtfs(
     GtfsDay gtfs, const GetStepsOptions& options = {}
 );
 
+// Returns all stops visited by all trips with `trip_id_prefix`.
+//
+// This is useful for finding all the stops in a given system within the
+// regional GTFS, because the trip ids are prefixed by the system, e.g. BART
+// trips are "BA:...".
+std::unordered_set<StopId> GetStopsForTripIdPrefix(
+    const GtfsDay& gtfs,
+    const DataGtfsMapping& mapping,
+    const std::string& trip_id_prefix
+);
+
 }  // namespace vats5
