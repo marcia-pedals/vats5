@@ -1077,4 +1077,24 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   EXPECT_EQ(result.destination_time.seconds, 210);
 }
 
+// TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART) {
+//   std::string gtfs_path = "../data/RG_20260109_BA_CT_SC_SM_AC";
+//   GtfsDay gtfs_day = GtfsNormalizeStops(GtfsLoadDay(gtfs_path));
+//   StepsFromGtfs steps_from_gtfs =
+//       GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+//   StepsAdjacencyList adjacency_list =
+//   MakeAdjacencyList(steps_from_gtfs.steps);
+
+//   std::unordered_set<StopId> bart_stops =
+//       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
+
+//   StepsAdjacencyList reduced =
+//       ReduceToMinimalSystemSteps(adjacency_list, bart_stops);
+
+//   // TODO: add assertions
+//   std::cout << "BART stops count: " << bart_stops.size() << std::endl;
+//   std::cout << "Reduced adjacency list size: " << reduced.adjacent.size()
+//             << std::endl;
+// }
+
 }  // namespace vats5

@@ -384,14 +384,17 @@ StepsAdjacencyList ReduceToMinimalSystemSteps(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
+  StepsAdjacencyList simplified_input = adjacency_list;
+
   StepsAdjacencyList result;
   result.adjacent.reserve(system_stops.size());
 
   for (const StopId origin : system_stops) {
+    std::cout << result.adjacent.size() << " / " << system_stops.size() << "\n";
     std::unordered_set<StopId> destinations = system_stops;
     destinations.erase(origin);
     std::unordered_map<StopId, std::vector<Path>> paths =
-        FindMinimalPathSet(adjacency_list, origin, destinations);
+        FindMinimalPathSet(simplified_input, origin, destinations);
     for (const StopId dest : destinations) {
       const std::vector<Path>& paths_to_dest = paths[dest];
       if (paths_to_dest.size() > 0) {
@@ -403,6 +406,12 @@ StepsAdjacencyList ReduceToMinimalSystemSteps(
         result.adjacent[origin].push_back(steps_to_dest);
       }
     }
+
+    // TODO: Think about this and decide whether it makes things faster and
+    // whether it is correct. And also think about whether there are similar
+    // ideas that make things even faster. Experimentally, it seems like it
+    // speeds up the BART reduction from 230s to 190s, so nice but not amazing.
+    // simplified_input.adjacent[origin] = result.adjacent[origin];
   }
 
   return result;

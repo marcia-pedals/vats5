@@ -8,7 +8,7 @@ int main() {
 
   vats5::Gtfs gtfs;
   try {
-    gtfs = vats5::GtfsLoad("../data/RG");
+    gtfs = vats5::GtfsLoad("../data/raw_RG_202506");
     std::cout << "Loaded " << gtfs.stops.size() << " stops from GTFS data"
               << std::endl;
   } catch (const std::exception& e) {
