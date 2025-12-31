@@ -96,6 +96,11 @@ struct Step {
   }
 };
 
+struct Path {
+  Step merged_step;
+  std::vector<Step> steps;
+};
+
 // Output operators for debugging/logging
 inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
   return os << "StopId{" << value.v << "}";

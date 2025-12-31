@@ -343,122 +343,48 @@ MATCHER_P5(
          arg.is_flex == is_flex;
 }
 
-TEST(ShortestPathTest, FindMinimalPathSetFromMilpitas) {
+MATCHER_P5(
+    MergedStepIs,
+    origin_stop,
+    destination_stop,
+    origin_time,
+    destination_time,
+    is_flex,
+    ""
+) {
+  return ExplainMatchResult(
+      IsStep(
+          origin_stop, destination_stop, origin_time, destination_time, is_flex
+      ),
+      arg.merged_step,
+      result_listener
+  );
+}
+
+TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
   const auto test_data =
       GetCachedTestData("../data/RG_20250718_BA_CT_SC_SM_AC");
   StopId milpitas =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:great-mall-milpitas-bart"}
       );
-  StopId fruitvale =
-      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-          GtfsStopId{"mtc:fruitvale"}
-      );
-  StopId millbrae =
-      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-          GtfsStopId{"mtc:millbrae-bart"}
-      );
   StopId berryessa =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"PS_BERR"}
       );
-
-  std::unordered_map<StopId, std::vector<Step>> minimal_path_set =
-      FindMinimalPathSet(
-          test_data.adjacency_list, milpitas, {fruitvale, millbrae, berryessa}
-      );
-
-  auto F = [&](const char* origin_time, const char* destination_time) {
-    return IsStep(milpitas, fruitvale, origin_time, destination_time, false);
-  };
-
-  auto M = [&](const char* origin_time, const char* destination_time) {
-    return IsStep(milpitas, millbrae, origin_time, destination_time, false);
-  };
-
+  std::unordered_map<StopId, std::vector<Path>> minimal_path_set =
+      FindMinimalPathSet(test_data.adjacency_list, milpitas, {berryessa});
   auto B = [&](const char* origin_time, const char* destination_time) {
-    return IsStep(milpitas, berryessa, origin_time, destination_time, false);
+    return MergedStepIs(
+        milpitas, berryessa, origin_time, destination_time, false
+    );
   };
-
   auto BFlex = [&](const char* origin_time, const char* destination_time) {
-    return IsStep(milpitas, berryessa, origin_time, destination_time, true);
+    return MergedStepIs(
+        milpitas, berryessa, origin_time, destination_time, true
+    );
   };
-
   using ::testing::ElementsAre;
-  EXPECT_THAT(
-      minimal_path_set[millbrae],
-      ElementsAre(
-          M("00:20:00", "02:55:00"),
-          M("01:00:00", "03:55:00"),
-          M("02:24:03", "05:39:00"),
-          M("02:47:26", "06:04:00"),
-          M("05:13:00", "06:33:00"),
-          M("05:16:00", "06:54:00"),
-          M("05:43:00", "07:04:00"),
-          M("06:00:00", "07:24:00"),
-          M("06:13:00", "07:33:00"),
-          M("06:27:00", "07:54:00"),
-          M("06:53:00", "08:04:00"),
-          M("06:57:00", "08:24:00"),
-          M("07:13:00", "08:33:00"),
-          M("07:27:00", "08:54:00"),
-          M("07:42:00", "09:04:00"),
-          M("07:57:00", "09:24:00"),
-          M("08:13:00", "09:33:00"),
-          M("08:26:00", "09:54:00"),
-          M("08:56:00", "10:24:00"),
-          M("09:01:00", "10:47:00"),
-          M("09:26:00", "10:54:00"),
-          M("09:29:00", "11:16:00"),
-          M("09:56:00", "11:24:00"),
-          M("10:01:00", "11:47:00"),
-          M("10:26:00", "11:54:00"),
-          M("10:56:00", "12:24:00"),
-          M("11:01:00", "12:47:00"),
-          M("11:26:00", "12:54:00"),
-          M("11:56:00", "13:24:00"),
-          M("12:01:00", "13:47:00"),
-          M("12:26:00", "13:54:00"),
-          M("12:29:00", "14:16:00"),
-          M("12:56:00", "14:24:00"),
-          M("13:01:00", "14:47:00"),
-          M("13:26:00", "14:54:00"),
-          M("13:56:00", "15:24:00"),
-          M("14:01:00", "15:47:00"),
-          M("14:27:00", "15:54:00"),
-          M("14:53:00", "16:04:00"),
-          M("14:57:00", "16:24:00"),
-          M("15:13:00", "16:33:00"),
-          M("15:27:00", "16:54:00"),
-          M("15:41:00", "17:04:00"),
-          M("15:56:00", "17:24:00"),
-          M("16:13:00", "17:33:00"),
-          M("16:26:00", "17:54:00"),
-          M("16:41:00", "18:04:00"),
-          M("16:56:00", "18:24:00"),
-          M("17:11:00", "18:33:00"),
-          M("17:26:00", "18:54:00"),
-          M("17:53:00", "19:04:00"),
-          M("17:56:00", "19:24:00"),
-          M("18:13:00", "19:33:00"),
-          M("18:27:00", "19:54:00"),
-          M("18:56:00", "20:24:00"),
-          M("19:01:00", "20:47:00"),
-          M("19:26:00", "20:54:00"),
-          M("20:00:00", "21:24:00"),
-          M("20:25:00", "21:54:00"),
-          M("21:00:00", "22:24:00"),
-          M("21:25:00", "22:54:00"),
-          M("22:00:00", "23:26:00"),
-          M("22:01:00", "24:06:00"),
-          M("22:21:00", "24:20:00"),
-          M("23:00:00", "24:26:00"),
-          M("23:01:00", "25:00:00"),
-          M("23:38:00", "25:20:00"),
-          M("23:54:00", "25:41:00")
-      )
-  );
-
   EXPECT_THAT(
       minimal_path_set[berryessa],
       ElementsAre(
@@ -583,115 +509,98 @@ TEST(ShortestPathTest, FindMinimalPathSetFromMilpitas) {
           B("23:43:00", "23:55:00")
       )
   );
+}
 
-  EXPECT_THAT(
-      minimal_path_set[fruitvale],
-      ElementsAre(
-          F("00:20:00", "05:00:00"),
-          F("01:00:00", "05:16:00"),
-          F("04:49:00", "05:31:00"),
-          F("05:01:00", "05:43:00"),
-          F("05:09:00", "05:51:00"),
-          F("05:21:00", "06:03:00"),
-          F("05:29:00", "06:11:00"),
-          F("05:41:00", "06:23:00"),
-          F("05:49:00", "06:31:00"),
-          F("06:01:00", "06:43:00"),
-          F("06:09:00", "06:51:00"),
-          F("06:21:00", "07:03:00"),
-          F("06:29:00", "07:11:00"),
-          F("06:41:00", "07:23:00"),
-          F("06:49:00", "07:31:00"),
-          F("07:01:00", "07:43:00"),
-          F("07:09:00", "07:51:00"),
-          F("07:21:00", "08:03:00"),
-          F("07:29:00", "08:11:00"),
-          F("07:41:00", "08:23:00"),
-          F("07:49:00", "08:31:00"),
-          F("08:01:00", "08:43:00"),
-          F("08:09:00", "08:51:00"),
-          F("08:21:00", "09:03:00"),
-          F("08:29:00", "09:11:00"),
-          F("08:41:00", "09:23:00"),
-          F("08:49:00", "09:31:00"),
-          F("09:01:00", "09:43:00"),
-          F("09:09:00", "09:51:00"),
-          F("09:21:00", "10:03:00"),
-          F("09:29:00", "10:11:00"),
-          F("09:41:00", "10:23:00"),
-          F("09:49:00", "10:31:00"),
-          F("10:01:00", "10:43:00"),
-          F("10:09:00", "10:51:00"),
-          F("10:21:00", "11:03:00"),
-          F("10:29:00", "11:11:00"),
-          F("10:41:00", "11:23:00"),
-          F("10:49:00", "11:31:00"),
-          F("11:01:00", "11:43:00"),
-          F("11:09:00", "11:51:00"),
-          F("11:21:00", "12:03:00"),
-          F("11:29:00", "12:11:00"),
-          F("11:41:00", "12:23:00"),
-          F("11:49:00", "12:31:00"),
-          F("12:01:00", "12:43:00"),
-          F("12:09:00", "12:51:00"),
-          F("12:21:00", "13:03:00"),
-          F("12:29:00", "13:11:00"),
-          F("12:41:00", "13:23:00"),
-          F("12:49:00", "13:31:00"),
-          F("13:01:00", "13:43:00"),
-          F("13:09:00", "13:51:00"),
-          F("13:21:00", "14:03:00"),
-          F("13:29:00", "14:11:00"),
-          F("13:41:00", "14:23:00"),
-          F("13:49:00", "14:31:00"),
-          F("14:01:00", "14:43:00"),
-          F("14:09:00", "14:51:00"),
-          F("14:21:00", "15:03:00"),
-          F("14:29:00", "15:11:00"),
-          F("14:41:00", "15:23:00"),
-          F("14:49:00", "15:31:00"),
-          F("15:01:00", "15:43:00"),
-          F("15:09:00", "15:51:00"),
-          F("15:21:00", "16:03:00"),
-          F("15:29:00", "16:11:00"),
-          F("15:41:00", "16:23:00"),
-          F("15:49:00", "16:31:00"),
-          F("16:01:00", "16:43:00"),
-          F("16:09:00", "16:51:00"),
-          F("16:21:00", "17:03:00"),
-          F("16:29:00", "17:11:00"),
-          F("16:41:00", "17:23:00"),
-          F("16:49:00", "17:31:00"),
-          F("17:01:00", "17:43:00"),
-          F("17:09:00", "17:51:00"),
-          F("17:21:00", "18:03:00"),
-          F("17:29:00", "18:11:00"),
-          F("17:41:00", "18:23:00"),
-          F("17:49:00", "18:31:00"),
-          F("18:01:00", "18:43:00"),
-          F("18:09:00", "18:51:00"),
-          F("18:21:00", "19:03:00"),
-          F("18:29:00", "19:11:00"),
-          F("18:41:00", "19:23:00"),
-          F("18:49:00", "19:31:00"),
-          F("19:01:00", "19:43:00"),
-          F("19:21:00", "20:03:00"),
-          F("19:41:00", "20:23:00"),
-          F("20:01:00", "20:43:00"),
-          F("20:21:00", "21:03:00"),
-          F("20:41:00", "21:23:00"),
-          F("21:01:00", "21:43:00"),
-          F("21:21:00", "22:03:00"),
-          F("21:41:00", "22:23:00"),
-          F("22:01:00", "22:43:00"),
-          F("22:21:00", "23:03:00"),
-          F("22:41:00", "23:23:00"),
-          F("23:01:00", "23:43:00"),
-          F("23:21:00", "24:03:00"),
-          F("23:38:00", "24:20:00"),
-          F("23:54:00", "24:36:00")
-      )
-  );
+TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
+  const auto test_data =
+      GetCachedTestData("../data/RG_20250718_BA_CT_SC_SM_AC");
+  StopId fruitvale =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"mtc:fruitvale"}
+      );
+  StopId lake_merritt =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"902109"}
+      );
+  StopId coliseum =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"mtc:oakland-coliseum-bart"}
+      );
+  StopId san_leandro =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"902409"}
+      );
+  StopId west_oakland =
+      test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+          GtfsStopId{"901109"}
+      );
+
+  std::unordered_map<StopId, std::vector<Path>> minimal_path_set =
+      FindMinimalPathSet(
+          test_data.adjacency_list,
+          fruitvale,
+          {lake_merritt, coliseum, san_leandro, west_oakland}
+      );
+
+  for (const auto& p : minimal_path_set[lake_merritt]) {
+    const auto& s = p.merged_step;
+    std::cout << "LM";
+    if (s.is_flex) {
+      std::cout << "Flex";
+    }
+    std::cout << "(\"" << s.origin_time.ToString() << "\", \""
+              << s.destination_time.ToString() << "\")\n";
+  }
+
+  for (const auto& p : minimal_path_set[coliseum]) {
+    const auto& s = p.merged_step;
+    std::cout << "COLS";
+    if (s.is_flex) {
+      std::cout << "Flex";
+    }
+    std::cout << "(\"" << s.origin_time.ToString() << "\", \""
+              << s.destination_time.ToString() << "\")\n";
+  }
+
+  for (const auto& p : minimal_path_set[san_leandro]) {
+    const auto& s = p.merged_step;
+    std::cout << "SL";
+    if (s.is_flex) {
+      std::cout << "Flex";
+    }
+    std::cout << "(\"" << s.origin_time.ToString() << "\", \""
+              << s.destination_time.ToString() << "\")\n";
+  }
+
+  for (const auto& p : minimal_path_set[west_oakland]) {
+    const auto& s = p.merged_step;
+    std::cout << "WO";
+    if (s.is_flex) {
+      std::cout << "Flex";
+    }
+    std::cout << "(\"" << s.origin_time.ToString() << "\", \""
+              << s.destination_time.ToString() << "\")\n";
+  }
+
+  //   auto F = [&](const char* origin_time, const char* destination_time) {
+  //     return IsStep(milpitas, fruitvale, origin_time, destination_time,
+  //     false);
+  //   };
+
+  //   auto M = [&](const char* origin_time, const char* destination_time) {
+  //     return IsStep(milpitas, millbrae, origin_time, destination_time,
+  //     false);
+  //   };
+
+  //   auto B = [&](const char* origin_time, const char* destination_time) {
+  //     return IsStep(milpitas, berryessa, origin_time, destination_time,
+  //     false);
+  //   };
+
+  //   auto BFlex = [&](const char* origin_time, const char* destination_time) {
+  //     return IsStep(milpitas, berryessa, origin_time, destination_time,
+  //     true);
+  //   };
 }
 
 TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {

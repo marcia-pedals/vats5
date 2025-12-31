@@ -19,15 +19,17 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 // each stop along the path. Also includes various derived data useful during
 // the search and useful for using the search results.
 //
-// TODO: Some of this derived data may be redundant in an unecessary way. These
-// states are used in the hot path of the search and so shrinking them may give
-// good speedups.
+// TODO: A lot of this data is very redundant for convenience. This struct is
+// heavily used in the hot path of the search, so making it smaller may make the
+// search a lot faster. One simple idea might be to make the whole search be
+// based off `current_step`, and rely on backtracking to get info about the
+// departure, instead of computing `whole_step` througout the whole search?
 struct PathState {
-  // Represents the whole path from origin to current stop.
+  // All steps in the whole path so far, merged together.
   Step whole_step;
 
-  // The previous stop along this path.
-  StopId prev_stop;
+  // The latest step taken in the search.
+  Step current_step;
 };
 
 // Find earliest times you can get to a set of stops from `origin` when starting
@@ -47,8 +49,14 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const std::unordered_set<StopId>& destinations
 );
 
-// Return a minimal set of steps from origin to destination, with origin times
+// Return a minimal set of steps from origin to destinations, with origin times
 // in [00:00, 24:00).
+//
+// The result is minimal in two senses:
+// - Each std::vector<Step> in the result satisfies `CheckSortedAndMinimal`.
+// - Each Step in the result represents a path that does not touch any
+// `destinations` other than its
+//   ultimate destination.
 //
 // TODO: I probably want to use this to replace outgoing trips from e.g. BART
 // stations when reducing the system, but to be able to handle past-midnight
@@ -60,10 +68,10 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
 // general way to figure that out, but proably like 36:00 will be plenty for
 // BART and also most other systems. Can probably detect situations where
 // whatever threshold we've set is insufficient, and error out of those.
-std::unordered_map<StopId, std::vector<Step>> FindMinimalPathSet(
+std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
-    std::vector<StopId> destinations
+    const std::unordered_set<StopId>& destinations
 );
 
 }  // namespace vats5
