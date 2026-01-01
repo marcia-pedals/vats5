@@ -1311,8 +1311,12 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
     );
   }
 
-  StepsAdjacencyList reduced =
-      ReduceToMinimalSystemSteps(adjacency_list, bart_stops);
+  // TODO: Separate out a SplitPathsAt test. Calling it here with an empty
+  // `intermediate_stops` is just a kludge to make sure it's working in the most
+  // basic way: Not changing anything when there are no intermediate stops.
+  StepsAdjacencyList reduced = AdjacentPathsToStepsList(
+      SplitPathsAt(ReduceToMinimalSystemPaths(adjacency_list, bart_stops), {})
+  );
 
   // Sort destination groups by destination stop ID for consistent comparison
   auto sort_by_dest = [](std::vector<std::vector<Step>>& groups) {

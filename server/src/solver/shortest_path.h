@@ -70,9 +70,19 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.
-StepsAdjacencyList ReduceToMinimalSystemSteps(
+std::unordered_map<StopId, std::vector<std::vector<Path>>>
+ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
+);
+
+std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
+    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths,
+    const std::unordered_set<StopId> intermediate_stops
+);
+
+StepsAdjacencyList AdjacentPathsToStepsList(
+    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths
 );
 
 }  // namespace vats5

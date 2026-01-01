@@ -8,8 +8,8 @@
 using namespace vats5;
 
 struct Visualization {
-  // Key is actually a StopId but I don't know how to make the NLHOMANN macro recognize that
-  // that is a number and can be serialized to an object key.
+  // Key is actually a StopId but I don't know how to make the NLHOMANN macro
+  // recognize that that is a number and can be serialized to an object key.
   // TODO: Figure out how to do that.
   std::unordered_map<int, GtfsStop> stops;
 
@@ -37,9 +37,24 @@ int main() {
   std::unordered_set<StopId> bart_stops =
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
+  std::unordered_set<StopId> intermediate_stops;
+  for (const auto& gtfs_stop_id :
+       {"mtc:san-jose-diridon-station", "mtc:mountain-view-station"}) {
+    auto r_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(
+        GtfsStopId{gtfs_stop_id}
+    );
+    if (r_it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+      std::cout << "OH NO: " << gtfs_stop_id << " not found!\n";
+      return 1;
+    }
+    intermediate_stops.insert(r_it->second);
+  }
+
   std::cout << "Reducing to minimal system steps..." << std::endl;
-  StepsAdjacencyList reduced =
-      ReduceToMinimalSystemSteps(adjacency_list, bart_stops);
+  auto minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
+  auto split = SplitPathsAt(minimal, intermediate_stops);
+
+  StepsAdjacencyList reduced = AdjacentPathsToStepsList(minimal);
 
   std::cout << "BART stops count: " << bart_stops.size() << std::endl;
   std::cout << "Reduced adjacency list size: " << reduced.adjacent.size()
@@ -47,8 +62,9 @@ int main() {
 
   Visualization viz;
   for (const GtfsStop& stop : gtfs_day.stops) {
-    const StopId stop_id = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(stop.stop_id);
-    if (bart_stops.contains(stop_id)) {
+    const StopId stop_id =
+        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(stop.stop_id);
+    if (bart_stops.contains(stop_id) || intermediate_stops.contains(stop_id)) {
       viz.stops[stop_id.v] = stop;
     }
   }

@@ -206,7 +206,9 @@ struct FlexTrip {
   StopId destination;
   int duration_seconds;
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(FlexTrip, origin, destination, duration_seconds)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    FlexTrip, origin, destination, duration_seconds
+)
 
 // Bidirectional mappings between GtfsStopId<->StopId, etc.
 struct DataGtfsMapping {

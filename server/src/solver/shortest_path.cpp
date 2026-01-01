@@ -84,6 +84,51 @@ std::optional<Step> FindDepartureAtOrAfter(
   return *lower_bound_it;
 }
 
+// TODO: Might be able to use this in FindShortestPathsAtTime instead of kinda
+// reimplementing a bunch of the cases.
+Step CombineSteps(const Step& a, const Step& b) {
+  if (a.is_flex && b.is_flex) {
+    return Step{
+        a.origin_stop,
+        b.destination_stop,
+        TimeSinceServiceStart{0},
+        TimeSinceServiceStart{
+            a.FlexDurationSeconds() + b.FlexDurationSeconds()
+        },
+        a.origin_trip,
+        b.destination_trip,
+        /*is_flex=*/true,
+    };
+  }
+  if (a.is_flex) {
+    return Step{
+        a.origin_stop,
+        b.destination_stop,
+        TimeSinceServiceStart{b.origin_time.seconds - a.FlexDurationSeconds()},
+        b.destination_time,
+        /*is_flex=*/false
+    };
+  }
+  if (b.is_flex) {
+    return Step{
+        a.origin_stop,
+        b.destination_stop,
+        a.origin_time,
+        TimeSinceServiceStart{a.origin_time.seconds + b.FlexDurationSeconds()},
+        /*is_flex=*/false
+    };
+  }
+  return Step{
+      a.origin_stop,
+      b.destination_stop,
+      a.origin_time,
+      b.destination_time,
+      a.origin_trip,
+      b.destination_trip,
+      /*is_flex=*/false,
+  };
+}
+
 std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
@@ -391,31 +436,25 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   return result_with_paths;
 }
 
-StepsAdjacencyList ReduceToMinimalSystemSteps(
+std::unordered_map<StopId, std::vector<std::vector<Path>>>
+ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
   StepsAdjacencyList simplified_input = adjacency_list;
 
-  StepsAdjacencyList result;
-  result.adjacent.reserve(system_stops.size());
+  std::unordered_map<StopId, std::vector<std::vector<Path>>> result;
+  result.reserve(system_stops.size());
 
   for (const StopId origin : system_stops) {
-    std::cout << result.adjacent.size() << " / " << system_stops.size() << "\n";
+    std::cout << result.size() << " / " << system_stops.size() << "\n";
     std::unordered_set<StopId> destinations = system_stops;
     destinations.erase(origin);
     std::unordered_map<StopId, std::vector<Path>> paths =
         FindMinimalPathSet(simplified_input, origin, destinations);
     for (const StopId dest : destinations) {
       const std::vector<Path>& paths_to_dest = paths[dest];
-      if (paths_to_dest.size() > 0) {
-        std::vector<Step> steps_to_dest;
-        steps_to_dest.reserve(paths_to_dest.size());
-        for (const Path& path : paths_to_dest) {
-          steps_to_dest.push_back(path.merged_step);
-        }
-        result.adjacent[origin].push_back(steps_to_dest);
-      }
+      result[origin].push_back(paths_to_dest);
     }
 
     // TODO: Think about this and decide whether it makes things faster and
@@ -425,6 +464,82 @@ StepsAdjacencyList ReduceToMinimalSystemSteps(
     // simplified_input.adjacent[origin] = result.adjacent[origin];
   }
 
+  return result;
+}
+
+std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
+    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths,
+    const std::unordered_set<StopId> intermediate_stops
+) {
+  std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Path>>>
+      result;
+  result.reserve(paths.size() + intermediate_stops.size());
+
+  for (const auto& [origin_stop, path_groups] : paths) {
+    for (const auto& path_group : path_groups) {
+      for (const Path& path : path_group) {
+        std::vector<Step> accumulated_steps;
+        std::optional<Step> accumulated_merged_step;
+        for (const Step& step : path.steps) {
+          if (accumulated_merged_step.has_value()) {
+            accumulated_merged_step =
+                CombineSteps(*accumulated_merged_step, step);
+          } else {
+            accumulated_merged_step = step;
+          }
+          accumulated_steps.push_back(step);
+          if (intermediate_stops.contains(
+                  accumulated_merged_step->destination_stop
+              )) {
+            result[accumulated_merged_step->origin_stop]
+                  [accumulated_merged_step->destination_stop]
+                      .push_back(
+                          Path{*accumulated_merged_step, accumulated_steps}
+                      );
+            accumulated_merged_step.reset();
+            accumulated_steps.clear();
+          }
+        }
+        if (accumulated_merged_step.has_value()) {
+          result[accumulated_merged_step->origin_stop]
+                [accumulated_merged_step->destination_stop]
+                    .push_back(Path{*accumulated_merged_step, accumulated_steps}
+                    );
+          accumulated_merged_step.reset();
+          accumulated_steps.clear();
+        }
+      }
+    }
+  }
+
+  std::unordered_map<StopId, std::vector<std::vector<Path>>> final_result;
+  for (const auto& [origin_stop, dest_map] : result) {
+    for (const auto& [dest_stop, paths] : dest_map) {
+      final_result[origin_stop].push_back(paths);
+    }
+  }
+  return final_result;
+}
+
+StepsAdjacencyList AdjacentPathsToStepsList(
+    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths
+) {
+  StepsAdjacencyList result;
+  for (const auto& [origin_stop, path_groups] : paths) {
+    std::vector<std::vector<Step>> step_groups;
+    for (const auto& path_group : path_groups) {
+      std::vector<Step> steps;
+      for (const Path& path : path_group) {
+        steps.push_back(path.merged_step);
+      }
+      if (!steps.empty()) {
+        step_groups.push_back(std::move(steps));
+      }
+    }
+    if (!step_groups.empty()) {
+      result.adjacent[origin_stop] = std::move(step_groups);
+    }
+  }
   return result;
 }
 
