@@ -1361,4 +1361,154 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
 //             << std::endl;
 // }
 
+TEST(ShortestPathTest, SnapToStops_BasicSnapping) {
+  // Create a mapping with stop positions.
+  // Stop 1: (0, 0)
+  // Stop 2: (100, 0)  - intermediate, will be snapped to Stop 3 (50m away)
+  // Stop 3: (150, 0)
+  // Stop 4: (1000, 0) - final destination, not snapped
+  DataGtfsMapping mapping;
+  mapping.stop_positions = {
+      StopPosition{StopId{0}, 0, 0},    // placeholder for index 0
+      StopPosition{StopId{1}, 0, 0},    // Stop 1 at origin
+      StopPosition{StopId{2}, 100, 0},  // Stop 2 at (100, 0)
+      StopPosition{StopId{3}, 150, 0},  // Stop 3 at (150, 0) - target snap stop
+      StopPosition{StopId{4}, 1000, 0},  // Stop 4 at (1000, 0)
+  };
+
+  // Snap target stops: only Stop 1 and Stop 3.
+  std::unordered_set<StopId> stops = {StopId{1}, StopId{3}};
+
+  // Path: 1 -> 2 -> 4
+  std::vector<Step> path = {
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{100},
+          .destination_time = TimeSinceServiceStart{200},
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{2},
+          .destination_stop = StopId{4},
+          .origin_time = TimeSinceServiceStart{200},
+          .destination_time = TimeSinceServiceStart{300},
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2},
+          .is_flex = false
+      }
+  };
+
+  // threshold = 100 meters, so Stop 2 (at 100m) should snap to Stop 3 (at 150m,
+  // 50m away). But origin of first step and destination of last step are not
+  // snapped.
+  std::vector<Step> result = SnapToStops(mapping, stops, 100.0f, path);
+
+  ASSERT_EQ(result.size(), 2);
+  // First step: 1 -> 3 (destination 2 snapped to 3, origin 1 not snapped)
+  EXPECT_EQ(result[0].origin_stop, StopId{1});
+  EXPECT_EQ(result[0].destination_stop, StopId{3});
+  // Second step: 3 -> 4 (origin 2 snapped to 3, destination 4 not snapped)
+  EXPECT_EQ(result[1].origin_stop, StopId{3});
+  EXPECT_EQ(result[1].destination_stop, StopId{4});
+}
+
+TEST(ShortestPathTest, SnapToStops_DropSelfLoops) {
+  DataGtfsMapping mapping;
+  mapping.stop_positions = {
+      StopPosition{StopId{0}, 0, 0},    // placeholder for index 0
+      StopPosition{StopId{1}, 0, 0},    // Stop 1
+      StopPosition{StopId{2}, 10, 0},   // Stop 2, 10m from Stop 1
+      StopPosition{StopId{3}, 500, 0},  // Stop 3
+  };
+
+  // Only Stop 1 and Stop 3 are snap targets.
+  std::unordered_set<StopId> stops = {StopId{1}, StopId{3}};
+
+  // Path: 1 -> 2 -> 2 -> 3
+  // The middle step (2 -> 2) is an intermediate step where both origin and
+  // destination will be snapped to Stop 1, creating a self-loop that should be
+  // dropped.
+  std::vector<Step> path = {
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{100},
+          .destination_time = TimeSinceServiceStart{200},
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{2},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{200},
+          .destination_time = TimeSinceServiceStart{250},
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{2},
+          .destination_stop = StopId{3},
+          .origin_time = TimeSinceServiceStart{250},
+          .destination_time = TimeSinceServiceStart{300},
+          .origin_trip = TripId{3},
+          .destination_trip = TripId{3},
+          .is_flex = false
+      }
+  };
+
+  std::vector<Step> result = SnapToStops(mapping, stops, 50.0f, path);
+
+  // First step: 1 -> 1 (destination 2 snaps to 1) -> self-loop, dropped
+  // Second step: 1 -> 1 (both snap to 1) -> self-loop, dropped
+  // Third step: 1 -> 3 (origin 2 snaps to 1, destination 3 not snapped)
+  ASSERT_EQ(result.size(), 1);
+  EXPECT_EQ(result[0].origin_stop, StopId{1});
+  EXPECT_EQ(result[0].destination_stop, StopId{3});
+}
+
+TEST(ShortestPathTest, SnapToStops_NoSnapWhenTooFar) {
+  DataGtfsMapping mapping;
+  mapping.stop_positions = {
+      StopPosition{StopId{0}, 0, 0},
+      StopPosition{StopId{1}, 0, 0},
+      StopPosition{StopId{2}, 200, 0},  // 200m away from Stop 1
+  };
+
+  std::unordered_set<StopId> stops = {StopId{1}};
+
+  std::vector<Step> path = {Step{
+      .origin_stop = StopId{1},
+      .destination_stop = StopId{2},
+      .origin_time = TimeSinceServiceStart{100},
+      .destination_time = TimeSinceServiceStart{200},
+      .origin_trip = TripId{1},
+      .destination_trip = TripId{1},
+      .is_flex = false
+  }};
+
+  // threshold = 100m, Stop 2 is 200m away, so no snapping.
+  std::vector<Step> result = SnapToStops(mapping, stops, 100.0f, path);
+
+  ASSERT_EQ(result.size(), 1);
+  EXPECT_EQ(result[0].origin_stop, StopId{1});
+  EXPECT_EQ(result[0].destination_stop, StopId{2});
+}
+
+TEST(ShortestPathTest, SnapToStops_EmptyPath) {
+  DataGtfsMapping mapping;
+  mapping.stop_positions = {StopPosition{StopId{0}, 0, 0}};
+
+  std::unordered_set<StopId> stops = {StopId{1}};
+  std::vector<Step> path = {};
+
+  std::vector<Step> result = SnapToStops(mapping, stops, 100.0f, path);
+
+  EXPECT_TRUE(result.empty());
+}
+
 }  // namespace vats5

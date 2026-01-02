@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <queue>
 
 #include "solver/step_merge.h"
@@ -502,21 +503,58 @@ PathsAdjacencyList SplitPathsAt(
 
 // }
 
-// Return a modified `path` where any intermediate stops within
-// `threshold_meters` of a stop in `stops` are replaced by that stop, and then
-// steps that are thusly changed to be from a stop to itself are dropped.
-//
-// Note that this doesn't change any trip ids or times in the modified steps, so
-// the steps become steps that may not actually be possible, so maybe this
-// should be used only to clean up visualizations and not to do actual
-// computations. We'll see. std::vector<Step> SnapToStops(
-//   const DataGtfsMapping& mapping,
-//   const std::unordered_set<StopId>& stops,
-//   float threshold_meters,
-//   const std::vector<Step>& path
-// ) {
+std::vector<Step> SnapToStops(
+    const DataGtfsMapping& mapping,
+    const std::unordered_set<StopId>& stops,
+    double threshold_meters,
+    const std::vector<Step>& path
+) {
+  // Helper to find the nearest stop from `stops` if within threshold, or return
+  // the original stop if none are close enough.
+  auto snap_stop = [&](StopId stop) -> StopId {
+    // If stop is already in the set, no snapping needed.
+    if (stops.count(stop) > 0) {
+      return stop;
+    }
 
-// }
+    const StopPosition& pos = mapping.stop_positions[stop.v];
+    StopId nearest = stop;
+    double nearest_distance = threshold_meters;
+
+    for (StopId candidate : stops) {
+      const StopPosition& candidate_pos = mapping.stop_positions[candidate.v];
+      double dx = pos.x_meters - candidate_pos.x_meters;
+      double dy = pos.y_meters - candidate_pos.y_meters;
+      double distance = std::sqrt(dx * dx + dy * dy);
+      if (distance < nearest_distance) {
+        nearest_distance = distance;
+        nearest = candidate;
+      }
+    }
+
+    return nearest;
+  };
+
+  std::vector<Step> result;
+  for (size_t i = 0; i < path.size(); ++i) {
+    Step snapped = path[i];
+
+    // Don't snap the origin of the first step or destination of the last step.
+    if (i > 0) {
+      snapped.origin_stop = snap_stop(path[i].origin_stop);
+    }
+    if (i < path.size() - 1) {
+      snapped.destination_stop = snap_stop(path[i].destination_stop);
+    }
+
+    // Drop steps that become self-loops after snapping.
+    if (snapped.origin_stop != snapped.destination_stop) {
+      result.push_back(snapped);
+    }
+  }
+
+  return result;
+}
 
 StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
   StepsAdjacencyList result;
