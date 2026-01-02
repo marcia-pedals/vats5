@@ -49,27 +49,6 @@ struct Visualization {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Visualization, stops, adjacent);
 
-// Helper to convert between StopId-keyed map and int-keyed map for JSON
-using MinimalPaths = std::unordered_map<StopId, std::vector<std::vector<Path>>>;
-using MinimalPathsJson =
-    std::unordered_map<int, std::vector<std::vector<Path>>>;
-
-MinimalPathsJson ToMinimalJson(const MinimalPaths& minimal) {
-  MinimalPathsJson result;
-  for (const auto& [stop_id, paths] : minimal) {
-    result[stop_id.v] = paths;
-  }
-  return result;
-}
-
-MinimalPaths FromMinimalJson(const MinimalPathsJson& json) {
-  MinimalPaths result;
-  for (const auto& [id, paths] : json) {
-    result[StopId{id}] = paths;
-  }
-  return result;
-}
-
 // Helper to convert between StopId set and int vector for JSON
 std::vector<int> ToStopIdsJson(const std::unordered_set<StopId>& stops) {
   std::vector<int> result;
@@ -93,7 +72,7 @@ struct VisualizationToolState {
   StepsFromGtfs steps_from_gtfs;
   StepsAdjacencyList adjacency_list;
   std::vector<int> bart_stops_json;
-  MinimalPathsJson minimal_json;
+  PathsAdjacencyList minimal;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     VisualizationToolState,
@@ -101,7 +80,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     steps_from_gtfs,
     adjacency_list,
     bart_stops_json,
-    minimal_json
+    minimal
 )
 
 struct PairHash {
@@ -128,7 +107,7 @@ struct StopGoodness {
 };
 
 std::optional<StopId> SelectIntermediateStop(
-    const MinimalPaths& split, const DataGtfsMapping& mapping
+    const PathsAdjacencyList& split, const DataGtfsMapping& mapping
 ) {
   // The ultimate origins and destinations of stops in `split`. These are not
   // canidates for new intermediate stops.
@@ -136,7 +115,7 @@ std::optional<StopId> SelectIntermediateStop(
 
   std::unordered_map<StopId, StopGoodness> goodness;
 
-  for (const auto& [origin_stop, path_groups] : split) {
+  for (const auto& [origin_stop, path_groups] : split.adjacent) {
     for (const auto& path_group : path_groups) {
       // A path_group is all the paths within a single (origin, destination)
       // edge.
@@ -224,7 +203,7 @@ void SaveVisualization(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId>& bart_stops,
     const std::unordered_set<StopId>& intermediate_stops,
-    const MinimalPaths& split
+    const PathsAdjacencyList& split
 ) {
   Visualization viz;
   for (const GtfsStop& stop : gtfs_day.stops) {
@@ -237,7 +216,7 @@ void SaveVisualization(
     };
   }
 
-  for (const auto& [stop_id, path_groups] : split) {
+  for (const auto& [stop_id, path_groups] : split.adjacent) {
     std::vector<std::vector<VisualizationPath>> viz_path_groups;
     for (const auto& path_group : path_groups) {
       std::vector<VisualizationPath> viz_paths;
@@ -283,7 +262,7 @@ int main(int argc, char* argv[]) {
   StepsFromGtfs steps_from_gtfs;
   StepsAdjacencyList adjacency_list;
   std::unordered_set<StopId> bart_stops;
-  MinimalPaths minimal;
+  PathsAdjacencyList minimal;
 
   if (!load_state_path.empty()) {
     std::cout << "Loading state from: " << load_state_path << std::endl;
@@ -295,7 +274,7 @@ int main(int argc, char* argv[]) {
     steps_from_gtfs = std::move(state.steps_from_gtfs);
     adjacency_list = std::move(state.adjacency_list);
     bart_stops = FromStopIdsJson(state.bart_stops_json);
-    minimal = FromMinimalJson(state.minimal_json);
+    minimal = std::move(state.minimal);
   } else {
     std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
     gtfs_day = GtfsLoadDay(gtfs_path);
@@ -322,20 +301,20 @@ int main(int argc, char* argv[]) {
         steps_from_gtfs,
         adjacency_list,
         ToStopIdsJson(bart_stops),
-        ToMinimalJson(minimal)
+        minimal
     };
     nlohmann::json state_j = state;
     std::ofstream state_out("../data/visualization_state.json");
     state_out << state_j.dump(2) << std::endl;
   }
 
-  MinimalPaths split;
+  PathsAdjacencyList split;
   std::unordered_set<StopId> intermediate_stops;
   for (int i = 0; i < 20; ++i) {
     split = SplitPathsAt(minimal, intermediate_stops);
 
     int edge_count = 0;
-    for (const auto& [origin_stop, path_groups] : split) {
+    for (const auto& [origin_stop, path_groups] : split.adjacent) {
       edge_count += path_groups.size();
     }
     std::cout << "Current edge count: " << edge_count << "\n";

@@ -75,10 +75,6 @@ target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 add_executable(visualization_tool src/tools/visualization_tool.cpp)
 target_link_libraries(visualization_tool PUBLIC shortest_path)
 
-# Add debug tool
-add_executable(debug_tool src/tools/debug_tool.cpp)
-target_link_libraries(debug_tool PUBLIC shortest_path)
-
 # Enable CMake testing
 enable_testing()
 

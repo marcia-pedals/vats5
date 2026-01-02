@@ -29,6 +29,31 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   }
 }
 
+struct PathsAdjacencyList {
+  // Mapping from stop to paths originating at that stop, grouped by destination
+  // stop. Each group of paths is sorted by origin time and minimal.
+  std::unordered_map<StopId, std::vector<std::vector<Path>>> adjacent;
+};
+
+// Custom JSON serialization for PathsAdjacencyList
+// Convert the StopId-keyed map to int-keyed for JSON
+inline void to_json(nlohmann::json& j, const PathsAdjacencyList& adj) {
+  std::vector<std::pair<int, std::vector<std::vector<Path>>>> pairs;
+  for (const auto& [k, v] : adj.adjacent) {
+    pairs.emplace_back(k.v, v);
+  }
+  j = nlohmann::json{{"adjacent", pairs}};
+}
+
+inline void from_json(const nlohmann::json& j, PathsAdjacencyList& adj) {
+  auto pairs =
+      j.at("adjacent")
+          .get<std::vector<std::pair<int, std::vector<std::vector<Path>>>>>();
+  for (const auto& [k, v] : pairs) {
+    adj.adjacent[StopId{k}] = v;
+  }
+}
+
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
@@ -89,19 +114,16 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.
-std::unordered_map<StopId, std::vector<std::vector<Path>>>
-ReduceToMinimalSystemPaths(
+PathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 );
 
-std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
-    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths,
+PathsAdjacencyList SplitPathsAt(
+    const PathsAdjacencyList& paths,
     const std::unordered_set<StopId> intermediate_stops
 );
 
-StepsAdjacencyList AdjacentPathsToStepsList(
-    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths
-);
+StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths);
 
 }  // namespace vats5

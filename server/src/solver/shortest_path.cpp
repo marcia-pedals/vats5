@@ -436,25 +436,24 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   return result_with_paths;
 }
 
-std::unordered_map<StopId, std::vector<std::vector<Path>>>
-ReduceToMinimalSystemPaths(
+PathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
   StepsAdjacencyList simplified_input = adjacency_list;
 
-  std::unordered_map<StopId, std::vector<std::vector<Path>>> result;
-  result.reserve(system_stops.size());
+  PathsAdjacencyList result;
+  result.adjacent.reserve(system_stops.size());
 
   for (const StopId origin : system_stops) {
-    std::cout << result.size() << " / " << system_stops.size() << "\n";
+    std::cout << result.adjacent.size() << " / " << system_stops.size() << "\n";
     std::unordered_set<StopId> destinations = system_stops;
     destinations.erase(origin);
     std::unordered_map<StopId, std::vector<Path>> paths =
         FindMinimalPathSet(simplified_input, origin, destinations);
     for (const StopId dest : destinations) {
       const std::vector<Path>& paths_to_dest = paths[dest];
-      result[origin].push_back(paths_to_dest);
+      result.adjacent[origin].push_back(paths_to_dest);
     }
 
     // TODO: Think about this and decide whether it makes things faster and
@@ -467,15 +466,15 @@ ReduceToMinimalSystemPaths(
   return result;
 }
 
-std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
-    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths,
+PathsAdjacencyList SplitPathsAt(
+    const PathsAdjacencyList& paths,
     const std::unordered_set<StopId> intermediate_stops
 ) {
   std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Path>>>
       result;
-  result.reserve(paths.size() + intermediate_stops.size());
+  result.reserve(paths.adjacent.size() + intermediate_stops.size());
 
-  for (const auto& [origin_stop, path_groups] : paths) {
+  for (const auto& [origin_stop, path_groups] : paths.adjacent) {
     for (const auto& path_group : path_groups) {
       for (const Path& path : path_group) {
         std::vector<Step> accumulated_steps;
@@ -512,7 +511,7 @@ std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
     }
   }
 
-  std::unordered_map<StopId, std::vector<std::vector<Path>>> final_result;
+  PathsAdjacencyList final_result;
   for (const auto& [origin_stop, dest_map] : result) {
     for (const auto& [dest_stop, paths] : dest_map) {
       std::vector<Path> deduped_paths;
@@ -533,17 +532,15 @@ std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
           }
       );
 
-      final_result[origin_stop].push_back(std::move(deduped_paths));
+      final_result.adjacent[origin_stop].push_back(std::move(deduped_paths));
     }
   }
   return final_result;
 }
 
-StepsAdjacencyList AdjacentPathsToStepsList(
-    const std::unordered_map<StopId, std::vector<std::vector<Path>>>& paths
-) {
+StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
   StepsAdjacencyList result;
-  for (const auto& [origin_stop, path_groups] : paths) {
+  for (const auto& [origin_stop, path_groups] : paths.adjacent) {
     std::vector<std::vector<Step>> step_groups;
     for (const auto& path_group : path_groups) {
       std::vector<Step> steps;
