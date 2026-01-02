@@ -144,7 +144,6 @@ function App() {
 
   return (
     <div style={{ position: 'relative' }}>
-      <h1>VATS5</h1>
       <label style={{ display: 'block', marginBottom: '10px' }}>
         <input
           type="checkbox"

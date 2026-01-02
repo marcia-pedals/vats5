@@ -494,15 +494,6 @@ PathsAdjacencyList SplitPathsAt(
   return final_result;
 }
 
-// // Snap the
-// PathsAdjacencyList SnapToNearbyStops(
-//   const GtfsDay& gtfs,
-//   const DataGtfsMapping& mapping,
-//   const PathsAdjacencyList& paths
-// ) {
-
-// }
-
 std::vector<Step> SnapToStops(
     const DataGtfsMapping& mapping,
     const std::unordered_set<StopId>& stops,
@@ -550,6 +541,43 @@ std::vector<Step> SnapToStops(
     // Drop steps that become self-loops after snapping.
     if (snapped.origin_stop != snapped.destination_stop) {
       result.push_back(snapped);
+    }
+  }
+
+  return result;
+}
+
+PathsAdjacencyList AdjacencyListSnapToStops(
+    const DataGtfsMapping& mapping,
+    double threshold_meters,
+    const PathsAdjacencyList& paths
+) {
+  // Collect all StopIds that are keys in the adjacency list.
+  std::unordered_set<StopId> stops;
+  for (const auto& [stop_id, _] : paths.adjacent) {
+    stops.insert(stop_id);
+  }
+
+  PathsAdjacencyList result;
+  for (const auto& [origin_stop, path_groups] : paths.adjacent) {
+    std::vector<std::vector<Path>> snapped_groups;
+    for (const auto& path_group : path_groups) {
+      std::vector<Path> snapped_paths;
+      for (const Path& path : path_group) {
+        std::vector<Step> snapped_steps =
+            SnapToStops(mapping, stops, threshold_meters, path.steps);
+        if (!snapped_steps.empty()) {
+          snapped_paths.emplace_back(
+              path.merged_step, std::move(snapped_steps)
+          );
+        }
+      }
+      if (!snapped_paths.empty()) {
+        snapped_groups.push_back(std::move(snapped_paths));
+      }
+    }
+    if (!snapped_groups.empty()) {
+      result.adjacent[origin_stop] = std::move(snapped_groups);
     }
   }
 

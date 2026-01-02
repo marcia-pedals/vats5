@@ -141,4 +141,12 @@ std::vector<Step> SnapToStops(
     const std::vector<Step>& path
 );
 
+// Snap all paths in the adjacency list to the stops that are keys of the
+// adjacency list.
+PathsAdjacencyList AdjacencyListSnapToStops(
+    const DataGtfsMapping& mapping,
+    double threshold_meters,
+    const PathsAdjacencyList& paths
+);
+
 }  // namespace vats5

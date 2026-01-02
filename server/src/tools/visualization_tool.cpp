@@ -106,7 +106,7 @@ struct StopGoodness {
   }
 };
 
-std::optional<StopId> SelectIntermediateStop(
+std::vector<StopId> SelectIntermediateStop(
     const PathsAdjacencyList& split, const DataGtfsMapping& mapping
 ) {
   // The ultimate origins and destinations of stops in `split`. These are not
@@ -192,10 +192,11 @@ std::optional<StopId> SelectIntermediateStop(
   }
   std::cout << std::endl;
 
-  if (sorted_goodness.size() == 0) {
-    return std::nullopt;
+  std::vector<StopId> result;
+  for (size_t i = 0; i < std::min(sorted_goodness.size(), size_t{10}); ++i) {
+    result.push_back(sorted_goodness[i].first);
   }
-  return sorted_goodness[0].first;
+  return result;
 }
 
 void SaveVisualization(
@@ -308,10 +309,15 @@ int main(int argc, char* argv[]) {
     state_out << state_j.dump(2) << std::endl;
   }
 
-  PathsAdjacencyList split;
-  std::unordered_set<StopId> intermediate_stops;
-  for (int i = 0; i < 20; ++i) {
-    split = SplitPathsAt(minimal, intermediate_stops);
+  double snap_threshold_meters = 150;
+  PathsAdjacencyList split = minimal;
+  std::unordered_set<StopId> intermediate_stops = bart_stops;
+  for (int i = 0; i < 50; ++i) {
+    split = SplitPathsAt(split, intermediate_stops);
+    split = AdjacencyListSnapToStops(
+        steps_from_gtfs.mapping, snap_threshold_meters, split
+    );
+    split = SplitPathsAt(split, intermediate_stops);
 
     int edge_count = 0;
     for (const auto& [origin_stop, path_groups] : split.adjacent) {
@@ -323,12 +329,44 @@ int main(int argc, char* argv[]) {
         gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
     );
 
-    auto new_intermediate_stop =
+    auto candidate_intermediate_stops =
         SelectIntermediateStop(split, steps_from_gtfs.mapping);
-    if (!new_intermediate_stop.has_value()) {
+    if (candidate_intermediate_stops.empty()) {
       break;
     }
-    intermediate_stops.insert(*new_intermediate_stop);
+
+    bool found_improvement = false;
+    for (int j = 0; j < candidate_intermediate_stops.size(); ++j) {
+      const StopId stop = candidate_intermediate_stops[j];
+      std::unordered_set<StopId> new_intermediate_stops = intermediate_stops;
+      new_intermediate_stops.insert(stop);
+
+      PathsAdjacencyList new_split = split;
+      new_split = SplitPathsAt(new_split, new_intermediate_stops);
+      new_split = AdjacencyListSnapToStops(
+          steps_from_gtfs.mapping, snap_threshold_meters, new_split
+      );
+      new_split = SplitPathsAt(new_split, new_intermediate_stops);
+
+      int new_edge_count = 0;
+      for (const auto& [origin_stop, path_groups] : new_split.adjacent) {
+        new_edge_count += path_groups.size();
+      }
+
+      if (new_edge_count < edge_count) {
+        std::cout << "Selected " << i + 1 << " reducing from " << edge_count
+                  << " to " << new_edge_count << "\n";
+        intermediate_stops.insert(stop);
+        found_improvement = true;
+        break;
+      }
+    }
+
+    if (!found_improvement) {
+      std::cout << "No improvement found, stopping.\n";
+      break;
+      // intermediate_stops.insert(candidate_intermediate_stops[0]);
+    }
   }
 
   return 0;
