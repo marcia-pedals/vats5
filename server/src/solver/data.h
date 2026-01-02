@@ -210,6 +210,26 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     FlexTrip, origin, destination, duration_seconds
 )
 
+// Wrapper for std::variant<GtfsTripId, FlexTrip> for JSON serialization
+struct TripInfo {
+  std::variant<GtfsTripId, FlexTrip> v;
+};
+inline void to_json(nlohmann::json& j, const TripInfo& info) {
+  if (std::holds_alternative<GtfsTripId>(info.v)) {
+    j = {{"type", "gtfs"}, {"gtfs_trip_id", std::get<GtfsTripId>(info.v)}};
+  } else {
+    j = {{"type", "flex"}, {"flex_trip", std::get<FlexTrip>(info.v)}};
+  }
+}
+inline void from_json(const nlohmann::json& j, TripInfo& info) {
+  std::string type = j.at("type").get<std::string>();
+  if (type == "gtfs") {
+    info.v = j.at("gtfs_trip_id").get<GtfsTripId>();
+  } else {
+    info.v = j.at("flex_trip").get<FlexTrip>();
+  }
+}
+
 // Bidirectional mappings between GtfsStopId<->StopId, etc.
 struct DataGtfsMapping {
   // StopId mappings
@@ -220,8 +240,7 @@ struct DataGtfsMapping {
 
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
-  std::unordered_map<TripId, std::variant<GtfsTripId, FlexTrip>>
-      trip_id_to_trip_info;
+  std::unordered_map<TripId, TripInfo> trip_id_to_trip_info;
   std::unordered_map<TripId, std::string> trip_id_to_route_desc;
 
   StopId GetStopIdFromName(const std::string& stop_name) const {
@@ -246,10 +265,101 @@ struct DataGtfsMapping {
   }
 };
 
+// Custom JSON serialization for DataGtfsMapping
+// We convert maps keyed by custom types to arrays of pairs
+inline void to_json(nlohmann::json& j, const DataGtfsMapping& m) {
+  // Convert gtfs_stop_id_to_stop_id
+  std::vector<std::pair<GtfsStopId, StopId>> gtfs_stop_id_pairs(
+      m.gtfs_stop_id_to_stop_id.begin(), m.gtfs_stop_id_to_stop_id.end()
+  );
+  // Convert stop_id_to_gtfs_stop_id
+  std::vector<std::pair<int, GtfsStopId>> stop_id_pairs;
+  for (const auto& [k, v] : m.stop_id_to_gtfs_stop_id) {
+    stop_id_pairs.emplace_back(k.v, v);
+  }
+  // Convert stop_id_to_stop_name
+  std::vector<std::pair<int, std::string>> stop_id_name_pairs;
+  for (const auto& [k, v] : m.stop_id_to_stop_name) {
+    stop_id_name_pairs.emplace_back(k.v, v);
+  }
+  // Convert gtfs_trip_id_to_trip_id
+  std::vector<std::pair<GtfsTripId, TripId>> gtfs_trip_id_pairs(
+      m.gtfs_trip_id_to_trip_id.begin(), m.gtfs_trip_id_to_trip_id.end()
+  );
+  // Convert trip_id_to_trip_info
+  std::vector<std::pair<int, TripInfo>> trip_id_info_pairs;
+  for (const auto& [k, v] : m.trip_id_to_trip_info) {
+    trip_id_info_pairs.emplace_back(k.v, v);
+  }
+  // Convert trip_id_to_route_desc
+  std::vector<std::pair<int, std::string>> trip_id_route_pairs;
+  for (const auto& [k, v] : m.trip_id_to_route_desc) {
+    trip_id_route_pairs.emplace_back(k.v, v);
+  }
+
+  j = nlohmann::json{
+      {"gtfs_stop_id_to_stop_id", gtfs_stop_id_pairs},
+      {"stop_id_to_gtfs_stop_id", stop_id_pairs},
+      {"stop_name_to_stop_ids", m.stop_name_to_stop_ids},
+      {"stop_id_to_stop_name", stop_id_name_pairs},
+      {"gtfs_trip_id_to_trip_id", gtfs_trip_id_pairs},
+      {"trip_id_to_trip_info", trip_id_info_pairs},
+      {"trip_id_to_route_desc", trip_id_route_pairs}
+  };
+}
+
+inline void from_json(const nlohmann::json& j, DataGtfsMapping& m) {
+  // Convert gtfs_stop_id_to_stop_id
+  auto gtfs_stop_id_pairs =
+      j.at("gtfs_stop_id_to_stop_id")
+          .get<std::vector<std::pair<GtfsStopId, StopId>>>();
+  for (const auto& [k, v] : gtfs_stop_id_pairs) {
+    m.gtfs_stop_id_to_stop_id[k] = v;
+  }
+  // Convert stop_id_to_gtfs_stop_id
+  auto stop_id_pairs = j.at("stop_id_to_gtfs_stop_id")
+                           .get<std::vector<std::pair<int, GtfsStopId>>>();
+  for (const auto& [k, v] : stop_id_pairs) {
+    m.stop_id_to_gtfs_stop_id[StopId{k}] = v;
+  }
+  // stop_name_to_stop_ids
+  m.stop_name_to_stop_ids =
+      j.at("stop_name_to_stop_ids")
+          .get<std::unordered_map<std::string, std::vector<StopId>>>();
+  // Convert stop_id_to_stop_name
+  auto stop_id_name_pairs =
+      j.at("stop_id_to_stop_name")
+          .get<std::vector<std::pair<int, std::string>>>();
+  for (const auto& [k, v] : stop_id_name_pairs) {
+    m.stop_id_to_stop_name[StopId{k}] = v;
+  }
+  // Convert gtfs_trip_id_to_trip_id
+  auto gtfs_trip_id_pairs =
+      j.at("gtfs_trip_id_to_trip_id")
+          .get<std::vector<std::pair<GtfsTripId, TripId>>>();
+  for (const auto& [k, v] : gtfs_trip_id_pairs) {
+    m.gtfs_trip_id_to_trip_id[k] = v;
+  }
+  // Convert trip_id_to_trip_info
+  auto trip_id_info_pairs =
+      j.at("trip_id_to_trip_info").get<std::vector<std::pair<int, TripInfo>>>();
+  for (const auto& [k, v] : trip_id_info_pairs) {
+    m.trip_id_to_trip_info[TripId{k}] = v;
+  }
+  // Convert trip_id_to_route_desc
+  auto trip_id_route_pairs =
+      j.at("trip_id_to_route_desc")
+          .get<std::vector<std::pair<int, std::string>>>();
+  for (const auto& [k, v] : trip_id_route_pairs) {
+    m.trip_id_to_route_desc[TripId{k}] = v;
+  }
+}
+
 struct StepsFromGtfs {
   DataGtfsMapping mapping;
   std::vector<Step> steps;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StepsFromGtfs, mapping, steps)
 
 StepsFromGtfs GetStepsFromGtfs(
     GtfsDay gtfs, const GetStepsOptions& options = {}

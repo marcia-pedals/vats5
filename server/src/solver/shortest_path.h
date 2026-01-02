@@ -10,6 +10,25 @@ struct StepsAdjacencyList {
   std::unordered_map<StopId, std::vector<std::vector<Step>>> adjacent;
 };
 
+// Custom JSON serialization for StepsAdjacencyList
+// Convert the StopId-keyed map to int-keyed for JSON
+inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
+  std::vector<std::pair<int, std::vector<std::vector<Step>>>> pairs;
+  for (const auto& [k, v] : adj.adjacent) {
+    pairs.emplace_back(k.v, v);
+  }
+  j = nlohmann::json{{"adjacent", pairs}};
+}
+
+inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
+  auto pairs =
+      j.at("adjacent")
+          .get<std::vector<std::pair<int, std::vector<std::vector<Step>>>>>();
+  for (const auto& [k, v] : pairs) {
+    adj.adjacent[StopId{k}] = v;
+  }
+}
+
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 

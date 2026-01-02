@@ -30,7 +30,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   for (const auto& trip : gtfs.trips) {
     TripId trip_id{next_trip_id++};
     result.mapping.gtfs_trip_id_to_trip_id[trip.trip_id] = trip_id;
-    result.mapping.trip_id_to_trip_info[trip_id] = trip.trip_id;
+    result.mapping.trip_id_to_trip_info[trip_id] = TripInfo{trip.trip_id};
 
     // Find the route for this trip
     const GtfsRoute* route = nullptr;
@@ -180,7 +180,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
             )  // duration in seconds
         };
 
-        result.mapping.trip_id_to_trip_info[walk_trip_id] = flex_trip;
+        result.mapping.trip_id_to_trip_info[walk_trip_id] = TripInfo{flex_trip};
 
         // Create route description for walking - lookup stop names
         GtfsStopId current_gtfs_stop_id =
@@ -226,7 +226,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         };
 
         result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
-            reverse_flex_trip;
+            TripInfo{reverse_flex_trip};
 
         std::string reverse_walk_desc =
             "Walk from " + other_stop_name + " to " + current_stop_name;

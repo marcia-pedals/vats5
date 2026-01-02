@@ -515,7 +515,25 @@ std::unordered_map<StopId, std::vector<std::vector<Path>>> SplitPathsAt(
   std::unordered_map<StopId, std::vector<std::vector<Path>>> final_result;
   for (const auto& [origin_stop, dest_map] : result) {
     for (const auto& [dest_stop, paths] : dest_map) {
-      final_result[origin_stop].push_back(paths);
+      std::vector<Path> deduped_paths;
+
+      std::unordered_set<Step> seen_merged_steps;
+      for (const Path& path : paths) {
+        if (seen_merged_steps.insert(path.merged_step).second) {
+          deduped_paths.push_back(path);
+        }
+      }
+
+      std::sort(
+          deduped_paths.begin(),
+          deduped_paths.end(),
+          [](const Path& a, const Path& b) {
+            return a.merged_step.origin_time.seconds <
+                   b.merged_step.origin_time.seconds;
+          }
+      );
+
+      final_result[origin_stop].push_back(std::move(deduped_paths));
     }
   }
   return final_result;

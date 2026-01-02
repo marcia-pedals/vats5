@@ -9,6 +9,8 @@ function App() {
   const [hoveredEdge, setHoveredEdge] = useState(null)
   const [selectedEdge, setSelectedEdge] = useState(null)
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+  const [forceSimulationEnabled, setForceSimulationEnabled] = useState(true)
+  const [hoveredRoute, setHoveredRoute] = useState(null) // Array of stop IDs for the hovered route
 
   const padding = 20
   const svgWidth = 800
@@ -22,9 +24,9 @@ function App() {
   }, [])
 
   // Compute node positions with force simulation
-  const { stopsById, nodes, nodePositions, edges } = useMemo(() => {
+  const { stopsById, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
     if (!visualization) {
-      return { stopsById: new Map(), nodes: [], nodePositions: new Map(), edges: [] }
+      return { stopsById: new Map(), nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
     }
 
     const stopsById = new Map(visualization.stops.map(([id, stop]) => [id, stop.gtfs_stop]))
@@ -32,7 +34,7 @@ function App() {
     const stops = graphStops.map(([id, stop]) => [id, stop.gtfs_stop])
 
     if (stops.length === 0) {
-      return { stopsById, nodes: [], nodePositions: new Map(), edges: [] }
+      return { stopsById, nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
     }
 
     const lats = stops.map(([, s]) => s.stop_lat)
@@ -58,32 +60,41 @@ function App() {
       return { id, stop, x, y, targetX: x, targetY: y }
     })
 
-    // Run force simulation
-    const simulation = forceSimulation(nodes)
-      .force('charge', forceManyBody().strength(-100))
-      .force('x', forceX(d => d.targetX).strength(0.5))
-      .force('y', forceY(d => d.targetY).strength(0.5))
-      .stop()
+    // Run force simulation if enabled
+    let nodePositions
+    if (forceSimulationEnabled) {
+      const simulation = forceSimulation(nodes)
+        .force('charge', forceManyBody().strength(-100))
+        .force('x', forceX(d => d.targetX).strength(0.5))
+        .force('y', forceY(d => d.targetY).strength(0.5))
+        .stop()
 
-    // Run simulation to completion
-    for (let i = 0; i < 300; i++) {
-      simulation.tick()
+      // Run simulation to completion
+      for (let i = 0; i < 300; i++) {
+        simulation.tick()
+      }
+
+      // Rescale to fit within SVG bounds
+      const simXs = nodes.map(n => n.x)
+      const simYs = nodes.map(n => n.y)
+      const simMinX = Math.min(...simXs)
+      const simMaxX = Math.max(...simXs)
+      const simMinY = Math.min(...simYs)
+      const simMaxY = Math.max(...simYs)
+      const simRangeX = simMaxX - simMinX || 1
+      const simRangeY = simMaxY - simMinY || 1
+
+      nodePositions = new Map(nodes.map(n => [n.id, {
+        x: padding + ((n.x - simMinX) / simRangeX) * (svgWidth - 2 * padding),
+        y: padding + ((n.y - simMinY) / simRangeY) * (svgHeight - 2 * padding),
+      }]))
+    } else {
+      // Use geographic positions directly without force simulation
+      nodePositions = new Map(nodes.map(n => [n.id, {
+        x: n.targetX,
+        y: n.targetY,
+      }]))
     }
-
-    // Rescale to fit within SVG bounds
-    const simXs = nodes.map(n => n.x)
-    const simYs = nodes.map(n => n.y)
-    const simMinX = Math.min(...simXs)
-    const simMaxX = Math.max(...simXs)
-    const simMinY = Math.min(...simYs)
-    const simMaxY = Math.max(...simYs)
-    const simRangeX = simMaxX - simMinX || 1
-    const simRangeY = simMaxY - simMinY || 1
-
-    const nodePositions = new Map(nodes.map(n => [n.id, {
-      x: padding + ((n.x - simMinX) / simRangeX) * (svgWidth - 2 * padding),
-      y: padding + ((n.y - simMinY) / simRangeY) * (svgHeight - 2 * padding),
-    }]))
 
     // Build edges and collect paths for each edge
     const edgeMap = new Map() // key -> { from, to, paths: [] }
@@ -106,8 +117,22 @@ function App() {
     }
     const edges = [...edgeMap.values()]
 
-    return { stopsById, nodes, nodePositions, edges }
-  }, [visualization])
+    // Function to get position for any stop (including those not in reduced graph)
+    const getStopPosition = (stopId) => {
+      // First check if it's in nodePositions (reduced graph nodes)
+      if (nodePositions.has(stopId)) {
+        return nodePositions.get(stopId)
+      }
+      // Otherwise compute position from lat/lon using mapToSvg
+      const stop = stopsById.get(stopId)
+      if (stop) {
+        return mapToSvg(stop.stop_lat, stop.stop_lon)
+      }
+      return null
+    }
+
+    return { stopsById, nodes, nodePositions, edges, getStopPosition }
+  }, [visualization, forceSimulationEnabled])
 
   if (error) {
     return <div>{error}</div>
@@ -120,6 +145,14 @@ function App() {
   return (
     <div style={{ position: 'relative' }}>
       <h1>VATS5</h1>
+      <label style={{ display: 'block', marginBottom: '10px' }}>
+        <input
+          type="checkbox"
+          checked={forceSimulationEnabled}
+          onChange={(e) => setForceSimulationEnabled(e.target.checked)}
+        />
+        {' '}Force simulation
+      </label>
       <div style={{ display: 'flex', gap: '20px' }}>
       <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
         {edges.map((edge, i) => {
@@ -136,7 +169,7 @@ function App() {
               x2={to.x}
               y2={to.y}
               stroke={isSelected ? 'orange' : 'gray'}
-              strokeWidth={isSelected ? 7 : 5}
+              strokeWidth={isSelected ? 3 : 2}
               style={{ cursor: 'pointer' }}
               onMouseEnter={(e) => {
                 setHoveredEdge({ from: fromStop, to: toStop })
@@ -171,6 +204,24 @@ function App() {
             />
           )
         })}
+        {hoveredRoute && hoveredRoute.length > 1 && (() => {
+          const points = hoveredRoute
+            .map(stopId => getStopPosition(stopId))
+            .filter(pos => pos)
+            .map(pos => `${pos.x},${pos.y}`)
+            .join(' ')
+          return (
+            <polyline
+              points={points}
+              fill="none"
+              stroke="red"
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              pointerEvents="none"
+            />
+          )
+        })()}
       </svg>
       <div style={{
         width: '400px',
@@ -218,7 +269,7 @@ function App() {
                       const segments = collapseSteps(path.steps)
                       const sig = getSignature(segments)
                       if (!groups.has(sig)) {
-                        groups.set(sig, { segments, times: [] })
+                        groups.set(sig, { segments, steps: path.steps, times: [] })
                       }
                       const firstStep = path.steps[0]
                       const lastStep = path.steps[path.steps.length - 1]
@@ -228,13 +279,26 @@ function App() {
                       })
                     }
 
-                    return [...groups.values()].map((group, groupIndex) => (
+                    return [...groups.values()].map((group, groupIndex) => {
+                      // Build the list of stop IDs for this route from uncollapsed steps
+                      const routeStops = []
+                      for (const step of group.steps) {
+                        if (routeStops.length === 0) {
+                          routeStops.push(step.origin_stop)
+                        }
+                        routeStops.push(step.destination_stop)
+                      }
+                      return (
                       <div key={groupIndex} style={{
                         marginBottom: '8px',
                         padding: '6px',
                         background: '#f5f5f5',
-                        borderRadius: '4px'
-                      }}>
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                      onMouseEnter={() => setHoveredRoute(routeStops)}
+                      onMouseLeave={() => setHoveredRoute(null)}
+                      >
                         {group.segments.map((segment, segmentIndex) => {
                           const tripDesc = segment.trip_description.startsWith('Walk from') ? 'Walk' : segment.trip_description
                           return (
@@ -251,7 +315,7 @@ function App() {
                           ))}
                         </div>
                       </div>
-                    ))
+                    )})
                   })()}
                 </div>
               )

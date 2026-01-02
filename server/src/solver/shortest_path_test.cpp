@@ -378,7 +378,7 @@ void PrintPaths(
     std::cout << "(\"" << s.origin_time.ToString() << "\", \""
               << s.destination_time.ToString() << "\")";
     if (mapping != nullptr) {
-      const auto& trip_info = mapping->trip_id_to_trip_info.at(s.origin_trip);
+      const auto& trip_info = mapping->trip_id_to_trip_info.at(s.origin_trip).v;
       if (std::holds_alternative<GtfsTripId>(trip_info)) {
         std::cout << " trip=" << std::get<GtfsTripId>(trip_info).v;
       }

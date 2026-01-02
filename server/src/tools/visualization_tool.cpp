@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <unordered_set>
@@ -48,49 +49,183 @@ struct Visualization {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Visualization, stops, adjacent);
 
-int main() {
-  std::string gtfs_path = "../data/RG_20260109_BA_CT_SC_SM_AC";
+// Helper to convert between StopId-keyed map and int-keyed map for JSON
+using MinimalPaths = std::unordered_map<StopId, std::vector<std::vector<Path>>>;
+using MinimalPathsJson =
+    std::unordered_map<int, std::vector<std::vector<Path>>>;
 
-  std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
+MinimalPathsJson ToMinimalJson(const MinimalPaths& minimal) {
+  MinimalPathsJson result;
+  for (const auto& [stop_id, paths] : minimal) {
+    result[stop_id.v] = paths;
+  }
+  return result;
+}
 
-  std::cout << "Normalizing stops..." << std::endl;
-  gtfs_day = GtfsNormalizeStops(gtfs_day);
+MinimalPaths FromMinimalJson(const MinimalPathsJson& json) {
+  MinimalPaths result;
+  for (const auto& [id, paths] : json) {
+    result[StopId{id}] = paths;
+  }
+  return result;
+}
 
-  std::cout << "Getting steps..." << std::endl;
-  StepsFromGtfs steps_from_gtfs =
-      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+// Helper to convert between StopId set and int vector for JSON
+std::vector<int> ToStopIdsJson(const std::unordered_set<StopId>& stops) {
+  std::vector<int> result;
+  for (const auto& stop_id : stops) {
+    result.push_back(stop_id.v);
+  }
+  return result;
+}
 
-  std::cout << "Making adjacency list..." << std::endl;
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+std::unordered_set<StopId> FromStopIdsJson(const std::vector<int>& json) {
+  std::unordered_set<StopId> result;
+  for (const int id : json) {
+    result.insert(StopId{id});
+  }
+  return result;
+}
 
-  std::unordered_set<StopId> bart_stops =
-      GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
+// Combined state for serialization
+struct VisualizationToolState {
+  GtfsDay gtfs_day;
+  StepsFromGtfs steps_from_gtfs;
+  StepsAdjacencyList adjacency_list;
+  std::vector<int> bart_stops_json;
+  MinimalPathsJson minimal_json;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    VisualizationToolState,
+    gtfs_day,
+    steps_from_gtfs,
+    adjacency_list,
+    bart_stops_json,
+    minimal_json
+)
 
-  std::unordered_set<StopId> intermediate_stops;
-  for (const auto& gtfs_stop_id :
-       {"mtc:san-jose-diridon-station",
-        "mtc:mountain-view-station",
-        "mtc:palo-alto-station",
-        "mtc:salesforce-transit-center",
-        "mtc:santa-clara-caltrain"}) {
-    auto r_it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(
-        GtfsStopId{gtfs_stop_id}
-    );
-    if (r_it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      std::cout << "OH NO: " << gtfs_stop_id << " not found!\n";
-      return 1;
+struct PairHash {
+  template <class T1, class T2>
+  std::size_t operator()(const std::pair<T1, T2>& p) const {
+    auto h1 = std::hash<T1>{}(p.first);
+    auto h2 = std::hash<T2>{}(p.second);
+    return h1 ^ (h2 << 1);
+  }
+};
+
+struct StopGoodness {
+  std::unordered_set<StopId> touch_stops;
+  std::unordered_set<std::pair<StopId, StopId>, PairHash> touch_edges;
+
+  int Goodness() const { return touch_edges.size() - touch_stops.size(); }
+
+  std::unordered_set<StopId> partial_touch_stops;
+  std::unordered_set<std::pair<StopId, StopId>, PairHash> partial_touch_edges;
+
+  int PartialGoodness() const {
+    return partial_touch_edges.size() - partial_touch_stops.size();
+  }
+};
+
+std::optional<StopId> SelectIntermediateStop(
+    const MinimalPaths& split, const DataGtfsMapping& mapping
+) {
+  // The ultimate origins and destinations of stops in `split`. These are not
+  // canidates for new intermediate stops.
+  std::unordered_set<StopId> ultimate_stops;
+
+  std::unordered_map<StopId, StopGoodness> goodness;
+
+  for (const auto& [origin_stop, path_groups] : split) {
+    for (const auto& path_group : path_groups) {
+      // A path_group is all the paths within a single (origin, destination)
+      // edge.
+      if (path_group.size() == 0) {
+        continue;
+      }
+      const StopId destination_stop =
+          path_group[0].merged_step.destination_stop;
+      ultimate_stops.insert(origin_stop);
+      ultimate_stops.insert(destination_stop);
+
+      // Mapping from `StopId` to number of paths in this group that touch that
+      // stop.
+      std::unordered_map<StopId, int> paths_touched;
+      for (const auto& path : path_group) {
+        std::unordered_set<StopId> stops_in_path;
+        for (const auto& step : path.steps) {
+          if (!stops_in_path.contains(step.origin_stop)) {
+            paths_touched[step.origin_stop] += 1;
+            stops_in_path.insert(step.origin_stop);
+          }
+        }
+      }
+
+      for (const auto& [stop_id, count] : paths_touched) {
+        StopGoodness& stop_goodness = goodness[stop_id];
+
+        if (count == path_group.size()) {
+          stop_goodness.touch_stops.insert(origin_stop);
+          stop_goodness.touch_stops.insert(destination_stop);
+          stop_goodness.touch_edges.insert(
+              {std::min(origin_stop, destination_stop),
+               std::max(origin_stop, destination_stop)}
+          );
+        }
+
+        stop_goodness.partial_touch_stops.insert(origin_stop);
+        stop_goodness.partial_touch_stops.insert(destination_stop);
+        stop_goodness.partial_touch_edges.insert(
+            {std::min(origin_stop, destination_stop),
+             std::max(origin_stop, destination_stop)}
+        );
+      }
     }
-    intermediate_stops.insert(r_it->second);
   }
 
-  std::cout << "Reducing to minimal system steps..." << std::endl;
-  auto minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
-  auto split = SplitPathsAt(minimal, intermediate_stops);
+  for (const StopId stop : ultimate_stops) {
+    goodness.erase(stop);
+  }
 
-  std::cout << "BART stops count: " << bart_stops.size() << std::endl;
-  std::cout << "Reduced adjacency list size: " << split.size() << std::endl;
+  std::vector<std::pair<StopId, StopGoodness>> sorted_goodness(
+      goodness.begin(), goodness.end()
+  );
+  std::sort(
+      sorted_goodness.begin(),
+      sorted_goodness.end(),
+      [](const auto& a, const auto& b) {
+        if (a.second.Goodness() == b.second.Goodness()) {
+          return a.second.partial_touch_edges.size() >
+                 b.second.partial_touch_edges.size();
+        }
+        return a.second.Goodness() > b.second.Goodness();
+      }
+  );
 
+  std::cout << "\nTop 10 stops:\n";
+  for (size_t i = 0; i < std::min(sorted_goodness.size(), size_t{10}); ++i) {
+    const auto& [stop_id, stop_goodness] = sorted_goodness[i];
+    const auto& stop_name = mapping.stop_id_to_stop_name.at(stop_id);
+    const auto& gtfs_stop_id = mapping.stop_id_to_gtfs_stop_id.at(stop_id);
+    std::cout << i + 1 << ". " << stop_name << " (" << gtfs_stop_id.v
+              << "): " << stop_goodness.Goodness() << " "
+              << stop_goodness.partial_touch_edges.size() << "\n";
+  }
+  std::cout << std::endl;
+
+  if (sorted_goodness.size() == 0) {
+    return std::nullopt;
+  }
+  return sorted_goodness[0].first;
+}
+
+void SaveVisualization(
+    const GtfsDay& gtfs_day,
+    const StepsFromGtfs& steps_from_gtfs,
+    const std::unordered_set<StopId>& bart_stops,
+    const std::unordered_set<StopId>& intermediate_stops,
+    const MinimalPaths& split
+) {
   Visualization viz;
   for (const GtfsStop& stop : gtfs_day.stops) {
     const StopId stop_id =
@@ -130,6 +265,141 @@ int main() {
   std::ofstream out("../data/visualization.json");
   out << j.dump(2) << std::endl;
   std::cout << "Wrote visualization to ../data/visualization.json" << std::endl;
+}
+
+int main(int argc, char* argv[]) {
+  const std::string gtfs_path = "../data/RG_20260109_BA_CT_SC_SM_AC";
+  std::string load_state_path;
+
+  // Parse command line arguments
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--load-state" && i + 1 < argc) {
+      load_state_path = argv[++i];
+    }
+  }
+
+  GtfsDay gtfs_day;
+  StepsFromGtfs steps_from_gtfs;
+  StepsAdjacencyList adjacency_list;
+  std::unordered_set<StopId> bart_stops;
+  MinimalPaths minimal;
+
+  if (!load_state_path.empty()) {
+    std::cout << "Loading state from: " << load_state_path << std::endl;
+    std::ifstream in(load_state_path);
+    nlohmann::json j;
+    in >> j;
+    VisualizationToolState state = j.get<VisualizationToolState>();
+    gtfs_day = std::move(state.gtfs_day);
+    steps_from_gtfs = std::move(state.steps_from_gtfs);
+    adjacency_list = std::move(state.adjacency_list);
+    bart_stops = FromStopIdsJson(state.bart_stops_json);
+    minimal = FromMinimalJson(state.minimal_json);
+  } else {
+    std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
+    gtfs_day = GtfsLoadDay(gtfs_path);
+
+    std::cout << "Normalizing stops..." << std::endl;
+    gtfs_day = GtfsNormalizeStops(gtfs_day);
+
+    std::cout << "Getting steps..." << std::endl;
+    steps_from_gtfs = GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+
+    std::cout << "Making adjacency list..." << std::endl;
+    adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+
+    bart_stops =
+        GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
+
+    std::cout << "Reducing to minimal system steps..." << std::endl;
+    minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
+
+    std::cout << "Saving state to ../data/visualization_state.json..."
+              << std::endl;
+    VisualizationToolState state{
+        gtfs_day,
+        steps_from_gtfs,
+        adjacency_list,
+        ToStopIdsJson(bart_stops),
+        ToMinimalJson(minimal)
+    };
+    nlohmann::json state_j = state;
+    std::ofstream state_out("../data/visualization_state.json");
+    state_out << state_j.dump(2) << std::endl;
+  }
+
+  MinimalPaths split;
+  std::unordered_set<StopId> intermediate_stops;
+  for (int i = 0; i < 20; ++i) {
+    split = SplitPathsAt(minimal, intermediate_stops);
+
+    int edge_count = 0;
+    for (const auto& [origin_stop, path_groups] : split) {
+      edge_count += path_groups.size();
+    }
+    std::cout << "Current edge count: " << edge_count << "\n";
+
+    SaveVisualization(
+        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+    );
+
+    auto new_intermediate_stop =
+        SelectIntermediateStop(split, steps_from_gtfs.mapping);
+    if (!new_intermediate_stop.has_value()) {
+      break;
+    }
+    intermediate_stops.insert(*new_intermediate_stop);
+  }
 
   return 0;
 }
+
+// Some older sets of intermediate stops:
+// {"mtc:san-jose-diridon-station",
+//         "mtc:mountain-view-station",
+//         "mtc:palo-alto-station",
+//         "mtc:salesforce-transit-center",
+//         "mtc:santa-clara-caltrain",
+//         "331100", // "SF Transit Center - BART shuttle connection"
+//         "55777", // Uptown Transit Center
+//         "52581", // 14th Street NB
+//         "51111", // Broadway & 12th St (12th St BART)
+//         "52050", //"7th St & Union St"
+//         "50454", // 14th St & Martin Luther King Jr Way
+//         "58808", // 159th Av & E 14th St
+//         "56665", // Telegraph Av & 40th St
+//         "59755", // San Pablo Av & Delaware St
+//         "53335", // Broadway & 17th St
+//        }
+
+// {
+//     "mtc:san-jose-diridon-station",
+//     "331544", // Potrero Ave & 16th St
+//     "58808", // 159th Av & E 14th St
+//     "50454", // 14th St & Martin Luther King Jr Way
+//     "50896", // 7th St & Mandela Pkwy (West Oakland BART)
+//     "mtc:salesforce-transit-center", // Salesforce Transit Center
+//     "52584", // City Center NB
+//     "50958", // Broadway & 17th St (19th St BART)
+//     "335620", // SFO Airport Terminal G-Lower Level
+//     "331553", // Bayshore Blvd & Augusta Ave
+//     "53335", // Broadway & 17th St
+//     "52573", // Madison SB
+//     "55562", // San Pablo Av & Carlson Blvd
+//     "55555", // Shattuck Av & Allston Way
+//     "53003", // San Pablo Av & Grayson St
+//     "56665", // Telegraph Av & 40th St
+//     "55335", // San Pablo Av & Stanford Av
+//     "52494", // 67th Avenue
+//     "335637", // SFO Airport Terminal A-Lower Level
+//     "52050", // 7th St & Union St
+//     "334087", // El Camino Real & McLellan Dr-South SF BART
+//     "334079", // El Camino Real & BART-South SF
+//     "331100", // SF Transit Center - BART shuttle connection
+//     "52643", // 11th St & Jackson St
+//     "55532", // Hayward BART
+//     "mtc:palo-alto-station",
+//     "51800", // 7th St & Adeline St
+//     "58850", // 7th St & Market St
+//   }

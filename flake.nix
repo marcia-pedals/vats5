@@ -14,10 +14,12 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
+            clang
             clang-tools
             cmake
             crow
             gcc
+            llvm
             ninja
             nlohmann_json
             nodejs
