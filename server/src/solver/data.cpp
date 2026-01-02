@@ -106,17 +106,11 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   }
 
   // Add walking connections between stops within 500m
-  // First create a struct to store stop positions in meters
-  struct StopPosition {
-    StopId stop_id;
-    double x_meters;  // approximate x position in meters
-    double y_meters;  // approximate y position in meters
-  };
-
-  // Create vector of stop positions and convert lat/lon to meters
+  // Create stop positions and convert lat/lon to meters
   // Using approximate conversion: 1 degree lat ≈ 111,000m, 1 degree lon ≈
   // 111,000m * cos(lat)
-  std::vector<StopPosition> stop_positions;
+  // Resize vector to accommodate all stop IDs (IDs start at 1)
+  result.mapping.stop_positions.resize(next_stop_id);
   for (const auto& gtfs_stop : gtfs.stops) {
     auto it = result.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop.stop_id);
     if (it != result.mapping.gtfs_stop_id_to_stop_id.end()) {
@@ -124,13 +118,13 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
       double x_meters = gtfs_stop.stop_lon * 111000.0 * std::cos(lat_rad);
       double y_meters = gtfs_stop.stop_lat * 111000.0;
 
-      stop_positions.push_back({
-          it->second,  // stop_id
-          x_meters,    // x_meters
-          y_meters     // y_meters
-      });
+      result.mapping.stop_positions[it->second.v] =
+          StopPosition{it->second, x_meters, y_meters};
     }
   }
+
+  // Create a sorted copy for sliding window algorithm
+  std::vector<StopPosition> stop_positions = result.mapping.stop_positions;
 
   // Sort stops by x_meters (longitude equivalent) for sliding window
   std::sort(

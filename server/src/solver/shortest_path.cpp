@@ -493,6 +493,31 @@ PathsAdjacencyList SplitPathsAt(
   return final_result;
 }
 
+// // Snap the
+// PathsAdjacencyList SnapToNearbyStops(
+//   const GtfsDay& gtfs,
+//   const DataGtfsMapping& mapping,
+//   const PathsAdjacencyList& paths
+// ) {
+
+// }
+
+// Return a modified `path` where any intermediate stops within
+// `threshold_meters` of a stop in `stops` are replaced by that stop, and then
+// steps that are thusly changed to be from a stop to itself are dropped.
+//
+// Note that this doesn't change any trip ids or times in the modified steps, so
+// the steps become steps that may not actually be possible, so maybe this
+// should be used only to clean up visualizations and not to do actual
+// computations. We'll see. std::vector<Step> SnapToStops(
+//   const DataGtfsMapping& mapping,
+//   const std::unordered_set<StopId>& stops,
+//   float threshold_meters,
+//   const std::vector<Step>& path
+// ) {
+
+// }
+
 StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
   StepsAdjacencyList result;
   for (const auto& [origin_stop, path_groups] : paths.adjacent) {

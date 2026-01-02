@@ -151,6 +151,13 @@ inline std::ostream& operator<<(std::ostream& os, const Step& value) {
             << "}";
 }
 
+struct StopPosition {
+  StopId stop_id;
+  double x_meters;  // approximate x position in meters
+  double y_meters;  // approximate y position in meters
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StopPosition, stop_id, x_meters, y_meters)
+
 }  // namespace vats5
 
 // Hash functions for solver Id structs to use in unordered_set/unordered_map
@@ -243,6 +250,9 @@ struct DataGtfsMapping {
   std::unordered_map<TripId, TripInfo> trip_id_to_trip_info;
   std::unordered_map<TripId, std::string> trip_id_to_route_desc;
 
+  // Position mappings (stop with id k is at index k)
+  std::vector<StopPosition> stop_positions;
+
   StopId GetStopIdFromName(const std::string& stop_name) const {
     auto it = stop_name_to_stop_ids.find(stop_name);
     if (it == stop_name_to_stop_ids.end() || it->second.empty()) {
@@ -296,7 +306,6 @@ inline void to_json(nlohmann::json& j, const DataGtfsMapping& m) {
   for (const auto& [k, v] : m.trip_id_to_route_desc) {
     trip_id_route_pairs.emplace_back(k.v, v);
   }
-
   j = nlohmann::json{
       {"gtfs_stop_id_to_stop_id", gtfs_stop_id_pairs},
       {"stop_id_to_gtfs_stop_id", stop_id_pairs},
@@ -304,7 +313,8 @@ inline void to_json(nlohmann::json& j, const DataGtfsMapping& m) {
       {"stop_id_to_stop_name", stop_id_name_pairs},
       {"gtfs_trip_id_to_trip_id", gtfs_trip_id_pairs},
       {"trip_id_to_trip_info", trip_id_info_pairs},
-      {"trip_id_to_route_desc", trip_id_route_pairs}
+      {"trip_id_to_route_desc", trip_id_route_pairs},
+      {"stop_positions", m.stop_positions}
   };
 }
 
@@ -353,6 +363,8 @@ inline void from_json(const nlohmann::json& j, DataGtfsMapping& m) {
   for (const auto& [k, v] : trip_id_route_pairs) {
     m.trip_id_to_route_desc[TripId{k}] = v;
   }
+  // Convert stop_positions
+  m.stop_positions = j.at("stop_positions").get<std::vector<StopPosition>>();
 }
 
 struct StepsFromGtfs {
