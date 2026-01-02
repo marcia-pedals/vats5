@@ -84,51 +84,6 @@ std::optional<Step> FindDepartureAtOrAfter(
   return *lower_bound_it;
 }
 
-// TODO: Might be able to use this in FindShortestPathsAtTime instead of kinda
-// reimplementing a bunch of the cases.
-Step CombineSteps(const Step& a, const Step& b) {
-  if (a.is_flex && b.is_flex) {
-    return Step{
-        a.origin_stop,
-        b.destination_stop,
-        TimeSinceServiceStart{0},
-        TimeSinceServiceStart{
-            a.FlexDurationSeconds() + b.FlexDurationSeconds()
-        },
-        a.origin_trip,
-        b.destination_trip,
-        /*is_flex=*/true,
-    };
-  }
-  if (a.is_flex) {
-    return Step{
-        a.origin_stop,
-        b.destination_stop,
-        TimeSinceServiceStart{b.origin_time.seconds - a.FlexDurationSeconds()},
-        b.destination_time,
-        /*is_flex=*/false
-    };
-  }
-  if (b.is_flex) {
-    return Step{
-        a.origin_stop,
-        b.destination_stop,
-        a.origin_time,
-        TimeSinceServiceStart{a.origin_time.seconds + b.FlexDurationSeconds()},
-        /*is_flex=*/false
-    };
-  }
-  return Step{
-      a.origin_stop,
-      b.destination_stop,
-      a.origin_time,
-      b.destination_time,
-      a.origin_trip,
-      b.destination_trip,
-      /*is_flex=*/false,
-  };
-}
-
 std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
@@ -482,7 +437,7 @@ PathsAdjacencyList SplitPathsAt(
         for (const Step& step : path.steps) {
           if (accumulated_merged_step.has_value()) {
             accumulated_merged_step =
-                CombineSteps(*accumulated_merged_step, step);
+                MergedStep(*accumulated_merged_step, step);
           } else {
             accumulated_merged_step = step;
           }

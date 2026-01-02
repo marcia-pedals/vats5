@@ -40,4 +40,8 @@ std::vector<Step> MergeSteps(
     const std::vector<Step>& ab, const std::vector<Step>& bc
 );
 
+// Merge two consecutive steps into a single step.
+// The destination of `ab` should be the origin of `bc`.
+Step MergedStep(Step ab, Step bc);
+
 }  // namespace vats5

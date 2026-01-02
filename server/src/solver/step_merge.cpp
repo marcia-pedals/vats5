@@ -115,7 +115,7 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
   return true;
 }
 
-static Step MergedStep(Step ab, Step bc) {
+Step MergedStep(Step ab, Step bc) {
   TimeSinceServiceStart origin_time{0}, destination_time{0};
   if (ab.is_flex && bc.is_flex) {
     origin_time.seconds = 0;
