@@ -15,6 +15,7 @@ struct VisualizationStep {
   TimeSinceServiceStart origin_time;
   TimeSinceServiceStart destination_time;
   std::string trip_description;
+  bool system_step;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     VisualizationStep,
@@ -22,7 +23,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     destination_stop,
     origin_time,
     destination_time,
-    trip_description
+    trip_description,
+    system_step
 );
 
 struct VisualizationPath {
@@ -32,10 +34,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VisualizationPath, steps);
 
 struct VisualizationStop {
   GtfsStop gtfs_stop;
-  bool included_in_reduced_graph;
+  bool system_stop;
+  bool intermediate_stop;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    VisualizationStop, gtfs_stop, included_in_reduced_graph
+    VisualizationStop, gtfs_stop, system_stop, intermediate_stop
 );
 
 struct Visualization {
@@ -199,6 +202,18 @@ std::vector<StopId> SelectIntermediateStop(
   return result;
 }
 
+bool IsBartTrip(const DataGtfsMapping& mapping, TripId trip_id) {
+  auto it = mapping.trip_id_to_trip_info.find(trip_id);
+  if (it == mapping.trip_id_to_trip_info.end()) {
+    return false;
+  }
+  if (!std::holds_alternative<GtfsTripId>(it->second.v)) {
+    return false;
+  }
+  const std::string& gtfs_trip_id = std::get<GtfsTripId>(it->second.v).v;
+  return gtfs_trip_id.starts_with("BA:");
+}
+
 void SaveVisualization(
     const GtfsDay& gtfs_day,
     const StepsFromGtfs& steps_from_gtfs,
@@ -212,8 +227,9 @@ void SaveVisualization(
         steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(stop.stop_id);
     viz.stops[stop_id.v] = VisualizationStop{
         .gtfs_stop = stop,
-        .included_in_reduced_graph = bart_stops.contains(stop_id) ||
-                                     intermediate_stops.contains(stop_id),
+        .system_stop = bart_stops.contains(stop_id),
+        .intermediate_stop = intermediate_stops.contains(stop_id) &&
+                             !bart_stops.contains(stop_id),
     };
   }
 
@@ -232,6 +248,9 @@ void SaveVisualization(
               .trip_description =
                   steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip
                   ),
+              .system_step =
+                  IsBartTrip(steps_from_gtfs.mapping, step.origin_trip) &&
+                  IsBartTrip(steps_from_gtfs.mapping, step.destination_trip),
           });
         }
         viz_paths.push_back(viz_path);
@@ -245,6 +264,11 @@ void SaveVisualization(
   std::ofstream out("../data/visualization.json");
   out << j.dump(2) << std::endl;
   std::cout << "Wrote visualization to ../data/visualization.json" << std::endl;
+  // std::cout << "Intermediate stops were (" << intermediate_stops.size() <<
+  // "): "; for (const auto s : intermediate_stops) {
+  //   std::cout << s.v << " ";
+  // }
+  // std::cout << "\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -312,6 +336,23 @@ int main(int argc, char* argv[]) {
   double snap_threshold_meters = 150;
   PathsAdjacencyList split = minimal;
   std::unordered_set<StopId> intermediate_stops = bart_stops;
+
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:palo-alto-station"}
+  ));
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:san-jose-diridon-station"}
+  ));
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:santa-clara-caltrain"}
+  ));
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:mountain-view-station"}
+  ));
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"sunnyvale"}
+  ));
+
   for (int i = 0; i < 50; ++i) {
     split = SplitPathsAt(split, intermediate_stops);
     split = AdjacencyListSnapToStops(
@@ -353,8 +394,8 @@ int main(int argc, char* argv[]) {
         new_edge_count += path_groups.size();
       }
 
-      if (new_edge_count < edge_count) {
-        std::cout << "Selected " << i + 1 << " reducing from " << edge_count
+      if (new_edge_count <= edge_count) {
+        std::cout << "Selected " << j + 1 << " reducing from " << edge_count
                   << " to " << new_edge_count << "\n";
         intermediate_stops.insert(stop);
         found_improvement = true;

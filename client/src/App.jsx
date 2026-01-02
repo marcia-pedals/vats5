@@ -11,6 +11,8 @@ function App() {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
   const [forceSimulationEnabled, setForceSimulationEnabled] = useState(true)
   const [hoveredRoute, setHoveredRoute] = useState(null) // Array of stop IDs for the hovered route
+  const [originTimeMin, setOriginTimeMin] = useState(21600) // 6:00 in seconds from midnight
+  const [originTimeMax, setOriginTimeMax] = useState(79200) // 22:00 in seconds from midnight
 
   const padding = 20
   const svgWidth = 800
@@ -24,17 +26,18 @@ function App() {
   }, [])
 
   // Compute node positions with force simulation
-  const { stopsById, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
+  const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
     if (!visualization) {
-      return { stopsById: new Map(), nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
+      return { stopsById: new Map(), systemStopIds: new Set(), nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
     }
 
     const stopsById = new Map(visualization.stops.map(([id, stop]) => [id, stop.gtfs_stop]))
-    const graphStops = visualization.stops.filter(([, stop]) => stop.included_in_reduced_graph)
+    const systemStopIds = new Set(visualization.stops.filter(([, stop]) => stop.system_stop).map(([id]) => id))
+    const graphStops = visualization.stops.filter(([, stop]) => stop.system_stop || stop.intermediate_stop)
     const stops = graphStops.map(([id, stop]) => [id, stop.gtfs_stop])
 
     if (stops.length === 0) {
-      return { stopsById, nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
+      return { stopsById, systemStopIds, nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
     }
 
     const lats = stops.map(([, s]) => s.stop_lat)
@@ -96,21 +99,30 @@ function App() {
       }]))
     }
 
-    // Build edges and collect paths for each edge
-    const edgeMap = new Map() // key -> { from, to, paths: [] }
+    // Build edges and collect paths for each edge (filtered by origin time)
+    const edgeMap = new Map() // key -> { from, to, paths: [], allSystemSteps: bool }
     for (const [originId, pathGroups] of visualization.adjacent) {
       for (const pathGroup of pathGroups) {
         for (const path of pathGroup) {
           if (path.steps.length === 0) continue
+          // Filter by origin time of first step
+          const firstStepOriginTime = path.steps[0].origin_time
+          if (firstStepOriginTime < originTimeMin || firstStepOriginTime > originTimeMax) continue
+
           const lastStep = path.steps[path.steps.length - 1]
           const destId = lastStep.destination_stop
           if (stopsById.has(originId) && stopsById.has(destId)) {
             const key = originId < destId ? `${originId}-${destId}` : `${destId}-${originId}`
             if (!edgeMap.has(key)) {
               const [from, to] = key.split('-').map(Number)
-              edgeMap.set(key, { from, to, paths: [] })
+              edgeMap.set(key, { from, to, paths: [], allSystemSteps: true })
             }
             edgeMap.get(key).paths.push({ originId, path })
+            // Check if all steps in this path are system steps
+            const allStepsSystem = path.steps.every(step => step.system_step)
+            if (!allStepsSystem) {
+              edgeMap.get(key).allSystemSteps = false
+            }
           }
         }
       }
@@ -131,8 +143,8 @@ function App() {
       return null
     }
 
-    return { stopsById, nodes, nodePositions, edges, getStopPosition }
-  }, [visualization, forceSimulationEnabled])
+    return { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition }
+  }, [visualization, forceSimulationEnabled, originTimeMin, originTimeMax])
 
   if (error) {
     return <div>{error}</div>
@@ -140,6 +152,12 @@ function App() {
 
   if (!visualization || nodes.length === 0) {
     return <div>Loading...</div>
+  }
+
+  const formatTimeForInput = (seconds) => {
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
   }
 
   return (
@@ -152,6 +170,35 @@ function App() {
         />
         {' '}Force simulation
       </label>
+      <div style={{ marginBottom: '10px' }}>
+        <div style={{ marginBottom: '5px' }}>
+          <span>Origin time: {formatTimeForInput(originTimeMin)} - {formatTimeForInput(originTimeMax)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+          <span style={{ width: '40px' }}>Min:</span>
+          <input
+            type="range"
+            min={0}
+            max={129600}
+            step={300}
+            value={originTimeMin}
+            onChange={(e) => setOriginTimeMin(Math.min(Number(e.target.value), originTimeMax))}
+            style={{ flex: 1 }}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <span style={{ width: '40px' }}>Max:</span>
+          <input
+            type="range"
+            min={0}
+            max={129600}
+            step={300}
+            value={originTimeMax}
+            onChange={(e) => setOriginTimeMax(Math.max(Number(e.target.value), originTimeMin))}
+            style={{ flex: 1 }}
+          />
+        </div>
+      </div>
       <div style={{ display: 'flex', gap: '20px' }}>
       <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
         {edges.map((edge, i) => {
@@ -169,6 +216,7 @@ function App() {
               y2={to.y}
               stroke={isSelected ? 'orange' : 'gray'}
               strokeWidth={isSelected ? 3 : 2}
+              strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
               style={{ cursor: 'pointer' }}
               onMouseEnter={(e) => {
                 setHoveredEdge({ from: fromStop, to: toStop })
@@ -184,13 +232,14 @@ function App() {
         })}
         {nodes.map((node) => {
           const pos = nodePositions.get(node.id)
+          const isSystemStop = systemStopIds.has(node.id)
           return (
             <circle
               key={node.id}
               cx={pos.x}
               cy={pos.y}
               r={5}
-              fill="blue"
+              fill={isSystemStop ? "blue" : "#444"}
               style={{ cursor: 'pointer' }}
               onMouseEnter={(e) => {
                 setHoveredStop(node.stop)
