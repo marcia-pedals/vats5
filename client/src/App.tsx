@@ -1,20 +1,78 @@
-import { useState, useEffect, useMemo } from 'react'
-import { forceSimulation, forceManyBody, forceX, forceY } from 'd3-force'
+import { useState, useEffect, useMemo, ChangeEvent, MouseEvent } from 'react'
+import { forceSimulation, forceManyBody, forceX, forceY, SimulationNodeDatum } from 'd3-force'
 import Slider from 'rc-slider'
 import 'rc-slider/assets/index.css'
 import './App.css'
 
+interface GtfsStop {
+  stop_id: string
+  stop_name: string
+  stop_lat: number
+  stop_lon: number
+}
+
+interface Stop {
+  gtfs_stop: GtfsStop
+  system_stop?: boolean
+  intermediate_stop?: boolean
+}
+
+interface Step {
+  origin_stop: number
+  destination_stop: number
+  origin_time: number
+  destination_time: number
+  trip_description: string
+  system_step?: boolean
+}
+
+interface Path {
+  steps: Step[]
+}
+
+interface Visualization {
+  stops: [number, Stop][]
+  adjacent: [number, Path[][]][]
+}
+
+interface NodeData extends SimulationNodeDatum {
+  id: number
+  stop: GtfsStop
+  targetX: number
+  targetY: number
+}
+
+interface Position {
+  x: number
+  y: number
+}
+
+interface EdgeData {
+  from: number
+  to: number
+  paths: { originId: number; path: Path }[]
+  allSystemSteps: boolean
+}
+
+interface SelectedEdge {
+  from: number
+  to: number
+  fromStop: GtfsStop
+  toStop: GtfsStop
+  paths: { originId: number; path: Path }[]
+}
+
 function App() {
-  const [visualizationFiles, setVisualizationFiles] = useState([])
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [visualization, setVisualization] = useState(null)
-  const [error, setError] = useState(null)
-  const [hoveredStop, setHoveredStop] = useState(null)
-  const [hoveredEdge, setHoveredEdge] = useState(null)
-  const [selectedEdge, setSelectedEdge] = useState(null)
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 })
+  const [visualizationFiles, setVisualizationFiles] = useState<string[]>([])
+  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [visualization, setVisualization] = useState<Visualization | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [hoveredStop, setHoveredStop] = useState<GtfsStop | null>(null)
+  const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop } | null>(null)
+  const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
+  const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 })
   const [forceSimulationEnabled, setForceSimulationEnabled] = useState(true)
-  const [hoveredRoute, setHoveredRoute] = useState(null) // Array of stop IDs for the hovered route
+  const [hoveredRoute, setHoveredRoute] = useState<number[] | null>(null)
   const [originTimeMin, setOriginTimeMin] = useState(21600) // 6:00 in seconds from midnight
   const [originTimeMax, setOriginTimeMax] = useState(79200) // 22:00 in seconds from midnight
 
@@ -26,10 +84,10 @@ function App() {
   useEffect(() => {
     fetch('/api/visualizations')
       .then(res => res.json())
-      .then(files => {
+      .then((files: string[]) => {
         setVisualizationFiles(files)
         if (files.length > 0) {
-          setSelectedFile(prev => prev ?? files[files.length - 1]) // Select the last file by default
+          setSelectedFile(prev => prev ?? files[files.length - 1])
         }
       })
       .catch(err => setError('Error loading file list: ' + err.message))
@@ -41,7 +99,7 @@ function App() {
     let cancelled = false
     fetch(`/api/visualizations/${selectedFile}`)
       .then(res => res.json())
-      .then(data => {
+      .then((data: Visualization) => {
         if (!cancelled) setVisualization(data)
       })
       .catch(err => {
@@ -53,16 +111,30 @@ function App() {
   // Compute node positions with force simulation
   const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
     if (!visualization) {
-      return { stopsById: new Map(), systemStopIds: new Set(), nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
+      return {
+        stopsById: new Map<number, GtfsStop>(),
+        systemStopIds: new Set<number>(),
+        nodes: [] as NodeData[],
+        nodePositions: new Map<number, Position>(),
+        edges: [] as EdgeData[],
+        getStopPosition: () => null as Position | null
+      }
     }
 
-    const stopsById = new Map(visualization.stops.map(([id, stop]) => [id, stop.gtfs_stop]))
-    const systemStopIds = new Set(visualization.stops.filter(([, stop]) => stop.system_stop).map(([id]) => id))
+    const stopsById = new Map<number, GtfsStop>(visualization.stops.map(([id, stop]) => [id, stop.gtfs_stop]))
+    const systemStopIds = new Set<number>(visualization.stops.filter(([, stop]) => stop.system_stop).map(([id]) => id))
     const graphStops = visualization.stops.filter(([, stop]) => stop.system_stop || stop.intermediate_stop)
-    const stops = graphStops.map(([id, stop]) => [id, stop.gtfs_stop])
+    const stops: [number, GtfsStop][] = graphStops.map(([id, stop]) => [id, stop.gtfs_stop])
 
     if (stops.length === 0) {
-      return { stopsById, systemStopIds, nodes: [], nodePositions: new Map(), edges: [], getStopPosition: () => null }
+      return {
+        stopsById,
+        systemStopIds,
+        nodes: [] as NodeData[],
+        nodePositions: new Map<number, Position>(),
+        edges: [] as EdgeData[],
+        getStopPosition: () => null as Position | null
+      }
     }
 
     const lats = stops.map(([, s]) => s.stop_lat)
@@ -76,25 +148,25 @@ function App() {
     const latRange = maxLat - minLat || 1
     const lonRange = maxLon - minLon || 1
 
-    const mapToSvg = (lat, lon) => {
+    const mapToSvg = (lat: number, lon: number): Position => {
       const x = padding + ((lon - minLon) / lonRange) * (svgWidth - 2 * padding)
       const y = padding + ((maxLat - lat) / latRange) * (svgHeight - 2 * padding)
       return { x, y }
     }
 
     // Create nodes with initial geographic positions
-    const nodes = stops.map(([id, stop]) => {
+    const nodes: NodeData[] = stops.map(([id, stop]) => {
       const { x, y } = mapToSvg(stop.stop_lat, stop.stop_lon)
       return { id, stop, x, y, targetX: x, targetY: y }
     })
 
     // Run force simulation if enabled
-    let nodePositions
+    let nodePositions: Map<number, Position>
     if (forceSimulationEnabled) {
       const simulation = forceSimulation(nodes)
         .force('charge', forceManyBody().strength(-100))
-        .force('x', forceX(d => d.targetX).strength(0.5))
-        .force('y', forceY(d => d.targetY).strength(0.5))
+        .force('x', forceX<NodeData>(d => d.targetX).strength(0.5))
+        .force('y', forceY<NodeData>(d => d.targetY).strength(0.5))
         .stop()
 
       // Run simulation to completion
@@ -103,8 +175,8 @@ function App() {
       }
 
       // Rescale to fit within SVG bounds
-      const simXs = nodes.map(n => n.x)
-      const simYs = nodes.map(n => n.y)
+      const simXs = nodes.map(n => n.x!)
+      const simYs = nodes.map(n => n.y!)
       const simMinX = Math.min(...simXs)
       const simMaxX = Math.max(...simXs)
       const simMinY = Math.min(...simYs)
@@ -113,8 +185,8 @@ function App() {
       const simRangeY = simMaxY - simMinY || 1
 
       nodePositions = new Map(nodes.map(n => [n.id, {
-        x: padding + ((n.x - simMinX) / simRangeX) * (svgWidth - 2 * padding),
-        y: padding + ((n.y - simMinY) / simRangeY) * (svgHeight - 2 * padding),
+        x: padding + ((n.x! - simMinX) / simRangeX) * (svgWidth - 2 * padding),
+        y: padding + ((n.y! - simMinY) / simRangeY) * (svgHeight - 2 * padding),
       }]))
     } else {
       // Use geographic positions directly without force simulation
@@ -125,7 +197,7 @@ function App() {
     }
 
     // Build edges and collect paths for each edge (filtered by origin time)
-    const edgeMap = new Map() // key -> { from, to, paths: [], allSystemSteps: bool }
+    const edgeMap = new Map<string, EdgeData>()
     for (const [originId, pathGroups] of visualization.adjacent) {
       for (const pathGroup of pathGroups) {
         for (const path of pathGroup) {
@@ -142,11 +214,11 @@ function App() {
               const [from, to] = key.split('-').map(Number)
               edgeMap.set(key, { from, to, paths: [], allSystemSteps: true })
             }
-            edgeMap.get(key).paths.push({ originId, path })
+            edgeMap.get(key)!.paths.push({ originId, path })
             // Check if all steps in this path are system steps
             const allStepsSystem = path.steps.every(step => step.system_step)
             if (!allStepsSystem) {
-              edgeMap.get(key).allSystemSteps = false
+              edgeMap.get(key)!.allSystemSteps = false
             }
           }
         }
@@ -155,10 +227,10 @@ function App() {
     const edges = [...edgeMap.values()]
 
     // Function to get position for any stop (including those not in reduced graph)
-    const getStopPosition = (stopId) => {
+    const getStopPosition = (stopId: number): Position | null => {
       // First check if it's in nodePositions (reduced graph nodes)
       if (nodePositions.has(stopId)) {
-        return nodePositions.get(stopId)
+        return nodePositions.get(stopId)!
       }
       // Otherwise compute position from lat/lon using mapToSvg
       const stop = stopsById.get(stopId)
@@ -179,13 +251,13 @@ function App() {
     return <div>Loading...</div>
   }
 
-  const formatTimeForInput = (seconds) => {
+  const formatTimeForInput = (seconds: number): string => {
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
   }
 
-  const currentIndex = visualizationFiles.indexOf(selectedFile)
+  const currentIndex = visualizationFiles.indexOf(selectedFile!)
   const canGoPrev = currentIndex > 0
   const canGoNext = currentIndex < visualizationFiles.length - 1
 
@@ -214,7 +286,7 @@ function App() {
         </button>
         <select
           value={selectedFile || ''}
-          onChange={(e) => setSelectedFile(e.target.value)}
+          onChange={(e: ChangeEvent<HTMLSelectElement>) => setSelectedFile(e.target.value)}
           style={{
             padding: '4px 8px',
             minWidth: '180px',
@@ -244,7 +316,7 @@ function App() {
           <input
             type="checkbox"
             checked={forceSimulationEnabled}
-            onChange={(e) => setForceSimulationEnabled(e.target.checked)}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setForceSimulationEnabled(e.target.checked)}
           />
           {' '}Spread stops
         </label>
@@ -260,7 +332,8 @@ function App() {
             max={129600}
             step={300}
             value={[originTimeMin, originTimeMax]}
-            onChange={([min, max]) => {
+            onChange={(value) => {
+              const [min, max] = value as [number, number]
               setOriginTimeMin(min)
               setOriginTimeMax(max)
             }}
@@ -270,10 +343,10 @@ function App() {
         <div style={{ display: 'flex', gap: '20px' }}>
       <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
         {edges.map((edge, i) => {
-          const fromStop = stopsById.get(edge.from)
-          const toStop = stopsById.get(edge.to)
-          const from = nodePositions.get(edge.from)
-          const to = nodePositions.get(edge.to)
+          const fromStop = stopsById.get(edge.from)!
+          const toStop = stopsById.get(edge.to)!
+          const from = nodePositions.get(edge.from)!
+          const to = nodePositions.get(edge.to)!
           const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
           return (
             <line
@@ -286,11 +359,11 @@ function App() {
               strokeWidth={isSelected ? 3 : 2}
               strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
               style={{ cursor: 'pointer' }}
-              onMouseEnter={(e) => {
+              onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
                 setHoveredEdge({ from: fromStop, to: toStop })
                 setMousePos({ x: e.clientX, y: e.clientY })
               }}
-              onMouseMove={(e) => {
+              onMouseMove={(e: MouseEvent<SVGLineElement>) => {
                 setMousePos({ x: e.clientX, y: e.clientY })
               }}
               onMouseLeave={() => setHoveredEdge(null)}
@@ -299,7 +372,7 @@ function App() {
           )
         })}
         {nodes.map((node) => {
-          const pos = nodePositions.get(node.id)
+          const pos = nodePositions.get(node.id)!
           const isSystemStop = systemStopIds.has(node.id)
           return (
             <circle
@@ -309,11 +382,11 @@ function App() {
               r={5}
               fill={isSystemStop ? "blue" : "#444"}
               style={{ cursor: 'pointer' }}
-              onMouseEnter={(e) => {
+              onMouseEnter={(e: MouseEvent<SVGCircleElement>) => {
                 setHoveredStop(node.stop)
                 setMousePos({ x: e.clientX, y: e.clientY })
               }}
-              onMouseMove={(e) => {
+              onMouseMove={(e: MouseEvent<SVGCircleElement>) => {
                 setMousePos({ x: e.clientX, y: e.clientY })
               }}
               onMouseLeave={() => setHoveredStop(null)}
@@ -323,7 +396,7 @@ function App() {
         {hoveredRoute && hoveredRoute.length > 1 && (() => {
           const points = hoveredRoute
             .map(stopId => getStopPosition(stopId))
-            .filter(pos => pos)
+            .filter((pos): pos is Position => pos !== null)
             .map(pos => `${pos.x},${pos.y}`)
             .join(' ')
           return (
@@ -361,12 +434,12 @@ function App() {
                   {directionPaths.length === 0 ? (
                     <div style={{ color: '#888', marginLeft: '10px' }}>No paths</div>
                   ) : (() => {
-                    const formatTime = (seconds) => {
+                    const formatTime = (seconds: number): string => {
                       const h = Math.floor(seconds / 3600)
                       const m = Math.floor((seconds % 3600) / 60)
                       return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
                     }
-                    const collapseSteps = (steps) => steps.reduce((acc, step) => {
+                    const collapseSteps = (steps: Step[]) => steps.reduce((acc, step) => {
                       const last = acc[acc.length - 1]
                       if (last && last.trip_description === step.trip_description) {
                         last.destination_stop = step.destination_stop
@@ -374,13 +447,13 @@ function App() {
                         acc.push({ ...step })
                       }
                       return acc
-                    }, [])
-                    const getSignature = (segments) => segments.map(s =>
+                    }, [] as Step[])
+                    const getSignature = (segments: Step[]) => segments.map(s =>
                       `${s.trip_description}:${s.origin_stop}:${s.destination_stop}`
                     ).join('|')
 
                     // Group paths by their signature
-                    const groups = new Map()
+                    const groups = new Map<string, { segments: Step[]; steps: Step[]; times: { start: number; end: number }[] }>()
                     for (const { path } of directionPaths) {
                       const segments = collapseSteps(path.steps)
                       const sig = getSignature(segments)
@@ -389,7 +462,7 @@ function App() {
                       }
                       const firstStep = path.steps[0]
                       const lastStep = path.steps[path.steps.length - 1]
-                      groups.get(sig).times.push({
+                      groups.get(sig)!.times.push({
                         start: firstStep.origin_time,
                         end: lastStep.destination_time
                       })
@@ -397,7 +470,7 @@ function App() {
 
                     return [...groups.values()].map((group, groupIndex) => {
                       // Build the list of stop IDs for this route from uncollapsed steps
-                      const routeStops = []
+                      const routeStops: number[] = []
                       for (const step of group.steps) {
                         if (routeStops.length === 0) {
                           routeStops.push(step.origin_stop)
