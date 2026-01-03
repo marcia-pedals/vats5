@@ -1,5 +1,5 @@
-import { useState, useMemo, ChangeEvent, MouseEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect, ChangeEvent, MouseEvent } from 'react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { forceSimulation, forceManyBody, forceX, forceY, SimulationNodeDatum } from 'd3-force'
 import Slider from 'rc-slider'
 import 'rc-slider/assets/index.css'
@@ -64,6 +64,7 @@ interface SelectedEdge {
 }
 
 function App() {
+  const queryClient = useQueryClient()
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [hoveredStop, setHoveredStop] = useState<GtfsStop | null>(null)
   const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop } | null>(null)
@@ -85,22 +86,39 @@ function App() {
       const res = await fetch('/api/visualizations')
       return res.json() as Promise<string[]>
     },
+    staleTime: Infinity,
   })
 
   // Derive effective selected file - use explicit selection or default to last file
   const effectiveSelectedFile = selectedFile ?? (visualizationFiles.length > 0 ? visualizationFiles[visualizationFiles.length - 1] : null)
 
   // Fetch selected visualization
-  const { data: visualization, error: visualizationError } = useQuery({
+  const { data: visualization, error: visualizationError, isFetching } = useQuery({
     queryKey: ['visualization', effectiveSelectedFile],
     queryFn: async () => {
       const res = await fetch(`/api/visualizations/${effectiveSelectedFile}`)
       return res.json() as Promise<Visualization>
     },
     enabled: effectiveSelectedFile !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
   })
 
   const error = filesError || visualizationError
+
+  // Prefetch all visualizations in the background
+  useEffect(() => {
+    for (const file of visualizationFiles) {
+      queryClient.prefetchQuery({
+        queryKey: ['visualization', file],
+        queryFn: async () => {
+          const res = await fetch(`/api/visualizations/${file}`)
+          return res.json() as Promise<Visualization>
+        },
+        staleTime: Infinity,
+      })
+    }
+  }, [visualizationFiles, queryClient])
 
   // Compute node positions with force simulation
   const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
@@ -247,7 +265,6 @@ function App() {
   const canGoPrev = currentIndex > 0
   const canGoNext = currentIndex < visualizationFiles.length - 1
 
-  const isLoading = !visualization || nodes.length === 0
 
   return (
     <div style={{ position: 'relative' }}>
@@ -313,7 +330,7 @@ function App() {
       {/* Main content */}
       <div>
         <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ whiteSpace: 'nowrap' }}>Origin time: {formatTimeForInput(originTimeMin)} - {formatTimeForInput(originTimeMax)}</span>
+          <span style={{ whiteSpace: 'nowrap' }}>Departure: {formatTimeForInput(originTimeMin)} - {formatTimeForInput(originTimeMax)}</span>
           <Slider
             range
             min={0}
@@ -329,19 +346,7 @@ function App() {
           />
         </div>
         <div style={{ display: 'flex', gap: '20px' }}>
-      {isLoading || error ? (
-        <div style={{
-          width: svgWidth,
-          height: svgHeight,
-          border: '1px solid black',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: error ? 'red' : '#666',
-        }}>
-          {error ? `Error: ${error.message}` : 'Loading...'}
-        </div>
-      ) : (
+      <div style={{ position: 'relative' }}>
         <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
           {edges.map((edge, i) => {
             const fromStop = stopsById.get(edge.from)!
@@ -413,7 +418,24 @@ function App() {
             )
           })()}
         </svg>
-      )}
+        {(isFetching || error) && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: svgWidth,
+            height: svgHeight,
+            background: 'rgba(255, 255, 255, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: error ? 'red' : '#666',
+            fontSize: '18px',
+          }}>
+            {error ? `Error: ${error.message}` : 'Loading...'}
+          </div>
+        )}
+      </div>
       <div style={{
         width: '400px',
         padding: '10px',
