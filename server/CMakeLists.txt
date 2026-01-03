@@ -75,6 +75,10 @@ target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 add_executable(visualization_tool src/tools/visualization_tool.cpp)
 target_link_libraries(visualization_tool PUBLIC shortest_path)
 
+# Add benchmark reduction tool
+add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
+target_link_libraries(benchmark_reduction PUBLIC shortest_path)
+
 # Enable CMake testing
 enable_testing()
 
