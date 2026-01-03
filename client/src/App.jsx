@@ -1,8 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { forceSimulation, forceManyBody, forceX, forceY } from 'd3-force'
+import Slider from 'rc-slider'
+import 'rc-slider/assets/index.css'
 import './App.css'
 
 function App() {
+  const [visualizationFiles, setVisualizationFiles] = useState([])
+  const [selectedFile, setSelectedFile] = useState(null)
   const [visualization, setVisualization] = useState(null)
   const [error, setError] = useState(null)
   const [hoveredStop, setHoveredStop] = useState(null)
@@ -18,12 +22,33 @@ function App() {
   const svgWidth = 800
   const svgHeight = 600
 
+  // Fetch list of visualization files
   useEffect(() => {
-    fetch('/api/visualization')
+    fetch('/api/visualizations')
       .then(res => res.json())
-      .then(setVisualization)
-      .catch(err => setError('Error: ' + err.message))
+      .then(files => {
+        setVisualizationFiles(files)
+        if (files.length > 0) {
+          setSelectedFile(prev => prev ?? files[files.length - 1]) // Select the last file by default
+        }
+      })
+      .catch(err => setError('Error loading file list: ' + err.message))
   }, [])
+
+  // Fetch selected visualization
+  useEffect(() => {
+    if (!selectedFile) return
+    let cancelled = false
+    fetch(`/api/visualizations/${selectedFile}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled) setVisualization(data)
+      })
+      .catch(err => {
+        if (!cancelled) setError('Error: ' + err.message)
+      })
+    return () => { cancelled = true }
+  }, [selectedFile])
 
   // Compute node positions with force simulation
   const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
@@ -160,46 +185,89 @@ function App() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
   }
 
+  const currentIndex = visualizationFiles.indexOf(selectedFile)
+  const canGoPrev = currentIndex > 0
+  const canGoNext = currentIndex < visualizationFiles.length - 1
+
   return (
     <div style={{ position: 'relative' }}>
-      <label style={{ display: 'block', marginBottom: '10px' }}>
-        <input
-          type="checkbox"
-          checked={forceSimulationEnabled}
-          onChange={(e) => setForceSimulationEnabled(e.target.checked)}
-        />
-        {' '}Spread stops
-      </label>
-      <div style={{ marginBottom: '10px' }}>
-        <div style={{ marginBottom: '5px' }}>
-          <span>Origin time: {formatTimeForInput(originTimeMin)} - {formatTimeForInput(originTimeMax)}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
-          <span style={{ width: '40px' }}>Min:</span>
+      {/* File selector bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        marginBottom: '10px',
+        padding: '8px',
+        background: '#f5f5f5',
+        borderRadius: '4px',
+      }}>
+        <button
+          onClick={() => canGoPrev && setSelectedFile(visualizationFiles[currentIndex - 1])}
+          disabled={!canGoPrev}
+          style={{
+            padding: '4px 12px',
+            cursor: canGoPrev ? 'pointer' : 'not-allowed',
+            opacity: canGoPrev ? 1 : 0.5,
+          }}
+        >
+          ←
+        </button>
+        <select
+          value={selectedFile || ''}
+          onChange={(e) => setSelectedFile(e.target.value)}
+          style={{
+            padding: '4px 8px',
+            minWidth: '180px',
+          }}
+        >
+          {visualizationFiles.map(file => (
+            <option key={file} value={file}>
+              {file.replace('.json', '')}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => canGoNext && setSelectedFile(visualizationFiles[currentIndex + 1])}
+          disabled={!canGoNext}
+          style={{
+            padding: '4px 12px',
+            cursor: canGoNext ? 'pointer' : 'not-allowed',
+            opacity: canGoNext ? 1 : 0.5,
+          }}
+        >
+          →
+        </button>
+        <span style={{ color: '#666', fontSize: '14px' }}>
+          {currentIndex + 1} / {visualizationFiles.length}
+        </span>
+        <label style={{ marginLeft: '20px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
           <input
-            type="range"
-            min={0}
-            max={129600}
-            step={300}
-            value={originTimeMin}
-            onChange={(e) => setOriginTimeMin(Math.min(Number(e.target.value), originTimeMax))}
-            style={{ flex: 1 }}
+            type="checkbox"
+            checked={forceSimulationEnabled}
+            onChange={(e) => setForceSimulationEnabled(e.target.checked)}
           />
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span style={{ width: '40px' }}>Max:</span>
-          <input
-            type="range"
-            min={0}
-            max={129600}
-            step={300}
-            value={originTimeMax}
-            onChange={(e) => setOriginTimeMax(Math.max(Number(e.target.value), originTimeMin))}
-            style={{ flex: 1 }}
-          />
-        </div>
+          {' '}Spread stops
+        </label>
       </div>
-      <div style={{ display: 'flex', gap: '20px' }}>
+
+      {/* Main content */}
+      <div>
+        <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ whiteSpace: 'nowrap' }}>Origin time: {formatTimeForInput(originTimeMin)} - {formatTimeForInput(originTimeMax)}</span>
+          <Slider
+            range
+            min={0}
+            max={129600}
+            step={300}
+            value={[originTimeMin, originTimeMax]}
+            onChange={([min, max]) => {
+              setOriginTimeMin(min)
+              setOriginTimeMax(max)
+            }}
+            style={{ flex: 1 }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: '20px' }}>
       <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
         {edges.map((edge, i) => {
           const fromStop = stopsById.get(edge.from)
@@ -372,7 +440,8 @@ function App() {
         ) : (
           <div style={{ color: '#888' }}>Click an edge to select</div>
         )}
-      </div>
+        </div>
+        </div>
       </div>
       {(hoveredStop || hoveredEdge) && (
         <div style={{

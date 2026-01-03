@@ -214,7 +214,7 @@ bool IsBartTrip(const DataGtfsMapping& mapping, TripId trip_id) {
   return gtfs_trip_id.starts_with("BA:");
 }
 
-void SaveVisualization(
+nlohmann::json MakeVisualization(
     const GtfsDay& gtfs_day,
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId>& bart_stops,
@@ -261,9 +261,7 @@ void SaveVisualization(
   }
 
   nlohmann::json j = viz;
-  std::ofstream out("../data/visualization.json");
-  out << j.dump(2) << std::endl;
-  std::cout << "Wrote visualization to ../data/visualization.json" << std::endl;
+  return j;
   // std::cout << "Intermediate stops were (" << intermediate_stops.size() <<
   // "): "; for (const auto s : intermediate_stops) {
   //   std::cout << s.v << " ";
@@ -358,9 +356,34 @@ int main(int argc, char* argv[]) {
   }
 
   double snap_threshold_meters = 150;
-  PathsAdjacencyList split = minimal;
   std::unordered_set<StopId> intermediate_stops = bart_stops;
 
+  // Collect all visualizations in order
+  std::vector<nlohmann::json> visualizations;
+
+  PathsAdjacencyList split = minimal;
+
+  // First visualization: no hardcoded intermediate stops (only bart_stops)
+  {
+    split = SplitPathsAt(split, intermediate_stops);
+    split = AdjacencyListSnapToStops(
+        steps_from_gtfs.mapping, snap_threshold_meters, split
+    );
+    split = SplitPathsAt(split, intermediate_stops);
+
+    int edge_count = 0;
+    for (const auto& [origin_stop, path_groups] : split.adjacent) {
+      edge_count += path_groups.size();
+    }
+    std::cout << "Visualization 0 (no hardcoded stops) edge count: "
+              << edge_count << "\n";
+
+    visualizations.push_back(MakeVisualization(
+        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+    ));
+  }
+
+  // Add all hardcoded intermediate stops at once
   intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
       GtfsStopId{"mtc:palo-alto-station"}
   ));
@@ -380,6 +403,26 @@ int main(int argc, char* argv[]) {
       GtfsStopId{"mtc:caltrain-4th-&-king"}
   ));
 
+  // Second visualization: with all hardcoded stops
+  {
+    split = SplitPathsAt(split, intermediate_stops);
+    split = AdjacencyListSnapToStops(
+        steps_from_gtfs.mapping, snap_threshold_meters, split
+    );
+    split = SplitPathsAt(split, intermediate_stops);
+
+    int edge_count = 0;
+    for (const auto& [origin_stop, path_groups] : split.adjacent) {
+      edge_count += path_groups.size();
+    }
+    std::cout << "Visualization 1 (with hardcoded stops) edge count: "
+              << edge_count << "\n";
+
+    visualizations.push_back(MakeVisualization(
+        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+    ));
+  }
+
   for (int i = 0; i < 50; ++i) {
     split = SplitPathsAt(split, intermediate_stops);
     split = AdjacencyListSnapToStops(
@@ -392,10 +435,6 @@ int main(int argc, char* argv[]) {
       edge_count += path_groups.size();
     }
     std::cout << "Current edge count: " << edge_count << "\n";
-
-    SaveVisualization(
-        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
-    );
 
     auto candidate_intermediate_stops =
         SelectIntermediateStop(split, steps_from_gtfs.mapping);
@@ -426,6 +465,11 @@ int main(int argc, char* argv[]) {
                   << " to " << new_edge_count << "\n";
         intermediate_stops.insert(stop);
         found_improvement = true;
+
+        // Save visualization after adding this intermediate stop
+        visualizations.push_back(MakeVisualization(
+            gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+        ));
         break;
       }
     }
@@ -433,8 +477,16 @@ int main(int argc, char* argv[]) {
     if (!found_improvement) {
       std::cout << "No improvement found, stopping.\n";
       break;
-      // intermediate_stops.insert(candidate_intermediate_stops[0]);
     }
+  }
+
+  // Write all visualizations to files
+  for (size_t i = 0; i < visualizations.size(); ++i) {
+    std::string filename =
+        "../data/visualization" + std::to_string(i) + ".json";
+    std::ofstream out(filename);
+    out << visualizations[i].dump(2) << std::endl;
+    std::cout << "Wrote " << filename << std::endl;
   }
 
   return 0;
