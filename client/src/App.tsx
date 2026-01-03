@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, ChangeEvent, MouseEvent } from 'react'
+import { useState, useMemo, ChangeEvent, MouseEvent } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { forceSimulation, forceManyBody, forceX, forceY, SimulationNodeDatum } from 'd3-force'
 import Slider from 'rc-slider'
 import 'rc-slider/assets/index.css'
@@ -63,10 +64,7 @@ interface SelectedEdge {
 }
 
 function App() {
-  const [visualizationFiles, setVisualizationFiles] = useState<string[]>([])
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [visualization, setVisualization] = useState<Visualization | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [hoveredStop, setHoveredStop] = useState<GtfsStop | null>(null)
   const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop } | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
@@ -81,32 +79,28 @@ function App() {
   const svgHeight = 600
 
   // Fetch list of visualization files
-  useEffect(() => {
-    fetch('/api/visualizations')
-      .then(res => res.json())
-      .then((files: string[]) => {
-        setVisualizationFiles(files)
-        if (files.length > 0) {
-          setSelectedFile(prev => prev ?? files[files.length - 1])
-        }
-      })
-      .catch(err => setError('Error loading file list: ' + err.message))
-  }, [])
+  const { data: visualizationFiles = [], error: filesError } = useQuery({
+    queryKey: ['visualizationFiles'],
+    queryFn: async () => {
+      const res = await fetch('/api/visualizations')
+      return res.json() as Promise<string[]>
+    },
+  })
+
+  // Derive effective selected file - use explicit selection or default to last file
+  const effectiveSelectedFile = selectedFile ?? (visualizationFiles.length > 0 ? visualizationFiles[visualizationFiles.length - 1] : null)
 
   // Fetch selected visualization
-  useEffect(() => {
-    if (!selectedFile) return
-    let cancelled = false
-    fetch(`/api/visualizations/${selectedFile}`)
-      .then(res => res.json())
-      .then((data: Visualization) => {
-        if (!cancelled) setVisualization(data)
-      })
-      .catch(err => {
-        if (!cancelled) setError('Error: ' + err.message)
-      })
-    return () => { cancelled = true }
-  }, [selectedFile])
+  const { data: visualization, error: visualizationError } = useQuery({
+    queryKey: ['visualization', effectiveSelectedFile],
+    queryFn: async () => {
+      const res = await fetch(`/api/visualizations/${effectiveSelectedFile}`)
+      return res.json() as Promise<Visualization>
+    },
+    enabled: effectiveSelectedFile !== null,
+  })
+
+  const error = filesError || visualizationError
 
   // Compute node positions with force simulation
   const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
@@ -243,23 +237,17 @@ function App() {
     return { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition }
   }, [visualization, forceSimulationEnabled, originTimeMin, originTimeMax])
 
-  if (error) {
-    return <div>{error}</div>
-  }
-
-  if (!visualization || nodes.length === 0) {
-    return <div>Loading...</div>
-  }
-
   const formatTimeForInput = (seconds: number): string => {
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
   }
 
-  const currentIndex = visualizationFiles.indexOf(selectedFile!)
+  const currentIndex = effectiveSelectedFile ? visualizationFiles.indexOf(effectiveSelectedFile) : -1
   const canGoPrev = currentIndex > 0
   const canGoNext = currentIndex < visualizationFiles.length - 1
+
+  const isLoading = !visualization || nodes.length === 0
 
   return (
     <div style={{ position: 'relative' }}>
@@ -285,7 +273,7 @@ function App() {
           ←
         </button>
         <select
-          value={selectedFile || ''}
+          value={effectiveSelectedFile || ''}
           onChange={(e: ChangeEvent<HTMLSelectElement>) => setSelectedFile(e.target.value)}
           style={{
             padding: '4px 8px',
@@ -341,77 +329,91 @@ function App() {
           />
         </div>
         <div style={{ display: 'flex', gap: '20px' }}>
-      <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
-        {edges.map((edge, i) => {
-          const fromStop = stopsById.get(edge.from)!
-          const toStop = stopsById.get(edge.to)!
-          const from = nodePositions.get(edge.from)!
-          const to = nodePositions.get(edge.to)!
-          const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
-          return (
-            <line
-              key={i}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke={isSelected ? 'orange' : 'gray'}
-              strokeWidth={isSelected ? 3 : 2}
-              strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
-                setHoveredEdge({ from: fromStop, to: toStop })
-                setMousePos({ x: e.clientX, y: e.clientY })
-              }}
-              onMouseMove={(e: MouseEvent<SVGLineElement>) => {
-                setMousePos({ x: e.clientX, y: e.clientY })
-              }}
-              onMouseLeave={() => setHoveredEdge(null)}
-              onClick={() => setSelectedEdge({ from: edge.from, to: edge.to, fromStop, toStop, paths: edge.paths })}
-            />
-          )
-        })}
-        {nodes.map((node) => {
-          const pos = nodePositions.get(node.id)!
-          const isSystemStop = systemStopIds.has(node.id)
-          return (
-            <circle
-              key={node.id}
-              cx={pos.x}
-              cy={pos.y}
-              r={5}
-              fill={isSystemStop ? "blue" : "#444"}
-              style={{ cursor: 'pointer' }}
-              onMouseEnter={(e: MouseEvent<SVGCircleElement>) => {
-                setHoveredStop(node.stop)
-                setMousePos({ x: e.clientX, y: e.clientY })
-              }}
-              onMouseMove={(e: MouseEvent<SVGCircleElement>) => {
-                setMousePos({ x: e.clientX, y: e.clientY })
-              }}
-              onMouseLeave={() => setHoveredStop(null)}
-            />
-          )
-        })}
-        {hoveredRoute && hoveredRoute.length > 1 && (() => {
-          const points = hoveredRoute
-            .map(stopId => getStopPosition(stopId))
-            .filter((pos): pos is Position => pos !== null)
-            .map(pos => `${pos.x},${pos.y}`)
-            .join(' ')
-          return (
-            <polyline
-              points={points}
-              fill="none"
-              stroke="red"
-              strokeWidth={3}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pointerEvents="none"
-            />
-          )
-        })()}
-      </svg>
+      {isLoading || error ? (
+        <div style={{
+          width: svgWidth,
+          height: svgHeight,
+          border: '1px solid black',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: error ? 'red' : '#666',
+        }}>
+          {error ? `Error: ${error.message}` : 'Loading...'}
+        </div>
+      ) : (
+        <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
+          {edges.map((edge, i) => {
+            const fromStop = stopsById.get(edge.from)!
+            const toStop = stopsById.get(edge.to)!
+            const from = nodePositions.get(edge.from)!
+            const to = nodePositions.get(edge.to)!
+            const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
+            return (
+              <line
+                key={i}
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke={isSelected ? 'orange' : 'gray'}
+                strokeWidth={isSelected ? 3 : 2}
+                strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
+                  setHoveredEdge({ from: fromStop, to: toStop })
+                  setMousePos({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseMove={(e: MouseEvent<SVGLineElement>) => {
+                  setMousePos({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseLeave={() => setHoveredEdge(null)}
+                onClick={() => setSelectedEdge({ from: edge.from, to: edge.to, fromStop, toStop, paths: edge.paths })}
+              />
+            )
+          })}
+          {nodes.map((node) => {
+            const pos = nodePositions.get(node.id)!
+            const isSystemStop = systemStopIds.has(node.id)
+            return (
+              <circle
+                key={node.id}
+                cx={pos.x}
+                cy={pos.y}
+                r={5}
+                fill={isSystemStop ? "blue" : "#444"}
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e: MouseEvent<SVGCircleElement>) => {
+                  setHoveredStop(node.stop)
+                  setMousePos({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseMove={(e: MouseEvent<SVGCircleElement>) => {
+                  setMousePos({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseLeave={() => setHoveredStop(null)}
+              />
+            )
+          })}
+          {hoveredRoute && hoveredRoute.length > 1 && (() => {
+            const points = hoveredRoute
+              .map(stopId => getStopPosition(stopId))
+              .filter((pos): pos is Position => pos !== null)
+              .map(pos => `${pos.x},${pos.y}`)
+              .join(' ')
+            return (
+              <polyline
+                points={points}
+                fill="none"
+                stroke="red"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                pointerEvents="none"
+              />
+            )
+          })()}
+        </svg>
+      )}
       <div style={{
         width: '400px',
         padding: '10px',
