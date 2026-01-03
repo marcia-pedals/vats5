@@ -89,8 +89,8 @@ function App() {
     staleTime: Infinity,
   })
 
-  // Derive effective selected file - use explicit selection or default to last file
-  const effectiveSelectedFile = selectedFile ?? (visualizationFiles.length > 0 ? visualizationFiles[visualizationFiles.length - 1] : null)
+  // Derive effective selected file - use explicit selection or default to first file
+  const effectiveSelectedFile = selectedFile ?? (visualizationFiles.length > 0 ? visualizationFiles[0] : null)
 
   // Fetch selected visualization
   const { data: visualization, error: visualizationError, isFetching } = useQuery({
