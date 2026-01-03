@@ -272,7 +272,7 @@ void SaveVisualization(
 }
 
 int main(int argc, char* argv[]) {
-  const std::string gtfs_path = "../data/RG_20260109_BA_CT_SC_SM_AC";
+  const std::string gtfs_path = "../data/RG_20260108_all";
   std::string load_state_path;
 
   // Parse command line arguments
@@ -329,8 +329,32 @@ int main(int argc, char* argv[]) {
         minimal
     };
     nlohmann::json state_j = state;
+    std::cout << "JSON object size info:" << std::endl;
+    std::cout << "  - gtfs_day entries: " << state_j["gtfs_day"].size()
+              << std::endl;
+    std::cout << "  - steps_from_gtfs.steps: "
+              << state_j["steps_from_gtfs"]["steps"].size() << std::endl;
+    std::cout << "  - adjacency_list: " << state_j["adjacency_list"].size()
+              << std::endl;
+    std::cout << "  - bart_stops: " << state_j["bart_stops"].size()
+              << std::endl;
+    std::cout << "  - minimal: " << state_j["minimal"].size() << std::endl;
+
     std::ofstream state_out("../data/visualization_state.json");
-    state_out << state_j.dump(2) << std::endl;
+    if (!state_out) {
+      std::cerr << "ERROR: Failed to open visualization_state.json for writing"
+                << std::endl;
+    } else {
+      state_out << state_j;
+      state_out.flush();
+      if (!state_out) {
+        std::cerr << "ERROR: Failed to write to visualization_state.json "
+                     "(stream error after write)"
+                  << std::endl;
+      } else {
+        std::cout << "Successfully wrote visualization_state.json" << std::endl;
+      }
+    }
   }
 
   double snap_threshold_meters = 150;
@@ -351,6 +375,9 @@ int main(int argc, char* argv[]) {
   ));
   intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
       GtfsStopId{"sunnyvale"}
+  ));
+  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+      GtfsStopId{"mtc:caltrain-4th-&-king"}
   ));
 
   for (int i = 0; i < 50; ++i) {

@@ -168,7 +168,7 @@ function App() {
           checked={forceSimulationEnabled}
           onChange={(e) => setForceSimulationEnabled(e.target.checked)}
         />
-        {' '}Force simulation
+        {' '}Spread stops
       </label>
       <div style={{ marginBottom: '10px' }}>
         <div style={{ marginBottom: '5px' }}>
