@@ -8,6 +8,10 @@ struct StepsAdjacencyList {
   // Mapping from stop to steps originating at that stop, grouped by destination
   // stop. Each group of steps is sorted by origin time and minimal.
   std::unordered_map<StopId, std::vector<std::vector<Step>>> adjacent;
+
+  // Strict upper bound on all StopId values in this adjacency list.
+  // All stop IDs s satisfy s.v < stop_id_ub.
+  int stop_id_ub = 0;
 };
 
 // Custom JSON serialization for StepsAdjacencyList
@@ -17,7 +21,7 @@ inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
   for (const auto& [k, v] : adj.adjacent) {
     pairs.emplace_back(k.v, v);
   }
-  j = nlohmann::json{{"adjacent", pairs}};
+  j = nlohmann::json{{"adjacent", pairs}, {"stop_id_ub", adj.stop_id_ub}};
 }
 
 inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
@@ -27,6 +31,7 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   for (const auto& [k, v] : pairs) {
     adj.adjacent[StopId{k}] = v;
   }
+  adj.stop_id_ub = j.at("stop_id_ub").get<int>();
 }
 
 struct PathsAdjacencyList {
@@ -69,7 +74,7 @@ struct PathState {
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
-    const std::unordered_map<StopId, PathState>& search_result, StopId dest
+    const std::vector<PathState>& search_result, StopId dest
 );
 
 // Compute the merged step for a path, with proper origin time calculation.
@@ -86,7 +91,10 @@ Step ComputeMergedStep(const std::vector<Step>& path);
 // The returned steps may depart later than `time` from `origin`, but you should
 // not rely on this to find the latest possible departure time (see the
 // SuboptimalDepartureTimeExposure test).
-std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
+//
+// Returns a vector indexed by StopId.v. Unvisited stops have
+// destination_time.seconds == numeric_limits<int>::max().
+std::vector<PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
