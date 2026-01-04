@@ -289,7 +289,7 @@ INSTANTIATE_TEST_SUITE_P(
                   "01:23:21",
                   "Walk from Berryessa / North San Jose to Berryessa Transit "
                   "Center",
-                  "Walk from Lundy & Trade Zone to Great Mall/Milpitas BART",
+                  "Walk from Lundy & Fortune to Great Mall/Milpitas BART",
                   true}}
         }
 

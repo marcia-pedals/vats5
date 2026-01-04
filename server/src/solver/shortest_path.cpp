@@ -40,15 +40,22 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-struct PathStateComparator {
-  bool operator()(const PathState& a, const PathState& b) const {
+// Compact entry for the priority queue - only stores what's needed for
+// ordering. The full PathState is stored separately in best_arrival map.
+struct FrontierEntry {
+  StopId destination_stop;
+  TimeSinceServiceStart arrival_time;
+};
+
+struct FrontierEntryComparator {
+  bool operator()(const FrontierEntry& a, const FrontierEntry& b) const {
     // Highest priority is to arrive earliest.
-    if (a.step.destination_time.seconds != b.step.destination_time.seconds) {
-      return a.step.destination_time.seconds > b.step.destination_time.seconds;
+    if (a.arrival_time.seconds != b.arrival_time.seconds) {
+      return a.arrival_time.seconds > b.arrival_time.seconds;
     }
 
     // Break ties arbitrarily but consistently.
-    return a.step.destination_stop.v > b.step.destination_stop.v;
+    return a.destination_stop.v > b.destination_stop.v;
   }
 };
 
@@ -140,11 +147,18 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     StopId origin_stop,
     const std::unordered_set<StopId>& destinations
 ) {
-  std::unordered_map<StopId, PathState> result;
   std::unordered_set<StopId> reached_destinations;
+  std::unordered_set<StopId> finalized;
 
-  std::priority_queue<PathState, std::vector<PathState>, PathStateComparator>
+  // Compact priority queue storing only destination_stop and arrival_time.
+  std::priority_queue<
+      FrontierEntry,
+      std::vector<FrontierEntry>,
+      FrontierEntryComparator>
       frontier;
+
+  // Maps stop to the best PathState we've found for reaching it.
+  std::unordered_map<StopId, PathState> best_arrival;
 
   // The state at the origin stop.
   const Step initial_step{
@@ -156,24 +170,24 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  frontier.push(PathState{initial_step});
+  frontier.push(FrontierEntry{origin_stop, origin_time});
+  best_arrival[origin_stop] = PathState{initial_step};
 
   while (!frontier.empty()) {
-    const PathState current_state = frontier.top();
-    const StopId current_stop = current_state.step.destination_stop;
-    const TimeSinceServiceStart current_time =
-        current_state.step.destination_time;
+    const FrontierEntry current_entry = frontier.top();
+    const StopId current_stop = current_entry.destination_stop;
+    const TimeSinceServiceStart current_time = current_entry.arrival_time;
     frontier.pop();
 
-    if (result.find(current_stop) != result.end()) {
+    if (finalized.contains(current_stop)) {
       continue;
     }
-    result[current_stop] = current_state;
+    finalized.insert(current_stop);
 
-    if (destinations.find(current_stop) != destinations.end()) {
+    if (destinations.contains(current_stop)) {
       reached_destinations.insert(current_stop);
       if (reached_destinations.size() == destinations.size()) {
-        return result;
+        return best_arrival;
       }
     }
 
@@ -181,11 +195,6 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     if (adj_it == adjacency_list.adjacent.end()) {
       continue;
     }
-
-    // Determine the origin time to use for new paths.
-    // If current step is NOOP (we're at the origin), new paths will start
-    // fresh. Otherwise, we propagate the existing origin_time.
-    const bool at_origin = current_state.step.origin_trip == TripId::NOOP;
 
     for (const std::vector<Step>& step_group : adj_it->second) {
       // Check if this group has a flex trip (first step is flex)
@@ -197,17 +206,24 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
         const Step& flex_step =
             step_group[0];  // Should be only one step in flex group
         const StopId next_stop = flex_step.destination_stop;
-        if (result.find(next_stop) == result.end()) {
+        if (!finalized.contains(next_stop)) {
           // Calculate arrival time based on current time + duration
           TimeSinceServiceStart arrival_time{
               current_time.seconds + flex_step.FlexDurationSeconds()
           };
 
-          Step flex_step_at_now = flex_step;
-          flex_step_at_now.origin_time = current_time;
-          flex_step_at_now.destination_time = arrival_time;
+          // Only add if this is a better arrival time
+          auto best_it = best_arrival.find(next_stop);
+          if (best_it == best_arrival.end() ||
+              arrival_time.seconds <
+                  best_it->second.step.destination_time.seconds) {
+            Step flex_step_at_now = flex_step;
+            flex_step_at_now.origin_time = current_time;
+            flex_step_at_now.destination_time = arrival_time;
 
-          frontier.push(PathState{flex_step_at_now});
+            best_arrival[next_stop] = PathState{flex_step_at_now};
+            frontier.push(FrontierEntry{next_stop, arrival_time});
+          }
         }
       }
 
@@ -221,16 +237,23 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
 
         const Step& next_step = *next_step_opt;
         const StopId next_stop = next_step.destination_stop;
-        if (result.find(next_stop) != result.end()) {
+        if (finalized.contains(next_stop)) {
           continue;
         }
 
-        frontier.push(PathState{next_step});
+        // Only add if this is a better arrival time
+        auto best_it = best_arrival.find(next_stop);
+        if (best_it == best_arrival.end() ||
+            next_step.destination_time.seconds <
+                best_it->second.step.destination_time.seconds) {
+          best_arrival[next_stop] = PathState{next_step};
+          frontier.push(FrontierEntry{next_stop, next_step.destination_time});
+        }
       }
     }
   }
 
-  return result;
+  return best_arrival;
 }
 
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
