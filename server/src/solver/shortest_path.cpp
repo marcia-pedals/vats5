@@ -41,22 +41,14 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
 }
 
 struct PathStateComparator {
-  bool operator()(const PathState& a_state, const PathState& b_state) const {
-    const Step& a = a_state.whole_step;
-    const Step& b = b_state.whole_step;
-
+  bool operator()(const PathState& a, const PathState& b) const {
     // Highest priority is to arrive earliest.
-    if (a.destination_time.seconds != b.destination_time.seconds) {
-      return a.destination_time.seconds > b.destination_time.seconds;
-    }
-
-    // Next priority is to depart latest.
-    if (a.origin_time.seconds != b.origin_time.seconds) {
-      return a.origin_time.seconds < b.origin_time.seconds;
+    if (a.step.destination_time.seconds != b.step.destination_time.seconds) {
+      return a.step.destination_time.seconds > b.step.destination_time.seconds;
     }
 
     // Break ties arbitrarily but consistently.
-    return a.destination_stop.v > b.destination_stop.v;
+    return a.step.destination_stop.v > b.step.destination_stop.v;
   }
 };
 
@@ -85,6 +77,63 @@ std::optional<Step> FindDepartureAtOrAfter(
   return *lower_bound_it;
 }
 
+// Backtrack through the search results to reconstruct the full path.
+// Returns the steps in order from origin to destination.
+std::vector<Step> BacktrackPath(
+    const std::unordered_map<StopId, PathState>& search_result, StopId dest
+) {
+  std::vector<Step> path;
+  PathState state = search_result.at(dest);
+  while (state.step.origin_trip != TripId::NOOP) {
+    path.push_back(state.step);
+    state = search_result.at(state.step.origin_stop);
+  }
+  std::reverse(path.begin(), path.end());
+  return path;
+}
+
+// Compute the merged step for a path, with proper origin time calculation.
+// The origin time adjustment handles flex paths that transition to fixed trips.
+Step ComputeMergedStep(const std::vector<Step>& path) {
+  if (path.empty()) {
+    return Step{};
+  }
+
+  const Step& first = path.front();
+  const Step& last = path.back();
+
+  // Calculate origin time with flex adjustment
+  TimeSinceServiceStart origin_time = first.origin_time;
+  bool is_flex = first.is_flex;
+
+  if (is_flex && path.size() > 1) {
+    // If the path starts with flex and transitions to a fixed trip,
+    // we can delay departure. Find where flex ends.
+    TimeSinceServiceStart flex_arrival = first.destination_time;
+    for (size_t i = 1; i < path.size(); ++i) {
+      if (!path[i].is_flex) {
+        // Found transition from flex to fixed
+        // We can wait: (fixed_departure - flex_arrival) extra time
+        origin_time.seconds +=
+            path[i].origin_time.seconds - flex_arrival.seconds;
+        is_flex = false;  // Path becomes non-flex when we connect to fixed
+        break;
+      }
+      flex_arrival = path[i].destination_time;
+    }
+  }
+
+  return Step{
+      first.origin_stop,
+      last.destination_stop,
+      origin_time,
+      last.destination_time,
+      first.origin_trip,
+      last.destination_trip,
+      is_flex
+  };
+}
+
 std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
@@ -107,14 +156,13 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  const PathState initial_state(initial_step, initial_step);
-  frontier.emplace(initial_state);
+  frontier.push(PathState{initial_step});
 
   while (!frontier.empty()) {
     const PathState current_state = frontier.top();
-    const StopId current_stop = current_state.whole_step.destination_stop;
+    const StopId current_stop = current_state.step.destination_stop;
     const TimeSinceServiceStart current_time =
-        current_state.whole_step.destination_time;
+        current_state.step.destination_time;
     frontier.pop();
 
     if (result.find(current_stop) != result.end()) {
@@ -133,6 +181,11 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
     if (adj_it == adjacency_list.adjacent.end()) {
       continue;
     }
+
+    // Determine the origin time to use for new paths.
+    // If current step is NOOP (we're at the origin), new paths will start
+    // fresh. Otherwise, we propagate the existing origin_time.
+    const bool at_origin = current_state.step.origin_trip == TripId::NOOP;
 
     for (const std::vector<Step>& step_group : adj_it->second) {
       // Check if this group has a flex trip (first step is flex)
@@ -154,32 +207,7 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
           flex_step_at_now.origin_time = current_time;
           flex_step_at_now.destination_time = arrival_time;
 
-          if (current_state.whole_step.origin_trip == TripId::NOOP) {
-            // If our current step is just staying in place, start the path with
-            // flex step
-            Step flex_path_step{
-                flex_step.origin_stop,
-                flex_step.destination_stop,
-                current_time,  // Start immediately
-                arrival_time,  // Arrive after duration
-                flex_step.origin_trip,
-                flex_step.destination_trip,
-                true  // is_flex
-            };
-            frontier.push(PathState{flex_path_step, flex_step_at_now});
-          } else {
-            // Combine current step with flex step
-            Step combined_flex_step{
-                current_state.whole_step.origin_stop,
-                flex_step.destination_stop,
-                current_state.whole_step.origin_time,
-                arrival_time,  // Arrive after walking duration
-                current_state.whole_step.origin_trip,
-                flex_step.destination_trip,
-                current_state.whole_step.is_flex  // is_flex
-            };
-            frontier.push(PathState{combined_flex_step, flex_step_at_now});
-          }
+          frontier.push(PathState{flex_step_at_now});
         }
       }
 
@@ -197,38 +225,7 @@ std::unordered_map<StopId, PathState> FindShortestPathsAtTime(
           continue;
         }
 
-        if (current_state.whole_step.origin_trip == TripId::NOOP) {
-          // If our current step is just staying in place, then "start" the path
-          // outwards with the whole next step.
-          frontier.push(PathState{next_step, next_step});
-        } else {
-          // If we have a current step that involves actually moving around,
-          // combine the "starting" part of the current step with the
-          // "finishing" part of the next step.
-
-          TimeSinceServiceStart new_step_origin_time =
-              current_state.whole_step.origin_time;
-          if (current_state.whole_step.is_flex) {
-            // If the current step is flex, we may be able to wait longer before
-            // starting and still catch this connection.
-            new_step_origin_time.seconds +=
-                next_step.origin_time.seconds -
-                current_state.whole_step.destination_time.seconds;
-          }
-
-          frontier.push(PathState{
-              Step{
-                  current_state.whole_step.origin_stop,
-                  next_step.destination_stop,
-                  new_step_origin_time,
-                  next_step.destination_time,
-                  current_state.whole_step.origin_trip,
-                  next_step.destination_trip,
-                  false  // is_flex
-              },
-              next_step
-          });
-        }
+        frontier.push(PathState{next_step});
       }
     }
   }
@@ -279,36 +276,47 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     }
 
     // Do query.
-    const std::unordered_map<StopId, PathState> steps = FindShortestPathsAtTime(
-        adjacency_list, query_time, origin, destinations_to_query
-    );
+    const std::unordered_map<StopId, PathState> search_result =
+        FindShortestPathsAtTime(
+            adjacency_list, query_time, origin, destinations_to_query
+        );
 
     // Push all results and update current origin times.
     for (const auto& dest : destinations_to_query) {
-      const auto r_it = steps.find(dest);
-      if (r_it == steps.end()) {
+      const auto r_it = search_result.find(dest);
+      if (r_it == search_result.end()) {
         // There are no more steps for this destination.
         current_origin_time[dest] = big_time;
         continue;
       }
-      const PathState r = r_it->second;
-      result[dest].push_back(r.whole_step);
 
-      Path& full_path = full_paths[r.whole_step];
-      full_path.merged_step = r.whole_step;
-      PathState backtracking_state = r;
-      while (backtracking_state.current_step.origin_trip != TripId::NOOP) {
-        full_path.steps.push_back(backtracking_state.current_step);
-        backtracking_state =
-            steps.at(backtracking_state.current_step.origin_stop);
-        if (destinations.find(backtracking_state.current_step.destination_stop
-            ) != destinations.end()) {
-          through_other_destination[r.whole_step] = true;
+      // Backtrack to get the full path
+      const PathState& path_state = r_it->second;
+      std::vector<Step> path_steps = BacktrackPath(search_result, dest);
+      if (path_steps.empty()) {
+        current_origin_time[dest] = big_time;
+        continue;
+      }
+
+      // Construct merged step by computing origin_time from the path
+      Step merged_step = ComputeMergedStep(path_steps);
+      result[dest].push_back(merged_step);
+
+      Path& full_path = full_paths[merged_step];
+      full_path.merged_step = merged_step;
+      full_path.steps = path_steps;
+
+      // Check if path goes through another destination
+      for (const Step& step : path_steps) {
+        if (step.destination_stop != dest &&
+            destinations.find(step.destination_stop) != destinations.end()) {
+          through_other_destination[merged_step] = true;
+          break;
         }
       }
-      std::reverse(full_path.steps.begin(), full_path.steps.end());
 
-      if (r.whole_step.is_flex) {
+      if (merged_step.is_flex) {
+        // Pure flex path (started flex and stayed flex throughout):
         // Flex step: The origin time is exactly the query time, but we know
         // that this is still gonna be the best step up until the next departure
         // from origin, so we can advance the current origin time to that.
@@ -348,9 +356,10 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
           current_origin_time[dest] = big_time;
         }
       } else {
-        // Non-flex step: This is the best step up until `r.origin_time`, so
-        // advance current origin time to 1 past that.
-        current_origin_time[dest] = r.whole_step.origin_time;
+        // Non-flex step: This is the best step up until
+        // merged_step.origin_time, so advance current origin time to 1 past
+        // that.
+        current_origin_time[dest] = merged_step.origin_time;
         current_origin_time[dest].seconds += 1;
       }
     }

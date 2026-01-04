@@ -14,6 +14,27 @@
 
 namespace vats5 {
 
+// GoogleTest printer for Step - makes EXPECT_THAT output readable
+void PrintTo(const Step& step, std::ostream* os) {
+  *os << "Step{origin_stop: " << step.origin_stop
+      << ", destination_stop: " << step.destination_stop << ", origin_time: \""
+      << step.origin_time.ToString() << "\""
+      << ", destination_time: \"" << step.destination_time.ToString() << "\""
+      << ", is_flex: " << (step.is_flex ? "true" : "false") << "}";
+}
+
+// GoogleTest printer for Path - makes EXPECT_THAT output readable
+void PrintTo(const Path& path, std::ostream* os) {
+  *os << "Path{merged_step: ";
+  PrintTo(path.merged_step, os);
+  *os << ", steps: [";
+  for (size_t i = 0; i < path.steps.size(); ++i) {
+    if (i > 0) *os << ", ";
+    PrintTo(path.steps[i], os);
+  }
+  *os << "]}";
+}
+
 TEST(ShortestPathTest, MakeAdjacencyListBasic) {
   std::vector<Step> steps = {
       Step{
@@ -61,11 +82,14 @@ void VerifyPathResult(
   StopId destination_stop =
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
 
-  auto path_it = shortest_paths.find(destination_stop);
-  ASSERT_NE(path_it, shortest_paths.end())
+  ASSERT_TRUE(shortest_paths.contains(destination_stop))
       << destination_stop_name << " path not found";
 
-  const Step& step = path_it->second.whole_step;
+  std::vector<Step> path_steps =
+      BacktrackPath(shortest_paths, destination_stop);
+  ASSERT_FALSE(path_steps.empty()) << destination_stop_name << " path is empty";
+
+  Step step = ComputeMergedStep(path_steps);
 
   EXPECT_EQ(step.origin_time.ToString(), expected_origin_time_str)
       << destination_stop_name << " departure time";
@@ -320,7 +344,7 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  const Step& result = shortest_paths[StopId{2}].whole_step;
+  const Step& result = shortest_paths[StopId{2}].step;
 
   // With the bug, this will be 350 (50 + 300 flex duration)
   // Without the bug, this should be 200 (scheduled trip arrival)
@@ -1265,7 +1289,7 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  const Step& result = shortest_paths[StopId{3}].whole_step;
+  std::vector<Step> path_steps = BacktrackPath(shortest_paths, StopId{3});
 
   // The algorithm will likely choose:
   // - Depart A at 100, arrive B at 110
@@ -1283,8 +1307,9 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   // the later departure from A at 180.
 
   // Assert the "suboptimal" returned result.
-  EXPECT_EQ(result.origin_time.seconds, 100);
-  EXPECT_EQ(result.destination_time.seconds, 210);
+  ASSERT_FALSE(path_steps.empty());
+  EXPECT_EQ(path_steps.front().origin_time.seconds, 100);
+  EXPECT_EQ(path_steps.back().destination_time.seconds, 210);
 }
 
 TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {

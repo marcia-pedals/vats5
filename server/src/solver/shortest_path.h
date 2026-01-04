@@ -59,22 +59,22 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
 // The data we keep at each stop along a shortest path search.
 //
-// Includes enough data to reconstruct a whole path if you have the state at
-// each stop along the path. Also includes various derived data useful during
-// the search and useful for using the search results.
-//
-// TODO: A lot of this data is very redundant for convenience. This struct is
-// heavily used in the hot path of the search, so making it smaller may make the
-// search a lot faster. One simple idea might be to make the whole search be
-// based off `current_step`, and rely on backtracking to get info about the
-// departure, instead of computing `whole_step` througout the whole search?
+// Stores the step used to reach this stop. The full path can be reconstructed
+// by backtracking through the result map.
 struct PathState {
-  // All steps in the whole path so far, merged together.
-  Step whole_step;
-
-  // The latest step taken in the search.
-  Step current_step;
+  // The step taken to reach this stop.
+  Step step;
 };
+
+// Backtrack through the search results to reconstruct the full path.
+// Returns the steps in order from origin to destination.
+std::vector<Step> BacktrackPath(
+    const std::unordered_map<StopId, PathState>& search_result, StopId dest
+);
+
+// Compute the merged step for a path, with proper origin time calculation.
+// The origin time adjustment handles flex paths that transition to fixed trips.
+Step ComputeMergedStep(const std::vector<Step>& path);
 
 // Find earliest times you can get to a set of stops from `origin` when starting
 // at `time`.
