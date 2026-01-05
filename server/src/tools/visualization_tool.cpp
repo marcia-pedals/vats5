@@ -96,10 +96,24 @@ struct PairHash {
 };
 
 struct StopGoodness {
-  std::unordered_set<StopId> touch_stops;
-  std::unordered_set<std::pair<StopId, StopId>, PairHash> touch_edges;
+  // Maps from StopId to distance in meters between the current stop and that
+  // stop
+  std::unordered_map<StopId, double> touch_stops;
+  // Maps from edge (pair of StopIds) to distance in meters between those two
+  // stops
+  std::unordered_map<std::pair<StopId, StopId>, double, PairHash> touch_edges;
 
-  int Goodness() const { return touch_edges.size() - touch_stops.size(); }
+  double Goodness() const {
+    double edge_sum = 0;
+    for (const auto& [edge, dist] : touch_edges) {
+      edge_sum += dist;
+    }
+    double stop_sum = 0;
+    for (const auto& [stop, dist] : touch_stops) {
+      stop_sum += dist;
+    }
+    return edge_sum - stop_sum;
+  }
 
   std::unordered_set<StopId> partial_touch_stops;
   std::unordered_set<std::pair<StopId, StopId>, PairHash> partial_touch_edges;
@@ -108,6 +122,41 @@ struct StopGoodness {
     return partial_touch_edges.size() - partial_touch_stops.size();
   }
 };
+
+// Calculate distance in meters between two stops using their positions.
+double StopDistanceMeters(
+    const DataGtfsMapping& mapping, StopId stop_a, StopId stop_b
+) {
+  const StopPosition& pos_a = mapping.stop_positions[stop_a.v];
+  const StopPosition& pos_b = mapping.stop_positions[stop_b.v];
+  double dx = pos_a.x_meters - pos_b.x_meters;
+  double dy = pos_a.y_meters - pos_b.y_meters;
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+// Calculate the sum of distances of all edges in the adjacency list.
+// Each edge is counted only once (not twice for both directions).
+double TotalEdgeDistance(
+    const PathsAdjacencyList& adjacency_list, const DataGtfsMapping& mapping
+) {
+  std::unordered_set<std::pair<StopId, StopId>, PairHash> seen_edges;
+  double total = 0;
+  for (const auto& [origin_stop, path_groups] : adjacency_list.adjacent) {
+    for (const auto& path_group : path_groups) {
+      if (path_group.empty()) continue;
+      StopId destination_stop = path_group[0].merged_step.destination_stop;
+      auto edge_key = std::make_pair(
+          std::min(origin_stop, destination_stop),
+          std::max(origin_stop, destination_stop)
+      );
+      if (!seen_edges.contains(edge_key)) {
+        seen_edges.insert(edge_key);
+        total += StopDistanceMeters(mapping, origin_stop, destination_stop);
+      }
+    }
+  }
+  return total;
+}
 
 std::vector<StopId> SelectIntermediateStop(
     const PathsAdjacencyList& split, const DataGtfsMapping& mapping
@@ -147,12 +196,19 @@ std::vector<StopId> SelectIntermediateStop(
         StopGoodness& stop_goodness = goodness[stop_id];
 
         if (count == path_group.size()) {
-          stop_goodness.touch_stops.insert(origin_stop);
-          stop_goodness.touch_stops.insert(destination_stop);
-          stop_goodness.touch_edges.insert(
-              {std::min(origin_stop, destination_stop),
-               std::max(origin_stop, destination_stop)}
+          double dist_to_origin =
+              StopDistanceMeters(mapping, stop_id, origin_stop);
+          double dist_to_dest =
+              StopDistanceMeters(mapping, stop_id, destination_stop);
+          stop_goodness.touch_stops[origin_stop] = dist_to_origin;
+          stop_goodness.touch_stops[destination_stop] = dist_to_dest;
+          double edge_distance =
+              StopDistanceMeters(mapping, origin_stop, destination_stop);
+          auto edge_key = std::make_pair(
+              std::min(origin_stop, destination_stop),
+              std::max(origin_stop, destination_stop)
           );
+          stop_goodness.touch_edges[edge_key] = edge_distance;
         }
 
         stop_goodness.partial_touch_stops.insert(origin_stop);
@@ -363,65 +419,69 @@ int main(int argc, char* argv[]) {
 
   PathsAdjacencyList split = minimal;
 
-  // First visualization: no hardcoded intermediate stops (only bart_stops)
-  {
-    split = SplitPathsAt(split, intermediate_stops);
-    split = AdjacencyListSnapToStops(
-        steps_from_gtfs.mapping, snap_threshold_meters, split
-    );
-    split = SplitPathsAt(split, intermediate_stops);
+  // // First visualization: no hardcoded intermediate stops (only bart_stops)
+  // {
+  //   split = SplitPathsAt(split, intermediate_stops);
+  //   split = AdjacencyListSnapToStops(
+  //       steps_from_gtfs.mapping, snap_threshold_meters, split
+  //   );
+  //   split = SplitPathsAt(split, intermediate_stops);
 
-    int edge_count = 0;
-    for (const auto& [origin_stop, path_groups] : split.adjacent) {
-      edge_count += path_groups.size();
-    }
-    std::cout << "Visualization 0 (no hardcoded stops) edge count: "
-              << edge_count << "\n";
+  //   int edge_count = 0;
+  //   for (const auto& [origin_stop, path_groups] : split.adjacent) {
+  //     edge_count += path_groups.size();
+  //   }
+  //   double edge_distance = TotalEdgeDistance(split, steps_from_gtfs.mapping);
+  //   std::cout << "Visualization 0 (no hardcoded stops) edge count: "
+  //             << edge_count << ", total edge distance: " << edge_distance <<
+  //             "m\n";
 
-    visualizations.push_back(MakeVisualization(
-        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
-    ));
-  }
+  //   visualizations.push_back(MakeVisualization(
+  //       gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+  //   ));
+  // }
 
   // Add all hardcoded intermediate stops at once
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:palo-alto-station"}
-  ));
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:san-jose-diridon-station"}
-  ));
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:santa-clara-caltrain"}
-  ));
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:mountain-view-station"}
-  ));
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"sunnyvale"}
-  ));
-  intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
-      GtfsStopId{"mtc:caltrain-4th-&-king"}
-  ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"mtc:palo-alto-station"}
+  // ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"mtc:san-jose-diridon-station"}
+  // ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"mtc:santa-clara-caltrain"}
+  // ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"mtc:mountain-view-station"}
+  // ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"sunnyvale"}
+  // ));
+  // intermediate_stops.insert(steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
+  //     GtfsStopId{"mtc:caltrain-4th-&-king"}
+  // ));
 
-  // Second visualization: with all hardcoded stops
-  {
-    split = SplitPathsAt(split, intermediate_stops);
-    split = AdjacencyListSnapToStops(
-        steps_from_gtfs.mapping, snap_threshold_meters, split
-    );
-    split = SplitPathsAt(split, intermediate_stops);
+  // // Second visualization: with all hardcoded stops
+  // {
+  //   split = SplitPathsAt(split, intermediate_stops);
+  //   split = AdjacencyListSnapToStops(
+  //       steps_from_gtfs.mapping, snap_threshold_meters, split
+  //   );
+  //   split = SplitPathsAt(split, intermediate_stops);
 
-    int edge_count = 0;
-    for (const auto& [origin_stop, path_groups] : split.adjacent) {
-      edge_count += path_groups.size();
-    }
-    std::cout << "Visualization 1 (with hardcoded stops) edge count: "
-              << edge_count << "\n";
+  //   int edge_count = 0;
+  //   for (const auto& [origin_stop, path_groups] : split.adjacent) {
+  //     edge_count += path_groups.size();
+  //   }
+  //   double edge_distance = TotalEdgeDistance(split, steps_from_gtfs.mapping);
+  //   std::cout << "Visualization 1 (with hardcoded stops) edge count: "
+  //             << edge_count << ", total edge distance: " << edge_distance <<
+  //             "m\n";
 
-    visualizations.push_back(MakeVisualization(
-        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
-    ));
-  }
+  //   visualizations.push_back(MakeVisualization(
+  //       gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+  //   ));
+  // }
 
   for (int i = 0; i < 50; ++i) {
     split = SplitPathsAt(split, intermediate_stops);
@@ -430,11 +490,17 @@ int main(int argc, char* argv[]) {
     );
     split = SplitPathsAt(split, intermediate_stops);
 
+    visualizations.push_back(MakeVisualization(
+        gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
+    ));
+
     int edge_count = 0;
     for (const auto& [origin_stop, path_groups] : split.adjacent) {
       edge_count += path_groups.size();
     }
-    std::cout << "Current edge count: " << edge_count << "\n";
+    double edge_distance = TotalEdgeDistance(split, steps_from_gtfs.mapping);
+    std::cout << "Current edge count: " << edge_count
+              << ", total edge distance: " << edge_distance << "m\n";
 
     auto candidate_intermediate_stops =
         SelectIntermediateStop(split, steps_from_gtfs.mapping);
@@ -459,18 +525,19 @@ int main(int argc, char* argv[]) {
       for (const auto& [origin_stop, path_groups] : new_split.adjacent) {
         new_edge_count += path_groups.size();
       }
+      double new_edge_distance =
+          TotalEdgeDistance(new_split, steps_from_gtfs.mapping);
 
-      if (new_edge_count <= edge_count) {
-        std::cout << "Selected " << j + 1 << " reducing from " << edge_count
-                  << " to " << new_edge_count << "\n";
+      if (new_edge_distance <= edge_distance + 100000) {
+        std::cout << "Selected " << j + 1 << " reducing distance from "
+                  << edge_distance << "m to " << new_edge_distance
+                  << "m (edges: " << edge_count << " -> " << new_edge_count
+                  << ")\n";
         intermediate_stops.insert(stop);
         found_improvement = true;
-
-        // Save visualization after adding this intermediate stop
-        visualizations.push_back(MakeVisualization(
-            gtfs_day, steps_from_gtfs, bart_stops, intermediate_stops, split
-        ));
         break;
+      } else {
+        std::cout << j + 1 << " not improvement " << new_edge_distance << "\n";
       }
     }
 
