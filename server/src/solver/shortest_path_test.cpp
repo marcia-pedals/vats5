@@ -64,7 +64,7 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
       adjacency_list.adjacent.find(StopId{1}), adjacency_list.adjacent.end()
   );
   EXPECT_EQ(adjacency_list.adjacent[StopId{1}].size(), 1);
-  EXPECT_EQ(adjacency_list.adjacent[StopId{1}][0].size(), 2);
+  EXPECT_EQ(adjacency_list.adjacent[StopId{1}][0].steps.size(), 2);
 }
 
 namespace {
@@ -1331,8 +1331,9 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
         std::remove_if(
             dest_groups.begin(),
             dest_groups.end(),
-            [&](const std::vector<Step>& group) {
-              return !group.empty() && group[0].destination_stop == stop_id;
+            [&](const StepGroup& group) {
+              return !group.steps.empty() &&
+                     group.steps[0].destination_stop == stop_id;
             }
         ),
         dest_groups.end()
@@ -1347,13 +1348,15 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   );
 
   // Sort destination groups by destination stop ID for consistent comparison
-  auto sort_by_dest = [](std::vector<std::vector<Step>>& groups) {
+  auto sort_by_dest = [](std::vector<StepGroup>& groups) {
     std::sort(
         groups.begin(),
         groups.end(),
-        [](const std::vector<Step>& a, const std::vector<Step>& b) {
-          StopId dest_a = a.empty() ? StopId{0} : a[0].destination_stop;
-          StopId dest_b = b.empty() ? StopId{0} : b[0].destination_stop;
+        [](const StepGroup& a, const StepGroup& b) {
+          StopId dest_a =
+              a.steps.empty() ? StopId{0} : a.steps[0].destination_stop;
+          StopId dest_b =
+              b.steps.empty() ? StopId{0} : b.steps[0].destination_stop;
           return dest_a.v < dest_b.v;
         }
     );
@@ -1366,7 +1369,16 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
     sort_by_dest(groups);
   }
 
-  EXPECT_EQ(adjacency_list.adjacent, reduced.adjacent);
+  // Compare step groups element-by-element (comparing steps only)
+  EXPECT_EQ(adjacency_list.adjacent.size(), reduced.adjacent.size());
+  for (const auto& [stop_id, groups] : adjacency_list.adjacent) {
+    auto it = reduced.adjacent.find(stop_id);
+    ASSERT_NE(it, reduced.adjacent.end()) << "Missing stop_id " << stop_id.v;
+    ASSERT_EQ(groups.size(), it->second.size());
+    for (size_t i = 0; i < groups.size(); ++i) {
+      EXPECT_EQ(groups[i].steps, it->second[i].steps);
+    }
+  }
 }
 
 // TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART) {

@@ -4,10 +4,34 @@
 
 namespace vats5 {
 
+// A group of steps from one origin to one destination, sorted by origin time.
+// Includes a separate array of departure times for cache-friendly binary
+// search.
+struct StepGroup {
+  std::vector<Step> steps;
+  // Parallel array: departure_times_div10[i] = steps[i].origin_time.seconds /
+  // 10 for non-flex steps. If steps[0] is flex, departure_times_div10[0] is
+  // ignored and the array still has the same size as steps. Divided by 10 to
+  // fit in int16_t (max 32767 * 10 = 327670 seconds ≈ 91 hours).
+  std::vector<int16_t> departure_times_div10;
+};
+
+inline void to_json(nlohmann::json& j, const StepGroup& sg) {
+  j = nlohmann::json{
+      {"steps", sg.steps}, {"departure_times_div10", sg.departure_times_div10}
+  };
+}
+
+inline void from_json(const nlohmann::json& j, StepGroup& sg) {
+  sg.steps = j.at("steps").get<std::vector<Step>>();
+  sg.departure_times_div10 =
+      j.at("departure_times_div10").get<std::vector<int16_t>>();
+}
+
 struct StepsAdjacencyList {
-  // Mapping from stop to steps originating at that stop, grouped by destination
-  // stop. Each group of steps is sorted by origin time and minimal.
-  std::unordered_map<StopId, std::vector<std::vector<Step>>> adjacent;
+  // Mapping from stop to step groups originating at that stop, grouped by
+  // destination stop. Each group of steps is sorted by origin time and minimal.
+  std::unordered_map<StopId, std::vector<StepGroup>> adjacent;
 
   // Strict upper bound on all StopId values in this adjacency list.
   // All stop IDs s satisfy s.v < stop_id_ub.
@@ -17,7 +41,7 @@ struct StepsAdjacencyList {
 // Custom JSON serialization for StepsAdjacencyList
 // Convert the StopId-keyed map to int-keyed for JSON
 inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
-  std::vector<std::pair<int, std::vector<std::vector<Step>>>> pairs;
+  std::vector<std::pair<int, std::vector<StepGroup>>> pairs;
   for (const auto& [k, v] : adj.adjacent) {
     pairs.emplace_back(k.v, v);
   }
@@ -25,9 +49,8 @@ inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
 }
 
 inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
-  auto pairs =
-      j.at("adjacent")
-          .get<std::vector<std::pair<int, std::vector<std::vector<Step>>>>>();
+  auto pairs = j.at("adjacent")
+                   .get<std::vector<std::pair<int, std::vector<StepGroup>>>>();
   for (const auto& [k, v] : pairs) {
     adj.adjacent[StopId{k}] = v;
   }
