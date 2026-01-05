@@ -14,11 +14,10 @@ find_package(Crow)
 find_package(nlohmann_json REQUIRED)
 
 FetchContent_Declare(
-  csv  
-  GIT_REPOSITORY https://github.com/vincentlaucsb/csv-parser.git
-  GIT_SHALLOW TRUE 
-  GIT_TAG 2.2.1
-) 
+  csv
+  GIT_REPOSITORY https://github.com/StaflSystems/csv-parser.git
+  GIT_TAG f30f50d3b4f6c4c0973dacb8e319faaca79d3960  # PR #277: fix --coverage linker error
+)
 FetchContent_MakeAvailable(csv)
 
 FetchContent_Declare(
@@ -46,7 +45,7 @@ target_include_directories(date PUBLIC src)
 
 # Create GTFS library target
 add_library(gtfs STATIC src/gtfs/gtfs.cpp)
-target_link_libraries(gtfs PUBLIC csv gcov nlohmann_json::nlohmann_json)
+target_link_libraries(gtfs PUBLIC csv nlohmann_json::nlohmann_json)
 target_include_directories(gtfs PUBLIC src)
 
 # Create data library target

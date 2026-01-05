@@ -26,8 +26,8 @@
           ];
 
           shellHook = ''
-            export CC=${pkgs.gcc}/bin/gcc
-            export CXX=${pkgs.gcc}/bin/g++
+            export CC=${pkgs.clang}/bin/clang
+            export CXX=${pkgs.clang}/bin/clang++
             export RC_PARAMS="max_success=5000"
           '';
         };
