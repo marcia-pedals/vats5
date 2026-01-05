@@ -1,9 +1,12 @@
 #include "shortest_path.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
+#include <mutex>
 #include <queue>
+#include <thread>
 
 #include "solver/step_merge.h"
 
@@ -441,27 +444,75 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
-  StepsAdjacencyList simplified_input = adjacency_list;
+  // Convert to vector for indexed access
+  std::vector<StopId> origins(system_stops.begin(), system_stops.end());
+  const size_t num_origins = origins.size();
 
-  PathsAdjacencyList result;
-  result.adjacent.reserve(system_stops.size());
+  // Per-origin results stored in a vector (one per origin)
+  std::vector<std::vector<std::vector<Path>>> per_origin_results(num_origins);
 
-  for (const StopId origin : system_stops) {
-    std::cout << result.adjacent.size() << " / " << system_stops.size() << "\n";
-    std::unordered_set<StopId> destinations = system_stops;
-    destinations.erase(origin);
-    std::unordered_map<StopId, std::vector<Path>> paths =
-        FindMinimalPathSet(simplified_input, origin, destinations);
-    for (const StopId dest : destinations) {
-      const std::vector<Path>& paths_to_dest = paths[dest];
-      result.adjacent[origin].push_back(paths_to_dest);
+  // Work queue: atomic index for next origin to process
+  std::atomic<size_t> next_origin{0};
+
+  // Progress tracking
+  std::atomic<size_t> completed{0};
+  std::mutex progress_mutex;
+
+  // Determine number of threads
+  const unsigned int num_threads =
+      std::max(1u, std::thread::hardware_concurrency());
+
+  // Worker function that grabs unclaimed origins
+  auto worker = [&]() {
+    while (true) {
+      // Atomically claim the next origin
+      size_t i = next_origin.fetch_add(1);
+      if (i >= num_origins) {
+        break;
+      }
+
+      const StopId origin = origins[i];
+
+      std::unordered_set<StopId> destinations = system_stops;
+      destinations.erase(origin);
+
+      std::unordered_map<StopId, std::vector<Path>> paths =
+          FindMinimalPathSet(adjacency_list, origin, destinations);
+
+      // Collect results for this origin
+      std::vector<std::vector<Path>> origin_result;
+      origin_result.reserve(destinations.size());
+      for (const StopId dest : destinations) {
+        origin_result.push_back(std::move(paths[dest]));
+      }
+      per_origin_results[i] = std::move(origin_result);
+
+      // Update progress
+      size_t done = ++completed;
+      {
+        std::lock_guard<std::mutex> lock(progress_mutex);
+        std::cout << done << " / " << num_origins << "\n";
+      }
     }
+  };
 
-    // TODO: Think about this and decide whether it makes things faster and
-    // whether it is correct. And also think about whether there are similar
-    // ideas that make things even faster. Experimentally, it seems like it
-    // speeds up the BART reduction from 230s to 190s, so nice but not amazing.
-    // simplified_input.adjacent[origin] = result.adjacent[origin];
+  // Launch threads
+  std::vector<std::thread> threads;
+  threads.reserve(num_threads);
+  for (unsigned int t = 0; t < num_threads; ++t) {
+    threads.emplace_back(worker);
+  }
+
+  // Wait for all threads to complete
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  // Combine results
+  PathsAdjacencyList result;
+  result.adjacent.reserve(num_origins);
+  for (size_t i = 0; i < num_origins; ++i) {
+    result.adjacent[origins[i]] = std::move(per_origin_results[i]);
   }
 
   return result;

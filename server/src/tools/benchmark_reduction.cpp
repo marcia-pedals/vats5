@@ -9,7 +9,7 @@
 using namespace vats5;
 
 int main(int argc, char* argv[]) {
-  const std::string gtfs_path = "../data/RG_20260109_BA_CT_SC";
+  const std::string gtfs_path = "../data/RG_20260108_all";
 
   std::string output_path;
   for (int i = 1; i < argc; i++) {
