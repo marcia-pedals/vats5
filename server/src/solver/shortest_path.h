@@ -8,21 +8,29 @@ namespace vats5 {
 // Includes a separate array of departure times for cache-friendly binary
 // search.
 struct StepGroup {
+  // Optional flex step for this origin-destination pair.
+  // If present, this is a flex trip that can be taken at any time.
+  std::optional<Step> flex_step;
+
+  // Fixed-schedule steps, sorted by origin time.
   std::vector<Step> steps;
+
   // Parallel array: departure_times_div10[i] = steps[i].origin_time.seconds /
-  // 10 for non-flex steps. If steps[0] is flex, departure_times_div10[0] is
-  // ignored and the array still has the same size as steps. Divided by 10 to
-  // fit in int16_t (max 32767 * 10 = 327670 seconds ≈ 91 hours).
+  // 10. Divided by 10 to fit in int16_t (max 32767 * 10 = 327670 seconds ≈ 91
+  // hours).
   std::vector<int16_t> departure_times_div10;
 };
 
 inline void to_json(nlohmann::json& j, const StepGroup& sg) {
   j = nlohmann::json{
-      {"steps", sg.steps}, {"departure_times_div10", sg.departure_times_div10}
+      {"flex_step", sg.flex_step},
+      {"steps", sg.steps},
+      {"departure_times_div10", sg.departure_times_div10}
   };
 }
 
 inline void from_json(const nlohmann::json& j, StepGroup& sg) {
+  sg.flex_step = j.at("flex_step").get<std::optional<Step>>();
   sg.steps = j.at("steps").get<std::vector<Step>>();
   sg.departure_times_div10 =
       j.at("departure_times_div10").get<std::vector<int16_t>>();

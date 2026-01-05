@@ -23,14 +23,37 @@ int main(int argc, char* argv[]) {
   GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
 
   std::cout << "Normalizing stops..." << std::endl;
+  auto normalize_start = std::chrono::high_resolution_clock::now();
   gtfs_day = GtfsNormalizeStops(gtfs_day);
+  auto normalize_end = std::chrono::high_resolution_clock::now();
+  auto normalize_duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          normalize_end - normalize_start
+      );
+  std::cout << "Normalizing stops took " << normalize_duration.count() << " ms"
+            << std::endl;
 
   std::cout << "Getting steps..." << std::endl;
+  auto steps_start = std::chrono::high_resolution_clock::now();
   StepsFromGtfs steps_from_gtfs =
       GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+  auto steps_end = std::chrono::high_resolution_clock::now();
+  auto steps_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      steps_end - steps_start
+  );
+  std::cout << "Getting steps took " << steps_duration.count() << " ms"
+            << std::endl;
 
   std::cout << "Making adjacency list..." << std::endl;
+  auto adjacency_start = std::chrono::high_resolution_clock::now();
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  auto adjacency_end = std::chrono::high_resolution_clock::now();
+  auto adjacency_duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          adjacency_end - adjacency_start
+      );
+  std::cout << "Making adjacency list took " << adjacency_duration.count()
+            << " ms" << std::endl;
 
   std::unordered_set<StopId> bart_stops =
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
