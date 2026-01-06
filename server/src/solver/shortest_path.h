@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "solver/data.h"
 
 namespace vats5 {
@@ -70,19 +72,42 @@ inline void from_json(const nlohmann::json& j, StepGroup& sg) {
 }
 
 struct StepsAdjacencyList {
-  // Step groups originating at each stop, indexed by StopId.v.
-  // adjacent[i] contains step groups for stop with id i.
-  // Each group of steps is sorted by origin time and minimal.
-  std::vector<std::vector<StepGroup>> adjacent;
+  // CSR (Compressed Sparse Row) format for step groups.
+  // step_groups_for_stop(i) returns a span of step_groups for stop i.
+  //
+  // offsets[i] is the index into step_groups where stop i's groups begin.
+  // offsets has size num_stops + 1, with offsets[num_stops] ==
+  // step_groups.size().
+  std::vector<uint32_t> offsets;
+
+  // Flat array of all step groups, grouped by origin stop.
+  std::vector<StepGroup> step_groups;
+
+  // Number of stops (offsets.size() - 1, or 0 if empty).
+  size_t num_stops() const { return offsets.empty() ? 0 : offsets.size() - 1; }
+
+  // Get step groups for a given stop.
+  std::span<const StepGroup> step_groups_for_stop(size_t stop_id) const {
+    if (stop_id >= num_stops()) {
+      return {};
+    }
+    return std::span<const StepGroup>(
+        step_groups.data() + offsets[stop_id],
+        offsets[stop_id + 1] - offsets[stop_id]
+    );
+  }
 };
 
 // Custom JSON serialization for StepsAdjacencyList
 inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
-  j = nlohmann::json{{"adjacent", adj.adjacent}};
+  j = nlohmann::json{
+      {"offsets", adj.offsets}, {"step_groups", adj.step_groups}
+  };
 }
 
 inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
-  adj.adjacent = j.at("adjacent").get<std::vector<std::vector<StepGroup>>>();
+  adj.offsets = j.at("offsets").get<std::vector<uint32_t>>();
+  adj.step_groups = j.at("step_groups").get<std::vector<StepGroup>>();
 }
 
 struct PathsAdjacencyList {

@@ -59,10 +59,11 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
 
-  EXPECT_GE(adjacency_list.adjacent.size(), 2u);  // At least indices 0 and 1
-  EXPECT_FALSE(adjacency_list.adjacent[1].empty());
-  EXPECT_EQ(adjacency_list.adjacent[1].size(), 1);
-  EXPECT_EQ(adjacency_list.adjacent[1][0].steps.size(), 2);
+  EXPECT_GE(adjacency_list.num_stops(), 2u);  // At least indices 0 and 1
+  auto groups = adjacency_list.step_groups_for_stop(1);
+  EXPECT_FALSE(groups.empty());
+  EXPECT_EQ(groups.size(), 1);
+  EXPECT_EQ(groups[0].steps.size(), 2);
 }
 
 namespace {
@@ -1327,24 +1328,6 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
     return group.destination_stop;
   };
 
-  // Remove self-loops because these are not minimal.
-  // (For some reason BART GTFS has trips with 2 adjacent SFO stops).
-  for (size_t stop_idx = 0; stop_idx < adjacency_list.adjacent.size();
-       ++stop_idx) {
-    auto& dest_groups = adjacency_list.adjacent[stop_idx];
-    StopId stop_id{static_cast<int>(stop_idx)};
-    dest_groups.erase(
-        std::remove_if(
-            dest_groups.begin(),
-            dest_groups.end(),
-            [&](const StepGroup& group) {
-              return get_dest_stop(group) == stop_id;
-            }
-        ),
-        dest_groups.end()
-    );
-  }
-
   // TODO: Separate out a SplitPathsAt test. Calling it here with an empty
   // `intermediate_stops` is just a kludge to make sure it's working in the most
   // basic way: Not changing anything when there are no intermediate stops.
@@ -1352,30 +1335,34 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       SplitPathsAt(ReduceToMinimalSystemPaths(adjacency_list, bart_stops), {})
   );
 
-  // Sort destination groups by destination stop ID for consistent comparison
-  auto sort_by_dest = [&](std::vector<StepGroup>& groups) {
+  // Helper to filter out self-loops and sort groups by destination
+  auto get_filtered_sorted_groups = [&](const StepsAdjacencyList& adj,
+                                        size_t stop_idx
+                                    ) -> std::vector<StepGroup> {
+    std::vector<StepGroup> result;
+    StopId stop_id{static_cast<int>(stop_idx)};
+    for (const StepGroup& sg : adj.step_groups_for_stop(stop_idx)) {
+      // Filter out self-loops (for some reason BART GTFS has trips with 2
+      // adjacent SFO stops)
+      if (get_dest_stop(sg) != stop_id) {
+        result.push_back(sg);
+      }
+    }
     std::sort(
-        groups.begin(),
-        groups.end(),
+        result.begin(),
+        result.end(),
         [&](const StepGroup& a, const StepGroup& b) {
           return get_dest_stop(a).v < get_dest_stop(b).v;
         }
     );
+    return result;
   };
 
-  for (auto& groups : adjacency_list.adjacent) {
-    sort_by_dest(groups);
-  }
-  for (auto& groups : reduced.adjacent) {
-    sort_by_dest(groups);
-  }
-
   // Compare step groups element-by-element (comparing steps and flex_step)
-  EXPECT_EQ(adjacency_list.adjacent.size(), reduced.adjacent.size());
-  for (size_t stop_idx = 0; stop_idx < adjacency_list.adjacent.size();
-       ++stop_idx) {
-    const auto& groups = adjacency_list.adjacent[stop_idx];
-    const auto& reduced_groups = reduced.adjacent[stop_idx];
+  EXPECT_EQ(adjacency_list.num_stops(), reduced.num_stops());
+  for (size_t stop_idx = 0; stop_idx < adjacency_list.num_stops(); ++stop_idx) {
+    auto groups = get_filtered_sorted_groups(adjacency_list, stop_idx);
+    auto reduced_groups = get_filtered_sorted_groups(reduced, stop_idx);
     ASSERT_EQ(groups.size(), reduced_groups.size())
         << "Mismatch at stop_id " << stop_idx;
     for (size_t i = 0; i < groups.size(); ++i) {

@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
   std::cout << "Number of stops in adjacency list: "
-            << adjacency_list.adjacent.size() << std::endl;
+            << adjacency_list.num_stops() << std::endl;
   std::cout << "Number of BART stops: " << bart_stops.size() << std::endl;
 
   std::cout << "Benchmarking ReduceToMinimalSystemPaths..." << std::endl;
