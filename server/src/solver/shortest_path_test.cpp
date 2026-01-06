@@ -63,7 +63,7 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
   auto groups = adjacency_list.step_groups_for_stop(1);
   EXPECT_FALSE(groups.empty());
   EXPECT_EQ(groups.size(), 1);
-  EXPECT_EQ(groups[0].steps.size(), 2);
+  EXPECT_EQ(adjacency_list.steps_for_group(groups[0]).size(), 2);
 }
 
 namespace {
@@ -1323,11 +1323,6 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  // Helper to get destination stop from a StepGroup
-  auto get_dest_stop = [](const StepGroup& group) -> StopId {
-    return group.destination_stop;
-  };
-
   // TODO: Separate out a SplitPathsAt test. Calling it here with an empty
   // `intermediate_stops` is just a kludge to make sure it's working in the most
   // basic way: Not changing anything when there are no intermediate stops.
@@ -1335,24 +1330,34 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       SplitPathsAt(ReduceToMinimalSystemPaths(adjacency_list, bart_stops), {})
   );
 
-  // Helper to filter out self-loops and sort groups by destination
-  auto get_filtered_sorted_groups = [&](const StepsAdjacencyList& adj,
-                                        size_t stop_idx
-                                    ) -> std::vector<StepGroup> {
-    std::vector<StepGroup> result;
+  // Helper struct to track StepGroup indices for sorting.
+  // We can't just copy StepGroups because steps_for_group uses pointer
+  // arithmetic to find the end from the next StepGroup.
+  struct GroupRef {
+    size_t index;  // Index into step_groups
+    StopId destination_stop;
+  };
+
+  // Helper to get filtered and sorted group indices for a stop
+  auto get_filtered_sorted_group_refs = [](const StepsAdjacencyList& adj,
+                                           size_t stop_idx
+                                        ) -> std::vector<GroupRef> {
+    std::vector<GroupRef> result;
     StopId stop_id{static_cast<int>(stop_idx)};
-    for (const StepGroup& sg : adj.step_groups_for_stop(stop_idx)) {
+    auto groups = adj.step_groups_for_stop(stop_idx);
+    size_t base_idx = adj.offsets[stop_idx];
+    for (size_t i = 0; i < groups.size(); ++i) {
       // Filter out self-loops (for some reason BART GTFS has trips with 2
       // adjacent SFO stops)
-      if (get_dest_stop(sg) != stop_id) {
-        result.push_back(sg);
+      if (groups[i].destination_stop != stop_id) {
+        result.push_back(GroupRef{base_idx + i, groups[i].destination_stop});
       }
     }
     std::sort(
         result.begin(),
         result.end(),
-        [&](const StepGroup& a, const StepGroup& b) {
-          return get_dest_stop(a).v < get_dest_stop(b).v;
+        [](const GroupRef& a, const GroupRef& b) {
+          return a.destination_stop.v < b.destination_stop.v;
         }
     );
     return result;
@@ -1361,13 +1366,26 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   // Compare step groups element-by-element (comparing steps and flex_step)
   EXPECT_EQ(adjacency_list.num_stops(), reduced.num_stops());
   for (size_t stop_idx = 0; stop_idx < adjacency_list.num_stops(); ++stop_idx) {
-    auto groups = get_filtered_sorted_groups(adjacency_list, stop_idx);
-    auto reduced_groups = get_filtered_sorted_groups(reduced, stop_idx);
-    ASSERT_EQ(groups.size(), reduced_groups.size())
+    auto group_refs = get_filtered_sorted_group_refs(adjacency_list, stop_idx);
+    auto reduced_group_refs = get_filtered_sorted_group_refs(reduced, stop_idx);
+    ASSERT_EQ(group_refs.size(), reduced_group_refs.size())
         << "Mismatch at stop_id " << stop_idx;
-    for (size_t i = 0; i < groups.size(); ++i) {
-      EXPECT_EQ(groups[i].flex_step, reduced_groups[i].flex_step);
-      EXPECT_EQ(groups[i].steps, reduced_groups[i].steps);
+    for (size_t i = 0; i < group_refs.size(); ++i) {
+      const StepGroup& sg = adjacency_list.step_groups[group_refs[i].index];
+      const StepGroup& reduced_sg =
+          reduced.step_groups[reduced_group_refs[i].index];
+      // Compare flex_step presence and value if present
+      EXPECT_EQ(sg.has_flex_step(), reduced_sg.has_flex_step());
+      if (sg.has_flex_step() && reduced_sg.has_flex_step()) {
+        EXPECT_EQ(sg.flex_step, reduced_sg.flex_step);
+      }
+      // Compare steps using the spans
+      auto steps = adjacency_list.steps_for_group(sg);
+      auto reduced_steps = reduced.steps_for_group(reduced_sg);
+      ASSERT_EQ(steps.size(), reduced_steps.size());
+      for (size_t j = 0; j < steps.size(); ++j) {
+        EXPECT_EQ(steps[j], reduced_steps[j]);
+      }
     }
   }
 }

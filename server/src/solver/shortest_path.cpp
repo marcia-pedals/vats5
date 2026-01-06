@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <mutex>
 #include <queue>
@@ -12,10 +13,10 @@
 
 namespace vats5 {
 
-// Helper to convert Step to AdjacencyListStep.
+// Helper to convert Step to AdjacencyListStep (drops origin_stop and
+// destination_stop).
 inline AdjacencyListStep ToAdjacencyListStep(const Step& step) {
   return AdjacencyListStep{
-      step.origin_stop,
       step.origin_time,
       step.destination_time,
       step.origin_trip,
@@ -25,10 +26,13 @@ inline AdjacencyListStep ToAdjacencyListStep(const Step& step) {
 
 // Helper to convert AdjacencyListStep back to Step.
 inline Step FromAdjacencyListStep(
-    const AdjacencyListStep& als, StopId destination_stop, bool is_flex
+    const AdjacencyListStep& als,
+    StopId origin_stop,
+    StopId destination_stop,
+    bool is_flex
 ) {
   return Step{
-      als.origin_stop,
+      origin_stop,
       destination_stop,
       als.origin_time,
       als.destination_time,
@@ -37,6 +41,26 @@ inline Step FromAdjacencyListStep(
       is_flex
   };
 }
+
+// Helper to convert a flex Step to AdjacencyListFlexStep.
+inline AdjacencyListFlexStep ToAdjacencyListFlexStep(const Step& step) {
+  return AdjacencyListFlexStep{
+      step.destination_time.seconds - step.origin_time.seconds,
+      step.origin_trip,
+      step.destination_trip
+  };
+}
+
+// Temporary step group with vectors for building the adjacency list.
+struct TempStepGroup {
+  StopId destination_stop;
+  AdjacencyListFlexStep
+      flex_step;  // origin_trip == TripId::NOOP means no flex step
+  std::vector<AdjacencyListStep> steps;
+  std::vector<int16_t> departure_times_div10;
+
+  bool has_flex_step() const { return flex_step.origin_trip != TripId::NOOP; }
+};
 
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   StepsAdjacencyList adjacency_list;
@@ -53,23 +77,25 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   }
 
   // Build step groups per stop in a temporary structure
-  std::vector<std::vector<StepGroup>> temp_adjacent(max_stop_id + 1);
+  std::vector<std::vector<TempStepGroup>> temp_adjacent(max_stop_id + 1);
 
   // Process each group: sort and make minimal
   for (auto& [origin_stop, destination_map] : groups) {
-    std::vector<StepGroup> sorted_minimal_groups;
+    std::vector<TempStepGroup> sorted_minimal_groups;
 
     for (auto& [destination_stop, step_vec] : destination_map) {
       SortSteps(step_vec);
       MakeMinimalCover(step_vec);
       if (!step_vec.empty()) {
-        StepGroup sg;
+        TempStepGroup sg;
         sg.destination_stop = destination_stop;
+        // Initialize flex_step with NOOP sentinel (no flex step by default)
+        sg.flex_step.origin_trip = TripId::NOOP;
 
         // Extract flex step if present (it's always first after sorting)
         size_t fixed_start = 0;
         if (step_vec[0].is_flex) {
-          sg.flex_step = ToAdjacencyListStep(step_vec[0]);
+          sg.flex_step = ToAdjacencyListFlexStep(step_vec[0]);
           fixed_start = 1;
         }
 
@@ -97,19 +123,38 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   adjacency_list.offsets.resize(num_stops + 1);
   adjacency_list.offsets[0] = 0;
 
-  // First pass: compute offsets
+  // First pass: compute offsets for step groups and count total steps
+  size_t total_steps = 0;
   for (size_t i = 0; i < num_stops; ++i) {
     adjacency_list.offsets[i + 1] =
         adjacency_list.offsets[i] +
         static_cast<uint32_t>(temp_adjacent[i].size());
+    for (const auto& tsg : temp_adjacent[i]) {
+      total_steps += tsg.steps.size();
+    }
   }
 
-  // Reserve space for all step groups
+  // Reserve space
   adjacency_list.step_groups.reserve(adjacency_list.offsets[num_stops]);
+  adjacency_list.all_steps.reserve(total_steps);
+  adjacency_list.all_departure_times_div10.reserve(total_steps);
 
-  // Second pass: flatten into step_groups
+  // Second pass: flatten into step_groups and all_steps
   for (size_t i = 0; i < num_stops; ++i) {
-    for (auto& sg : temp_adjacent[i]) {
+    for (auto& tsg : temp_adjacent[i]) {
+      StepGroup sg;
+      sg.destination_stop = tsg.destination_stop;
+      sg.flex_step = std::move(tsg.flex_step);
+      sg.steps_begin = static_cast<uint32_t>(adjacency_list.all_steps.size());
+
+      // Append steps to flat arrays
+      for (size_t j = 0; j < tsg.steps.size(); ++j) {
+        adjacency_list.all_steps.push_back(std::move(tsg.steps[j]));
+        adjacency_list.all_departure_times_div10.push_back(
+            tsg.departure_times_div10[j]
+        );
+      }
+
       adjacency_list.step_groups.push_back(std::move(sg));
     }
   }
@@ -120,12 +165,14 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   std::vector<size_t> non_flex_steps_per_group;
 
   for (size_t i = 0; i < num_stops; ++i) {
-    auto groups = adjacency_list.step_groups_for_stop(i);
-    if (!groups.empty()) {
-      step_groups_per_stop.push_back(groups.size());
-      for (const StepGroup& sg : groups) {
-        flex_steps_per_group.push_back(sg.flex_step.has_value() ? 1 : 0);
-        non_flex_steps_per_group.push_back(sg.steps.size());
+    auto step_groups = adjacency_list.step_groups_for_stop(i);
+    if (!step_groups.empty()) {
+      step_groups_per_stop.push_back(step_groups.size());
+      for (const StepGroup& sg : step_groups) {
+        flex_steps_per_group.push_back(sg.has_flex_step() ? 1 : 0);
+        non_flex_steps_per_group.push_back(
+            adjacency_list.steps_end_for_group(sg) - sg.steps_begin
+        );
       }
     }
   }
@@ -188,10 +235,13 @@ struct FrontierEntryComparator {
 // Precondition: `step_group.steps` contains only fixed-schedule steps (no
 // flex).
 const AdjacencyListStep* FindDepartureAtOrAfter(
-    const StepGroup& step_group, TimeSinceServiceStart t
+    const StepsAdjacencyList& adjacency_list,
+    const StepGroup& step_group,
+    TimeSinceServiceStart t
 ) {
-  const auto& steps = step_group.steps;
-  const auto& departure_times_div10 = step_group.departure_times_div10;
+  auto steps = adjacency_list.steps_for_group(step_group);
+  auto departure_times_div10 =
+      adjacency_list.departure_times_for_group(step_group);
 
   if (steps.empty()) {
     return nullptr;
@@ -352,27 +402,24 @@ std::vector<PathState> FindShortestPathsAtTime(
       const StopId next_stop = step_group.destination_stop;
 
       // Handle flex trip if present
-      if (step_group.flex_step.has_value()) {
-        const AdjacencyListStep& flex_als = *step_group.flex_step;
+      if (step_group.has_flex_step()) {
+        const AdjacencyListFlexStep& flex_step = step_group.flex_step;
         if (!finalized[next_stop.v]) {
-          // Calculate flex duration from stored times
-          int flex_duration =
-              flex_als.destination_time.seconds - flex_als.origin_time.seconds;
           // Calculate arrival time based on current time + duration
           TimeSinceServiceStart arrival_time{
-              current_time.seconds + flex_duration
+              current_time.seconds + flex_step.duration_seconds
           };
 
           // Only add if this is a better arrival time
           if (arrival_time.seconds <
               best_arrival[next_stop.v].step.destination_time.seconds) {
             Step flex_step_at_now{
-                flex_als.origin_stop,
+                current_stop,  // origin_stop is current_stop
                 next_stop,
                 current_time,
                 arrival_time,
-                flex_als.origin_trip,
-                flex_als.destination_trip,
+                flex_step.origin_trip,
+                flex_step.destination_trip,
                 true  // is_flex
             };
 
@@ -385,7 +432,7 @@ std::vector<PathState> FindShortestPathsAtTime(
       // Regular fixed-time trip handling
       {
         const AdjacencyListStep* next_als_ptr =
-            FindDepartureAtOrAfter(step_group, current_time);
+            FindDepartureAtOrAfter(adjacency_list, step_group, current_time);
         if (next_als_ptr == nullptr) {
           continue;
         }
@@ -397,8 +444,9 @@ std::vector<PathState> FindShortestPathsAtTime(
         // Only add if this is a better arrival time
         if (next_als_ptr->destination_time.seconds <
             best_arrival[next_stop.v].step.destination_time.seconds) {
-          Step next_step =
-              FromAdjacencyListStep(*next_als_ptr, next_stop, false);
+          Step next_step = FromAdjacencyListStep(
+              *next_als_ptr, current_stop, next_stop, false
+          );
           best_arrival[next_stop.v] = PathState{next_step};
           frontier.push(FrontierEntry{next_stop, next_als_ptr->destination_time}
           );
@@ -413,14 +461,17 @@ std::vector<PathState> FindShortestPathsAtTime(
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId>& destinations,
+    TimeSinceServiceStart origin_time_lb,
+    TimeSinceServiceStart origin_time_ub
 ) {
-  const TimeSinceServiceStart origin_time_ub{36 * 3600};
-
   const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
 
   std::unordered_map<StopId, std::vector<Step>> result;
   std::unordered_map<StopId, TimeSinceServiceStart> current_origin_time;
+  for (const StopId dest : destinations) {
+    current_origin_time[dest] = origin_time_lb;
+  }
 
   // A mapping from a Step in the result to its full Path.
   std::unordered_map<Step, Path> full_paths;
@@ -503,9 +554,9 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
           auto origin_step_groups =
               adjacency_list.step_groups_for_stop(origin.v);
           for (const StepGroup& step_group_from_origin : origin_step_groups) {
-            // All steps in step_group.steps are fixed-schedule (no flex)
-            for (const AdjacencyListStep& step_from_origin :
-                 step_group_from_origin.steps) {
+            // All steps in step_group are fixed-schedule (no flex)
+            auto steps = adjacency_list.steps_for_group(step_group_from_origin);
+            for (const AdjacencyListStep& step_from_origin : steps) {
               origin_departure_times->push_back(step_from_origin.origin_time);
             }
           }
@@ -583,11 +634,24 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
   std::vector<StopId> origins(system_stops.begin(), system_stops.end());
   const size_t num_origins = origins.size();
 
-  // Per-origin results stored in a vector (one per origin)
-  std::vector<std::vector<std::vector<Path>>> per_origin_results(num_origins);
+  // Time range parameters
+  constexpr int32_t range_size_seconds = 6 * 3600;   // 6 hours
+  constexpr int32_t total_time_seconds = 36 * 3600;  // 36 hours total
+  constexpr size_t num_ranges = (total_time_seconds + range_size_seconds - 1) /
+                                range_size_seconds;  // 6 ranges
 
-  // Work queue: atomic index for next origin to process
-  std::atomic<size_t> next_origin{0};
+  // Work items: (origin_index, range_index) pairs
+  const size_t num_work_items = num_origins * num_ranges;
+
+  // Per-work-item results: [origin_index][range_index] -> map of dest -> paths
+  std::vector<std::vector<std::unordered_map<StopId, std::vector<Path>>>>
+      per_work_item_results(
+          num_origins,
+          std::vector<std::unordered_map<StopId, std::vector<Path>>>(num_ranges)
+      );
+
+  // Work queue: atomic index for next work item to process
+  std::atomic<size_t> next_work_item{0};
 
   // Progress tracking
   std::atomic<size_t> completed{0};
@@ -597,37 +661,58 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
   const unsigned int num_threads =
       std::max(1u, std::thread::hardware_concurrency());
 
-  // Worker function that grabs unclaimed origins
-  auto worker = [&]() {
+  // Thread finish time tracking
+  std::vector<std::chrono::steady_clock::time_point> thread_finish_times(
+      num_threads
+  );
+  std::mutex finish_mutex;
+
+  // Worker function that grabs unclaimed work items
+  auto worker = [&](unsigned int thread_id) {
     while (true) {
-      // Atomically claim the next origin
-      size_t i = next_origin.fetch_add(1);
-      if (i >= num_origins) {
+      // Atomically claim the next work item
+      size_t work_idx = next_work_item.fetch_add(1);
+      if (work_idx >= num_work_items) {
         break;
       }
 
-      const StopId origin = origins[i];
+      // Decode work item into origin and range indices
+      size_t origin_idx = work_idx / num_ranges;
+      size_t range_idx = work_idx % num_ranges;
+
+      const StopId origin = origins[origin_idx];
 
       std::unordered_set<StopId> destinations = system_stops;
       destinations.erase(origin);
 
-      std::unordered_map<StopId, std::vector<Path>> paths =
-          FindMinimalPathSet(adjacency_list, origin, destinations);
-
-      // Collect results for this origin
-      std::vector<std::vector<Path>> origin_result;
-      origin_result.reserve(destinations.size());
-      for (const StopId dest : destinations) {
-        origin_result.push_back(std::move(paths[dest]));
+      // Compute time bounds for this range
+      TimeSinceServiceStart time_lb{
+          static_cast<int32_t>(range_idx * range_size_seconds)
+      };
+      TimeSinceServiceStart time_ub{
+          static_cast<int32_t>((range_idx + 1) * range_size_seconds)
+      };
+      if (time_ub.seconds > total_time_seconds) {
+        time_ub.seconds = total_time_seconds;
       }
-      per_origin_results[i] = std::move(origin_result);
+
+      std::unordered_map<StopId, std::vector<Path>> paths = FindMinimalPathSet(
+          adjacency_list, origin, destinations, time_lb, time_ub
+      );
+
+      per_work_item_results[origin_idx][range_idx] = std::move(paths);
 
       // Update progress
       size_t done = ++completed;
       {
         std::lock_guard<std::mutex> lock(progress_mutex);
-        std::cout << done << " / " << num_origins << "\n";
+        std::cout << done << " / " << num_work_items << "\n";
       }
+    }
+    // Record when this thread finished
+    {
+      std::lock_guard<std::mutex> lock(finish_mutex);
+      thread_finish_times[thread_id] = std::chrono::steady_clock::now();
     }
   };
 
@@ -635,7 +720,7 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
   std::vector<std::thread> threads;
   threads.reserve(num_threads);
   for (unsigned int t = 0; t < num_threads; ++t) {
-    threads.emplace_back(worker);
+    threads.emplace_back(worker, t);
   }
 
   // Wait for all threads to complete
@@ -643,11 +728,50 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
     thread.join();
   }
 
-  // Combine results
+  // Compute and report thread wait time
+  std::sort(thread_finish_times.begin(), thread_finish_times.end());
+  auto first_finish = thread_finish_times.front();
+  auto second_last_finish = thread_finish_times[thread_finish_times.size() - 2];
+  auto last_finish = thread_finish_times.back();
+  auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     last_finish - first_finish
+  )
+                     .count();
+  auto last_task_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          last_finish - second_last_finish
+  )
+                          .count();
+  std::cout << "Thread wait time (first to last finish): " << wait_ms
+            << " ms\n";
+  std::cout << "Thread wait time (2nd last to last finish): " << last_task_ms
+            << " ms\n";
+
+  // Combine results: merge all ranges for each origin
   PathsAdjacencyList result;
   result.adjacent.reserve(num_origins);
-  for (size_t i = 0; i < num_origins; ++i) {
-    result.adjacent[origins[i]] = std::move(per_origin_results[i]);
+
+  for (size_t origin_idx = 0; origin_idx < num_origins; ++origin_idx) {
+    const StopId origin = origins[origin_idx];
+    std::unordered_set<StopId> destinations = system_stops;
+    destinations.erase(origin);
+
+    std::vector<std::vector<Path>> origin_result;
+    origin_result.reserve(destinations.size());
+
+    for (const StopId dest : destinations) {
+      std::vector<Path> combined_paths;
+      for (size_t range_idx = 0; range_idx < num_ranges; ++range_idx) {
+        auto& range_paths = per_work_item_results[origin_idx][range_idx][dest];
+        combined_paths.insert(
+            combined_paths.end(),
+            std::make_move_iterator(range_paths.begin()),
+            std::make_move_iterator(range_paths.end())
+        );
+      }
+      origin_result.push_back(std::move(combined_paths));
+    }
+
+    result.adjacent[origin] = std::move(origin_result);
   }
 
   return result;
@@ -830,30 +954,32 @@ StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
     }
   }
 
-  // Build temporary vector of vectors
-  std::vector<std::vector<StepGroup>> temp_adjacent(max_stop_id + 1);
+  // Build temporary vector of TempStepGroups
+  std::vector<std::vector<TempStepGroup>> temp_adjacent(max_stop_id + 1);
 
   // Second pass: populate step groups
   for (const auto& [origin_stop, path_groups] : paths.adjacent) {
-    std::vector<StepGroup> step_groups;
+    std::vector<TempStepGroup> step_groups;
     for (const auto& path_group : path_groups) {
-      StepGroup sg;
+      TempStepGroup tsg;
+      // Initialize flex_step with NOOP sentinel (no flex step by default)
+      tsg.flex_step.origin_trip = TripId::NOOP;
       // All paths in a path_group have the same destination
       if (!path_group.empty()) {
-        sg.destination_stop = path_group[0].merged_step.destination_stop;
+        tsg.destination_stop = path_group[0].merged_step.destination_stop;
       }
       for (const Path& path : path_group) {
         if (path.merged_step.is_flex) {
-          sg.flex_step = ToAdjacencyListStep(path.merged_step);
+          tsg.flex_step = ToAdjacencyListFlexStep(path.merged_step);
         } else {
-          sg.steps.push_back(ToAdjacencyListStep(path.merged_step));
-          sg.departure_times_div10.push_back(
+          tsg.steps.push_back(ToAdjacencyListStep(path.merged_step));
+          tsg.departure_times_div10.push_back(
               static_cast<int16_t>(path.merged_step.origin_time.seconds / 10)
           );
         }
       }
-      if (sg.flex_step.has_value() || !sg.steps.empty()) {
-        step_groups.push_back(std::move(sg));
+      if (tsg.has_flex_step() || !tsg.steps.empty()) {
+        step_groups.push_back(std::move(tsg));
       }
     }
     if (!step_groups.empty()) {
@@ -866,14 +992,36 @@ StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
   result.offsets.resize(num_stops + 1);
   result.offsets[0] = 0;
 
+  // First pass: compute offsets for step groups and count total steps
+  size_t total_steps = 0;
   for (size_t i = 0; i < num_stops; ++i) {
     result.offsets[i + 1] =
         result.offsets[i] + static_cast<uint32_t>(temp_adjacent[i].size());
+    for (const auto& tsg : temp_adjacent[i]) {
+      total_steps += tsg.steps.size();
+    }
   }
 
+  // Reserve space
   result.step_groups.reserve(result.offsets[num_stops]);
+  result.all_steps.reserve(total_steps);
+  result.all_departure_times_div10.reserve(total_steps);
+
+  // Second pass: flatten into step_groups and all_steps
   for (size_t i = 0; i < num_stops; ++i) {
-    for (auto& sg : temp_adjacent[i]) {
+    for (auto& tsg : temp_adjacent[i]) {
+      StepGroup sg;
+      sg.destination_stop = tsg.destination_stop;
+      sg.flex_step = std::move(tsg.flex_step);
+      sg.steps_begin = static_cast<uint32_t>(result.all_steps.size());
+
+      // Append steps to flat arrays
+      for (size_t j = 0; j < tsg.steps.size(); ++j) {
+        result.all_steps.push_back(std::move(tsg.steps[j]));
+        result.all_departure_times_div10.push_back(tsg.departure_times_div10[j]
+        );
+      }
+
       result.step_groups.push_back(std::move(sg));
     }
   }
