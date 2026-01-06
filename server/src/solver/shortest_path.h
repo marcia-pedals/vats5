@@ -4,16 +4,47 @@
 
 namespace vats5 {
 
+// A step stored in an adjacency list. Omits destination_stop (stored once in
+// StepGroup) and is_flex (inferred from flex_step vs steps in StepGroup).
+struct AdjacencyListStep {
+  StopId origin_stop;
+
+  TimeSinceServiceStart origin_time;
+  TimeSinceServiceStart destination_time;
+
+  TripId origin_trip;
+  TripId destination_trip;
+
+  bool operator==(const AdjacencyListStep& other) const {
+    return origin_stop == other.origin_stop &&
+           origin_time == other.origin_time &&
+           destination_time == other.destination_time &&
+           origin_trip == other.origin_trip &&
+           destination_trip == other.destination_trip;
+  }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    AdjacencyListStep,
+    origin_stop,
+    origin_time,
+    destination_time,
+    origin_trip,
+    destination_trip
+)
+
 // A group of steps from one origin to one destination, sorted by origin time.
 // Includes a separate array of departure times for cache-friendly binary
 // search.
 struct StepGroup {
+  // The destination stop for all steps in this group.
+  StopId destination_stop;
+
   // Optional flex step for this origin-destination pair.
   // If present, this is a flex trip that can be taken at any time.
-  std::optional<Step> flex_step;
+  std::optional<AdjacencyListStep> flex_step;
 
   // Fixed-schedule steps, sorted by origin time.
-  std::vector<Step> steps;
+  std::vector<AdjacencyListStep> steps;
 
   // Parallel array: departure_times_div10[i] = steps[i].origin_time.seconds /
   // 10. Divided by 10 to fit in int16_t (max 32767 * 10 = 327670 seconds ≈ 91
@@ -23,6 +54,7 @@ struct StepGroup {
 
 inline void to_json(nlohmann::json& j, const StepGroup& sg) {
   j = nlohmann::json{
+      {"destination_stop", sg.destination_stop},
       {"flex_step", sg.flex_step},
       {"steps", sg.steps},
       {"departure_times_div10", sg.departure_times_div10}
@@ -30,39 +62,27 @@ inline void to_json(nlohmann::json& j, const StepGroup& sg) {
 }
 
 inline void from_json(const nlohmann::json& j, StepGroup& sg) {
-  sg.flex_step = j.at("flex_step").get<std::optional<Step>>();
-  sg.steps = j.at("steps").get<std::vector<Step>>();
+  sg.destination_stop = j.at("destination_stop").get<StopId>();
+  sg.flex_step = j.at("flex_step").get<std::optional<AdjacencyListStep>>();
+  sg.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
   sg.departure_times_div10 =
       j.at("departure_times_div10").get<std::vector<int16_t>>();
 }
 
 struct StepsAdjacencyList {
-  // Mapping from stop to step groups originating at that stop, grouped by
-  // destination stop. Each group of steps is sorted by origin time and minimal.
-  std::unordered_map<StopId, std::vector<StepGroup>> adjacent;
-
-  // Strict upper bound on all StopId values in this adjacency list.
-  // All stop IDs s satisfy s.v < stop_id_ub.
-  int stop_id_ub = 0;
+  // Step groups originating at each stop, indexed by StopId.v.
+  // adjacent[i] contains step groups for stop with id i.
+  // Each group of steps is sorted by origin time and minimal.
+  std::vector<std::vector<StepGroup>> adjacent;
 };
 
 // Custom JSON serialization for StepsAdjacencyList
-// Convert the StopId-keyed map to int-keyed for JSON
 inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
-  std::vector<std::pair<int, std::vector<StepGroup>>> pairs;
-  for (const auto& [k, v] : adj.adjacent) {
-    pairs.emplace_back(k.v, v);
-  }
-  j = nlohmann::json{{"adjacent", pairs}, {"stop_id_ub", adj.stop_id_ub}};
+  j = nlohmann::json{{"adjacent", adj.adjacent}};
 }
 
 inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
-  auto pairs = j.at("adjacent")
-                   .get<std::vector<std::pair<int, std::vector<StepGroup>>>>();
-  for (const auto& [k, v] : pairs) {
-    adj.adjacent[StopId{k}] = v;
-  }
-  adj.stop_id_ub = j.at("stop_id_ub").get<int>();
+  adj.adjacent = j.at("adjacent").get<std::vector<std::vector<StepGroup>>>();
 }
 
 struct PathsAdjacencyList {
