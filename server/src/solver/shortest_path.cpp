@@ -14,8 +14,9 @@ namespace vats5 {
 
 // Temporary structure for building StepGroups before flattening
 struct TempStepGroup {
-  std::optional<Step> flex_step;
-  std::vector<Step> fixed_steps;
+  StopId destination_stop;
+  std::optional<AdjacencyListStep> flex_step;
+  std::vector<AdjacencyListStep> fixed_steps;
 };
 
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
@@ -41,18 +42,19 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
       MakeMinimalCover(step_vec);
       if (!step_vec.empty()) {
         TempStepGroup tsg;
+        tsg.destination_stop = destination_stop;
 
         // Extract flex step if present (it's always first after sorting)
         size_t fixed_start = 0;
         if (step_vec[0].is_flex) {
-          tsg.flex_step = step_vec[0];
+          tsg.flex_step = AdjacencyListStep::FromStep(step_vec[0]);
           fixed_start = 1;
         }
 
         // Copy fixed-schedule steps
         tsg.fixed_steps.reserve(step_vec.size() - fixed_start);
         for (size_t i = fixed_start; i < step_vec.size(); ++i) {
-          tsg.fixed_steps.push_back(step_vec[i]);
+          tsg.fixed_steps.push_back(AdjacencyListStep::FromStep(step_vec[i]));
         }
 
         sorted_minimal_groups.push_back(std::move(tsg));
@@ -60,6 +62,14 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
     }
 
     if (!sorted_minimal_groups.empty()) {
+      // Sort by destination stop ID for consistent ordering
+      std::sort(
+          sorted_minimal_groups.begin(),
+          sorted_minimal_groups.end(),
+          [](const TempStepGroup& a, const TempStepGroup& b) {
+            return a.destination_stop.v < b.destination_stop.v;
+          }
+      );
       origin_to_temp_groups[origin_stop.v] = std::move(sorted_minimal_groups);
     }
   }
@@ -84,20 +94,27 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   // Allocate groups vector
   adjacency_list.groups.resize(running_offset);
 
-  // Second pass: place groups in flat vector and flatten steps
+  // Second pass: place groups in flat vector and flatten steps.
+  // Iterate by origin stop ID in sorted order for deterministic output.
   int steps_offset = 0;
-  for (auto& [origin_v, temp_groups] : origin_to_temp_groups) {
+  for (int origin_v = 0; origin_v <= max_stop_id; ++origin_v) {
+    auto it = origin_to_temp_groups.find(origin_v);
+    if (it == origin_to_temp_groups.end()) {
+      continue;
+    }
+    std::vector<TempStepGroup>& temp_groups = it->second;
     int group_offset = adjacency_list.group_offsets[origin_v];
     for (size_t i = 0; i < temp_groups.size(); ++i) {
       TempStepGroup& tsg = temp_groups[i];
       StepGroup& sg = adjacency_list.groups[group_offset + i];
 
+      sg.destination_stop = tsg.destination_stop;
       sg.flex_step = std::move(tsg.flex_step);
       sg.steps_start = steps_offset;
       sg.steps_end = steps_offset + static_cast<int>(tsg.fixed_steps.size());
 
       // Append fixed steps to flat vector
-      for (const Step& step : tsg.fixed_steps) {
+      for (const AdjacencyListStep& step : tsg.fixed_steps) {
         adjacency_list.steps.push_back(step);
         adjacency_list.departure_times_div10.push_back(
             static_cast<int16_t>(step.origin_time.seconds / 10)
@@ -134,7 +151,7 @@ struct FrontierEntryComparator {
 // steps.size() if none found.
 // Precondition: `steps` contains only fixed-schedule steps (no flex).
 size_t FindDepartureAtOrAfter(
-    std::span<const Step> steps,
+    std::span<const AdjacencyListStep> steps,
     std::span<const int16_t> departure_times_div10,
     TimeSinceServiceStart t
 ) {
@@ -294,10 +311,11 @@ std::vector<PathState> FindShortestPathsAtTime(
         adjacency_list.GetGroups(current_stop);
 
     for (const StepGroup& step_group : step_groups) {
+      const StopId next_stop = step_group.destination_stop;
+
       // Handle flex trip if present
       if (step_group.flex_step.has_value()) {
-        const Step& flex_step = *step_group.flex_step;
-        const StopId next_stop = flex_step.destination_stop;
+        const AdjacencyListStep& flex_step = *step_group.flex_step;
         if (!finalized[next_stop.v]) {
           // Calculate arrival time based on current time + duration
           TimeSinceServiceStart arrival_time{
@@ -307,9 +325,15 @@ std::vector<PathState> FindShortestPathsAtTime(
           // Only add if this is a better arrival time
           if (arrival_time.seconds <
               best_arrival[next_stop.v].step.destination_time.seconds) {
-            Step flex_step_at_now = flex_step;
-            flex_step_at_now.origin_time = current_time;
-            flex_step_at_now.destination_time = arrival_time;
+            Step flex_step_at_now{
+                current_stop,
+                next_stop,
+                current_time,
+                arrival_time,
+                flex_step.origin_trip,
+                flex_step.destination_trip,
+                true  // is_flex
+            };
 
             best_arrival[next_stop.v] = PathState{flex_step_at_now};
             frontier.push(
@@ -321,7 +345,8 @@ std::vector<PathState> FindShortestPathsAtTime(
 
       // Regular fixed-time trip handling
       {
-        std::span<const Step> group_steps = adjacency_list.GetSteps(step_group);
+        std::span<const AdjacencyListStep> group_steps =
+            adjacency_list.GetSteps(step_group);
         std::span<const int16_t> group_departure_times =
             adjacency_list.GetDepartureTimes(step_group);
 
@@ -350,15 +375,15 @@ std::vector<PathState> FindShortestPathsAtTime(
           }
         }
 
-        const Step& next_step = group_steps[next_step_idx];
-        const StopId next_stop = next_step.destination_stop;
+        const AdjacencyListStep& adj_step = group_steps[next_step_idx];
         if (finalized[next_stop.v]) {
           continue;
         }
 
         // Only add if this is a better arrival time
-        if (next_step.destination_time.seconds <
+        if (adj_step.destination_time.seconds <
             best_arrival[next_stop.v].step.destination_time.seconds) {
+          Step next_step = adj_step.ToStep(current_stop, next_stop, false);
           best_arrival[next_stop.v] = PathState{next_step};
           frontier.push(FrontierEntry{
               next_stop, next_step.destination_time, /*is_flex=*/false

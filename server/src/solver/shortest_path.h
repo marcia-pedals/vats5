@@ -6,22 +6,86 @@
 
 namespace vats5 {
 
+// A step in the adjacency list with only the necessary data.
+// origin_stop and destination_stop are stored in the parent structures,
+// and is_flex is inferred from context (flex_step vs steps array).
+struct AdjacencyListStep {
+  TimeSinceServiceStart origin_time;
+  TimeSinceServiceStart destination_time;
+  TripId origin_trip;
+  TripId destination_trip;
+
+  // Convert to a full Step given the context.
+  Step ToStep(StopId origin_stop, StopId destination_stop, bool is_flex) const {
+    return Step{
+        origin_stop,
+        destination_stop,
+        origin_time,
+        destination_time,
+        origin_trip,
+        destination_trip,
+        is_flex
+    };
+  }
+
+  // Create from a full Step.
+  static AdjacencyListStep FromStep(const Step& step) {
+    return AdjacencyListStep{
+        step.origin_time,
+        step.destination_time,
+        step.origin_trip,
+        step.destination_trip
+    };
+  }
+
+  int FlexDurationSeconds() const {
+    return destination_time.seconds - origin_time.seconds;
+  }
+
+  bool operator==(const AdjacencyListStep& other) const {
+    return origin_time == other.origin_time &&
+           destination_time == other.destination_time &&
+           origin_trip == other.origin_trip &&
+           destination_trip == other.destination_trip;
+  }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    AdjacencyListStep,
+    origin_time,
+    destination_time,
+    origin_trip,
+    destination_trip
+)
+
 // A group of steps from one origin to one destination, sorted by origin time.
 // The fixed-schedule steps and their departure times are stored in the parent
 // StepsAdjacencyList; this struct holds indices into those arrays.
 struct StepGroup {
+  // The destination stop for all steps in this group.
+  // The origin stop is determined by the position in the CSR structure.
+  StopId destination_stop;
+
   // Optional flex step for this origin-destination pair.
   // If present, this is a flex trip that can be taken at any time.
-  std::optional<Step> flex_step;
+  // is_flex is implicitly true for this step.
+  std::optional<AdjacencyListStep> flex_step;
 
   // Index range [steps_start, steps_end) into StepsAdjacencyList.steps
   // for fixed-schedule steps, sorted by origin time.
+  // is_flex is implicitly false for these steps.
   int steps_start = 0;
   int steps_end = 0;
+
+  bool operator==(const StepGroup& other) const {
+    return destination_stop == other.destination_stop &&
+           flex_step == other.flex_step && steps_start == other.steps_start &&
+           steps_end == other.steps_end;
+  }
 };
 
 inline void to_json(nlohmann::json& j, const StepGroup& sg) {
   j = nlohmann::json{
+      {"destination_stop", sg.destination_stop},
       {"flex_step", sg.flex_step},
       {"steps_start", sg.steps_start},
       {"steps_end", sg.steps_end}
@@ -29,7 +93,8 @@ inline void to_json(nlohmann::json& j, const StepGroup& sg) {
 }
 
 inline void from_json(const nlohmann::json& j, StepGroup& sg) {
-  sg.flex_step = j.at("flex_step").get<std::optional<Step>>();
+  sg.destination_stop = j.at("destination_stop").get<StopId>();
+  sg.flex_step = j.at("flex_step").get<std::optional<AdjacencyListStep>>();
   sg.steps_start = j.at("steps_start").get<int>();
   sg.steps_end = j.at("steps_end").get<int>();
 }
@@ -47,7 +112,8 @@ struct StepsAdjacencyList {
 
   // Flat vector of all fixed-schedule steps across all groups.
   // Each StepGroup references a range [steps_start, steps_end) into this.
-  std::vector<Step> steps;
+  // The origin_stop, destination_stop, and is_flex are stored in the StepGroup.
+  std::vector<AdjacencyListStep> steps;
 
   // Parallel array to steps: departure_times_div10[i] =
   // steps[i].origin_time.seconds / 10. Divided by 10 to fit in int16_t
@@ -70,8 +136,8 @@ struct StepsAdjacencyList {
   }
 
   // Get the fixed-schedule steps for a StepGroup.
-  std::span<const Step> GetSteps(const StepGroup& group) const {
-    return std::span<const Step>(
+  std::span<const AdjacencyListStep> GetSteps(const StepGroup& group) const {
+    return std::span<const AdjacencyListStep>(
         steps.data() + group.steps_start, group.steps_end - group.steps_start
     );
   }
@@ -82,6 +148,12 @@ struct StepsAdjacencyList {
         departure_times_div10.data() + group.steps_start,
         group.steps_end - group.steps_start
     );
+  }
+
+  bool operator==(const StepsAdjacencyList& other) const {
+    return group_offsets == other.group_offsets && groups == other.groups &&
+           steps == other.steps;
+    // Note: departure_times_div10 is derived from steps, so we don't compare it
   }
 };
 
@@ -98,7 +170,7 @@ inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
 inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   adj.group_offsets = j.at("group_offsets").get<std::vector<int>>();
   adj.groups = j.at("groups").get<std::vector<StepGroup>>();
-  adj.steps = j.at("steps").get<std::vector<Step>>();
+  adj.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
   adj.departure_times_div10 =
       j.at("departure_times_div10").get<std::vector<int16_t>>();
 }
