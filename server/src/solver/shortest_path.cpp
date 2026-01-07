@@ -752,78 +752,16 @@ PathsAdjacencyList AdjacencyListSnapToStops(
 }
 
 StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
-  // First pass: build per-origin temp step groups and find max_stop_id
-  std::unordered_map<int, std::vector<TempStepGroup>> origin_to_temp_groups;
-  int max_stop_id = 0;
-
+  // Extract all merged steps from paths
+  std::vector<Step> all_steps;
   for (const auto& [origin_stop, path_groups] : paths.adjacent) {
-    max_stop_id = std::max(max_stop_id, origin_stop.v);
-    std::vector<TempStepGroup> temp_step_groups;
     for (const auto& path_group : path_groups) {
-      TempStepGroup tsg;
       for (const Path& path : path_group) {
-        max_stop_id =
-            std::max(max_stop_id, path.merged_step.destination_stop.v);
-
-        if (path.merged_step.is_flex) {
-          tsg.flex_step = path.merged_step;
-        } else {
-          tsg.fixed_steps.push_back(path.merged_step);
-        }
-      }
-      if (tsg.flex_step.has_value() || !tsg.fixed_steps.empty()) {
-        temp_step_groups.push_back(std::move(tsg));
+        all_steps.push_back(path.merged_step);
       }
     }
-    if (!temp_step_groups.empty()) {
-      origin_to_temp_groups[origin_stop.v] = std::move(temp_step_groups);
-    }
   }
-
-  // Build CSR format for groups
-  StepsAdjacencyList result;
-  result.group_offsets.resize(max_stop_id + 1, 0);
-
-  // Count groups per origin
-  for (const auto& [origin_v, groups] : origin_to_temp_groups) {
-    result.group_offsets[origin_v] = static_cast<int>(groups.size());
-  }
-
-  // Convert counts to offsets (prefix sum)
-  int running_offset = 0;
-  for (int i = 0; i <= max_stop_id; ++i) {
-    int count = result.group_offsets[i];
-    result.group_offsets[i] = running_offset;
-    running_offset += count;
-  }
-
-  // Allocate groups vector
-  result.groups.resize(running_offset);
-
-  // Second pass: place groups in flat vector and flatten steps
-  int steps_offset = 0;
-  for (auto& [origin_v, temp_groups] : origin_to_temp_groups) {
-    int group_offset = result.group_offsets[origin_v];
-    for (size_t i = 0; i < temp_groups.size(); ++i) {
-      TempStepGroup& tsg = temp_groups[i];
-      StepGroup& sg = result.groups[group_offset + i];
-
-      sg.flex_step = std::move(tsg.flex_step);
-      sg.steps_start = steps_offset;
-      sg.steps_end = steps_offset + static_cast<int>(tsg.fixed_steps.size());
-
-      // Append fixed steps to flat vector
-      for (const Step& step : tsg.fixed_steps) {
-        result.steps.push_back(step);
-        result.departure_times_div10.push_back(
-            static_cast<int16_t>(step.origin_time.seconds / 10)
-        );
-      }
-      steps_offset = sg.steps_end;
-    }
-  }
-
-  return result;
+  return MakeAdjacencyList(all_steps);
 }
 
 }  // namespace vats5
