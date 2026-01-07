@@ -1,7 +1,6 @@
 #include "shortest_path.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <mutex>
@@ -399,14 +398,17 @@ std::vector<PathState> FindShortestPathsAtTime(
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId>& destinations,
+    TimeSinceServiceStart origin_time_lb,
+    TimeSinceServiceStart origin_time_ub
 ) {
-  const TimeSinceServiceStart origin_time_ub{36 * 3600};
-
   const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
 
   std::unordered_map<StopId, std::vector<Step>> result;
   std::unordered_map<StopId, TimeSinceServiceStart> current_origin_time;
+  for (const StopId dest : destinations) {
+    current_origin_time[dest] = origin_time_lb;
+  }
 
   // A mapping from a Step in the result to its full Path.
   std::unordered_map<Step, Path> full_paths;
@@ -544,50 +546,63 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
   std::vector<StopId> origins(system_stops.begin(), system_stops.end());
   const size_t num_origins = origins.size();
 
-  // Per-origin results stored in a vector (one per origin)
-  std::vector<std::vector<std::vector<Path>>> per_origin_results(num_origins);
+  // Split into 6-hour chunks: 36 hours / 6 hours = 6 chunks per origin
+  constexpr int kChunkSeconds = 6 * 3600;
+  constexpr int kTotalSeconds = 36 * 3600;
+  constexpr int kNumChunks = kTotalSeconds / kChunkSeconds;  // 6 chunks
+  const size_t num_work_items = num_origins * kNumChunks;
 
-  // Work queue: atomic index for next origin to process
-  std::atomic<size_t> next_origin{0};
+  // Per-work-item results: map from destination to paths
+  std::vector<std::unordered_map<StopId, std::vector<Path>>> per_item_results(
+      num_work_items
+  );
 
-  // Progress tracking
-  std::atomic<size_t> completed{0};
-  std::mutex progress_mutex;
+  // Work queue and progress tracking
+  std::mutex mutex;
+  size_t next_item = 0;
+  size_t completed = 0;
 
   // Determine number of threads
   const unsigned int num_threads =
       std::max(1u, std::thread::hardware_concurrency());
 
-  // Worker function that grabs unclaimed origins
+  std::cout << "Using " << num_threads << " threads for " << num_work_items
+            << " work items\n";
+
+  // Worker function that grabs unclaimed work items
   auto worker = [&]() {
     while (true) {
-      // Atomically claim the next origin
-      size_t i = next_origin.fetch_add(1);
-      if (i >= num_origins) {
+      // Claim the next work item
+      size_t i;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        i = next_item;
+        next_item += 1;
+      }
+      if (i >= num_work_items) {
         break;
       }
 
-      const StopId origin = origins[i];
+      const size_t origin_index = i / kNumChunks;
+      const int chunk_index = i % kNumChunks;
+      const StopId origin = origins[origin_index];
 
       std::unordered_set<StopId> destinations = system_stops;
       destinations.erase(origin);
 
-      std::unordered_map<StopId, std::vector<Path>> paths =
-          FindMinimalPathSet(adjacency_list, origin, destinations);
+      TimeSinceServiceStart lb{chunk_index * kChunkSeconds};
+      TimeSinceServiceStart ub{(chunk_index + 1) * kChunkSeconds};
 
-      // Collect results for this origin
-      std::vector<std::vector<Path>> origin_result;
-      origin_result.reserve(destinations.size());
-      for (const StopId dest : destinations) {
-        origin_result.push_back(std::move(paths[dest]));
-      }
-      per_origin_results[i] = std::move(origin_result);
+      per_item_results[i] =
+          FindMinimalPathSet(adjacency_list, origin, destinations, lb, ub);
 
-      // Update progress
-      size_t done = ++completed;
+      // Update progress (print only every 10 items)
       {
-        std::lock_guard<std::mutex> lock(progress_mutex);
-        std::cout << done << " / " << num_origins << "\n";
+        std::lock_guard<std::mutex> lock(mutex);
+        completed += 1;
+        if (completed % 10 == 0 || completed == num_work_items) {
+          std::cout << completed << " / " << num_work_items << "\n";
+        }
       }
     }
   };
@@ -604,11 +619,49 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
     thread.join();
   }
 
-  // Combine results
+  // Combine results per origin, merging flex steps
   PathsAdjacencyList result;
   result.adjacent.reserve(num_origins);
-  for (size_t i = 0; i < num_origins; ++i) {
-    result.adjacent[origins[i]] = std::move(per_origin_results[i]);
+
+  for (size_t origin_idx = 0; origin_idx < num_origins; ++origin_idx) {
+    const StopId origin = origins[origin_idx];
+
+    // Collect all paths from all chunks for this origin, grouped by destination
+    std::unordered_map<StopId, std::vector<Path>> dest_to_paths;
+
+    for (int c = 0; c < kNumChunks; ++c) {
+      size_t item_idx = origin_idx * kNumChunks + c;
+      for (auto& [dest, paths] : per_item_results[item_idx]) {
+        for (Path& path : paths) {
+          dest_to_paths[dest].push_back(std::move(path));
+        }
+      }
+    }
+
+    // For each destination, reorder flex steps to the beginning and keep only
+    // one
+    std::vector<std::vector<Path>> origin_result;
+    origin_result.reserve(dest_to_paths.size());
+
+    for (auto& [dest, paths] : dest_to_paths) {
+      // Partition flex paths to the front (stable to preserve order of
+      // non-flex)
+      auto first_non_flex =
+          std::stable_partition(paths.begin(), paths.end(), [](const Path& p) {
+            return p.merged_step.is_flex;
+          });
+
+      // Keep at most one flex path (they're all equivalent after normalization)
+      if (first_non_flex - paths.begin() > 1) {
+        paths.erase(paths.begin() + 1, first_non_flex);
+      }
+
+      if (!paths.empty()) {
+        origin_result.push_back(std::move(paths));
+      }
+    }
+
+    result.adjacent[origin] = std::move(origin_result);
   }
 
   return result;

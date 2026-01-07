@@ -253,8 +253,8 @@ std::vector<PathState> FindShortestPathsAtTime(
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin
-// times in [00:00, 36:00). Return value is a map from destination to the paths
-// from `origin` to that destination.
+// times in [origin_time_lb, origin_time_ub). Return value is a map from
+// destination to the paths from `origin` to that destination.
 //
 // Minimal means that these properties hold:
 // (a) Any path in `adjacency_list` from `origin` to a destination can be
@@ -263,7 +263,9 @@ std::vector<PathState> FindShortestPathsAtTime(
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId>& destinations,
+    TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
+    TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600}
 );
 
 // Return an adjacency list ("reduced list") with these properties:
