@@ -64,7 +64,9 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
   EXPECT_TRUE(adjacency_list.GetGroups(StopId{0}).empty());
   EXPECT_FALSE(adjacency_list.GetGroups(StopId{1}).empty());
   EXPECT_EQ(adjacency_list.GetGroups(StopId{1}).size(), 1);
-  EXPECT_EQ(adjacency_list.GetGroups(StopId{1})[0].steps.size(), 2);
+  EXPECT_EQ(
+      adjacency_list.GetSteps(adjacency_list.GetGroups(StopId{1})[0]).size(), 2
+  );
 }
 
 namespace {
@@ -1343,17 +1345,6 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  // Helper to get destination stop from a StepGroup
-  auto get_dest_stop = [](const StepGroup& group) -> StopId {
-    if (group.flex_step.has_value()) {
-      return group.flex_step->destination_stop;
-    }
-    if (!group.steps.empty()) {
-      return group.steps[0].destination_stop;
-    }
-    return StopId{0};
-  };
-
   // TODO: Separate out a SplitPathsAt test. Calling it here with an empty
   // `intermediate_stops` is just a kludge to make sure it's working in the most
   // basic way: Not changing anything when there are no intermediate stops.
@@ -1361,35 +1352,62 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       SplitPathsAt(ReduceToMinimalSystemPaths(adjacency_list, bart_stops), {})
   );
 
-  // Sort destination groups by destination stop ID for consistent comparison
-  auto sort_by_dest = [&](std::vector<StepGroup>& groups) {
-    std::sort(
-        groups.begin(),
-        groups.end(),
-        [&](const StepGroup& a, const StepGroup& b) {
-          return get_dest_stop(a).v < get_dest_stop(b).v;
-        }
-    );
+  // Helper to get destination stop from a StepGroup
+  auto get_dest_stop = [](const StepsAdjacencyList& adj,
+                          const StepGroup& group) -> StopId {
+    if (group.flex_step.has_value()) {
+      return group.flex_step->destination_stop;
+    }
+    std::span<const Step> steps = adj.GetSteps(group);
+    if (!steps.empty()) {
+      return steps[0].destination_stop;
+    }
+    return StopId{0};
+  };
+
+  // Struct to hold extracted group data for comparison
+  struct ExtractedGroup {
+    std::optional<Step> flex_step;
+    std::vector<Step> steps;
+  };
+
+  auto extract_group = [](const StepsAdjacencyList& adj, const StepGroup& g) {
+    ExtractedGroup eg;
+    eg.flex_step = g.flex_step;
+    std::span<const Step> steps = adj.GetSteps(g);
+    eg.steps.assign(steps.begin(), steps.end());
+    return eg;
   };
 
   // Extract groups from CSR into vectors for comparison, filtering self-loops
   // from original (BART GTFS has trips with 2 adjacent SFO stops).
-  std::unordered_map<int, std::vector<StepGroup>> original_groups;
-  std::unordered_map<int, std::vector<StepGroup>> reduced_groups;
+  std::unordered_map<int, std::vector<ExtractedGroup>> original_groups;
+  std::unordered_map<int, std::vector<ExtractedGroup>> reduced_groups;
 
   for (int stop_v = 0; stop_v < adjacency_list.NumStops(); ++stop_v) {
     std::span<const StepGroup> groups =
         adjacency_list.GetGroups(StopId{stop_v});
     if (!groups.empty()) {
-      std::vector<StepGroup> filtered;
+      std::vector<ExtractedGroup> filtered;
       for (const StepGroup& g : groups) {
         // Filter out self-loops
-        if (get_dest_stop(g).v != stop_v) {
-          filtered.push_back(g);
+        if (get_dest_stop(adjacency_list, g).v != stop_v) {
+          filtered.push_back(extract_group(adjacency_list, g));
         }
       }
       if (!filtered.empty()) {
-        sort_by_dest(filtered);
+        // Sort by destination stop ID for consistent comparison
+        std::sort(filtered.begin(), filtered.end(), [&](auto& a, auto& b) {
+          StopId dest_a =
+              a.flex_step.has_value()
+                  ? a.flex_step->destination_stop
+                  : (a.steps.empty() ? StopId{0} : a.steps[0].destination_stop);
+          StopId dest_b =
+              b.flex_step.has_value()
+                  ? b.flex_step->destination_stop
+                  : (b.steps.empty() ? StopId{0} : b.steps[0].destination_stop);
+          return dest_a.v < dest_b.v;
+        });
         original_groups[stop_v] = std::move(filtered);
       }
     }
@@ -1398,8 +1416,22 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   for (int stop_v = 0; stop_v < reduced.NumStops(); ++stop_v) {
     std::span<const StepGroup> groups = reduced.GetGroups(StopId{stop_v});
     if (!groups.empty()) {
-      std::vector<StepGroup> vec(groups.begin(), groups.end());
-      sort_by_dest(vec);
+      std::vector<ExtractedGroup> vec;
+      for (const StepGroup& g : groups) {
+        vec.push_back(extract_group(reduced, g));
+      }
+      // Sort by destination stop ID for consistent comparison
+      std::sort(vec.begin(), vec.end(), [&](auto& a, auto& b) {
+        StopId dest_a =
+            a.flex_step.has_value()
+                ? a.flex_step->destination_stop
+                : (a.steps.empty() ? StopId{0} : a.steps[0].destination_stop);
+        StopId dest_b =
+            b.flex_step.has_value()
+                ? b.flex_step->destination_stop
+                : (b.steps.empty() ? StopId{0} : b.steps[0].destination_stop);
+        return dest_a.v < dest_b.v;
+      });
       reduced_groups[stop_v] = std::move(vec);
     }
   }
