@@ -66,8 +66,14 @@ int main(int argc, char* argv[]) {
   std::unordered_set<StopId> bart_stops =
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
-  std::cout << "Number of stops in adjacency list: "
-            << adjacency_list.adjacent.size() << std::endl;
+  int num_origins_with_groups = 0;
+  for (int i = 0; i < adjacency_list.NumStops(); ++i) {
+    if (!adjacency_list.GetGroups(StopId{i}).empty()) {
+      ++num_origins_with_groups;
+    }
+  }
+  std::cout << "Number of stops in adjacency list: " << num_origins_with_groups
+            << std::endl;
   std::cout << "Number of BART stops: " << bart_stops.size() << std::endl;
 
   std::cout << "Benchmarking ReduceToMinimalSystemPaths..." << std::endl;

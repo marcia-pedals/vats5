@@ -13,21 +13,21 @@
 namespace vats5 {
 
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
-  StepsAdjacencyList adjacency_list;
-
   // Group steps by origin_stop and destination_stop
   std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Step>>>
-      groups;
+      temp_groups;
 
   int max_stop_id = 0;
   for (const Step& step : steps) {
-    groups[step.origin_stop][step.destination_stop].push_back(step);
+    temp_groups[step.origin_stop][step.destination_stop].push_back(step);
     max_stop_id = std::max(max_stop_id, step.origin_stop.v);
     max_stop_id = std::max(max_stop_id, step.destination_stop.v);
   }
 
-  // Process each group: sort and make minimal
-  for (auto& [origin_stop, destination_map] : groups) {
+  // Build per-origin StepGroups in a temporary map
+  std::unordered_map<int, std::vector<StepGroup>> origin_to_groups;
+
+  for (auto& [origin_stop, destination_map] : temp_groups) {
     std::vector<StepGroup> sorted_minimal_groups;
 
     for (auto& [destination_stop, step_vec] : destination_map) {
@@ -58,11 +58,38 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
     }
 
     if (!sorted_minimal_groups.empty()) {
-      adjacency_list.adjacent[origin_stop] = std::move(sorted_minimal_groups);
+      origin_to_groups[origin_stop.v] = std::move(sorted_minimal_groups);
     }
   }
 
-  adjacency_list.stop_id_ub = max_stop_id + 1;
+  // Build CSR format
+  StepsAdjacencyList adjacency_list;
+  adjacency_list.group_offsets.resize(max_stop_id + 1, 0);
+
+  // First pass: count groups per origin
+  for (const auto& [origin_v, groups] : origin_to_groups) {
+    adjacency_list.group_offsets[origin_v] = static_cast<int>(groups.size());
+  }
+
+  // Convert counts to offsets (prefix sum)
+  int running_offset = 0;
+  for (int i = 0; i <= max_stop_id; ++i) {
+    int count = adjacency_list.group_offsets[i];
+    adjacency_list.group_offsets[i] = running_offset;
+    running_offset += count;
+  }
+
+  // Allocate groups vector
+  adjacency_list.groups.resize(running_offset);
+
+  // Second pass: place groups in flat vector
+  for (auto& [origin_v, groups] : origin_to_groups) {
+    int offset = adjacency_list.group_offsets[origin_v];
+    for (size_t i = 0; i < groups.size(); ++i) {
+      adjacency_list.groups[offset + i] = std::move(groups[i]);
+    }
+  }
+
   return adjacency_list;
 }
 
@@ -202,7 +229,7 @@ std::vector<PathState> FindShortestPathsAtTime(
   }
 
   std::unordered_set<StopId> reached_destinations;
-  std::vector<bool> finalized(adjacency_list.stop_id_ub, false);
+  std::vector<bool> finalized(adjacency_list.NumStops(), false);
 
   // Compact priority queue storing only destination_stop and arrival_time.
   std::priority_queue<
@@ -214,7 +241,7 @@ std::vector<PathState> FindShortestPathsAtTime(
   // Maps stop index to the best PathState we've found for reaching it.
   // Unvisited stops have kUnvisitedPathState.
   std::vector<PathState> best_arrival(
-      adjacency_list.stop_id_ub, kUnvisitedPathState
+      adjacency_list.NumStops(), kUnvisitedPathState
   );
 
   // The state at the origin stop.
@@ -248,12 +275,10 @@ std::vector<PathState> FindShortestPathsAtTime(
       }
     }
 
-    auto adj_it = adjacency_list.adjacent.find(current_stop);
-    if (adj_it == adjacency_list.adjacent.end()) {
-      continue;
-    }
+    std::span<const StepGroup> step_groups =
+        adjacency_list.GetGroups(current_stop);
 
-    for (const StepGroup& step_group : adj_it->second) {
+    for (const StepGroup& step_group : step_groups) {
       // Handle flex trip if present
       if (step_group.flex_step.has_value()) {
         const Step& flex_step = *step_group.flex_step;
@@ -706,8 +731,10 @@ PathsAdjacencyList AdjacencyListSnapToStops(
 }
 
 StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
-  StepsAdjacencyList result;
+  // First pass: build per-origin step groups and find max_stop_id
+  std::unordered_map<int, std::vector<StepGroup>> origin_to_groups;
   int max_stop_id = 0;
+
   for (const auto& [origin_stop, path_groups] : paths.adjacent) {
     max_stop_id = std::max(max_stop_id, origin_stop.v);
     std::vector<StepGroup> step_groups;
@@ -731,10 +758,36 @@ StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
       }
     }
     if (!step_groups.empty()) {
-      result.adjacent[origin_stop] = std::move(step_groups);
+      origin_to_groups[origin_stop.v] = std::move(step_groups);
     }
   }
-  result.stop_id_ub = max_stop_id + 1;
+
+  // Build CSR format
+  StepsAdjacencyList result;
+  result.group_offsets.resize(max_stop_id + 1, 0);
+
+  // Count groups per origin
+  for (const auto& [origin_v, groups] : origin_to_groups) {
+    result.group_offsets[origin_v] = static_cast<int>(groups.size());
+  }
+
+  // Convert counts to offsets (prefix sum)
+  int running_offset = 0;
+  for (int i = 0; i <= max_stop_id; ++i) {
+    int count = result.group_offsets[i];
+    result.group_offsets[i] = running_offset;
+    running_offset += count;
+  }
+
+  // Allocate and fill groups vector
+  result.groups.resize(running_offset);
+  for (auto& [origin_v, groups] : origin_to_groups) {
+    int offset = result.group_offsets[origin_v];
+    for (size_t i = 0; i < groups.size(); ++i) {
+      result.groups[offset + i] = std::move(groups[i]);
+    }
+  }
+
   return result;
 }
 
