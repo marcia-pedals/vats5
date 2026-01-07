@@ -768,6 +768,17 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
             std::make_move_iterator(range_paths.end())
         );
       }
+
+      // Move flex steps to the front and keep only one
+      auto flex_end = std::stable_partition(
+          combined_paths.begin(),
+          combined_paths.end(),
+          [](const Path& p) { return p.merged_step.is_flex; }
+      );
+      if (flex_end - combined_paths.begin() > 1) {
+        combined_paths.erase(combined_paths.begin() + 1, flex_end);
+      }
+
       origin_result.push_back(std::move(combined_paths));
     }
 
