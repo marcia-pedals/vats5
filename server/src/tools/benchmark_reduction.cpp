@@ -5,6 +5,7 @@
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
 #include "solver/shortest_path.h"
+#include "tools/reduction_output.h"
 
 using namespace vats5;
 
@@ -14,8 +15,15 @@ int main(int argc, char* argv[]) {
   std::string output_path;
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if (arg == "--output" && i + 1 < argc) {
+    if (arg == "--output") {
+      if (i + 1 >= argc) {
+        std::cerr << "Error: --output requires an argument" << std::endl;
+        return 1;
+      }
       output_path = argv[++i];
+    } else {
+      std::cerr << "Error: unrecognized argument: " << arg << std::endl;
+      return 1;
     }
   }
 
@@ -87,9 +95,10 @@ int main(int argc, char* argv[]) {
 
   if (!output_path.empty()) {
     std::cout << "Saving result to: " << output_path << std::endl;
-    nlohmann::json j = minimal;
+    ReductionOutput output{minimal, steps_from_gtfs.mapping};
+    nlohmann::json j = output;
     std::ofstream out(output_path);
-    out << j.dump(2) << std::endl;
+    out << j;
   }
 
   return 0;

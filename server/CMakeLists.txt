@@ -78,6 +78,10 @@ target_link_libraries(visualization_tool PUBLIC shortest_path)
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
 target_link_libraries(benchmark_reduction PUBLIC shortest_path)
 
+# Add reduction diff tool
+add_executable(reduction_diff src/tools/reduction_diff.cpp)
+target_link_libraries(reduction_diff PUBLIC shortest_path)
+
 # Enable CMake testing
 enable_testing()
 
