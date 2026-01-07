@@ -66,11 +66,12 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-// Compact entry for the priority queue - only stores what's needed for
-// ordering. The full PathState is stored separately in best_arrival map.
 struct FrontierEntry {
   StopId destination_stop;
   TimeSinceServiceStart arrival_time;
+
+  // Whether the full path up to now is entirely flex.
+  bool is_flex;
 };
 
 struct FrontierEntryComparator {
@@ -85,17 +86,18 @@ struct FrontierEntryComparator {
   }
 };
 
-// Return pointer to the first fixed-schedule step departing >= `t`, or nullptr.
+// Return iterator to the first fixed-schedule step departing >= `t`, or
+// step_group.steps.end().
 // Precondition: `step_group.steps` contains only fixed-schedule steps (no
 // flex).
-const Step* FindDepartureAtOrAfter(
+std::vector<Step>::const_iterator FindDepartureAtOrAfter(
     const StepGroup& step_group, TimeSinceServiceStart t
 ) {
   const auto& steps = step_group.steps;
   const auto& departure_times_div10 = step_group.departure_times_div10;
 
   if (steps.empty()) {
-    return nullptr;
+    return steps.end();
   }
 
   // Binary search on the cache-friendly departure_times_div10 array.
@@ -106,22 +108,18 @@ const Step* FindDepartureAtOrAfter(
   );
 
   if (lower_bound_it == departure_times_div10.end()) {
-    return nullptr;
+    return steps.end();
   }
 
   // Linear scan forward to fix rounding errors.
   // The binary search may have landed on a step that departs before t
   // due to integer division truncation.
-  size_t index = lower_bound_it - departure_times_div10.begin();
-  while (index < steps.size() && steps[index].origin_time.seconds < t.seconds) {
-    ++index;
+  auto it = steps.begin() + (lower_bound_it - departure_times_div10.begin());
+  while (it != steps.end() && it->origin_time.seconds < t.seconds) {
+    ++it;
   }
 
-  if (index >= steps.size()) {
-    return nullptr;
-  }
-
-  return &steps[index];
+  return it;
 }
 
 // Backtrack through the search results to reconstruct the full path.
@@ -196,8 +194,13 @@ std::vector<PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
     StopId origin_stop,
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId>& destinations,
+    int* smallest_next_departure_gap_from_flex
 ) {
+  if (smallest_next_departure_gap_from_flex != nullptr) {
+    *smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
+  }
+
   std::unordered_set<StopId> reached_destinations;
   std::vector<bool> finalized(adjacency_list.stop_id_ub, false);
 
@@ -224,7 +227,7 @@ std::vector<PathState> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  frontier.push(FrontierEntry{origin_stop, origin_time});
+  frontier.push(FrontierEntry{origin_stop, origin_time, /*is_flex=*/true});
   best_arrival[origin_stop.v] = PathState{initial_step};
 
   while (!frontier.empty()) {
@@ -269,20 +272,39 @@ std::vector<PathState> FindShortestPathsAtTime(
             flex_step_at_now.destination_time = arrival_time;
 
             best_arrival[next_stop.v] = PathState{flex_step_at_now};
-            frontier.push(FrontierEntry{next_stop, arrival_time});
+            frontier.push(
+                FrontierEntry{next_stop, arrival_time, current_entry.is_flex}
+            );
           }
         }
       }
 
       // Regular fixed-time trip handling
       {
-        const Step* next_step_ptr =
-            FindDepartureAtOrAfter(step_group, current_time);
-        if (next_step_ptr == nullptr) {
+        auto next_step_it = FindDepartureAtOrAfter(step_group, current_time);
+        if (next_step_it == step_group.steps.end()) {
           continue;
         }
 
-        const Step& next_step = *next_step_ptr;
+        if (current_entry.is_flex &&
+            smallest_next_departure_gap_from_flex != nullptr) {
+          int this_gap = std::numeric_limits<int>::max();
+          auto next_dep_gap_it = next_step_it;
+          while (next_dep_gap_it != step_group.steps.end() &&
+                 next_dep_gap_it->origin_time <= current_time) {
+            next_dep_gap_it++;
+          }
+          if (next_dep_gap_it != step_group.steps.end() &&
+              next_dep_gap_it->origin_time > current_time) {
+            this_gap =
+                next_dep_gap_it->origin_time.seconds - current_time.seconds;
+          }
+          if (this_gap < *smallest_next_departure_gap_from_flex) {
+            *smallest_next_departure_gap_from_flex = this_gap;
+          }
+        }
+
+        const Step& next_step = *next_step_it;
         const StopId next_stop = next_step.destination_stop;
         if (finalized[next_stop.v]) {
           continue;
@@ -292,7 +314,9 @@ std::vector<PathState> FindShortestPathsAtTime(
         if (next_step.destination_time.seconds <
             best_arrival[next_stop.v].step.destination_time.seconds) {
           best_arrival[next_stop.v] = PathState{next_step};
-          frontier.push(FrontierEntry{next_stop, next_step.destination_time});
+          frontier.push(FrontierEntry{
+              next_stop, next_step.destination_time, /*is_flex=*/false
+          });
         }
       }
     }
@@ -340,8 +364,13 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     }
 
     // Do query.
+    int smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
     const std::vector<PathState> search_result = FindShortestPathsAtTime(
-        adjacency_list, query_time, origin, destinations_to_query
+        adjacency_list,
+        query_time,
+        origin,
+        destinations_to_query,
+        &smallest_next_departure_gap_from_flex
     );
 
     // Push all results and update current origin times.
@@ -379,14 +408,17 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
       }
 
       if (merged_step.is_flex) {
-        // Pure flex step: we don't know when there is a departure that will be
-        // faster than flex, so increment query time by 1 second.
-        // TODO: This is very slow (approx responsible for 2x-ing the e2e
-        // reduction of BART), and there might be some binary-search-like
-        // strategy for identifying the earliest next departure that's faster
-        // than flex.
-        current_origin_time[dest] = query_time;
-        current_origin_time[dest].seconds += 1;
+        // Pure flex step: Step forwards by
+        // `smallest_next_departure_gap_from_flex` (see
+        // `FindShortestPathsAtTime` doc comment).
+        if (smallest_next_departure_gap_from_flex ==
+            std::numeric_limits<int>::max()) {
+          current_origin_time[dest] = big_time;
+        } else {
+          current_origin_time[dest] = query_time;
+          current_origin_time[dest].seconds +=
+              smallest_next_departure_gap_from_flex;
+        }
       } else {
         // Non-flex step: This is the best step up until
         // merged_step.origin_time, so advance current origin time to 1 past

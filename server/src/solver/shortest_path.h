@@ -125,11 +125,21 @@ Step ComputeMergedStep(const std::vector<Step>& path);
 //
 // Returns a vector indexed by StopId.v. Unvisited stops have
 // destination_time.seconds == numeric_limits<int>::max().
+//
+// If `smallest_next_departure_gap_from_flex` is specified, it'll be set to the
+// smallest gap between any visited flex path from the origin and the next
+// departure that departs strictly after the visited flex path visits the stop.
+// This is useful if you are scanning forwards to find all best paths from A->B,
+// and you get a flex result, then you know that the result continues to be flex
+// up at least until `time + smallest_next_departure_gap_from_flex`. It gets set
+// to `std::numeric_limits<int>::max()` if there are no departures after any
+// visited flex paths.
 std::vector<PathState> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId>& destinations,
+    int* smallest_next_departure_gap_from_flex = nullptr
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin
