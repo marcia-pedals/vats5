@@ -320,10 +320,6 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   // of `destinations` before reaching its ultimate destination.
   std::unordered_map<Step, bool> through_other_destination;
 
-  // Sorted vector of all departure times from origin. This is optional because
-  // usually we don't need it. We compute it on demand.
-  std::optional<std::vector<TimeSinceServiceStart>> origin_departure_times;
-
   while (true) {
     // Find the smallest `current_origin_time` and query from there. Include all
     // destinations with that `current_origin_time` in the query.
@@ -383,44 +379,14 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
       }
 
       if (merged_step.is_flex) {
-        // Pure flex path (started flex and stayed flex throughout):
-        // Flex step: The origin time is exactly the query time, but we know
-        // that this is still gonna be the best step up until the next departure
-        // from origin, so we can advance the current origin time to that.
-
-        if (!origin_departure_times.has_value()) {
-          // Need to compute origin departure times.
-          origin_departure_times.emplace(std::vector<TimeSinceServiceStart>());
-          if (adjacency_list.adjacent.contains(origin)) {
-            for (const StepGroup& step_group_from_origin :
-                 adjacency_list.adjacent.at(origin)) {
-              // All steps in step_group.steps are fixed-schedule (no flex)
-              for (const Step& step_from_origin :
-                   step_group_from_origin.steps) {
-                origin_departure_times->push_back(step_from_origin.origin_time);
-              }
-            }
-          }
-
-          // TODO: Since we're merging sorted lists, we could do that faster
-          // than sorting at the end.
-          std::sort(
-              origin_departure_times->begin(), origin_departure_times->end()
-          );
-        }
-
-        TimeSinceServiceStart want_departure_at_or_after = query_time;
-        want_departure_at_or_after.seconds += 1;
-        const auto next_departure_it = std::lower_bound(
-            origin_departure_times->begin(),
-            origin_departure_times->end(),
-            want_departure_at_or_after
-        );
-        if (next_departure_it != origin_departure_times->end()) {
-          current_origin_time[dest] = *next_departure_it;
-        } else {
-          current_origin_time[dest] = big_time;
-        }
+        // Pure flex step: we don't know when there is a departure that will be
+        // faster than flex, so increment query time by 1 second.
+        // TODO: This is very slow (approx responsible for 2x-ing the e2e
+        // reduction of BART), and there might be some binary-search-like
+        // strategy for identifying the earliest next departure that's faster
+        // than flex.
+        current_origin_time[dest] = query_time;
+        current_origin_time[dest].seconds += 1;
       } else {
         // Non-flex step: This is the best step up until
         // merged_step.origin_time, so advance current origin time to 1 past

@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <random>
+#include <sstream>
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
@@ -389,6 +390,25 @@ MATCHER_P5(
       arg.merged_step,
       result_listener
   );
+}
+
+std::string FormatPath(
+    const std::vector<Step>& path, const DataGtfsMapping& mapping
+) {
+  std::ostringstream ss;
+  for (const auto& step : path) {
+    if (step.is_flex) {
+      ss << "  Flex ";
+    } else {
+      ss << "  ";
+    }
+    ss << mapping.stop_id_to_stop_name.at(step.origin_stop) << " -> "
+       << mapping.stop_id_to_stop_name.at(step.destination_stop) << " (\""
+       << step.origin_time.ToString() << "\" -> \""
+       << step.destination_time.ToString() << "\", "
+       << mapping.GetRouteDescFromTrip(step.origin_trip) << ")\n";
+  }
+  return ss.str();
 }
 
 void PrintPaths(
@@ -1388,26 +1408,6 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   }
 }
 
-// TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART) {
-//   std::string gtfs_path = "../data/RG_20260109_BA_CT_SC_SM_AC";
-//   GtfsDay gtfs_day = GtfsNormalizeStops(GtfsLoadDay(gtfs_path));
-//   StepsFromGtfs steps_from_gtfs =
-//       GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
-//   StepsAdjacencyList adjacency_list =
-//   MakeAdjacencyList(steps_from_gtfs.steps);
-
-//   std::unordered_set<StopId> bart_stops =
-//       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
-
-//   StepsAdjacencyList reduced =
-//       ReduceToMinimalSystemSteps(adjacency_list, bart_stops);
-
-//   // TODO: add assertions
-//   std::cout << "BART stops count: " << bart_stops.size() << std::endl;
-//   std::cout << "Reduced adjacency list size: " << reduced.adjacent.size()
-//             << std::endl;
-// }
-
 TEST(ShortestPathTest, SnapToStops_BasicSnapping) {
   // Create a mapping with stop positions.
   // Stop 1: (0, 0)
@@ -1556,6 +1556,120 @@ TEST(ShortestPathTest, SnapToStops_EmptyPath) {
   std::vector<Step> result = SnapToStops(mapping, stops, 100.0f, path);
 
   EXPECT_TRUE(result.empty());
+}
+
+TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
+  const auto test_data =
+      GetCachedTestData("../data/RG_20260109_BA_CT_SC_SM_AC");
+
+  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+      test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
+  );
+
+  PathsAdjacencyList reduced_paths =
+      ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops);
+  StepsAdjacencyList reduced_adjacency_list =
+      AdjacentPathsToStepsList(reduced_paths);
+
+  // Convert bart_stops set to vector for random access
+  std::vector<StopId> bart_stops_vec(bart_stops.begin(), bart_stops.end());
+
+  std::mt19937 rng(42);  // Fixed seed for reproducibility
+  std::uniform_int_distribution<size_t> stop_dist(0, bart_stops_vec.size() - 1);
+
+  // Time range: 0 to 24 hours in seconds.
+  // Note: Because of the technical condition about origin times in
+  // `ReduceToMinimalSystemPaths`, the paths do not match if they involve any
+  // steps that originate after 36:00:00. This is why we only query up to 24
+  // hours -- then any path is definitely going to reach the destination before
+  // 36 hours.
+  std::uniform_int_distribution<int> time_dist(0, 24 * 60 * 60);
+
+  for (int i = 0; i < 5000; ++i) {
+    StopId origin = bart_stops_vec[stop_dist(rng)];
+    StopId destination = bart_stops_vec[stop_dist(rng)];
+    if (origin == destination) {
+      continue;  // Skip self-loops
+    }
+
+    TimeSinceServiceStart origin_time{time_dist(rng)};
+
+    const auto& mapping = test_data.steps_from_gtfs.mapping;
+    std::ostringstream context;
+    context << "Iteration " << i << "\n"
+            << "  Origin: " << mapping.stop_id_to_stop_name.at(origin) << " ("
+            << mapping.stop_id_to_gtfs_stop_id.at(origin).v
+            << ", id=" << origin.v << ")\n"
+            << "  Destination: " << mapping.stop_id_to_stop_name.at(destination)
+            << " (" << mapping.stop_id_to_gtfs_stop_id.at(destination).v
+            << ", id=" << destination.v << ")\n"
+            << "  Query time: " << origin_time.ToString();
+    SCOPED_TRACE(context.str());
+
+    std::unordered_set<StopId> destinations = {destination};
+
+    auto original_paths = FindShortestPathsAtTime(
+        test_data.adjacency_list, origin_time, origin, destinations
+    );
+    auto reduced_result = FindShortestPathsAtTime(
+        reduced_adjacency_list, origin_time, origin, destinations
+    );
+
+    const auto& original_state = original_paths[destination.v];
+    const auto& reduced_state = reduced_result[destination.v];
+
+    bool original_found = original_state.step.destination_time.seconds !=
+                          std::numeric_limits<int>::max();
+    bool reduced_found = reduced_state.step.destination_time.seconds !=
+                         std::numeric_limits<int>::max();
+
+    if (!original_found) {
+      // If original doesn't have a path, reduced shouldn't either
+      EXPECT_FALSE(reduced_found) << "Reduced found path when original didn't";
+      continue;
+    }
+
+    std::vector<Step> original_path =
+        BacktrackPath(original_paths, destination);
+
+    ASSERT_TRUE(reduced_found) << "Reduced didn't find path when original did\n"
+                               << "Original path:\n"
+                               << FormatPath(original_path, mapping);
+
+    std::vector<Step> reduced_path = BacktrackPath(reduced_result, destination);
+
+    Step original_merged = ComputeMergedStep(original_path);
+    Step reduced_merged = ComputeMergedStep(reduced_path);
+
+    auto format_both_paths = [&]() {
+      return "Original path:\n" + FormatPath(original_path, mapping) +
+             "Reduced path:\n" + FormatPath(reduced_path, mapping);
+    };
+
+    EXPECT_EQ(original_merged.is_flex, reduced_merged.is_flex)
+        << format_both_paths();
+
+    if (original_merged.is_flex || reduced_merged.is_flex) {
+      // For flex paths, compare total duration
+      int original_duration = original_merged.destination_time.seconds -
+                              original_merged.origin_time.seconds;
+      int reduced_duration = reduced_merged.destination_time.seconds -
+                             reduced_merged.origin_time.seconds;
+      EXPECT_EQ(original_duration, reduced_duration)
+          << "Flex path duration mismatch\n"
+          << format_both_paths();
+    } else {
+      // For non-flex paths, destination times should be identical (earliest
+      // arrival). Origin times may differ because FindShortestPathsAtTime
+      // doesn't guarantee optimal departure times (see
+      // SuboptimalDepartureTimeExposure test).
+      EXPECT_EQ(
+          original_merged.destination_time.seconds,
+          reduced_merged.destination_time.seconds
+      ) << "Destination time mismatch\n"
+        << format_both_paths();
+    }
+  }
 }
 
 }  // namespace vats5
