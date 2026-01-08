@@ -72,7 +72,7 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
 namespace {
 
 void VerifyPathResult(
-    const std::vector<PathState>& shortest_paths,
+    const std::vector<Step>& shortest_paths,
     const StepsFromGtfs& steps_from_gtfs,
     const std::string& destination_stop_name,
     const std::string& expected_origin_time_str,
@@ -85,7 +85,7 @@ void VerifyPathResult(
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
 
   ASSERT_TRUE(
-      shortest_paths[destination_stop.v].step.destination_time.seconds !=
+      shortest_paths[destination_stop.v].destination_time.seconds !=
       std::numeric_limits<int>::max()
   ) << destination_stop_name
     << " path not found";
@@ -349,7 +349,7 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  const Step& result = shortest_paths[2].step;
+  const Step& result = shortest_paths[2];
 
   // With the bug, this will be 350 (50 + 300 flex duration)
   // Without the bug, this should be 200 (scheduled trip arrival)
@@ -1588,9 +1588,9 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
     const auto& original_state = original_paths[destination.v];
     const auto& reduced_state = reduced_result[destination.v];
 
-    bool original_found = original_state.step.destination_time.seconds !=
+    bool original_found = original_state.destination_time.seconds !=
                           std::numeric_limits<int>::max();
-    bool reduced_found = reduced_state.step.destination_time.seconds !=
+    bool reduced_found = reduced_state.destination_time.seconds !=
                          std::numeric_limits<int>::max();
 
     if (!original_found) {

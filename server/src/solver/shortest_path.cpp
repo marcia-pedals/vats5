@@ -183,13 +183,13 @@ size_t FindDepartureAtOrAfter(
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
-    const std::vector<PathState>& search_result, StopId dest
+    const std::vector<Step>& search_result, StopId dest
 ) {
   std::vector<Step> path;
-  PathState state = search_result[dest.v];
-  while (state.step.origin_trip != TripId::NOOP) {
-    path.push_back(state.step);
-    state = search_result[state.step.origin_stop.v];
+  Step state = search_result[dest.v];
+  while (state.origin_trip != TripId::NOOP) {
+    path.push_back(state);
+    state = search_result[state.origin_stop.v];
   }
   std::reverse(path.begin(), path.end());
   return path;
@@ -237,8 +237,8 @@ Step ComputeMergedStep(const std::vector<Step>& path) {
   };
 }
 
-// Sentinel PathState representing an unvisited stop.
-const PathState kUnvisitedPathState{Step{
+// Sentinel Step representing an unvisited stop.
+const Step kUnvisitedStep{
     StopId{-1},
     StopId{-1},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
@@ -246,9 +246,9 @@ const PathState kUnvisitedPathState{Step{
     TripId{-1},
     TripId{-1},
     false
-}};
+};
 
-std::vector<PathState> FindShortestPathsAtTime(
+std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
     StopId origin_stop,
@@ -269,11 +269,9 @@ std::vector<PathState> FindShortestPathsAtTime(
       FrontierEntryComparator>
       frontier;
 
-  // Maps stop index to the best PathState we've found for reaching it.
-  // Unvisited stops have kUnvisitedPathState.
-  std::vector<PathState> best_arrival(
-      adjacency_list.NumStops(), kUnvisitedPathState
-  );
+  // Maps stop index to the best Step we've found for reaching it.
+  // Unvisited stops have kUnvisitedStep.
+  std::vector<Step> best_arrival(adjacency_list.NumStops(), kUnvisitedStep);
 
   // The state at the origin stop.
   const Step initial_step{
@@ -286,7 +284,7 @@ std::vector<PathState> FindShortestPathsAtTime(
       false  // is_flex
   };
   frontier.push(FrontierEntry{origin_stop, origin_time, /*is_flex=*/true});
-  best_arrival[origin_stop.v] = PathState{initial_step};
+  best_arrival[origin_stop.v] = initial_step;
 
   while (!frontier.empty()) {
     const FrontierEntry current_entry = frontier.top();
@@ -323,7 +321,7 @@ std::vector<PathState> FindShortestPathsAtTime(
 
           // Only add if this is a better arrival time
           if (arrival_time.seconds <
-              best_arrival[next_stop.v].step.destination_time.seconds) {
+              best_arrival[next_stop.v].destination_time.seconds) {
             Step flex_step_at_now{
                 current_stop,
                 next_stop,
@@ -334,7 +332,7 @@ std::vector<PathState> FindShortestPathsAtTime(
                 true  // is_flex
             };
 
-            best_arrival[next_stop.v] = PathState{flex_step_at_now};
+            best_arrival[next_stop.v] = flex_step_at_now;
             frontier.push(
                 FrontierEntry{next_stop, arrival_time, current_entry.is_flex}
             );
@@ -381,9 +379,9 @@ std::vector<PathState> FindShortestPathsAtTime(
 
         // Only add if this is a better arrival time
         if (adj_step.destination_time.seconds <
-            best_arrival[next_stop.v].step.destination_time.seconds) {
+            best_arrival[next_stop.v].destination_time.seconds) {
           Step next_step = adj_step.ToStep(current_stop, next_stop, false);
-          best_arrival[next_stop.v] = PathState{next_step};
+          best_arrival[next_stop.v] = next_step;
           frontier.push(FrontierEntry{
               next_stop, next_step.destination_time, /*is_flex=*/false
           });
@@ -438,7 +436,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
     // Do query.
     int smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
-    const std::vector<PathState> search_result = FindShortestPathsAtTime(
+    const std::vector<Step> search_result = FindShortestPathsAtTime(
         adjacency_list,
         query_time,
         origin,
@@ -448,8 +446,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
     // Push all results and update current origin times.
     for (const auto& dest : destinations_to_query) {
-      const PathState& path_state = search_result[dest.v];
-      if (path_state.step.destination_time.seconds ==
+      const Step& path_state = search_result[dest.v];
+      if (path_state.destination_time.seconds ==
           std::numeric_limits<int>::max()) {
         // There are no more steps for this destination.
         current_origin_time[dest] = big_time;

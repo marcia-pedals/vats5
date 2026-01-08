@@ -203,19 +203,10 @@ inline void from_json(const nlohmann::json& j, PathsAdjacencyList& adj) {
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
-// The data we keep at each stop along a shortest path search.
-//
-// Stores the step used to reach this stop. The full path can be reconstructed
-// by backtracking through the result map.
-struct PathState {
-  // The step taken to reach this stop.
-  Step step;
-};
-
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
-    const std::vector<PathState>& search_result, StopId dest
+    const std::vector<Step>& search_result, StopId dest
 );
 
 // Compute the merged step for a path, with proper origin time calculation.
@@ -244,7 +235,7 @@ Step ComputeMergedStep(const std::vector<Step>& path);
 // up at least until `time + smallest_next_departure_gap_from_flex`. It gets set
 // to `std::numeric_limits<int>::max()` if there are no departures after any
 // visited flex paths.
-std::vector<PathState> FindShortestPathsAtTime(
+std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
