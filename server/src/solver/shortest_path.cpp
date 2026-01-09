@@ -840,6 +840,41 @@ StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
   return MakeAdjacencyList(all_steps);
 }
 
+std::vector<int> FindShortestRelaxedPaths(
+    const RelaxedAdjacencyList& adjacency_list, StopId origin
+) {
+  const int num_stops = adjacency_list.NumStops();
+  std::vector<int> distances(num_stops, std::numeric_limits<int>::max());
+  std::vector<bool> finalized(num_stops, false);
+
+  // Priority queue: (distance, stop_id)
+  using Entry = std::pair<int, StopId>;
+  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> frontier;
+
+  distances[origin.v] = 0;
+  frontier.push({0, origin});
+
+  while (!frontier.empty()) {
+    auto [current_dist, current_stop] = frontier.top();
+    frontier.pop();
+
+    if (finalized[current_stop.v]) {
+      continue;
+    }
+    finalized[current_stop.v] = true;
+
+    for (const RelaxedEdge& edge : adjacency_list.GetEdges(current_stop)) {
+      int new_dist = current_dist + edge.weight_seconds;
+      if (new_dist < distances[edge.destination_stop.v]) {
+        distances[edge.destination_stop.v] = new_dist;
+        frontier.push({new_dist, edge.destination_stop});
+      }
+    }
+  }
+
+  return distances;
+}
+
 RelaxedAdjacencyList MakeRelaxedAdjacencyList(
     const StepsAdjacencyList& steps_list
 ) {

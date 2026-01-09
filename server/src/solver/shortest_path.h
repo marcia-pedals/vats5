@@ -328,6 +328,14 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
     const StepsAdjacencyList& steps_list
 );
 
+// Find shortest paths from origin to all reachable stops using Dijkstra's
+// algorithm. Returns a vector indexed by StopId.v containing the shortest
+// distance in seconds from origin to each stop. Unreachable stops have distance
+// std::numeric_limits<int>::max().
+std::vector<int> FindShortestRelaxedPaths(
+    const RelaxedAdjacencyList& adjacency_list, StopId origin
+);
+
 // Return a modified `path` where any intermediate stops within
 // `threshold_meters` of a stop in `stops` are replaced by that stop, and then
 // steps that are thusly changed to be from a stop to itself are dropped.
