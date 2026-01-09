@@ -69,6 +69,87 @@ TEST(ShortestPathTest, MakeAdjacencyListBasic) {
   );
 }
 
+TEST(ShortestPathTest, MakeRelaxedAdjacencyListBasic) {
+  // Create steps with multiple trips between same stops, different durations.
+  // Stop 1 -> Stop 2: durations 100 (fixed), 80 (fixed), 120 (flex)
+  // Stop 1 -> Stop 3: duration 50 (fixed)
+  // Stop 2 -> Stop 3: duration 30 (flex)
+  std::vector<Step> steps = {
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{100},
+          .destination_time = TimeSinceServiceStart{200},  // duration 100
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{300},
+          .destination_time = TimeSinceServiceStart{380},  // duration 80
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{2},
+          .origin_time = TimeSinceServiceStart{0},
+          .destination_time = TimeSinceServiceStart{120},  // flex, duration 120
+          .origin_trip = TripId{3},
+          .destination_trip = TripId{3},
+          .is_flex = true
+      },
+      Step{
+          .origin_stop = StopId{1},
+          .destination_stop = StopId{3},
+          .origin_time = TimeSinceServiceStart{500},
+          .destination_time = TimeSinceServiceStart{550},  // duration 50
+          .origin_trip = TripId{4},
+          .destination_trip = TripId{4},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{2},
+          .destination_stop = StopId{3},
+          .origin_time = TimeSinceServiceStart{0},
+          .destination_time = TimeSinceServiceStart{30},  // flex, duration 30
+          .origin_trip = TripId{5},
+          .destination_trip = TripId{5},
+          .is_flex = true
+      },
+  };
+
+  StepsAdjacencyList steps_list = MakeAdjacencyList(steps);
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyList(steps_list);
+
+  // Check structure
+  EXPECT_EQ(relaxed.NumStops(), 4);  // Stops 0, 1, 2, 3
+
+  // Stop 0 has no edges
+  EXPECT_TRUE(relaxed.GetEdges(StopId{0}).empty());
+
+  // Stop 1 has edges to Stop 2 (min duration 80) and Stop 3 (duration 50)
+  auto edges_1 = relaxed.GetEdges(StopId{1});
+  EXPECT_EQ(edges_1.size(), 2);
+  // Edges are sorted by destination stop ID
+  EXPECT_EQ(edges_1[0].destination_stop, StopId{2});
+  EXPECT_EQ(edges_1[0].weight_seconds, 80);  // min of 100, 80, 120
+  EXPECT_EQ(edges_1[1].destination_stop, StopId{3});
+  EXPECT_EQ(edges_1[1].weight_seconds, 50);
+
+  // Stop 2 has edge to Stop 3 (duration 30)
+  auto edges_2 = relaxed.GetEdges(StopId{2});
+  EXPECT_EQ(edges_2.size(), 1);
+  EXPECT_EQ(edges_2[0].destination_stop, StopId{3});
+  EXPECT_EQ(edges_2[0].weight_seconds, 30);
+
+  // Stop 3 has no edges
+  EXPECT_TRUE(relaxed.GetEdges(StopId{3}).empty());
+}
+
 namespace {
 
 void VerifyPathResult(
@@ -303,6 +384,32 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.test_name;
     }
 );
+
+TEST(ShortestPathTest, MakeRelaxedAdjacencyListFromBART) {
+  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyList(test_data.adjacency_list);
+
+  // Find Berkeley and North Berkeley stops
+  StopId berkeley =
+      test_data.steps_from_gtfs.mapping.GetStopIdFromName("Downtown Berkeley");
+  StopId north_berkeley =
+      test_data.steps_from_gtfs.mapping.GetStopIdFromName("North Berkeley");
+
+  // Find the edge from Berkeley to North Berkeley
+  auto edges = relaxed.GetEdges(berkeley);
+  const RelaxedEdge* edge_to_north_berkeley = nullptr;
+  for (const auto& edge : edges) {
+    if (edge.destination_stop == north_berkeley) {
+      edge_to_north_berkeley = &edge;
+      break;
+    }
+  }
+
+  ASSERT_NE(edge_to_north_berkeley, nullptr)
+      << "No edge from Berkeley to North Berkeley";
+  EXPECT_EQ(edge_to_north_berkeley->weight_seconds, 120);
+}
 
 TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
   // Create a scenario where a stop has both flex trip (walking) and regular
