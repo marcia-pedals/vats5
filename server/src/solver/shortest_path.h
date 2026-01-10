@@ -213,6 +213,39 @@ std::vector<Step> BacktrackPath(
 // The origin time adjustment handles flex paths that transition to fixed trips.
 Step ComputeMergedStep(const std::vector<Step>& path);
 
+struct RelaxedDistances {
+    // distance_to[dest_id][stop_id.v] is the relaxed distance from stop_id to dest_id.
+  std::unordered_map<StopId, std::vector<int>> distance_to;
+};
+
+struct StopIdVectorHash {
+  size_t operator()(const std::vector<StopId>& v) const {
+    size_t seed = v.size();
+    for (const StopId& s : v) {
+      seed ^= std::hash<int>{}(s.v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
+    return seed;
+  }
+};
+
+// A cache of A*-like heuristics for FindShortestPathsAtTime.
+struct HeuristicCache {
+  const RelaxedDistances* relaxed_distances = nullptr;
+
+  std::unordered_map<std::vector<StopId>, std::vector<int>, StopIdVectorHash>
+      cache;
+
+  HeuristicCache() = default;
+  explicit HeuristicCache(const RelaxedDistances* rd)
+      : relaxed_distances(rd) {}
+
+  // Get or compute heuristic distances for a destination set.
+  // Returns pointer to cached vector, or nullptr if no heuristic.
+  const std::vector<int>* GetOrCompute(
+      const std::unordered_set<StopId>& destinations
+  );
+};
+
 // Find earliest times you can get to a set of stops from `origin` when starting
 // at `time`.
 //
@@ -235,12 +268,15 @@ Step ComputeMergedStep(const std::vector<Step>& path);
 // up at least until `time + smallest_next_departure_gap_from_flex`. It gets set
 // to `std::numeric_limits<int>::max()` if there are no departures after any
 // visited flex paths.
+//
+// If `heuristic_cache` is specified, enables A* optimization.
 std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
     const std::unordered_set<StopId>& destinations,
-    int* smallest_next_departure_gap_from_flex = nullptr
+    int* smallest_next_departure_gap_from_flex = nullptr,
+    HeuristicCache* heuristic_cache = nullptr
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin
@@ -256,7 +292,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
-    TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600}
+    TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600},
+    const RelaxedDistances* relaxed_distances = nullptr
 );
 
 // Return an adjacency list ("reduced list") with these properties:
@@ -334,6 +371,17 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
 // std::numeric_limits<int>::max().
 std::vector<int> FindShortestRelaxedPaths(
     const RelaxedAdjacencyList& adjacency_list, StopId origin
+);
+
+// Create a reversed relaxed adjacency list where all edges are reversed.
+// An edge (u -> v, weight) becomes (v -> u, weight).
+RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
+    const RelaxedAdjacencyList& adjacency_list
+);
+
+RelaxedDistances ComputeRelaxedDistances(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& destinations
 );
 
 // Return a modified `path` where any intermediate stops within

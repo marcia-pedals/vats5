@@ -131,11 +131,20 @@ struct FrontierEntry {
 
   // Whether the full path up to now is entirely flex.
   bool is_flex;
+
+  // Lower bound for time required to reach any remaining destination.
+  int lb_to_dest = 0;
 };
 
 struct FrontierEntryComparator {
   bool operator()(const FrontierEntry& a, const FrontierEntry& b) const {
-    // Highest priority is to arrive earliest.
+    int f_a = a.arrival_time.seconds + a.lb_to_dest;
+    int f_b = b.arrival_time.seconds + b.lb_to_dest;
+    if (f_a != f_b) {
+      return f_a > f_b;
+    }
+
+    // Break ties by arrival time (prefer earlier actual arrivals).
     if (a.arrival_time.seconds != b.arrival_time.seconds) {
       return a.arrival_time.seconds > b.arrival_time.seconds;
     }
@@ -247,18 +256,75 @@ const Step kUnvisitedStep{
     false
 };
 
+const std::vector<int>* HeuristicCache::GetOrCompute(
+    const std::unordered_set<StopId>& destinations
+) {
+  if (relaxed_distances == nullptr ||
+      relaxed_distances->distance_to.empty()) {
+    return nullptr;
+  }
+
+  // Create sorted key from destinations
+  std::vector<StopId> cache_key(destinations.begin(), destinations.end());
+  std::sort(cache_key.begin(), cache_key.end());
+
+  auto cache_it = cache.find(cache_key);
+  if (cache_it != cache.end()) {
+    return &cache_it->second;
+  }
+
+  // Compute by taking min of distance_to_single_destination for each dest
+  // Get num_stops from the first destination's vector
+  const int num_stops = static_cast<int>(
+      relaxed_distances->distance_to.begin()->second.size()
+  );
+  std::vector<int> computed(num_stops, std::numeric_limits<int>::max());
+
+  for (const StopId dest : destinations) {
+    auto it = relaxed_distances->distance_to.find(dest);
+    if (it != relaxed_distances->distance_to.end()) {
+      const std::vector<int>& single_dists = it->second;
+      for (int i = 0; i < num_stops && i < static_cast<int>(single_dists.size());
+           ++i) {
+        computed[i] = std::min(computed[i], single_dists[i]);
+      }
+    }
+  }
+
+  auto [inserted_it, _] =
+      cache.emplace(std::move(cache_key), std::move(computed));
+  return &inserted_it->second;
+}
+
 std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart origin_time,
     StopId origin_stop,
     const std::unordered_set<StopId>& destinations,
-    int* smallest_next_departure_gap_from_flex
+    int* smallest_next_departure_gap_from_flex,
+    HeuristicCache* heuristic_cache
 ) {
   if (smallest_next_departure_gap_from_flex != nullptr) {
     *smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
   }
 
-  std::unordered_set<StopId> reached_destinations;
+  // Get initial heuristic distances
+  const std::vector<int>* heuristic_distances =
+      heuristic_cache != nullptr ? heuristic_cache->GetOrCompute(destinations)
+                                 : nullptr;
+
+  // Helper to get heuristic value for a stop (0 if no heuristic provided)
+  auto GetHeuristic = [&](StopId stop) -> int {
+    if (heuristic_distances == nullptr || stop.v < 0 ||
+        stop.v >= static_cast<int>(heuristic_distances->size())) {
+      return 0;
+    }
+    int h = (*heuristic_distances)[stop.v];
+    // Treat unreachable stops (max int) as 0 heuristic to avoid overflow
+    return (h == std::numeric_limits<int>::max()) ? 0 : h;
+  };
+
+  std::unordered_set<StopId> remaining_destinations = destinations;
   std::vector<bool> finalized(adjacency_list.NumStops(), false);
 
   // Compact priority queue storing only destination_stop and arrival_time.
@@ -279,8 +345,15 @@ std::vector<Step> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  frontier.push_back(FrontierEntry{origin_stop, origin_time, /*is_flex=*/true});
+  frontier.push_back(FrontierEntry{
+      origin_stop, origin_time, /*is_flex=*/true, GetHeuristic(origin_stop)
+  });
   best_arrival[origin_stop.v] = initial_step;
+
+  // Thresholds at which to recompute heuristic for tighter bounds
+  auto ShouldRecomputeHeuristic = [](size_t remaining) {
+    return remaining == 5 || remaining == 2 || remaining == 1;
+  };
 
   while (!frontier.empty()) {
     std::pop_heap(frontier.begin(), frontier.end(), frontier_cmp);
@@ -294,10 +367,21 @@ std::vector<Step> FindShortestPathsAtTime(
     }
     finalized[current_stop.v] = true;
 
-    if (destinations.contains(current_stop)) {
-      reached_destinations.insert(current_stop);
-      if (reached_destinations.size() == destinations.size()) {
+    if (remaining_destinations.erase(current_stop) > 0) {
+      if (remaining_destinations.empty()) {
         return best_arrival;
+      }
+
+      // Check if we should recompute heuristic with fewer destinations
+      if (heuristic_cache != nullptr &&
+          ShouldRecomputeHeuristic(remaining_destinations.size())) {
+        heuristic_distances = heuristic_cache->GetOrCompute(remaining_destinations);
+
+        // Recompute heuristic for all entries in the frontier and reheapify
+        for (FrontierEntry& entry : frontier) {
+          entry.lb_to_dest = GetHeuristic(entry.destination_stop);
+        }
+        std::make_heap(frontier.begin(), frontier.end(), frontier_cmp);
       }
     }
 
@@ -330,9 +414,12 @@ std::vector<Step> FindShortestPathsAtTime(
             };
 
             best_arrival[next_stop.v] = flex_step_at_now;
-            frontier.push_back(
-                FrontierEntry{next_stop, arrival_time, current_entry.is_flex}
-            );
+            frontier.push_back(FrontierEntry{
+                next_stop,
+                arrival_time,
+                current_entry.is_flex,
+                GetHeuristic(next_stop)
+            });
             std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
           }
         }
@@ -381,7 +468,10 @@ std::vector<Step> FindShortestPathsAtTime(
           Step next_step = adj_step.ToStep(current_stop, next_stop, false);
           best_arrival[next_stop.v] = next_step;
           frontier.push_back(FrontierEntry{
-              next_stop, next_step.destination_time, /*is_flex=*/false
+              next_stop,
+              next_step.destination_time,
+              /*is_flex=*/false,
+              GetHeuristic(next_stop)
           });
           std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
         }
@@ -397,8 +487,11 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb,
-    TimeSinceServiceStart origin_time_ub
+    TimeSinceServiceStart origin_time_ub,
+    const RelaxedDistances* relaxed_distances
 ) {
+  HeuristicCache heuristic_cache(relaxed_distances);
+
   const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
 
   std::unordered_map<StopId, std::vector<Step>> result;
@@ -440,7 +533,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
         query_time,
         origin,
         destinations_to_query,
-        &smallest_next_departure_gap_from_flex
+        &smallest_next_departure_gap_from_flex,
+        &heuristic_cache
     );
 
     // Push all results and update current origin times.
@@ -543,6 +637,9 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
   std::vector<StopId> origins(system_stops.begin(), system_stops.end());
   const size_t num_origins = origins.size();
 
+  RelaxedDistances relaxed_distances =
+      ComputeRelaxedDistances(adjacency_list, system_stops);
+
   // Split into 6-hour chunks: 36 hours / 6 hours = 6 chunks per origin
   constexpr int kChunkSeconds = 6 * 3600;
   constexpr int kTotalSeconds = 36 * 3600;
@@ -590,8 +687,9 @@ PathsAdjacencyList ReduceToMinimalSystemPaths(
       TimeSinceServiceStart lb{chunk_index * kChunkSeconds};
       TimeSinceServiceStart ub{(chunk_index + 1) * kChunkSeconds};
 
-      per_item_results[i] =
-          FindMinimalPathSet(adjacency_list, origin, destinations, lb, ub);
+      per_item_results[i] = FindMinimalPathSet(
+          adjacency_list, origin, destinations, lb, ub, &relaxed_distances
+      );
 
       // Update progress (print only every 10 items)
       {
@@ -927,6 +1025,62 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
     for (const RelaxedEdge& edge : per_origin_edges[i]) {
       result.edges.push_back(edge);
     }
+  }
+
+  return result;
+}
+
+RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
+    const RelaxedAdjacencyList& adjacency_list
+) {
+  const int num_stops = adjacency_list.NumStops();
+
+  // Collect reversed edges: for each edge (u -> v, w), create (v -> u, w)
+  std::vector<std::vector<RelaxedEdge>> per_origin_edges(num_stops);
+
+  for (int origin_v = 0; origin_v < num_stops; ++origin_v) {
+    for (const RelaxedEdge& edge :
+         adjacency_list.GetEdges(StopId{origin_v})) {
+      // Reverse the edge: destination becomes origin
+      per_origin_edges[edge.destination_stop.v].push_back(
+          RelaxedEdge{StopId{origin_v}, edge.weight_seconds}
+      );
+    }
+  }
+
+  // Build CSR format
+  RelaxedAdjacencyList result;
+  result.edge_offsets.resize(num_stops);
+
+  int running_offset = 0;
+  for (int i = 0; i < num_stops; ++i) {
+    result.edge_offsets[i] = running_offset;
+    running_offset += static_cast<int>(per_origin_edges[i].size());
+  }
+
+  result.edges.reserve(running_offset);
+  for (int i = 0; i < num_stops; ++i) {
+    for (const RelaxedEdge& edge : per_origin_edges[i]) {
+      result.edges.push_back(edge);
+    }
+  }
+
+  return result;
+}
+
+RelaxedDistances ComputeRelaxedDistances(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& destinations
+) {
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyList(adjacency_list);
+  RelaxedAdjacencyList reversed = ReverseRelaxedAdjacencyList(relaxed);
+
+  RelaxedDistances result;
+
+  // Compute distances from each destination separately on the reversed graph
+  for (const StopId dest : destinations) {
+    result.distance_to[dest] =
+        FindShortestRelaxedPaths(reversed, dest);
   }
 
   return result;
