@@ -62,6 +62,15 @@ struct GtfsPath {
     return true;
   }
 
+  // Check if two paths are "equivalent" - same origin, destination, and times
+  bool IsEquivalentTo(const GtfsPath& other) const {
+    return merged_step.origin_stop == other.merged_step.origin_stop &&
+           merged_step.destination_stop == other.merged_step.destination_stop &&
+           merged_step.origin_time == other.merged_step.origin_time &&
+           merged_step.destination_time == other.merged_step.destination_time &&
+           merged_step.is_flex == other.merged_step.is_flex;
+  }
+
   bool operator<(const GtfsPath& other) const {
     if (merged_step < other.merged_step) return true;
     if (other.merged_step < merged_step) return false;
@@ -250,14 +259,36 @@ std::optional<LoadedReductionOutput> LoadReductionOutput(const std::string& path
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 3) {
-    std::cerr << "Usage: " << argv[0] << " <file_a.json> <file_b.json>"
-              << std::endl;
+  bool match_equivalent_paths = false;
+  std::vector<std::string> positional_args;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--match-equivalent-paths") {
+      match_equivalent_paths = true;
+    } else if (arg[0] == '-') {
+      std::cerr << "Unknown option: " << arg << std::endl;
+      return 1;
+    } else {
+      positional_args.push_back(arg);
+    }
+  }
+
+  if (positional_args.size() != 2) {
+    std::cerr
+        << "Usage: " << argv[0]
+        << " [--match-equivalent-paths] <file_a.json> <file_b.json>\n"
+        << "\nOptions:\n"
+        << "  --match-equivalent-paths  Treat paths with same start/end times\n"
+        << "                            as matching, even if intermediate\n"
+        << "                            stops differ\n";
     return 1;
   }
 
-  auto future_a = std::async(std::launch::async, LoadReductionOutput, argv[1]);
-  auto future_b = std::async(std::launch::async, LoadReductionOutput, argv[2]);
+  auto future_a =
+      std::async(std::launch::async, LoadReductionOutput, positional_args[0]);
+  auto future_b =
+      std::async(std::launch::async, LoadReductionOutput, positional_args[1]);
 
   auto loaded_a = future_a.get();
   if (!loaded_a) return 1;
@@ -332,11 +363,16 @@ int main(int argc, char* argv[]) {
       for (const auto& pa : *paths_a) {
         bool found = false;
         for (size_t i = 0; i < paths_b->size(); ++i) {
-          if (!b_matched[i] && pa == (*paths_b)[i]) {
-            b_matched[i] = true;
-            found = true;
-            matching_count++;
-            break;
+          if (!b_matched[i]) {
+            bool matches = match_equivalent_paths
+                               ? pa.IsEquivalentTo((*paths_b)[i])
+                               : pa == (*paths_b)[i];
+            if (matches) {
+              b_matched[i] = true;
+              found = true;
+              matching_count++;
+              break;
+            }
           }
         }
         if (!found) {
