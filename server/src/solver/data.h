@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cassert>
-#include <limits>
 #include <nlohmann/json.hpp>
 #include <ostream>
 #include <stdexcept>

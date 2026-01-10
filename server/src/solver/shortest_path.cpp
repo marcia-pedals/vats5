@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cmath>
 #include <mutex>
-#include <queue>
 #include <thread>
 
 #include "solver/step_merge.h"
@@ -263,11 +262,8 @@ std::vector<Step> FindShortestPathsAtTime(
   std::vector<bool> finalized(adjacency_list.NumStops(), false);
 
   // Compact priority queue storing only destination_stop and arrival_time.
-  std::priority_queue<
-      FrontierEntry,
-      std::vector<FrontierEntry>,
-      FrontierEntryComparator>
-      frontier;
+  FrontierEntryComparator frontier_cmp;
+  std::vector<FrontierEntry> frontier;
 
   // Maps stop index to the best Step we've found for reaching it.
   // Unvisited stops have kUnvisitedStep.
@@ -283,14 +279,15 @@ std::vector<Step> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  frontier.push(FrontierEntry{origin_stop, origin_time, /*is_flex=*/true});
+  frontier.push_back(FrontierEntry{origin_stop, origin_time, /*is_flex=*/true});
   best_arrival[origin_stop.v] = initial_step;
 
   while (!frontier.empty()) {
-    const FrontierEntry current_entry = frontier.top();
+    std::pop_heap(frontier.begin(), frontier.end(), frontier_cmp);
+    const FrontierEntry current_entry = frontier.back();
     const StopId current_stop = current_entry.destination_stop;
     const TimeSinceServiceStart current_time = current_entry.arrival_time;
-    frontier.pop();
+    frontier.pop_back();
 
     if (finalized[current_stop.v]) {
       continue;
@@ -333,9 +330,10 @@ std::vector<Step> FindShortestPathsAtTime(
             };
 
             best_arrival[next_stop.v] = flex_step_at_now;
-            frontier.push(
+            frontier.push_back(
                 FrontierEntry{next_stop, arrival_time, current_entry.is_flex}
             );
+            std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
           }
         }
       }
@@ -382,9 +380,10 @@ std::vector<Step> FindShortestPathsAtTime(
             best_arrival[next_stop.v].destination_time.seconds) {
           Step next_step = adj_step.ToStep(current_stop, next_stop, false);
           best_arrival[next_stop.v] = next_step;
-          frontier.push(FrontierEntry{
+          frontier.push_back(FrontierEntry{
               next_stop, next_step.destination_time, /*is_flex=*/false
           });
+          std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
         }
       }
     }
@@ -849,14 +848,16 @@ std::vector<int> FindShortestRelaxedPaths(
 
   // Priority queue: (distance, stop_id)
   using Entry = std::pair<int, StopId>;
-  std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> frontier;
+  auto frontier_cmp = std::greater<Entry>{};
+  std::vector<Entry> frontier;
 
   distances[origin.v] = 0;
-  frontier.push({0, origin});
+  frontier.push_back({0, origin});
 
   while (!frontier.empty()) {
-    auto [current_dist, current_stop] = frontier.top();
-    frontier.pop();
+    std::pop_heap(frontier.begin(), frontier.end(), frontier_cmp);
+    auto [current_dist, current_stop] = frontier.back();
+    frontier.pop_back();
 
     if (finalized[current_stop.v]) {
       continue;
@@ -867,7 +868,8 @@ std::vector<int> FindShortestRelaxedPaths(
       int new_dist = current_dist + edge.weight_seconds;
       if (new_dist < distances[edge.destination_stop.v]) {
         distances[edge.destination_stop.v] = new_dist;
-        frontier.push({new_dist, edge.destination_stop});
+        frontier.push_back({new_dist, edge.destination_stop});
+        std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
       }
     }
   }
