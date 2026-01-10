@@ -129,6 +129,10 @@ struct FrontierEntry {
   StopId destination_stop;
   TimeSinceServiceStart arrival_time;
 
+  // Number of destinations visited on the path so far (not including this
+  // stop).
+  int16_t destinations_visited;
+
   // Whether the full path up to now is entirely flex.
   bool is_flex;
 
@@ -147,6 +151,11 @@ struct FrontierEntryComparator {
     // Break ties by arrival time (prefer earlier actual arrivals).
     if (a.arrival_time.seconds != b.arrival_time.seconds) {
       return a.arrival_time.seconds > b.arrival_time.seconds;
+    }
+
+    // Tiebreak: prefer paths that have gone through more destinations.
+    if (a.destinations_visited != b.destinations_visited) {
+      return a.destinations_visited < b.destinations_visited;
     }
 
     // Break ties arbitrarily but consistently.
@@ -335,6 +344,10 @@ std::vector<Step> FindShortestPathsAtTime(
   // Unvisited stops have kUnvisitedStep.
   std::vector<Step> best_arrival(adjacency_list.NumStops(), kUnvisitedStep);
 
+  // Maps stop index to the number of destinations visited on the best path to
+  // it. -1 means unvisited.
+  std::vector<int16_t> best_destinations_visited(adjacency_list.NumStops(), -1);
+
   // The state at the origin stop.
   const Step initial_step{
       origin_stop,
@@ -345,10 +358,12 @@ std::vector<Step> FindShortestPathsAtTime(
       TripId::NOOP,
       false  // is_flex
   };
-  frontier.push_back(FrontierEntry{
-      origin_stop, origin_time, /*is_flex=*/true, GetHeuristic(origin_stop)
+frontier.push_back(FrontierEntry{
+      origin_stop, origin_time, /*destinations_visited=*/0,
+      /*is_flex=*/true, GetHeuristic(origin_stop)
   });
   best_arrival[origin_stop.v] = initial_step;
+  best_destinations_visited[origin_stop.v] = 0;
 
   // Thresholds at which to recompute heuristic for tighter bounds
   auto ShouldRecomputeHeuristic = [](size_t remaining) {
@@ -385,6 +400,11 @@ std::vector<Step> FindShortestPathsAtTime(
       }
     }
 
+    // Calculate destinations visited for paths continuing from this stop.
+    const int16_t next_destinations_visited =
+        current_entry.destinations_visited +
+        (destinations.contains(current_stop) ? 1 : 0);
+
     std::span<const StepGroup> step_groups =
         adjacency_list.GetGroups(current_stop);
 
@@ -400,9 +420,16 @@ std::vector<Step> FindShortestPathsAtTime(
               current_time.seconds + flex_step.FlexDurationSeconds()
           };
 
-          // Only add if this is a better arrival time
-          if (arrival_time.seconds <
-              best_arrival[next_stop.v].destination_time.seconds) {
+          // Only add if this is a better path (earlier arrival, or same
+          // arrival with more destinations visited).
+          const bool is_better =
+              arrival_time.seconds <
+                  best_arrival[next_stop.v].destination_time.seconds ||
+              (arrival_time.seconds ==
+                   best_arrival[next_stop.v].destination_time.seconds &&
+               next_destinations_visited >
+                   best_destinations_visited[next_stop.v]);
+          if (is_better) {
             Step flex_step_at_now{
                 current_stop,
                 next_stop,
@@ -414,9 +441,11 @@ std::vector<Step> FindShortestPathsAtTime(
             };
 
             best_arrival[next_stop.v] = flex_step_at_now;
+            best_destinations_visited[next_stop.v] = next_destinations_visited;
             frontier.push_back(FrontierEntry{
                 next_stop,
                 arrival_time,
+                next_destinations_visited,
                 current_entry.is_flex,
                 GetHeuristic(next_stop)
             });
@@ -462,14 +491,23 @@ std::vector<Step> FindShortestPathsAtTime(
           continue;
         }
 
-        // Only add if this is a better arrival time
-        if (adj_step.destination_time.seconds <
-            best_arrival[next_stop.v].destination_time.seconds) {
+        // Only add if this is a better path (earlier arrival, or same
+        // arrival with more destinations visited).
+        const bool is_better =
+            adj_step.destination_time.seconds <
+                best_arrival[next_stop.v].destination_time.seconds ||
+            (adj_step.destination_time.seconds ==
+                 best_arrival[next_stop.v].destination_time.seconds &&
+             next_destinations_visited >
+                 best_destinations_visited[next_stop.v]);
+        if (is_better) {
           Step next_step = adj_step.ToStep(current_stop, next_stop, false);
           best_arrival[next_stop.v] = next_step;
+          best_destinations_visited[next_stop.v] = next_destinations_visited;
           frontier.push_back(FrontierEntry{
               next_stop,
               next_step.destination_time,
+              next_destinations_visited,
               /*is_flex=*/false,
               GetHeuristic(next_stop)
           });
