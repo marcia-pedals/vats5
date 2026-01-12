@@ -234,8 +234,8 @@ Step ComputeMergedStep(const std::vector<Step>& path) {
       if (!path[i].is_flex) {
         // Found transition from flex to fixed
         // We can wait: (fixed_departure - flex_arrival) extra time
-        origin_time.seconds +=
-            path[i].origin_time.seconds - flex_arrival.seconds;
+        int extra_wait = path[i].origin_time.seconds - flex_arrival.seconds;
+        origin_time.seconds += extra_wait;
         is_flex = false;  // Path becomes non-flex when we connect to fixed
         break;
       }
@@ -1119,6 +1119,37 @@ RelaxedDistances ComputeRelaxedDistances(
   for (const StopId dest : destinations) {
     result.distance_to[dest] =
         FindShortestRelaxedPaths(reversed, dest);
+  }
+
+  return result;
+}
+
+RelaxedAdjacencyList CompleteShortestRelaxedPaths(
+    const RelaxedAdjacencyList& adjacency_list
+) {
+  const int n = adjacency_list.NumStops();
+
+  // Compute shortest paths from each node
+  std::vector<std::vector<int>> all_distances(n);
+  for (int i = 0; i < n; ++i) {
+    all_distances[i] = FindShortestRelaxedPaths(adjacency_list, StopId{i});
+  }
+
+  // Build complete graph
+  RelaxedAdjacencyList result;
+  result.edge_offsets.resize(n);
+  result.edges.reserve(static_cast<size_t>(n) * (n - 1));  // n*(n-1) edges
+
+  for (int i = 0; i < n; ++i) {
+    result.edge_offsets[i] = static_cast<int>(result.edges.size());
+    for (int j = 0; j < n; ++j) {
+      if (i != j) {
+        result.edges.push_back(RelaxedEdge{
+            .destination_stop = StopId{j},
+            .weight_seconds = all_distances[i][j]
+        });
+      }
+    }
   }
 
   return result;

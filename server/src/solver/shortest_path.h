@@ -379,6 +379,13 @@ RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
     const RelaxedAdjacencyList& adjacency_list
 );
 
+// Compute all-pairs shortest paths and return a complete graph where the
+// edge i->j has weight equal to the shortest path distance from i to j.
+// If there is no path from i to j, the edge weight is INT_MAX.
+RelaxedAdjacencyList CompleteShortestRelaxedPaths(
+    const RelaxedAdjacencyList& adjacency_list
+);
+
 RelaxedDistances ComputeRelaxedDistances(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& destinations

@@ -64,6 +64,11 @@ add_library(shortest_path STATIC src/solver/shortest_path.cpp)
 target_link_libraries(shortest_path PUBLIC step_merge)
 target_include_directories(shortest_path PUBLIC src)
 
+# Create branch_and_bound_solver library target
+add_library(branch_and_bound_solver STATIC src/solver/branch_and_bound_solver.cpp)
+target_link_libraries(branch_and_bound_solver PUBLIC shortest_path)
+target_include_directories(branch_and_bound_solver PUBLIC src)
+
 # Create visualization library target
 add_library(visualization STATIC src/visualization/visualization.cpp)
 target_link_libraries(visualization PUBLIC shortest_path)
@@ -92,6 +97,10 @@ target_link_libraries(reduction_diff PUBLIC shortest_path)
 add_executable(plain_viz src/tools/plain_viz.cpp)
 target_link_libraries(plain_viz PUBLIC visualization)
 
+# Add branch_and_bound_tool
+add_executable(branch_and_bound_tool src/tools/branch_and_bound_tool.cpp)
+target_link_libraries(branch_and_bound_tool PUBLIC branch_and_bound_solver)
+
 # Enable CMake testing
 enable_testing()
 
@@ -119,3 +128,8 @@ add_test(NAME shortest_path_test COMMAND shortest_path_test)
 add_executable(date_test src/util/date_test.cpp)
 target_link_libraries(date_test PUBLIC gunit date)
 add_test(NAME date_test COMMAND date_test)
+
+# Add branch_and_bound_solver test executable
+add_executable(branch_and_bound_solver_test src/solver/branch_and_bound_solver_test.cpp)
+target_link_libraries(branch_and_bound_solver_test PUBLIC gunit branch_and_bound_solver)
+add_test(NAME branch_and_bound_solver_test COMMAND branch_and_bound_solver_test)
