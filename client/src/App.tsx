@@ -47,20 +47,13 @@ interface EdgeData {
   allSystemSteps: boolean
 }
 
-interface SelectedEdge {
-  from: number
-  to: number
-  fromStop: GtfsStop
-  toStop: GtfsStop
-  paths: { originId: number; path: Path }[]
-}
 
 function App() {
   const queryClient = useQueryClient()
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [hoveredStop, setHoveredStop] = useState<GtfsStop | null>(null)
-  const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop } | null>(null)
-  const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
+  const [selectedStop, setSelectedStop] = useState<{ id: number; stop: GtfsStop } | null>(null)
+  const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop; tripDescriptions: string[] } | null>(null)
   const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 })
   const [hoveredRoute, setHoveredRoute] = useState<number[] | null>(null)
   const [originTimeMin, setOriginTimeMin] = useState(21600) // 6:00 in seconds from midnight
@@ -240,6 +233,63 @@ function App() {
     return { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition }
   }, [visualization, originTimeMin, originTimeMax])
 
+  // Compute highlighted stops, edges, and paths by destination when a stop is selected
+  const { highlightedStops, highlightedEdges, pathsByDestination } = useMemo(() => {
+    if (!selectedStop || !visualization) {
+      return { highlightedStops: null, highlightedEdges: null, pathsByDestination: null }
+    }
+
+    const highlightedStops = new Set<number>()
+    const highlightedEdges = new Set<string>()
+    // Map from destination stop ID to list of paths
+    const pathsByDest = new Map<number, Path[]>()
+
+    for (const [, pathGroups] of visualization.adjacent) {
+      for (const pathGroup of pathGroups) {
+        for (const path of pathGroup) {
+          if (path.steps.length === 0) continue
+
+          // Filter by origin time
+          const firstStepOriginTime = path.steps[0].origin_time
+          if (firstStepOriginTime < originTimeMin || firstStepOriginTime > originTimeMax) continue
+
+          const firstStop = path.steps[0].origin_stop
+          const lastStop = path.steps[path.steps.length - 1].destination_stop
+
+          // Check if this path starts or ends at the selected stop
+          if (firstStop === selectedStop.id) {
+            // Add all stops and edges from this path
+            for (const step of path.steps) {
+              highlightedStops.add(step.origin_stop)
+              highlightedStops.add(step.destination_stop)
+              const edgeKey = step.origin_stop < step.destination_stop
+                ? `${step.origin_stop}-${step.destination_stop}`
+                : `${step.destination_stop}-${step.origin_stop}`
+              highlightedEdges.add(edgeKey)
+            }
+            // Group by destination
+            if (!pathsByDest.has(lastStop)) {
+              pathsByDest.set(lastStop, [])
+            }
+            pathsByDest.get(lastStop)!.push(path)
+          } else if (lastStop === selectedStop.id) {
+            // Add all stops and edges from this path
+            for (const step of path.steps) {
+              highlightedStops.add(step.origin_stop)
+              highlightedStops.add(step.destination_stop)
+              const edgeKey = step.origin_stop < step.destination_stop
+                ? `${step.origin_stop}-${step.destination_stop}`
+                : `${step.destination_stop}-${step.origin_stop}`
+              highlightedEdges.add(edgeKey)
+            }
+          }
+        }
+      }
+    }
+
+    return { highlightedStops, highlightedEdges, pathsByDestination: pathsByDest }
+  }, [selectedStop, visualization, originTimeMin, originTimeMax])
+
   const formatTimeForInput = (seconds: number): string => {
     const h = Math.floor(seconds / 3600)
     const m = Math.floor((seconds % 3600) / 60)
@@ -388,36 +438,53 @@ function App() {
             const toStop = stopsById.get(edge.to)!
             const from = nodePositions.get(edge.from)!
             const to = nodePositions.get(edge.to)!
-            const isSelected = selectedEdge?.from === edge.from && selectedEdge?.to === edge.to
+            const edgeKey = `${edge.from}-${edge.to}`
+            const isDimmed = highlightedEdges && !highlightedEdges.has(edgeKey)
             return (
-              <line
-                key={i}
-                x1={from.x}
-                y1={from.y}
-                x2={to.x}
-                y2={to.y}
-                stroke={isSelected ? 'orange' : 'gray'}
-                strokeWidth={(isSelected ? 3 : 2) / zoom}
-                strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
-                style={{ cursor: 'pointer' }}
-                onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
-                  setHoveredEdge({ from: fromStop, to: toStop })
-                  setMousePos({ x: e.clientX, y: e.clientY })
-                }}
-                onMouseMove={(e: MouseEvent<SVGLineElement>) => {
-                  setMousePos({ x: e.clientX, y: e.clientY })
-                }}
-                onMouseLeave={() => setHoveredEdge(null)}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setSelectedEdge({ from: edge.from, to: edge.to, fromStop, toStop, paths: edge.paths })
-                }}
-              />
+              <g key={i} opacity={isDimmed ? 0.2 : 1}>
+                <line
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  stroke="gray"
+                  strokeWidth={2 / zoom}
+                  strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
+                  pointerEvents="none"
+                />
+                <line
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  stroke="transparent"
+                  strokeWidth={12 / zoom}
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
+                    const tripDescriptions = [...new Set(
+                      edge.paths.flatMap(p => p.path.steps
+                        .filter(s =>
+                          (s.origin_stop === edge.from && s.destination_stop === edge.to) ||
+                          (s.origin_stop === edge.to && s.destination_stop === edge.from)
+                        )
+                        .map(s => s.trip_description)
+                      )
+                    )]
+                    setHoveredEdge({ from: fromStop, to: toStop, tripDescriptions })
+                    setMousePos({ x: e.clientX, y: e.clientY })
+                  }}
+                  onMouseMove={(e: MouseEvent<SVGLineElement>) => {
+                    setMousePos({ x: e.clientX, y: e.clientY })
+                  }}
+                  onMouseLeave={() => setHoveredEdge(null)}
+                />
+              </g>
             )
           })}
           {nodes.map((node) => {
             const pos = nodePositions.get(node.id)!
             const isSystemStop = systemStopIds.has(node.id)
+            const isDimmed = highlightedStops && !highlightedStops.has(node.id)
             return (
               <circle
                 key={node.id}
@@ -425,6 +492,7 @@ function App() {
                 cy={pos.y}
                 r={(isSystemStop ? 5 : 2) / zoom}
                 fill={isSystemStop ? "blue" : "#444"}
+                opacity={isDimmed ? 0.2 : 1}
                 style={{ cursor: 'pointer' }}
                 onMouseEnter={(e: MouseEvent<SVGCircleElement>) => {
                   setHoveredStop(node.stop)
@@ -434,6 +502,7 @@ function App() {
                   setMousePos({ x: e.clientX, y: e.clientY })
                 }}
                 onMouseLeave={() => setHoveredStop(null)}
+                onClick={() => setSelectedStop({ id: node.id, stop: node.stop })}
               />
             )
           })}
@@ -484,65 +553,60 @@ function App() {
         overflowY: 'auto',
         textAlign: 'left'
       }}>
-        {selectedEdge ? (
+        {selectedStop && pathsByDestination ? (
           <div style={{ fontSize: '14px' }}>
-            {[
-              { from: selectedEdge.from, to: selectedEdge.to, fromStop: selectedEdge.fromStop, toStop: selectedEdge.toStop },
-              { from: selectedEdge.to, to: selectedEdge.from, fromStop: selectedEdge.toStop, toStop: selectedEdge.fromStop }
-            ].map(({ from, to, fromStop, toStop }) => {
-              const directionPaths = selectedEdge.paths.filter(p =>
-                p.path.steps.some(step => step.origin_stop === from && step.destination_stop === to)
-              )
+            <h3 style={{ margin: '0 0 12px 0' }}>{selectedStop.stop.stop_name}</h3>
+            {[...pathsByDestination.entries()].map(([destId, paths]) => {
+              const destStop = stopsById.get(destId)
+              if (!destStop) return null
+
+              const formatTime = (seconds: number): string => {
+                const h = Math.floor(seconds / 3600)
+                const m = Math.floor((seconds % 3600) / 60)
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+              }
+              const collapseSteps = (steps: Step[]) => steps.reduce((acc, step) => {
+                const last = acc[acc.length - 1]
+                if (last && last.trip_description === step.trip_description) {
+                  last.destination_stop = step.destination_stop
+                } else {
+                  acc.push({ ...step })
+                }
+                return acc
+              }, [] as Step[])
+              const getSignature = (segments: Step[]) => segments.map(s =>
+                `${s.trip_description}:${s.origin_stop}:${s.destination_stop}`
+              ).join('|')
+
+              // Group paths by their signature
+              const groups = new Map<string, { segments: Step[]; steps: Step[]; times: { start: number; end: number }[] }>()
+              for (const path of paths) {
+                const segments = collapseSteps(path.steps)
+                const sig = getSignature(segments)
+                if (!groups.has(sig)) {
+                  groups.set(sig, { segments, steps: path.steps, times: [] })
+                }
+                const firstStep = path.steps[0]
+                const lastStep = path.steps[path.steps.length - 1]
+                groups.get(sig)!.times.push({
+                  start: firstStep.origin_time,
+                  end: lastStep.destination_time
+                })
+              }
+
               return (
-                <div key={`${from}-${to}`} style={{ marginBottom: '15px' }}>
-                  <h4 style={{ margin: '0 0 8px 0' }}>{fromStop.stop_name} → {toStop.stop_name}</h4>
-                  {directionPaths.length === 0 ? (
-                    <div style={{ color: '#888', marginLeft: '10px' }}>No paths</div>
-                  ) : (() => {
-                    const formatTime = (seconds: number): string => {
-                      const h = Math.floor(seconds / 3600)
-                      const m = Math.floor((seconds % 3600) / 60)
-                      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+                <div key={destId} style={{ marginBottom: '15px' }}>
+                  <h4 style={{ margin: '0 0 8px 0' }}>→ {destStop.stop_name}</h4>
+                  {[...groups.values()].map((group, groupIndex) => {
+                    // Build the list of stop IDs for this route from uncollapsed steps
+                    const routeStops: number[] = []
+                    for (const step of group.steps) {
+                      if (routeStops.length === 0) {
+                        routeStops.push(step.origin_stop)
+                      }
+                      routeStops.push(step.destination_stop)
                     }
-                    const collapseSteps = (steps: Step[]) => steps.reduce((acc, step) => {
-                      const last = acc[acc.length - 1]
-                      if (last && last.trip_description === step.trip_description) {
-                        last.destination_stop = step.destination_stop
-                      } else {
-                        acc.push({ ...step })
-                      }
-                      return acc
-                    }, [] as Step[])
-                    const getSignature = (segments: Step[]) => segments.map(s =>
-                      `${s.trip_description}:${s.origin_stop}:${s.destination_stop}`
-                    ).join('|')
-
-                    // Group paths by their signature
-                    const groups = new Map<string, { segments: Step[]; steps: Step[]; times: { start: number; end: number }[] }>()
-                    for (const { path } of directionPaths) {
-                      const segments = collapseSteps(path.steps)
-                      const sig = getSignature(segments)
-                      if (!groups.has(sig)) {
-                        groups.set(sig, { segments, steps: path.steps, times: [] })
-                      }
-                      const firstStep = path.steps[0]
-                      const lastStep = path.steps[path.steps.length - 1]
-                      groups.get(sig)!.times.push({
-                        start: firstStep.origin_time,
-                        end: lastStep.destination_time
-                      })
-                    }
-
-                    return [...groups.values()].map((group, groupIndex) => {
-                      // Build the list of stop IDs for this route from uncollapsed steps
-                      const routeStops: number[] = []
-                      for (const step of group.steps) {
-                        if (routeStops.length === 0) {
-                          routeStops.push(step.origin_stop)
-                        }
-                        routeStops.push(step.destination_stop)
-                      }
-                      return (
+                    return (
                       <div key={groupIndex} style={{
                         marginBottom: '8px',
                         padding: '6px',
@@ -569,14 +633,14 @@ function App() {
                           ))}
                         </div>
                       </div>
-                    )})
-                  })()}
+                    )
+                  })}
                 </div>
               )
             })}
           </div>
         ) : (
-          <div style={{ color: '#888' }}>Click an edge to select</div>
+          <div style={{ color: '#888' }}>Click a stop to see paths</div>
         )}
         </div>
         </div>
@@ -594,7 +658,14 @@ function App() {
           pointerEvents: 'none',
         }}>
           {hoveredStop && hoveredStop.stop_name}
-          {hoveredEdge && `${hoveredEdge.from.stop_name} ↔ ${hoveredEdge.to.stop_name}`}
+          {hoveredEdge && (
+            <div>
+              <div>{hoveredEdge.from.stop_name} ↔ {hoveredEdge.to.stop_name}</div>
+              {hoveredEdge.tripDescriptions.map((desc, i) => (
+                <div key={i} style={{ fontSize: '12px', opacity: 0.9 }}>{desc}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
