@@ -64,6 +64,11 @@ add_library(shortest_path STATIC src/solver/shortest_path.cpp)
 target_link_libraries(shortest_path PUBLIC step_merge)
 target_include_directories(shortest_path PUBLIC src)
 
+# Create visualization library target
+add_library(visualization STATIC src/visualization/visualization.cpp)
+target_link_libraries(visualization PUBLIC shortest_path)
+target_include_directories(visualization PUBLIC src)
+
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
@@ -73,7 +78,7 @@ target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 
 # Add visualization tool
 add_executable(visualization_tool src/tools/visualization_tool.cpp)
-target_link_libraries(visualization_tool PUBLIC shortest_path)
+target_link_libraries(visualization_tool PUBLIC visualization)
 
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
@@ -82,6 +87,10 @@ target_link_libraries(benchmark_reduction PUBLIC shortest_path)
 # Add reduction diff tool
 add_executable(reduction_diff src/tools/reduction_diff.cpp)
 target_link_libraries(reduction_diff PUBLIC shortest_path)
+
+# Add plain_viz tool (minimal paths only, no iteration)
+add_executable(plain_viz src/tools/plain_viz.cpp)
+target_link_libraries(plain_viz PUBLIC visualization)
 
 # Enable CMake testing
 enable_testing()

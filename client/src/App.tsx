@@ -1,6 +1,5 @@
-import { useState, useMemo, useEffect, ChangeEvent, MouseEvent } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback, ChangeEvent, MouseEvent } from 'react'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { forceSimulation, forceManyBody, forceX, forceY, SimulationNodeDatum } from 'd3-force'
 import Slider from 'rc-slider'
 import 'rc-slider/assets/index.css'
 import './App.css'
@@ -36,13 +35,6 @@ interface Visualization {
   adjacent: [number, Path[][]][]
 }
 
-interface NodeData extends SimulationNodeDatum {
-  id: number
-  stop: GtfsStop
-  targetX: number
-  targetY: number
-}
-
 interface Position {
   x: number
   y: number
@@ -70,10 +62,20 @@ function App() {
   const [hoveredEdge, setHoveredEdge] = useState<{ from: GtfsStop; to: GtfsStop } | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<SelectedEdge | null>(null)
   const [mousePos, setMousePos] = useState<Position>({ x: 0, y: 0 })
-  const [forceSimulationEnabled, setForceSimulationEnabled] = useState(true)
   const [hoveredRoute, setHoveredRoute] = useState<number[] | null>(null)
   const [originTimeMin, setOriginTimeMin] = useState(21600) // 6:00 in seconds from midnight
   const [originTimeMax, setOriginTimeMax] = useState(79200) // 22:00 in seconds from midnight
+
+  // Pan and zoom state
+  const [pan, setPan] = useState<Position>({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+  const [isPanning, setIsPanning] = useState(false)
+  const [panStart, setPanStart] = useState<Position>({ x: 0, y: 0 })
+  const svgRef = useRef<SVGSVGElement>(null)
+  const panRef = useRef(pan)
+  const zoomRef = useRef(zoom)
+  panRef.current = pan
+  zoomRef.current = zoom
 
   const padding = 20
   const svgWidth = 800
@@ -120,13 +122,13 @@ function App() {
     }
   }, [visualizationFiles, queryClient])
 
-  // Compute node positions with force simulation
+  // Compute node positions (geographic only, no force simulation)
   const { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition } = useMemo(() => {
     if (!visualization) {
       return {
         stopsById: new Map<number, GtfsStop>(),
         systemStopIds: new Set<number>(),
-        nodes: [] as NodeData[],
+        nodes: [] as { id: number; stop: GtfsStop }[],
         nodePositions: new Map<number, Position>(),
         edges: [] as EdgeData[],
         getStopPosition: () => null as Position | null
@@ -135,14 +137,28 @@ function App() {
 
     const stopsById = new Map<number, GtfsStop>(visualization.stops.map(([id, stop]) => [id, stop.gtfs_stop]))
     const systemStopIds = new Set<number>(visualization.stops.filter(([, stop]) => stop.system_stop).map(([id]) => id))
-    const graphStops = visualization.stops.filter(([, stop]) => stop.system_stop || stop.intermediate_stop)
+
+    // Collect all stop IDs that appear in any path
+    const stopsInPaths = new Set<number>()
+    for (const [originId, pathGroups] of visualization.adjacent) {
+      for (const pathGroup of pathGroups) {
+        for (const path of pathGroup) {
+          for (const step of path.steps) {
+            stopsInPaths.add(step.origin_stop)
+            stopsInPaths.add(step.destination_stop)
+          }
+        }
+      }
+    }
+
+    const graphStops = visualization.stops.filter(([id]) => stopsInPaths.has(id))
     const stops: [number, GtfsStop][] = graphStops.map(([id, stop]) => [id, stop.gtfs_stop])
 
     if (stops.length === 0) {
       return {
         stopsById,
         systemStopIds,
-        nodes: [] as NodeData[],
+        nodes: [] as { id: number; stop: GtfsStop }[],
         nodePositions: new Map<number, Position>(),
         edges: [] as EdgeData[],
         getStopPosition: () => null as Position | null
@@ -166,49 +182,18 @@ function App() {
       return { x, y }
     }
 
-    // Create nodes with initial geographic positions
-    const nodes: NodeData[] = stops.map(([id, stop]) => {
-      const { x, y } = mapToSvg(stop.stop_lat, stop.stop_lon)
-      return { id, stop, x, y, targetX: x, targetY: y }
+    // Create nodes with geographic positions
+    const nodes = stops.map(([id, stop]) => {
+      return { id, stop }
     })
 
-    // Run force simulation if enabled
-    let nodePositions: Map<number, Position>
-    if (forceSimulationEnabled) {
-      const simulation = forceSimulation(nodes)
-        .force('charge', forceManyBody().strength(-100))
-        .force('x', forceX<NodeData>(d => d.targetX).strength(0.5))
-        .force('y', forceY<NodeData>(d => d.targetY).strength(0.5))
-        .stop()
+    // Use geographic positions directly
+    const nodePositions = new Map(stops.map(([id, stop]) => {
+      const pos = mapToSvg(stop.stop_lat, stop.stop_lon)
+      return [id, pos]
+    }))
 
-      // Run simulation to completion
-      for (let i = 0; i < 300; i++) {
-        simulation.tick()
-      }
-
-      // Rescale to fit within SVG bounds
-      const simXs = nodes.map(n => n.x!)
-      const simYs = nodes.map(n => n.y!)
-      const simMinX = Math.min(...simXs)
-      const simMaxX = Math.max(...simXs)
-      const simMinY = Math.min(...simYs)
-      const simMaxY = Math.max(...simYs)
-      const simRangeX = simMaxX - simMinX || 1
-      const simRangeY = simMaxY - simMinY || 1
-
-      nodePositions = new Map(nodes.map(n => [n.id, {
-        x: padding + ((n.x! - simMinX) / simRangeX) * (svgWidth - 2 * padding),
-        y: padding + ((n.y! - simMinY) / simRangeY) * (svgHeight - 2 * padding),
-      }]))
-    } else {
-      // Use geographic positions directly without force simulation
-      nodePositions = new Map(nodes.map(n => [n.id, {
-        x: n.targetX,
-        y: n.targetY,
-      }]))
-    }
-
-    // Build edges and collect paths for each edge (filtered by origin time)
+    // Build edges for each individual step (filtered by origin time)
     const edgeMap = new Map<string, EdgeData>()
     for (const [originId, pathGroups] of visualization.adjacent) {
       for (const pathGroup of pathGroups) {
@@ -218,19 +203,19 @@ function App() {
           const firstStepOriginTime = path.steps[0].origin_time
           if (firstStepOriginTime < originTimeMin || firstStepOriginTime > originTimeMax) continue
 
-          const lastStep = path.steps[path.steps.length - 1]
-          const destId = lastStep.destination_stop
-          if (stopsById.has(originId) && stopsById.has(destId)) {
-            const key = originId < destId ? `${originId}-${destId}` : `${destId}-${originId}`
-            if (!edgeMap.has(key)) {
-              const [from, to] = key.split('-').map(Number)
-              edgeMap.set(key, { from, to, paths: [], allSystemSteps: true })
-            }
-            edgeMap.get(key)!.paths.push({ originId, path })
-            // Check if all steps in this path are system steps
-            const allStepsSystem = path.steps.every(step => step.system_step)
-            if (!allStepsSystem) {
-              edgeMap.get(key)!.allSystemSteps = false
+          for (const step of path.steps) {
+            const fromId = step.origin_stop
+            const toId = step.destination_stop
+            if (stopsById.has(fromId) && stopsById.has(toId)) {
+              const key = fromId < toId ? `${fromId}-${toId}` : `${toId}-${fromId}`
+              if (!edgeMap.has(key)) {
+                const [from, to] = key.split('-').map(Number)
+                edgeMap.set(key, { from, to, paths: [], allSystemSteps: true })
+              }
+              edgeMap.get(key)!.paths.push({ originId, path })
+              if (!step.system_step) {
+                edgeMap.get(key)!.allSystemSteps = false
+              }
             }
           }
         }
@@ -253,7 +238,7 @@ function App() {
     }
 
     return { stopsById, systemStopIds, nodes, nodePositions, edges, getStopPosition }
-  }, [visualization, forceSimulationEnabled, originTimeMin, originTimeMax])
+  }, [visualization, originTimeMin, originTimeMax])
 
   const formatTimeForInput = (seconds: number): string => {
     const h = Math.floor(seconds / 3600)
@@ -265,6 +250,54 @@ function App() {
   const canGoPrev = currentIndex > 0
   const canGoNext = currentIndex < visualizationFiles.length - 1
 
+  // Pan and zoom handlers
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+
+    const handleWheel = (e: globalThis.WheelEvent) => {
+      e.preventDefault()
+      const rect = svg.getBoundingClientRect()
+
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      const zoomFactor = e.deltaY > 0 ? 0.92 : 1.08
+      const oldZoom = zoomRef.current
+      const newZoom = Math.min(Math.max(oldZoom * zoomFactor, 0.5), 10)
+
+      const oldPan = panRef.current
+      const newPanX = mouseX - (mouseX - oldPan.x) * (newZoom / oldZoom)
+      const newPanY = mouseY - (mouseY - oldPan.y) * (newZoom / oldZoom)
+
+      setZoom(newZoom)
+      setPan({ x: newPanX, y: newPanY })
+    }
+
+    svg.addEventListener('wheel', handleWheel, { passive: false })
+    return () => svg.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  const handleMouseDown = useCallback((e: MouseEvent<SVGSVGElement>) => {
+    if (e.button === 0) {
+      setIsPanning(true)
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+    }
+  }, [pan])
+
+  const handleMouseMove = useCallback((e: MouseEvent<SVGSVGElement>) => {
+    if (isPanning) {
+      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
+    }
+  }, [isPanning, panStart])
+
+  const handleMouseUp = useCallback(() => {
+    setIsPanning(false)
+  }, [])
+
+  const handleMouseLeave = useCallback(() => {
+    setIsPanning(false)
+  }, [])
 
   return (
     <div style={{ position: 'relative' }}>
@@ -317,14 +350,6 @@ function App() {
         <span style={{ color: '#666', fontSize: '14px' }}>
           {currentIndex + 1} / {visualizationFiles.length}
         </span>
-        <label style={{ marginLeft: '20px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={forceSimulationEnabled}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setForceSimulationEnabled(e.target.checked)}
-          />
-          {' '}Spread stops
-        </label>
       </div>
 
       {/* Main content */}
@@ -347,7 +372,17 @@ function App() {
         </div>
         <div style={{ display: 'flex', gap: '20px' }}>
       <div style={{ position: 'relative' }}>
-        <svg width={svgWidth} height={svgHeight} style={{ border: '1px solid black' }}>
+        <svg
+          ref={svgRef}
+          width={svgWidth}
+          height={svgHeight}
+          style={{ border: '1px solid black', cursor: isPanning ? 'grabbing' : 'grab' }}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+        >
+          <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {edges.map((edge, i) => {
             const fromStop = stopsById.get(edge.from)!
             const toStop = stopsById.get(edge.to)!
@@ -362,7 +397,7 @@ function App() {
                 x2={to.x}
                 y2={to.y}
                 stroke={isSelected ? 'orange' : 'gray'}
-                strokeWidth={isSelected ? 3 : 2}
+                strokeWidth={(isSelected ? 3 : 2) / zoom}
                 strokeDasharray={edge.allSystemSteps ? "5,5" : undefined}
                 style={{ cursor: 'pointer' }}
                 onMouseEnter={(e: MouseEvent<SVGLineElement>) => {
@@ -373,7 +408,10 @@ function App() {
                   setMousePos({ x: e.clientX, y: e.clientY })
                 }}
                 onMouseLeave={() => setHoveredEdge(null)}
-                onClick={() => setSelectedEdge({ from: edge.from, to: edge.to, fromStop, toStop, paths: edge.paths })}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setSelectedEdge({ from: edge.from, to: edge.to, fromStop, toStop, paths: edge.paths })
+                }}
               />
             )
           })}
@@ -385,7 +423,7 @@ function App() {
                 key={node.id}
                 cx={pos.x}
                 cy={pos.y}
-                r={5}
+                r={(isSystemStop ? 5 : 2) / zoom}
                 fill={isSystemStop ? "blue" : "#444"}
                 style={{ cursor: 'pointer' }}
                 onMouseEnter={(e: MouseEvent<SVGCircleElement>) => {
@@ -410,13 +448,14 @@ function App() {
                 points={points}
                 fill="none"
                 stroke="red"
-                strokeWidth={3}
+                strokeWidth={3 / zoom}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 pointerEvents="none"
               />
             )
           })()}
+          </g>
         </svg>
         {(isFetching || error) && (
           <div style={{
@@ -451,7 +490,9 @@ function App() {
               { from: selectedEdge.from, to: selectedEdge.to, fromStop: selectedEdge.fromStop, toStop: selectedEdge.toStop },
               { from: selectedEdge.to, to: selectedEdge.from, fromStop: selectedEdge.toStop, toStop: selectedEdge.fromStop }
             ].map(({ from, to, fromStop, toStop }) => {
-              const directionPaths = selectedEdge.paths.filter(p => p.originId === from)
+              const directionPaths = selectedEdge.paths.filter(p =>
+                p.path.steps.some(step => step.origin_stop === from && step.destination_stop === to)
+              )
               return (
                 <div key={`${from}-${to}`} style={{ marginBottom: '15px' }}>
                   <h4 style={{ margin: '0 0 8px 0' }}>{fromStop.stop_name} → {toStop.stop_name}</h4>

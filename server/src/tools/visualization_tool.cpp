@@ -3,54 +3,9 @@
 #include <iostream>
 #include <unordered_set>
 
-#include "gtfs/gtfs.h"
-#include "solver/data.h"
-#include "solver/shortest_path.h"
+#include "visualization/visualization.h"
 
 using namespace vats5;
-
-struct VisualizationStep {
-  StopId origin_stop;
-  StopId destination_stop;
-  TimeSinceServiceStart origin_time;
-  TimeSinceServiceStart destination_time;
-  std::string trip_description;
-  bool system_step;
-};
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    VisualizationStep,
-    origin_stop,
-    destination_stop,
-    origin_time,
-    destination_time,
-    trip_description,
-    system_step
-);
-
-struct VisualizationPath {
-  std::vector<VisualizationStep> steps;
-};
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VisualizationPath, steps);
-
-struct VisualizationStop {
-  GtfsStop gtfs_stop;
-  bool system_stop;
-  bool intermediate_stop;
-};
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    VisualizationStop, gtfs_stop, system_stop, intermediate_stop
-);
-
-struct Visualization {
-  // Key is actually a StopId but I don't know how to make the NLHOMANN macro
-  // recognize that that is a number and can be serialized to an object key.
-  // TODO: Figure out how to do that.
-  std::unordered_map<int, VisualizationStop> stops;
-
-  // Similar thing about the key.
-  std::unordered_map<int, std::vector<std::vector<VisualizationPath>>> adjacent;
-};
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Visualization, stops, adjacent);
 
 // Helper to convert between StopId set and int vector for JSON
 std::vector<int> ToStopIdsJson(const std::unordered_set<StopId>& stops) {
@@ -258,73 +213,6 @@ std::vector<StopId> SelectIntermediateStop(
   return result;
 }
 
-bool IsBartTrip(const DataGtfsMapping& mapping, TripId trip_id) {
-  auto it = mapping.trip_id_to_trip_info.find(trip_id);
-  if (it == mapping.trip_id_to_trip_info.end()) {
-    return false;
-  }
-  if (!std::holds_alternative<GtfsTripId>(it->second.v)) {
-    return false;
-  }
-  const std::string& gtfs_trip_id = std::get<GtfsTripId>(it->second.v).v;
-  return gtfs_trip_id.starts_with("BA:");
-}
-
-nlohmann::json MakeVisualization(
-    const GtfsDay& gtfs_day,
-    const StepsFromGtfs& steps_from_gtfs,
-    const std::unordered_set<StopId>& bart_stops,
-    const std::unordered_set<StopId>& intermediate_stops,
-    const PathsAdjacencyList& split
-) {
-  Visualization viz;
-  for (const GtfsStop& stop : gtfs_day.stops) {
-    const StopId stop_id =
-        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(stop.stop_id);
-    viz.stops[stop_id.v] = VisualizationStop{
-        .gtfs_stop = stop,
-        .system_stop = bart_stops.contains(stop_id),
-        .intermediate_stop = intermediate_stops.contains(stop_id) &&
-                             !bart_stops.contains(stop_id),
-    };
-  }
-
-  for (const auto& [stop_id, path_groups] : split.adjacent) {
-    std::vector<std::vector<VisualizationPath>> viz_path_groups;
-    for (const auto& path_group : path_groups) {
-      std::vector<VisualizationPath> viz_paths;
-      for (const auto& path : path_group) {
-        VisualizationPath viz_path;
-        for (const auto& step : path.steps) {
-          viz_path.steps.push_back(VisualizationStep{
-              .origin_stop = step.origin_stop,
-              .destination_stop = step.destination_stop,
-              .origin_time = step.origin_time,
-              .destination_time = step.destination_time,
-              .trip_description =
-                  steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip
-                  ),
-              .system_step =
-                  IsBartTrip(steps_from_gtfs.mapping, step.origin_trip) &&
-                  IsBartTrip(steps_from_gtfs.mapping, step.destination_trip),
-          });
-        }
-        viz_paths.push_back(viz_path);
-      }
-      viz_path_groups.push_back(viz_paths);
-    }
-    viz.adjacent[stop_id.v] = viz_path_groups;
-  }
-
-  nlohmann::json j = viz;
-  return j;
-  // std::cout << "Intermediate stops were (" << intermediate_stops.size() <<
-  // "): "; for (const auto s : intermediate_stops) {
-  //   std::cout << s.v << " ";
-  // }
-  // std::cout << "\n";
-}
-
 int main(int argc, char* argv[]) {
   const std::string gtfs_path = "../data/RG_20260108_all";
   std::string load_state_path;
@@ -411,7 +299,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  double snap_threshold_meters = 150;
+  double snap_threshold_meters = 0;
   std::unordered_set<StopId> intermediate_stops = bart_stops;
 
   // Collect all visualizations in order
