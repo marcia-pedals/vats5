@@ -64,9 +64,14 @@ add_library(steps_adjacency_list STATIC src/solver/steps_adjacency_list.cpp)
 target_link_libraries(steps_adjacency_list PUBLIC step_merge)
 target_include_directories(steps_adjacency_list PUBLIC src)
 
+# Create relaxed_adjacency_list library target
+add_library(relaxed_adjacency_list STATIC src/solver/relaxed_adjacency_list.cpp)
+target_link_libraries(relaxed_adjacency_list PUBLIC steps_adjacency_list)
+target_include_directories(relaxed_adjacency_list PUBLIC src)
+
 # Create shortest_path library target
 add_library(shortest_path STATIC src/solver/shortest_path.cpp)
-target_link_libraries(shortest_path PUBLIC steps_adjacency_list)
+target_link_libraries(shortest_path PUBLIC relaxed_adjacency_list)
 target_include_directories(shortest_path PUBLIC src)
 
 # Create visualization library target
@@ -119,6 +124,11 @@ add_test(NAME step_merge_test COMMAND step_merge_test)
 add_executable(steps_adjacency_list_test src/solver/steps_adjacency_list_test.cpp)
 target_link_libraries(steps_adjacency_list_test PUBLIC gunit steps_adjacency_list)
 add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
+
+# Add relaxed_adjacency_list test executable
+add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_test.cpp)
+target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list)
+add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
 
 # Add shortest_path test executable
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)

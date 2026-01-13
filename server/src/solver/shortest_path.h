@@ -3,6 +3,7 @@
 #include <span>
 
 #include "solver/data.h"
+#include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
 
 namespace vats5 {
@@ -16,11 +17,6 @@ std::vector<Step> BacktrackPath(
 // Compute the merged step for a path, with proper origin time calculation.
 // The origin time adjustment handles flex paths that transition to fixed trips.
 Step ComputeMergedStep(const std::vector<Step>& path);
-
-struct RelaxedDistances {
-    // distance_to[dest_id][stop_id.v] is the relaxed distance from stop_id to dest_id.
-  std::unordered_map<StopId, std::vector<int>> distance_to;
-};
 
 struct StopIdVectorHash {
   size_t operator()(const std::vector<StopId>& v) const {
@@ -117,75 +113,6 @@ StepPathsAdjacencyList SplitPathsAt(
     const std::unordered_set<StopId> intermediate_stops
 );
 
-// An edge in the relaxed adjacency list.
-struct RelaxedEdge {
-  StopId destination_stop;
-  int weight_seconds;  // Duration of the shortest step between stops
-
-  bool operator==(const RelaxedEdge& other) const {
-    return destination_stop == other.destination_stop &&
-           weight_seconds == other.weight_seconds;
-  }
-};
-
-// A simple directed weighted graph on StopIds.
-// Each edge weight is the duration in seconds of the shortest step between
-// stops.
-struct RelaxedAdjacencyList {
-  // CSR (Compressed Sparse Row) representation.
-  // edge_offsets[stop_id.v] is the start index into `edges` for that stop.
-  std::vector<int> edge_offsets;
-
-  // Flat vector of all edges. Edges for stop s are at indices
-  // [edge_offsets[s.v], edge_offsets[s.v + 1]) for s.v < NumStops() - 1,
-  // or [edge_offsets[s.v], edges.size()) for s.v == NumStops() - 1.
-  std::vector<RelaxedEdge> edges;
-
-  int NumStops() const { return static_cast<int>(edge_offsets.size()); }
-
-  // Get the edges originating at the given stop.
-  std::span<const RelaxedEdge> GetEdges(StopId stop) const {
-    if (stop.v < 0 || stop.v >= NumStops()) {
-      return {};
-    }
-    int start = edge_offsets[stop.v];
-    int end = (stop.v + 1 < NumStops()) ? edge_offsets[stop.v + 1]
-                                        : static_cast<int>(edges.size());
-    return std::span<const RelaxedEdge>(edges.data() + start, end - start);
-  }
-
-  bool operator==(const RelaxedAdjacencyList& other) const {
-    return edge_offsets == other.edge_offsets && edges == other.edges;
-  }
-};
-
-// Create a relaxed adjacency list from a steps adjacency list.
-// For each origin-destination pair, the weight is the duration in seconds
-// of the shortest step (minimum destination_time - origin_time across all
-// steps).
-RelaxedAdjacencyList MakeRelaxedAdjacencyList(
-    const StepsAdjacencyList& steps_list
-);
-
-// Find shortest paths from origin to all reachable stops using Dijkstra's
-// algorithm. Returns a vector indexed by StopId.v containing the shortest
-// distance in seconds from origin to each stop. Unreachable stops have distance
-// std::numeric_limits<int>::max().
-std::vector<int> FindShortestRelaxedPaths(
-    const RelaxedAdjacencyList& adjacency_list, StopId origin
-);
-
-// Create a reversed relaxed adjacency list where all edges are reversed.
-// An edge (u -> v, weight) becomes (v -> u, weight).
-RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
-    const RelaxedAdjacencyList& adjacency_list
-);
-
-RelaxedDistances ComputeRelaxedDistances(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& destinations
-);
-
 // Return a modified `path` where any intermediate stops within
 // `threshold_meters` of a stop in `stops` are replaced by that stop, and then
 // steps that are thusly changed to be from a stop to itself are dropped.
@@ -207,6 +134,20 @@ StepPathsAdjacencyList AdjacencyListSnapToStops(
     const DataGtfsMapping& mapping,
     double threshold_meters,
     const StepPathsAdjacencyList& paths
+);
+
+// Find shortest paths from origin to all reachable stops using Dijkstra's
+// algorithm. Returns a vector indexed by StopId.v containing the shortest
+// distance in seconds from origin to each stop. Unreachable stops have distance
+// std::numeric_limits<int>::max().
+std::vector<int> FindShortestRelaxedPaths(
+    const RelaxedAdjacencyList& adjacency_list, StopId origin
+);
+
+// Compute relaxed distances from all stops to each destination.
+RelaxedDistances ComputeRelaxedDistances(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& destinations
 );
 
 }  // namespace vats5
