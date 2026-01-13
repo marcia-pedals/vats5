@@ -31,7 +31,7 @@ struct RemappedAdjacencyList {
 RemappedAdjacencyList RemapStopIds(const StepsAdjacencyList& adj);
 
 // Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW format.
-// The graph is symmetrized by taking min(weight(i,j), weight(j,i)).
+// Uses vertex doubling to solve asymmetric TSP: each vertex i becomes 2i (in) and 2i+1 (out).
 // Missing edges get a large weight.
 void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed);
 

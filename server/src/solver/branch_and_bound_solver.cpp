@@ -10,6 +10,7 @@
 #include <limits>
 #include <sstream>
 #include <unistd.h>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -100,11 +101,15 @@ RemappedAdjacencyList RemapStopIds(const StepsAdjacencyList& adj) {
 }
 
 // Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW format.
-// The graph is symmetrized by taking min(weight(i,j), weight(j,i)).
-// Missing edges get a large weight
+// Uses vertex doubling to convert asymmetric TSP to symmetric TSP:
+// - For each original vertex i, create two vertices: 2i (in) and 2i+1 (out)
+// - Edge (in_i, out_i) = 0 (forces them to be adjacent)
+// - Edge (out_i, in_j) = w(i,j) for the asymmetric weight from i to j
+// - Edges (in_i, in_j) and (out_i, out_j) are forbidden (large weight)
 void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
     int n = relaxed.NumStops();
-    constexpr int kMissingEdgeWeight = 360 * 3600;
+    int doubled_n = 2 * n;
+    constexpr int kForbiddenEdgeWeight = 36 * 3600;
 
     // Build edge lookup: (origin * n + dest) -> weight
     std::unordered_map<int64_t, int> edge_weights;
@@ -115,56 +120,154 @@ void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
         }
     }
 
-    // Helper to get weight, returning kMissingEdgeWeight if edge doesn't exist
+    // Helper to get asymmetric weight, returning kForbiddenEdgeWeight if edge doesn't exist
     auto get_weight = [&](int from, int to) -> int {
         int64_t key = static_cast<int64_t>(from) * n + to;
         auto it = edge_weights.find(key);
-        return (it != edge_weights.end()) ? it->second : kMissingEdgeWeight;
+        return (it != edge_weights.end()) ? it->second : kForbiddenEdgeWeight;
+    };
+
+    // Helper to compute symmetric edge weight in doubled graph
+    // Vertices: 2i = in(i), 2i+1 = out(i)
+    auto get_doubled_weight = [&](int a, int b) -> int {
+        assert(a < b);
+        int a_orig = a / 2;
+        int b_orig = b / 2;
+        bool a_is_in = (a % 2 == 0);
+        bool b_is_in = (b % 2 == 0);
+
+        if (a_orig == b_orig) {
+            // Same original vertex: in(i) <-> out(i), weight 0
+            return 0;
+        }
+
+        // Different original vertices
+        if (!a_is_in && b_is_in) {
+            // out(a_orig) <-> in(b_orig): asymmetric weight w(a_orig, b_orig)
+            return get_weight(a_orig, b_orig);
+        } else if (a_is_in && !b_is_in) {
+            // in(a_orig) <-> out(b_orig): asymmetric weight w(b_orig, a_orig)
+            return get_weight(b_orig, a_orig);
+        } else {
+            // Both in or both out: forbidden
+            return kForbiddenEdgeWeight;
+        }
     };
 
     // Output TSP header
     out << "NAME: vats5\n";
     out << "TYPE: TSP\n";
-    out << "DIMENSION: " << n << "\n";
+    out << "DIMENSION: " << doubled_n << "\n";
     out << "EDGE_WEIGHT_TYPE: EXPLICIT\n";
     out << "EDGE_WEIGHT_FORMAT: UPPER_ROW\n";
     out << "EDGE_WEIGHT_SECTION\n";
 
     // Output upper triangular matrix (excluding diagonal)
     // For row i, output weights to j for all j > i
-    for (int i = 0; i < n; ++i) {
-        for (int j = i + 1; j < n; ++j) {
-            int weight_ij = get_weight(i, j);
-            int weight_ji = get_weight(j, i);
-            int symmetric_weight = std::min(weight_ij, weight_ji);
-            out << symmetric_weight;
-            if (j < n - 1) {
+    for (int i = 0; i < doubled_n; ++i) {
+        for (int j = i + 1; j < doubled_n; ++j) {
+            int weight = get_doubled_weight(i, j);
+            out << weight;
+            if (j < doubled_n - 1) {
                 out << " ";
             }
         }
-        if (i < n - 1) {
+        if (i < doubled_n - 1) {
             out << "\n";
         }
     }
     out << "\nEOF\n";
 }
 
+// Parse Concorde solution from doubled graph back to original vertices.
+// The doubled graph has vertices 2i (in) and 2i+1 (out) for each original vertex i.
+// The tour alternates: in(a) -> out(a) -> in(b) -> out(b) -> ...
+// We extract the original tour by taking the original vertex from each in/out pair.
 std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
     std::ifstream in(solution_path);
     if (!in) {
         throw std::runtime_error("Failed to open solution file: " + solution_path);
     }
 
-    int n;
-    in >> n;
+    int doubled_n;
+    in >> doubled_n;
 
-    std::vector<StopId> tour;
-    tour.reserve(n);
-    for (int i = 0; i < n; ++i) {
+    std::vector<int> doubled_tour;
+    doubled_tour.reserve(doubled_n);
+    for (int i = 0; i < doubled_n; ++i) {
         int node;
         in >> node;
-        tour.push_back(StopId{node});
+        doubled_tour.push_back(node);
     }
+
+    // The tour should alternate between in/out pairs of the same vertex.
+    // Find the pattern: if doubled_tour[i] and doubled_tour[i+1] are a pair (same orig vertex),
+    // then that's our in->out transition.
+    // We need to extract original vertices from consecutive pairs.
+
+    int n = doubled_n / 2;
+    std::vector<StopId> tour;
+    tour.reserve(n);
+
+    // The tour should alternate between in/out pairs of the same vertex.
+    // Forward direction: in(a) -> out(a) -> in(b) -> out(b) -> ...
+    // Reversed direction: out(a) -> in(a) -> out(b) -> in(b) -> ...
+    // Find where a proper pair starts and determine direction.
+
+    int start_idx = -1;
+    bool is_reversed = false;
+
+    for (int i = 0; i < doubled_n; ++i) {
+        int curr = doubled_tour[i];
+        int next = doubled_tour[(i + 1) % doubled_n];
+        int curr_orig = curr / 2;
+        int next_orig = next / 2;
+        bool curr_is_in = (curr % 2 == 0);
+        bool curr_is_out = (curr % 2 == 1);
+        bool next_is_in = (next % 2 == 0);
+        bool next_is_out = (next % 2 == 1);
+
+        if (curr_orig == next_orig) {
+            if (curr_is_in && next_is_out) {
+                // Forward: in(a) -> out(a)
+                start_idx = i;
+                is_reversed = false;
+                break;
+            } else if (curr_is_out && next_is_in) {
+                // Reversed: out(a) -> in(a)
+                start_idx = i;
+                is_reversed = true;
+                break;
+            }
+        }
+    }
+
+    if (start_idx == -1) {
+        std::ostringstream err;
+        err << "Could not find in/out pair in Concorde solution.\n";
+        err << "Doubled tour (" << doubled_n << " vertices):\n";
+        for (int i = 0; i < doubled_n; ++i) {
+            int v = doubled_tour[i];
+            int orig = v / 2;
+            const char* type = (v % 2 == 0) ? "in" : "out";
+            err << "  [" << i << "] " << v << " = " << type << "(" << orig << ")\n";
+        }
+        throw std::runtime_error(err.str());
+    }
+
+    // Extract original vertices, stepping by 2 (each pair is one original vertex)
+    // If reversed, we need to reverse the final tour to get the correct direction
+    for (int i = 0; i < n; ++i) {
+        int idx = (start_idx + 2 * i) % doubled_n;
+        int doubled_vertex = doubled_tour[idx];
+        int orig_vertex = doubled_vertex / 2;
+        tour.push_back(StopId{orig_vertex});
+    }
+
+    if (is_reversed) {
+        std::reverse(tour.begin(), tour.end());
+    }
+
     return tour;
 }
 
@@ -509,32 +612,25 @@ void PrintTourEvaluation(
 
     size_t max_prefix_len = 0;
     int max_fw_width = 0;
-    int max_bw_width = 0;
     for (size_t i = 0; i < eval.tour.size() - 1; ++i) {
         StopId a = eval.tour[i];
         StopId b = eval.tour[i + 1];
         size_t len = stop_name(a).size() + 4 + stop_name(b).size();  // 4 for " -> "
         max_prefix_len = std::max(max_prefix_len, len);
         max_fw_width = std::max(max_fw_width, static_cast<int>(std::to_string(eval.tour_forwards_weights[i]).size()));
-        max_bw_width = std::max(max_bw_width, static_cast<int>(std::to_string(eval.tour_backwards_weights[i]).size()));
     }
-    int max_weight_width = std::max(max_fw_width, max_bw_width);
 
-    int sum_of_mins = 0;
+    int total = 0;
     for (size_t i = 0; i < eval.tour.size() - 1; ++i) {
         StopId a = eval.tour[i];
         StopId b = eval.tour[i + 1];
         std::string prefix = stop_name(a) + " -> " + stop_name(b);
         int fw = eval.tour_forwards_weights[i];
-        int bw = eval.tour_backwards_weights[i];
-        int min_weight = std::min(fw, bw);
-        sum_of_mins += min_weight;
+        total += fw;
         std::cout << std::left << std::setw(max_prefix_len) << prefix << ": "
-            << std::right << std::setw(max_weight_width) << fw << " | "
-            << std::setw(max_weight_width) << bw << " = "
-            << min_weight << "\n";
+            << std::right << std::setw(max_fw_width) << fw << "\n";
     }
-    std::cout << "Sum of mins: " << sum_of_mins << "\n";
+    std::cout << "Total: " << total << "\n";
 }
 
 void DoIt(
@@ -644,10 +740,6 @@ void DoIt(
         SolutionState solution_right_state = MakeBranchRequireEdge(solution_initial_state, a, b);
         auto eval2 = EvaluateState(solution_right_state);
         PrintTourEvaluation(mapping, solution_right_state, eval2);
-
-        if (i > 5) {
-            return;
-        }
     }
 
     for (int i = 0; i < eval.tour.size() - 1; ++i) {
