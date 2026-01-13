@@ -259,7 +259,7 @@ TEST(StepMergeTest, MergeStepsTest) {
   EXPECT_TRUE(CheckSortedAndMinimal(bc));
 
   // Call MergeSteps
-  std::vector<Step> ac = MergeSteps(ab, bc);
+  std::vector<Step> ac = PairwiseMergedSteps(ab, bc);
 
   TripId ct503 =
       result.mapping.gtfs_trip_id_to_trip_id.at(GtfsTripId{"CT:503"});
@@ -625,7 +625,7 @@ RC_GTEST_PROP(
   RC_LOG() << "Minimal steps 2->3: " << rc::toString(steps_23) << "\n";
 
   // Merge the steps
-  std::vector<Step> merged_steps = MergeSteps(steps_12, steps_23);
+  std::vector<Step> merged_steps = PairwiseMergedSteps(steps_12, steps_23);
   RC_LOG() << "Merged steps: " << rc::toString(merged_steps) << "\n";
 
   // Property 1: the result satisfies CheckSortedAndMinimal

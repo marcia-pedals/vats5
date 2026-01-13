@@ -13,6 +13,7 @@
 #include "gtfs/gtfs.h"
 #include "solver/cached_test_data.h"
 #include "solver/data.h"
+#include "solver/step_merge.h"
 
 namespace vats5 {
 
@@ -121,7 +122,7 @@ void VerifyPathResult(
       BacktrackPath(shortest_paths, destination_stop);
   ASSERT_FALSE(path_steps.empty()) << destination_stop_name << " path is empty";
 
-  Step step = ComputeMergedStep(path_steps);
+  Step step = ConsecutiveMergedSteps(path_steps);
 
   EXPECT_EQ(step.origin_time.ToString(), expected_origin_time_str)
       << destination_stop_name << " departure time";
@@ -1450,8 +1451,8 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
 
     std::vector<Step> reduced_path = BacktrackPath(reduced_result, destination);
 
-    Step original_merged = ComputeMergedStep(original_path);
-    Step reduced_merged = ComputeMergedStep(reduced_path);
+    Step original_merged = ConsecutiveMergedSteps(original_path);
+    Step reduced_merged = ConsecutiveMergedSteps(reduced_path);
 
     auto format_both_paths = [&]() {
       return "Original path:\n" + FormatPath(original_path, mapping) +

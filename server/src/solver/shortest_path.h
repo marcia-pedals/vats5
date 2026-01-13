@@ -12,10 +12,6 @@ std::vector<Step> BacktrackPath(
     const std::vector<Step>& search_result, StopId dest
 );
 
-// Compute the merged step for a path, with proper origin time calculation.
-// The origin time adjustment handles flex paths that transition to fixed trips.
-Step ComputeMergedStep(const std::vector<Step>& path);
-
 struct StopIdVectorHash {
   size_t operator()(const std::vector<StopId>& v) const {
     size_t seed = v.size();

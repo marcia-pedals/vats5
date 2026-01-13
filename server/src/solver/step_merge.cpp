@@ -140,7 +140,7 @@ Step MergedStep(Step ab, Step bc) {
   };
 }
 
-std::vector<Step> MergeSteps(
+std::vector<Step> PairwiseMergedSteps(
     const std::vector<Step>& ab, const std::vector<Step>& bc
 ) {
   std::vector<Step> result;
@@ -263,6 +263,46 @@ std::vector<Step> MergeSteps(
   // delete them.
   MakeMinimalCover(result);
   return result;
+}
+
+Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
+  if (path.empty()) {
+    return Step{};
+  }
+
+  const Step& first = path.front();
+  const Step& last = path.back();
+
+  // Calculate origin time with flex adjustment
+  TimeSinceServiceStart origin_time = first.origin_time;
+  bool is_flex = first.is_flex;
+
+  if (is_flex && path.size() > 1) {
+    // If the path starts with flex and transitions to a fixed trip,
+    // we can delay departure. Find where flex ends.
+    TimeSinceServiceStart flex_arrival = first.destination_time;
+    for (size_t i = 1; i < path.size(); ++i) {
+      if (!path[i].is_flex) {
+        // Found transition from flex to fixed
+        // We can wait: (fixed_departure - flex_arrival) extra time
+        origin_time.seconds +=
+            path[i].origin_time.seconds - flex_arrival.seconds;
+        is_flex = false;  // Path becomes non-flex when we connect to fixed
+        break;
+      }
+      flex_arrival = path[i].destination_time;
+    }
+  }
+
+  return Step{
+      first.origin_stop,
+      last.destination_stop,
+      origin_time,
+      last.destination_time,
+      first.origin_trip,
+      last.destination_trip,
+      is_flex
+  };
 }
 
 }  // namespace vats5

@@ -36,12 +36,17 @@ void MakeMinimalCover(std::vector<Step>& steps);
 //
 // ab: All the steps from stop A to stop B, must satisfy CheckSortedAndMinimal.
 // bc: All the steps from stop B to stop C, must satisfy CheckSortedAndMinimal.
-std::vector<Step> MergeSteps(
+std::vector<Step> PairwiseMergedSteps(
     const std::vector<Step>& ab, const std::vector<Step>& bc
 );
 
 // Merge two consecutive steps into a single step.
 // The destination of `ab` should be the origin of `bc`.
 Step MergedStep(Step ab, Step bc);
+
+// Compute the merged step for a path of consecutive steps, with proper origin
+// time calculation. The origin time adjustment handles flex paths that
+// transition to fixed trips.
+Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 
 }  // namespace vats5

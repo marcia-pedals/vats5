@@ -97,48 +97,6 @@ std::vector<Step> BacktrackPath(
   return path;
 }
 
-// Compute the merged step for a path, with proper origin time calculation.
-// The origin time adjustment handles flex paths that transition to fixed trips.
-Step ComputeMergedStep(const std::vector<Step>& path) {
-  if (path.empty()) {
-    return Step{};
-  }
-
-  const Step& first = path.front();
-  const Step& last = path.back();
-
-  // Calculate origin time with flex adjustment
-  TimeSinceServiceStart origin_time = first.origin_time;
-  bool is_flex = first.is_flex;
-
-  if (is_flex && path.size() > 1) {
-    // If the path starts with flex and transitions to a fixed trip,
-    // we can delay departure. Find where flex ends.
-    TimeSinceServiceStart flex_arrival = first.destination_time;
-    for (size_t i = 1; i < path.size(); ++i) {
-      if (!path[i].is_flex) {
-        // Found transition from flex to fixed
-        // We can wait: (fixed_departure - flex_arrival) extra time
-        origin_time.seconds +=
-            path[i].origin_time.seconds - flex_arrival.seconds;
-        is_flex = false;  // Path becomes non-flex when we connect to fixed
-        break;
-      }
-      flex_arrival = path[i].destination_time;
-    }
-  }
-
-  return Step{
-      first.origin_stop,
-      last.destination_stop,
-      origin_time,
-      last.destination_time,
-      first.origin_trip,
-      last.destination_trip,
-      is_flex
-  };
-}
-
 // Sentinel Step representing an unvisited stop.
 const Step kUnvisitedStep{
     StopId{-1},
@@ -478,7 +436,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
       }
 
       // Construct merged step by computing origin_time from the path
-      Step merged_step = ComputeMergedStep(path_steps);
+      Step merged_step = ConsecutiveMergedSteps(path_steps);
       result[dest].push_back(merged_step);
 
       Path& full_path = full_paths[merged_step];
