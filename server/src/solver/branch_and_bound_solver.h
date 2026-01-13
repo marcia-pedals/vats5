@@ -10,15 +10,19 @@
 
 namespace vats5 {
 
-// Result of remapping stop IDs to consecutive integers starting from 0.
-struct RemappedAdjacencyList {
-  StepsAdjacencyList adj;
-
+// Bidirectional mapping between original stop IDs and remapped consecutive IDs.
+struct StopIdRemapping {
   // Maps original StopId -> new consecutive StopId
   std::unordered_map<int, StopId> original_to_new;
 
   // Maps new consecutive StopId -> original StopId
   std::vector<StopId> new_to_original;
+};
+
+// Result of remapping stop IDs to consecutive integers starting from 0.
+struct RemappedAdjacencyList {
+  StepsAdjacencyList adj;
+  StopIdRemapping mapping;
 };
 
 // Remaps all stop IDs in the adjacency list to consecutive integers [0, N)
@@ -33,15 +37,13 @@ void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed);
 
 // Result of solving TSP with Concorde.
 struct ConcordeSolution {
-  // Tour using indices into the relaxed adjacency list (0..n-1 are real stops).
-  // The dummy START node has been removed.
-  std::vector<int> tour;
+  std::vector<StopId> tour;
 
   // Optimal tour cost as reported by Concorde (rounded to int).
   int optimal_value;
 };
 
-// Solves TSP using Concorde and returns the tour rotated to start at the dummy START node.
+// Solves TSP using Concorde and returns the tour.
 ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed);
 
 // Result of computing the actual path for a tour.

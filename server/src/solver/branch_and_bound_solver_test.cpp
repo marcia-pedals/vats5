@@ -60,37 +60,37 @@ TEST(BranchAndBoundSolverTest, RemapStopIdsBasic) {
   EXPECT_EQ(remapped.adj.NumStops(), 3);
 
   // Check bidirectional mappings exist for all 3 original stops
-  EXPECT_EQ(remapped.new_to_original.size(), 3);
-  EXPECT_EQ(remapped.original_to_new.size(), 3);
+  EXPECT_EQ(remapped.mapping.new_to_original.size(), 3);
+  EXPECT_EQ(remapped.mapping.original_to_new.size(), 3);
 
   // Check that mappings are consistent
   for (int old_id : {10, 20, 30}) {
-    ASSERT_TRUE(remapped.original_to_new.contains(old_id));
-    StopId new_id = remapped.original_to_new.at(old_id);
+    ASSERT_TRUE(remapped.mapping.original_to_new.contains(old_id));
+    StopId new_id = remapped.mapping.original_to_new.at(old_id);
     EXPECT_GE(new_id.v, 0);
     EXPECT_LT(new_id.v, 3);
-    EXPECT_EQ(remapped.new_to_original[new_id.v].v, old_id);
+    EXPECT_EQ(remapped.mapping.new_to_original[new_id.v].v, old_id);
   }
 
   // Check that the graph structure is preserved:
   // The new stop corresponding to original 10 should have 2 destination groups
-  StopId new_10 = remapped.original_to_new.at(10);
+  StopId new_10 = remapped.mapping.original_to_new.at(10);
   auto groups_from_10 = remapped.adj.GetGroups(new_10);
   EXPECT_EQ(groups_from_10.size(), 2);
 
   // The new stop corresponding to original 20 should have 1 destination group
-  StopId new_20 = remapped.original_to_new.at(20);
+  StopId new_20 = remapped.mapping.original_to_new.at(20);
   auto groups_from_20 = remapped.adj.GetGroups(new_20);
   EXPECT_EQ(groups_from_20.size(), 1);
 
   // The new stop corresponding to original 30 should have 0 destination groups
-  StopId new_30 = remapped.original_to_new.at(30);
+  StopId new_30 = remapped.mapping.original_to_new.at(30);
   auto groups_from_30 = remapped.adj.GetGroups(new_30);
   EXPECT_EQ(groups_from_30.size(), 0);
 
   // Check that destination stops are remapped correctly
-  StopId new_20_expected = remapped.original_to_new.at(20);
-  StopId new_30_expected = remapped.original_to_new.at(30);
+  StopId new_20_expected = remapped.mapping.original_to_new.at(20);
+  StopId new_30_expected = remapped.mapping.original_to_new.at(30);
 
   // Find destinations from new_10
   bool found_20 = false, found_30 = false;

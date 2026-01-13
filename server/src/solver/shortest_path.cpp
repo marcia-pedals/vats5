@@ -125,6 +125,30 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
+std::vector<Step> GetAllSteps(const StepsAdjacencyList& adjacency_list) {
+  std::vector<Step> result;
+
+  for (int origin_v = 0; origin_v < adjacency_list.NumStops(); ++origin_v) {
+    StopId origin_stop{origin_v};
+    for (const StepGroup& group : adjacency_list.GetGroups(origin_stop)) {
+      // Add flex step if present
+      if (group.flex_step.has_value()) {
+        result.push_back(
+            group.flex_step->ToStep(origin_stop, group.destination_stop, true)
+        );
+      }
+      // Add fixed-schedule steps
+      for (const AdjacencyListStep& step : adjacency_list.GetSteps(group)) {
+        result.push_back(
+            step.ToStep(origin_stop, group.destination_stop, false)
+        );
+      }
+    }
+  }
+
+  return result;
+}
+
 struct FrontierEntry {
   StopId destination_stop;
   TimeSinceServiceStart arrival_time;
@@ -979,7 +1003,7 @@ std::vector<int> FindShortestRelaxedPaths(
     const RelaxedAdjacencyList& adjacency_list, StopId origin
 ) {
   const int num_stops = adjacency_list.NumStops();
-  std::vector<int> distances(num_stops, std::numeric_limits<int>::max());
+  std::vector<int> distances(num_stops, 360 * 3600);
   std::vector<bool> finalized(num_stops, false);
 
   // Priority queue: (distance, stop_id)
@@ -1125,7 +1149,8 @@ RelaxedDistances ComputeRelaxedDistances(
 }
 
 RelaxedAdjacencyList CompleteShortestRelaxedPaths(
-    const RelaxedAdjacencyList& adjacency_list
+    const RelaxedAdjacencyList& adjacency_list,
+    BoundaryIds boundary
 ) {
   const int n = adjacency_list.NumStops();
 
@@ -1134,6 +1159,8 @@ RelaxedAdjacencyList CompleteShortestRelaxedPaths(
   for (int i = 0; i < n; ++i) {
     all_distances[i] = FindShortestRelaxedPaths(adjacency_list, StopId{i});
   }
+  all_distances[boundary.anchor.v][boundary.start.v] = 0;
+  all_distances[boundary.end.v][boundary.anchor.v] = 0;
 
   // Build complete graph
   RelaxedAdjacencyList result;

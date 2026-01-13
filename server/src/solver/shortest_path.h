@@ -203,6 +203,9 @@ inline void from_json(const nlohmann::json& j, PathsAdjacencyList& adj) {
 // Group steps into an adjacency list.
 StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
 
+// Extract all steps from an adjacency list (inverse of MakeAdjacencyList).
+std::vector<Step> GetAllSteps(const StepsAdjacencyList& adjacency_list);
+
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
@@ -352,6 +355,16 @@ struct RelaxedAdjacencyList {
     return std::span<const RelaxedEdge>(edges.data() + start, end - start);
   }
 
+  // Get the weight of the edge from a to b, if it exists.
+  std::optional<int> GetWeight(StopId a, StopId b) const {
+    for (const RelaxedEdge& edge : GetEdges(a)) {
+      if (edge.destination_stop == b) {
+        return edge.weight_seconds;
+      }
+    }
+    return std::nullopt;
+  }
+
   bool operator==(const RelaxedAdjacencyList& other) const {
     return edge_offsets == other.edge_offsets && edges == other.edges;
   }
@@ -379,11 +392,18 @@ RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
     const RelaxedAdjacencyList& adjacency_list
 );
 
+struct BoundaryIds {
+    StopId start;
+    StopId end;
+    StopId anchor;
+};
+
 // Compute all-pairs shortest paths and return a complete graph where the
 // edge i->j has weight equal to the shortest path distance from i to j.
 // If there is no path from i to j, the edge weight is INT_MAX.
 RelaxedAdjacencyList CompleteShortestRelaxedPaths(
-    const RelaxedAdjacencyList& adjacency_list
+    const RelaxedAdjacencyList& adjacency_list,
+    BoundaryIds boundary
 );
 
 RelaxedDistances ComputeRelaxedDistances(

@@ -30,6 +30,8 @@ struct TripId {
   // A special marker indicating that a Step is just staying put.
   static const TripId NOOP;
 
+  static const TripId BOUNDARY_TRIP;
+
   bool operator==(const TripId& other) const { return v == other.v; }
 };
 inline void to_json(nlohmann::json& j, const TripId& id) { j = id.v; }
@@ -38,6 +40,8 @@ inline void from_json(const nlohmann::json& j, TripId& id) {
 }
 
 inline const TripId TripId::NOOP = TripId{-1};
+
+inline const TripId TripId::BOUNDARY_TRIP = TripId{-2};
 
 struct TimeSinceServiceStart {
   int seconds = 0;
