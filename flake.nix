@@ -10,8 +10,20 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
+        # QSopt LP solver (prebuilt binary)
+        qsopt = pkgs.callPackage ./third_party/qsopt.nix { };
+
+        # Concorde TSP solver
+        concorde = pkgs.callPackage ./third_party/concorde.nix { inherit qsopt; };
       in
       {
+        # Export packages so they can be built with `nix build .#qsopt` etc.
+        packages = {
+          inherit qsopt concorde;
+          default = concorde;
+        };
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             clang
@@ -23,6 +35,8 @@
             ninja
             nlohmann_json
             nodejs
+          ] ++ [
+            concorde
           ];
 
           shellHook = ''

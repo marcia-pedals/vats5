@@ -60,6 +60,48 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
   return result;
 }
 
+RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(
+    const std::vector<WeightedEdge>& edges
+) {
+  if (edges.empty()) {
+    return RelaxedAdjacencyList{};
+  }
+
+  // Find the number of stops (max stop ID + 1)
+  int num_stops = 0;
+  for (const WeightedEdge& edge : edges) {
+    num_stops = std::max(num_stops, edge.origin.v + 1);
+    num_stops = std::max(num_stops, edge.destination.v + 1);
+  }
+
+  // Group edges by origin
+  std::vector<std::vector<RelaxedEdge>> per_origin_edges(num_stops);
+  for (const WeightedEdge& edge : edges) {
+    per_origin_edges[edge.origin.v].push_back(
+        RelaxedEdge{edge.destination, edge.weight_seconds}
+    );
+  }
+
+  // Build CSR format
+  RelaxedAdjacencyList result;
+  result.edge_offsets.resize(num_stops);
+
+  int running_offset = 0;
+  for (int i = 0; i < num_stops; ++i) {
+    result.edge_offsets[i] = running_offset;
+    running_offset += static_cast<int>(per_origin_edges[i].size());
+  }
+
+  result.edges.reserve(running_offset);
+  for (int i = 0; i < num_stops; ++i) {
+    for (const RelaxedEdge& edge : per_origin_edges[i]) {
+      result.edges.push_back(edge);
+    }
+  }
+
+  return result;
+}
+
 RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
     const RelaxedAdjacencyList& adjacency_list
 ) {

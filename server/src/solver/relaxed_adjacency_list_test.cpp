@@ -87,6 +87,45 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
 
   // Stop 3 has no edges
   EXPECT_TRUE(relaxed.GetEdges(StopId{3}).empty());
+
+  // Test GetWeight
+  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{2}), 80);
+  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{3}), 50);
+  EXPECT_EQ(relaxed.GetWeight(StopId{2}, StopId{3}), 30);
+  EXPECT_EQ(relaxed.GetWeight(StopId{0}, StopId{1}), std::nullopt);  // No edge
+  EXPECT_EQ(relaxed.GetWeight(StopId{3}, StopId{1}), std::nullopt);  // No edge
+  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{1}), std::nullopt);  // Self-loop
+}
+
+TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromWeightedEdges) {
+  std::vector<WeightedEdge> edges = {
+      WeightedEdge{StopId{0}, StopId{1}, 100},
+      WeightedEdge{StopId{0}, StopId{2}, 200},
+      WeightedEdge{StopId{1}, StopId{2}, 50},
+      WeightedEdge{StopId{2}, StopId{0}, 150},
+  };
+
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+
+  EXPECT_EQ(relaxed.NumStops(), 3);
+
+  // Stop 0 has edges to Stop 1 and Stop 2
+  EXPECT_EQ(relaxed.GetWeight(StopId{0}, StopId{1}), 100);
+  EXPECT_EQ(relaxed.GetWeight(StopId{0}, StopId{2}), 200);
+
+  // Stop 1 has edge to Stop 2
+  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{2}), 50);
+  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{0}), std::nullopt);
+
+  // Stop 2 has edge to Stop 0
+  EXPECT_EQ(relaxed.GetWeight(StopId{2}, StopId{0}), 150);
+  EXPECT_EQ(relaxed.GetWeight(StopId{2}, StopId{1}), std::nullopt);
+}
+
+TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromWeightedEdgesEmpty) {
+  std::vector<WeightedEdge> edges = {};
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  EXPECT_EQ(relaxed.NumStops(), 0);
 }
 
 TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromBART) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -17,6 +18,18 @@ struct RelaxedEdge {
 
   bool operator==(const RelaxedEdge& other) const {
     return destination_stop == other.destination_stop &&
+           weight_seconds == other.weight_seconds;
+  }
+};
+
+// A weighted directed edge between two stops.
+struct WeightedEdge {
+  StopId origin;
+  StopId destination;
+  int weight_seconds;
+
+  bool operator==(const WeightedEdge& other) const {
+    return origin == other.origin && destination == other.destination &&
            weight_seconds == other.weight_seconds;
   }
 };
@@ -47,6 +60,16 @@ struct RelaxedAdjacencyList {
     return std::span<const RelaxedEdge>(edges.data() + start, end - start);
   }
 
+  // Get the weight of the edge from `from` to `to`, or std::nullopt if no edge.
+  std::optional<int> GetWeight(StopId from, StopId to) const {
+    for (const RelaxedEdge& edge : GetEdges(from)) {
+      if (edge.destination_stop == to) {
+        return edge.weight_seconds;
+      }
+    }
+    return std::nullopt;
+  }
+
   bool operator==(const RelaxedAdjacencyList& other) const {
     return edge_offsets == other.edge_offsets && edges == other.edges;
   }
@@ -64,6 +87,12 @@ struct RelaxedDistances {
 // steps).
 RelaxedAdjacencyList MakeRelaxedAdjacencyList(
     const StepsAdjacencyList& steps_list
+);
+
+// Create a relaxed adjacency list from a list of weighted edges.
+// The number of stops is inferred from the maximum stop ID in the edges.
+RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(
+    const std::vector<WeightedEdge>& edges
 );
 
 // Create a reversed relaxed adjacency list where all edges are reversed.

@@ -69,6 +69,11 @@ add_library(relaxed_adjacency_list STATIC src/solver/relaxed_adjacency_list.cpp)
 target_link_libraries(relaxed_adjacency_list PUBLIC steps_adjacency_list)
 target_include_directories(relaxed_adjacency_list PUBLIC src)
 
+# Create concorde library target
+add_library(concorde STATIC src/solver/concorde.cpp)
+target_link_libraries(concorde PUBLIC relaxed_adjacency_list)
+target_include_directories(concorde PUBLIC src)
+
 # Create relaxed_shortest_path library target
 add_library(relaxed_shortest_path STATIC src/solver/relaxed_shortest_path.cpp)
 target_link_libraries(relaxed_shortest_path PUBLIC relaxed_adjacency_list)
@@ -135,6 +140,11 @@ add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
 add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_test.cpp)
 target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list cached_test_data)
 add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
+
+# Add concorde test executable
+add_executable(concorde_test src/solver/concorde_test.cpp)
+target_link_libraries(concorde_test PUBLIC gunit concorde rapidcheck rapidcheck_gtest)
+add_test(NAME concorde_test COMMAND concorde_test)
 
 # Add relaxed_shortest_path test executable
 add_executable(relaxed_shortest_path_test src/solver/relaxed_shortest_path_test.cpp)
