@@ -1,7 +1,5 @@
 #pragma once
 
-#include <span>
-
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
@@ -106,34 +104,6 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
-);
-
-StepPathsAdjacencyList SplitPathsAt(
-    const StepPathsAdjacencyList& paths,
-    const std::unordered_set<StopId> intermediate_stops
-);
-
-// Return a modified `path` where any intermediate stops within
-// `threshold_meters` of a stop in `stops` are replaced by that stop, and then
-// steps that are thusly changed to be from a stop to itself are dropped.
-//
-// Note that this doesn't change any trip ids or times in the modified steps, so
-// the steps become steps that may not actually be possible, so maybe this
-// should be used only to clean up visualizations and not to do actual
-// computations.
-std::vector<Step> SnapToStops(
-    const DataGtfsMapping& mapping,
-    const std::unordered_set<StopId>& stops,
-    double threshold_meters,
-    const std::vector<Step>& path
-);
-
-// Snap all paths in the adjacency list to the stops that are keys of the
-// adjacency list.
-StepPathsAdjacencyList AdjacencyListSnapToStops(
-    const DataGtfsMapping& mapping,
-    double threshold_meters,
-    const StepPathsAdjacencyList& paths
 );
 
 // Find shortest paths from origin to all reachable stops using Dijkstra's
