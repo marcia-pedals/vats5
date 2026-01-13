@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include "solver/cached_test_data.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 
@@ -86,6 +87,32 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
 
   // Stop 3 has no edges
   EXPECT_TRUE(relaxed.GetEdges(StopId{3}).empty());
+}
+
+TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromBART) {
+  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyList(test_data.adjacency_list);
+
+  // Find Berkeley and North Berkeley stops
+  StopId berkeley =
+      test_data.steps_from_gtfs.mapping.GetStopIdFromName("Downtown Berkeley");
+  StopId north_berkeley =
+      test_data.steps_from_gtfs.mapping.GetStopIdFromName("North Berkeley");
+
+  // Find the edge from Berkeley to North Berkeley
+  auto edges = relaxed.GetEdges(berkeley);
+  const RelaxedEdge* edge_to_north_berkeley = nullptr;
+  for (const auto& edge : edges) {
+    if (edge.destination_stop == north_berkeley) {
+      edge_to_north_berkeley = &edge;
+      break;
+    }
+  }
+
+  ASSERT_NE(edge_to_north_berkeley, nullptr)
+      << "No edge from Berkeley to North Berkeley";
+  EXPECT_EQ(edge_to_north_berkeley->weight_seconds, 120);
 }
 
 }  // namespace vats5

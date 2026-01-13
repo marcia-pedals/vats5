@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
+#include "solver/cached_test_data.h"
 #include "solver/data.h"
 
 namespace vats5 {
@@ -164,38 +165,6 @@ struct ShortestPathTestCase {
 class ShortestPathParameterizedTest
     : public ::testing::TestWithParam<ShortestPathTestCase> {};
 
-struct CachedTestData {
-  GtfsDay gtfs_day;
-  StepsFromGtfs steps_from_gtfs;
-  StepsAdjacencyList adjacency_list;
-};
-
-CachedTestData GetCachedTestData(const std::string& gtfs_path) {
-  static std::unordered_map<std::string, CachedTestData> cache;
-
-  auto it = cache.find(gtfs_path);
-  if (it != cache.end()) {
-    return it->second;
-  }
-
-  std::cout << "Loading for test: " << gtfs_path << "\n";
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
-  std::cout << "Normalizing stops...\n";
-  gtfs_day = GtfsNormalizeStops(gtfs_day);
-  std::cout << "Getting steps...\n";
-  StepsFromGtfs steps_from_gtfs =
-      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
-  std::cout << "Making adjacency list...\n";
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
-  std::cout << "Done computing test data.\n";
-
-  CachedTestData data{
-      std::move(gtfs_day), std::move(steps_from_gtfs), std::move(adjacency_list)
-  };
-  cache[gtfs_path] = data;
-  return data;
-}
-
 }  // namespace
 
 TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
@@ -329,34 +298,6 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.test_name;
     }
 );
-
-// TODO: Move to relaxed_adjacency_list_test after figuring out how to deal with
-// GetCachedTestData sharing.
-TEST(ShortestPathTest, MakeRelaxedAdjacencyListFromBART) {
-  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
-  RelaxedAdjacencyList relaxed =
-      MakeRelaxedAdjacencyList(test_data.adjacency_list);
-
-  // Find Berkeley and North Berkeley stops
-  StopId berkeley =
-      test_data.steps_from_gtfs.mapping.GetStopIdFromName("Downtown Berkeley");
-  StopId north_berkeley =
-      test_data.steps_from_gtfs.mapping.GetStopIdFromName("North Berkeley");
-
-  // Find the edge from Berkeley to North Berkeley
-  auto edges = relaxed.GetEdges(berkeley);
-  const RelaxedEdge* edge_to_north_berkeley = nullptr;
-  for (const auto& edge : edges) {
-    if (edge.destination_stop == north_berkeley) {
-      edge_to_north_berkeley = &edge;
-      break;
-    }
-  }
-
-  ASSERT_NE(edge_to_north_berkeley, nullptr)
-      << "No edge from Berkeley to North Berkeley";
-  EXPECT_EQ(edge_to_north_berkeley->weight_seconds, 120);
-}
 
 TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
   // Create a scenario where a stop has both flex trip (walking) and regular

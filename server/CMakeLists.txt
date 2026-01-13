@@ -98,6 +98,11 @@ target_link_libraries(reduction_diff PUBLIC shortest_path)
 add_executable(plain_viz src/tools/plain_viz.cpp)
 target_link_libraries(plain_viz PUBLIC visualization)
 
+# Create cached_test_data header-only library for test utilities
+add_library(cached_test_data INTERFACE)
+target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)
+target_include_directories(cached_test_data INTERFACE src)
+
 # Enable CMake testing
 enable_testing()
 
@@ -123,12 +128,12 @@ add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
 
 # Add relaxed_adjacency_list test executable
 add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_test.cpp)
-target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list)
+target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list cached_test_data)
 add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
 
 # Add shortest_path test executable
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
-target_link_libraries(shortest_path_test PUBLIC gunit shortest_path rapidcheck rapidcheck_gtest)
+target_link_libraries(shortest_path_test PUBLIC gunit shortest_path cached_test_data rapidcheck rapidcheck_gtest)
 add_test(NAME shortest_path_test COMMAND shortest_path_test)
 
 # Add date test executable
