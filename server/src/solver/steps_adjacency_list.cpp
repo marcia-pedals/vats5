@@ -135,4 +135,97 @@ StepsAdjacencyList AdjacentPathsToStepsList(const StepPathsAdjacencyList& paths)
   return MakeAdjacencyList(all_steps);
 }
 
+CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
+  // Collect all unique stop IDs actually used in the adjacency list
+  std::vector<bool> used(original.NumStops(), false);
+  int num_new_stops = 0;
+
+  for (int origin_v = 0; origin_v < original.NumStops(); ++origin_v) {
+    auto groups = original.GetGroups(StopId{origin_v});
+    if (!groups.empty()) {
+      if (!used[origin_v]) {
+        num_new_stops += 1;
+        used[origin_v] = true;
+      }
+      for (const StepGroup& group : groups) {
+        if (!used[group.destination_stop.v]) {
+          num_new_stops += 1;
+          used[group.destination_stop.v] = true;
+        }
+      }
+    }
+  }
+
+  // Build mapping from original to new (dense) IDs
+  StopIdMapping mapping;
+  mapping.original_to_new.resize(original.NumStops(), StopId{-1});
+  mapping.new_to_original.reserve(num_new_stops);
+
+  int new_id = 0;
+  for (int orig_v = 0; orig_v < original.NumStops(); ++orig_v) {
+    if (used[orig_v]) {
+      mapping.original_to_new[orig_v] = StopId{new_id};
+      mapping.new_to_original.push_back(StopId{orig_v});
+      ++new_id;
+    }
+  }
+
+  // Build the remapped adjacency list
+  StepsAdjacencyList remapped;
+  remapped.group_offsets.resize(num_new_stops, 0);
+
+  // First pass: count groups per new origin
+  for (int orig_v = 0; orig_v < original.NumStops(); ++orig_v) {
+    auto groups = original.GetGroups(StopId{orig_v});
+    if (!groups.empty()) {
+      int new_origin = mapping.original_to_new[orig_v].v;
+      remapped.group_offsets[new_origin] = static_cast<int>(groups.size());
+    }
+  }
+
+  // Convert counts to offsets (prefix sum)
+  int running_offset = 0;
+  for (int i = 0; i < num_new_stops; ++i) {
+    int count = remapped.group_offsets[i];
+    remapped.group_offsets[i] = running_offset;
+    running_offset += count;
+  }
+
+  // Allocate groups vector
+  remapped.groups.resize(running_offset);
+
+  // Second pass: copy groups with remapped destination IDs
+  // Process in new ID order for deterministic output
+  for (int new_origin = 0; new_origin < num_new_stops; ++new_origin) {
+    int orig_v = mapping.new_to_original[new_origin].v;
+    auto orig_groups = original.GetGroups(StopId{orig_v});
+
+    int group_offset = remapped.group_offsets[new_origin];
+    int steps_offset = static_cast<int>(remapped.steps.size());
+
+    for (size_t i = 0; i < orig_groups.size(); ++i) {
+      const StepGroup& orig_group = orig_groups[i];
+      StepGroup& new_group = remapped.groups[group_offset + i];
+
+      new_group.destination_stop =
+          mapping.original_to_new[orig_group.destination_stop.v];
+      new_group.flex_step = orig_group.flex_step;
+      new_group.steps_start = steps_offset;
+
+      // Copy fixed steps
+      auto orig_steps = original.GetSteps(orig_group);
+      auto orig_times = original.GetDepartureTimes(orig_group);
+      for (size_t j = 0; j < orig_steps.size(); ++j) {
+        remapped.steps.push_back(orig_steps[j]);
+        remapped.departure_times_div10.push_back(orig_times[j]);
+      }
+
+      steps_offset = static_cast<int>(remapped.steps.size());
+      new_group.steps_end = steps_offset;
+    }
+  }
+
+  return CompactStopIdsResult{std::move(remapped), std::move(mapping)};
+}
+
 }  // namespace vats5

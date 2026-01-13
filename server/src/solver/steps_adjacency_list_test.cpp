@@ -37,4 +37,66 @@ TEST(StepsAdjacencyListTest, MakeAdjacencyListBasic) {
   );
 }
 
+TEST(StepsAdjacencyListTest, RemapStopIdsBasic) {
+  // Create a sparse adjacency list: stops 10 -> 50, 10 -> 100
+  // This will have NumStops() = 101 but only 3 stops actually used
+  std::vector<Step> steps = {
+      Step{
+          .origin_stop = StopId{10},
+          .destination_stop = StopId{50},
+          .origin_time = TimeSinceServiceStart{100},
+          .destination_time = TimeSinceServiceStart{200},
+          .origin_trip = TripId{1},
+          .destination_trip = TripId{1},
+          .is_flex = false
+      },
+      Step{
+          .origin_stop = StopId{10},
+          .destination_stop = StopId{100},
+          .origin_time = TimeSinceServiceStart{300},
+          .destination_time = TimeSinceServiceStart{400},
+          .origin_trip = TripId{2},
+          .destination_trip = TripId{2},
+          .is_flex = false
+      },
+  };
+
+  StepsAdjacencyList original = MakeAdjacencyList(steps);
+  ASSERT_EQ(original.NumStops(), 101);  // max stop id + 1
+
+  CompactStopIdsResult remapped = CompactStopIds(original);
+
+  // Should have exactly 3 stops now: 10, 50, 100 -> 0, 1, 2
+  EXPECT_EQ(remapped.list.NumStops(), 3);
+
+  // Check the mapping
+  EXPECT_EQ(remapped.mapping.new_to_original.size(), 3);
+  EXPECT_EQ(remapped.mapping.new_to_original[0], StopId{10});
+  EXPECT_EQ(remapped.mapping.new_to_original[1], StopId{50});
+  EXPECT_EQ(remapped.mapping.new_to_original[2], StopId{100});
+
+  EXPECT_EQ(remapped.mapping.original_to_new[10], StopId{0});
+  EXPECT_EQ(remapped.mapping.original_to_new[50], StopId{1});
+  EXPECT_EQ(remapped.mapping.original_to_new[100], StopId{2});
+
+  // Check that remapped stop 0 (original 10) has 2 groups (to stops 1 and 2)
+  auto groups = remapped.list.GetGroups(StopId{0});
+  EXPECT_EQ(groups.size(), 2);
+
+  // Groups should be sorted by destination, so first is to new stop 1 (orig 50)
+  EXPECT_EQ(groups[0].destination_stop, StopId{1});
+  EXPECT_EQ(groups[1].destination_stop, StopId{2});
+
+  // Check that the steps are preserved
+  auto steps_to_50 = remapped.list.GetSteps(groups[0]);
+  ASSERT_EQ(steps_to_50.size(), 1);
+  EXPECT_EQ(steps_to_50[0].origin_time.seconds, 100);
+  EXPECT_EQ(steps_to_50[0].destination_time.seconds, 200);
+
+  auto steps_to_100 = remapped.list.GetSteps(groups[1]);
+  ASSERT_EQ(steps_to_100.size(), 1);
+  EXPECT_EQ(steps_to_100[0].origin_time.seconds, 300);
+  EXPECT_EQ(steps_to_100[0].destination_time.seconds, 400);
+}
+
 }  // namespace vats5

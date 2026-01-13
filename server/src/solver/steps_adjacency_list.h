@@ -209,4 +209,16 @@ inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList& adj) {
 // merged steps from all paths.
 StepsAdjacencyList AdjacentPathsToStepsList(const StepPathsAdjacencyList& paths);
 
+struct StopIdMapping {
+    std::vector<StopId> new_to_original;
+    std::vector<StopId> original_to_new;
+};
+
+struct CompactStopIdsResult {
+    StepsAdjacencyList list;
+    StopIdMapping mapping;
+};
+
+CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original);
+
 }  // namespace vats5

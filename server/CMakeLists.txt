@@ -108,6 +108,10 @@ target_link_libraries(reduction_diff PUBLIC steps_shortest_path)
 add_executable(plain_viz src/tools/plain_viz.cpp)
 target_link_libraries(plain_viz PUBLIC visualization)
 
+# Add branch_and_bound_dev tool
+add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
+target_link_libraries(branch_and_bound_dev PUBLIC steps_shortest_path concorde)
+
 # Create cached_test_data header-only library for test utilities
 add_library(cached_test_data INTERFACE)
 target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)
