@@ -30,7 +30,7 @@ struct VisualizationToolState {
   StepsFromGtfs steps_from_gtfs;
   StepsAdjacencyList adjacency_list;
   std::vector<int> bart_stops_json;
-  PathsAdjacencyList minimal;
+  StepPathsAdjacencyList minimal;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     VisualizationToolState,
@@ -92,7 +92,7 @@ double StopDistanceMeters(
 // Calculate the sum of distances of all edges in the adjacency list.
 // Each edge is counted only once (not twice for both directions).
 double TotalEdgeDistance(
-    const PathsAdjacencyList& adjacency_list, const DataGtfsMapping& mapping
+    const StepPathsAdjacencyList& adjacency_list, const DataGtfsMapping& mapping
 ) {
   std::unordered_set<std::pair<StopId, StopId>, PairHash> seen_edges;
   double total = 0;
@@ -114,7 +114,7 @@ double TotalEdgeDistance(
 }
 
 std::vector<StopId> SelectIntermediateStop(
-    const PathsAdjacencyList& split, const DataGtfsMapping& mapping
+    const StepPathsAdjacencyList& split, const DataGtfsMapping& mapping
 ) {
   // The ultimate origins and destinations of stops in `split`. These are not
   // canidates for new intermediate stops.
@@ -229,7 +229,7 @@ int main(int argc, char* argv[]) {
   StepsFromGtfs steps_from_gtfs;
   StepsAdjacencyList adjacency_list;
   std::unordered_set<StopId> bart_stops;
-  PathsAdjacencyList minimal;
+  StepPathsAdjacencyList minimal;
 
   if (!load_state_path.empty()) {
     std::cout << "Loading state from: " << load_state_path << std::endl;
@@ -305,7 +305,7 @@ int main(int argc, char* argv[]) {
   // Collect all visualizations in order
   std::vector<nlohmann::json> visualizations;
 
-  PathsAdjacencyList split = minimal;
+  StepPathsAdjacencyList split = minimal;
 
   // // First visualization: no hardcoded intermediate stops (only bart_stops)
   // {
@@ -402,7 +402,7 @@ int main(int argc, char* argv[]) {
       std::unordered_set<StopId> new_intermediate_stops = intermediate_stops;
       new_intermediate_stops.insert(stop);
 
-      PathsAdjacencyList new_split = split;
+      StepPathsAdjacencyList new_split = split;
       new_split = SplitPathsAt(new_split, new_intermediate_stops);
       new_split = AdjacencyListSnapToStops(
           steps_from_gtfs.mapping, snap_threshold_meters, new_split

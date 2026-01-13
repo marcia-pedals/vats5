@@ -19,7 +19,7 @@ nlohmann::json MakeVisualization(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId>& bart_stops,
     const std::unordered_set<StopId>& intermediate_stops,
-    const PathsAdjacencyList& split
+    const StepPathsAdjacencyList& split
 ) {
   Visualization viz;
   for (const GtfsStop& stop : gtfs_day.stops) {

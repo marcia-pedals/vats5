@@ -113,7 +113,7 @@ GtfsPath ToGtfsPath(const Path& path, const DataGtfsMapping& mapping) {
 }
 
 GtfsPathsMap ToGtfsPathsMap(
-    const PathsAdjacencyList& adj, const DataGtfsMapping& mapping
+    const StepPathsAdjacencyList& adj, const DataGtfsMapping& mapping
 ) {
   GtfsPathsMap result;
   for (const auto& [origin, path_groups] : adj.adjacent) {

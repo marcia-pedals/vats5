@@ -25,7 +25,7 @@ int main() {
         GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
     std::cout << "Reducing to minimal system paths..." << std::endl;
-    PathsAdjacencyList minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
+    StepPathsAdjacencyList minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
 
     std::cout << "Done. minimal has " << minimal.adjacent.size() << " origin stops." << std::endl;
 

@@ -36,39 +36,6 @@ void PrintTo(const Path& path, std::ostream* os) {
   *os << "]}";
 }
 
-TEST(ShortestPathTest, MakeAdjacencyListBasic) {
-  std::vector<Step> steps = {
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{100},
-          .destination_time = TimeSinceServiceStart{200},
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{150},
-          .destination_time = TimeSinceServiceStart{250},
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = false
-      }
-  };
-
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
-
-  // Check that stop 1 has groups (and stop 0 has none)
-  EXPECT_TRUE(adjacency_list.GetGroups(StopId{0}).empty());
-  EXPECT_FALSE(adjacency_list.GetGroups(StopId{1}).empty());
-  EXPECT_EQ(adjacency_list.GetGroups(StopId{1}).size(), 1);
-  EXPECT_EQ(
-      adjacency_list.GetSteps(adjacency_list.GetGroups(StopId{1})[0]).size(), 2
-  );
-}
-
 TEST(ShortestPathTest, FindShortestRelaxedPathsBasic) {
   // Simple graph:
   //   1 --10--> 2 --20--> 4
@@ -1702,7 +1669,7 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  PathsAdjacencyList reduced_paths =
+  StepPathsAdjacencyList reduced_paths =
       ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops);
   StepsAdjacencyList reduced_adjacency_list =
       AdjacentPathsToStepsList(reduced_paths);

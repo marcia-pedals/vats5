@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Benchmarking ReduceToMinimalSystemPaths..." << std::endl;
 
   auto start = std::chrono::high_resolution_clock::now();
-  PathsAdjacencyList minimal =
+  StepPathsAdjacencyList minimal =
       ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
   auto end = std::chrono::high_resolution_clock::now();
 

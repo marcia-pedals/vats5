@@ -59,9 +59,14 @@ add_library(step_merge STATIC src/solver/step_merge.cpp)
 target_link_libraries(step_merge PUBLIC data)
 target_include_directories(step_merge PUBLIC src)
 
+# Create steps_adjacency_list library target
+add_library(steps_adjacency_list STATIC src/solver/steps_adjacency_list.cpp)
+target_link_libraries(steps_adjacency_list PUBLIC step_merge)
+target_include_directories(steps_adjacency_list PUBLIC src)
+
 # Create shortest_path library target
 add_library(shortest_path STATIC src/solver/shortest_path.cpp)
-target_link_libraries(shortest_path PUBLIC step_merge)
+target_link_libraries(shortest_path PUBLIC steps_adjacency_list)
 target_include_directories(shortest_path PUBLIC src)
 
 # Create visualization library target
@@ -109,6 +114,11 @@ add_test(NAME data_test COMMAND data_test)
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
 target_link_libraries(step_merge_test PUBLIC gunit step_merge rapidcheck rapidcheck_gtest)
 add_test(NAME step_merge_test COMMAND step_merge_test)
+
+# Add steps_adjacency_list test executable
+add_executable(steps_adjacency_list_test src/solver/steps_adjacency_list_test.cpp)
+target_link_libraries(steps_adjacency_list_test PUBLIC gunit steps_adjacency_list)
+add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
 
 # Add shortest_path test executable
 add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
