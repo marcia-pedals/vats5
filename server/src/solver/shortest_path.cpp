@@ -335,7 +335,8 @@ std::vector<Step> FindShortestPathsAtTime(
     StopId origin_stop,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex,
-    HeuristicCache* heuristic_cache
+    HeuristicCache* heuristic_cache,
+    std::optional<BoundaryIds> boundary
 ) {
   if (smallest_next_departure_gap_from_flex != nullptr) {
     *smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
@@ -422,6 +423,11 @@ frontier.push_back(FrontierEntry{
         }
         std::make_heap(frontier.begin(), frontier.end(), frontier_cmp);
       }
+    }
+
+    // When there is a boundary, shortest paths are not allowed to pass through the anchor.
+    if (boundary.has_value() && current_stop != origin_stop && boundary->anchor == current_stop) {
+      continue;
     }
 
     // Calculate destinations visited for paths continuing from this stop.
@@ -550,7 +556,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb,
     TimeSinceServiceStart origin_time_ub,
-    const RelaxedDistances* relaxed_distances
+    const RelaxedDistances* relaxed_distances,
+    std::optional<BoundaryIds> boundary
 ) {
   HeuristicCache heuristic_cache(relaxed_distances);
 
@@ -596,7 +603,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
         origin,
         destinations_to_query,
         &smallest_next_departure_gap_from_flex,
-        &heuristic_cache
+        &heuristic_cache,
+        boundary
     );
 
     // Push all results and update current origin times.
@@ -1000,7 +1008,8 @@ StepsAdjacencyList AdjacentPathsToStepsList(const PathsAdjacencyList& paths) {
 }
 
 std::vector<int> FindShortestRelaxedPaths(
-    const RelaxedAdjacencyList& adjacency_list, StopId origin
+    const RelaxedAdjacencyList& adjacency_list, StopId origin,
+    std::optional<BoundaryIds> boundary
 ) {
   const int num_stops = adjacency_list.NumStops();
   std::vector<int> distances(num_stops, 360 * 3600);
@@ -1025,6 +1034,11 @@ std::vector<int> FindShortestRelaxedPaths(
     finalized[current_stop.v] = true;
 
     for (const RelaxedEdge& edge : adjacency_list.GetEdges(current_stop)) {
+        // When there is a boundary, you are not allowed to get to the anchor.
+        if (boundary.has_value() && current_stop == boundary->anchor) {
+            continue;
+        }
+
       int new_dist = current_dist + edge.weight_seconds;
       if (new_dist < distances[edge.destination_stop.v]) {
         distances[edge.destination_stop.v] = new_dist;
@@ -1157,10 +1171,35 @@ RelaxedAdjacencyList CompleteShortestRelaxedPaths(
   // Compute shortest paths from each node
   std::vector<std::vector<int>> all_distances(n);
   for (int i = 0; i < n; ++i) {
-    all_distances[i] = FindShortestRelaxedPaths(adjacency_list, StopId{i});
+    all_distances[i] = FindShortestRelaxedPaths(adjacency_list, StopId{i}, boundary);
   }
-  all_distances[boundary.anchor.v][boundary.start.v] = 0;
-  all_distances[boundary.end.v][boundary.anchor.v] = 0;
+
+  auto e_to_a = adjacency_list.GetWeight(boundary.end, boundary.anchor);
+  auto a_to_e = adjacency_list.GetWeight(boundary.anchor, boundary.start);
+  if (e_to_a.has_value()) {
+    all_distances[boundary.end.v][boundary.anchor.v] = *e_to_a;
+  }
+  if (a_to_e.has_value()) {
+    all_distances[boundary.anchor.v][boundary.start.v] = *a_to_e;
+  }
+
+  // std::cout << "From start (" << boundary.start.v << "/" << all_distances.size() << ") ";
+  // for (int i = 0; i < all_distances[boundary.start.v].size(); ++i) {
+  //     std::cout << all_distances[boundary.start.v][i] << " ";
+  // }
+  // std::cout << "\n";
+
+  // std::cout << "From end (" << boundary.end.v << "/" << all_distances.size() << ") ";
+  // for (int i = 0; i < all_distances[boundary.end.v].size(); ++i) {
+  //     std::cout << all_distances[boundary.end.v][i] << " ";
+  // }
+  // std::cout << "\n";
+
+  // std::cout << "From anchor (" << boundary.anchor.v << "/" << all_distances.size() << ") ";
+  // for (int i = 0; i < all_distances[boundary.anchor.v].size(); ++i) {
+  //     std::cout << all_distances[boundary.anchor.v][i] << " ";
+  // }
+  // std::cout << "\n";
 
   // Build complete graph
   RelaxedAdjacencyList result;

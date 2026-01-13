@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <unistd.h>
 #include <stdexcept>
@@ -264,10 +265,6 @@ std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
         tour.push_back(StopId{orig_vertex});
     }
 
-    if (is_reversed) {
-        std::reverse(tour.begin(), tour.end());
-    }
-
     return tour;
 }
 
@@ -286,8 +283,9 @@ ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, Bound
         OutputConcordeTsp(out, relaxed);
     }
 
-    // Invoke Concorde
+    // Invoke Concorde (suppress stderr)
     std::ostringstream cmd;
+    // cmd << "concorde -x -o " << solution_path << " " << problem_path << " 2>/dev/null";
     cmd << "concorde -x -o " << solution_path << " " << problem_path;
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
@@ -316,14 +314,11 @@ ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, Bound
     std::remove(solution_path.c_str());
     rmdir(temp_dir.c_str());
 
-    // Rotate tour so dummy_start is first.
-    auto it_start = std::find(tour.begin(), tour.end(), boundary.start);
+    // Rotate tour so anchor is first.
+    auto it_start = std::find(tour.begin(), tour.end(), boundary.anchor);
     if (it_start != tour.end()) {
         std::rotate(tour.begin(), it_start, tour.end());
-
-        // If the anchor comes after the start, then the tour is "backwards" so
-        // reverse it and then rotate the start back to the front.
-        if (tour[1] == boundary.anchor) {
+        if (tour[1] == boundary.end) {
             std::reverse(tour.begin(), tour.end());
             std::rotate(tour.begin(), tour.end() - 1, tour.end());
         }
@@ -341,22 +336,18 @@ ActualPathResult ComputeActualPath(
 
     std::optional<std::vector<Step>> accumulated_steps;
     for (size_t i = 0; i < tour.size(); ++i) {
-        StopId cur_stop = tour[i];
-
-        if (i == 0) {
-            continue;
-        }
-        StopId prev_stop = tour[i - 1];
-
-        if (prev_stop == boundary.start || cur_stop == boundary.anchor) {
-            continue;
-        }
+        StopId prev_stop = tour[i];
+        StopId cur_stop = tour[(i + 1) % tour.size()];
 
         // TODO: Shouldn't need to redo dijkstra's here I think. Can build this up from stuff we've already computed.
         // Or maybe not.
         std::unordered_set<StopId> dest;
         dest.insert(cur_stop);
-        const auto soln = FindMinimalPathSet(adj, prev_stop, dest).at(cur_stop);
+        const auto soln = FindMinimalPathSet(
+            adj, prev_stop, dest,
+            TimeSinceServiceStart{0}, TimeSinceServiceStart{36 * 3600},
+            nullptr, boundary
+        ).at(cur_stop);
         std::vector<Step> current_steps;
         current_steps.reserve(soln.size());
         for (const Path& path : soln) {
@@ -405,6 +396,7 @@ struct SolutionState {
 };
 
 SolutionState MakeBranchForbidEdge(const SolutionState& cur, const StopId a, const StopId b) {
+    assert(a != cur.boundary.anchor && b != cur.boundary.anchor);
     std::vector<Step> steps = GetAllSteps(cur.adj);
     std::erase_if(steps, [&](const Step& step) -> bool { return step.origin_stop == a && step.destination_stop == b; });
     return SolutionState{MakeAdjacencyList(steps), cur.boundary, cur.remapping};
@@ -551,33 +543,40 @@ SolutionState MakeBranchRequireEdge(const SolutionState& cur, const StopId a, co
 struct SolutionStateEvaluation {
     std::vector<StopId> tour;
     std::vector<int> tour_forwards_weights;
-    std::vector<int> tour_backwards_weights;
     int lb;
     int ub;
 };
 
 SolutionStateEvaluation EvaluateState(const SolutionState& state) {
     RelaxedAdjacencyList relaxed = CompleteShortestRelaxedPaths(MakeRelaxedAdjacencyList(state.adj), state.boundary);
-    ConcordeSolution solution = SolveTspWithConcorde(relaxed, state.boundary);
+
+    ConcordeSolution solution;
+    constexpr int kMaxRetries = 5;
+    for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
+        try {
+            solution = SolveTspWithConcorde(relaxed, state.boundary);
+            break;
+        } catch (const std::exception& e) {
+            std::cerr << "SolveTspWithConcorde attempt " << attempt << "/" << kMaxRetries << " failed: " << e.what() << "\n";
+            if (attempt == kMaxRetries) {
+                throw;
+            }
+        }
+    }
     ActualPathResult result = ComputeActualPath(solution.tour, state.adj, state.boundary);
     std::cout << "lb: " << solution.optimal_value << ", ub: " << result.duration_seconds << "\n";
 
     std::vector<int> tour_forwards_weights;
-    std::vector<int> tour_backwards_weights;
 
-    for (int i = 0; i < solution.tour.size() - 1; ++i) {
-        std::optional<int> fw = relaxed.GetWeight(solution.tour[i], solution.tour[i + 1]);
-        std::optional<int> bw = relaxed.GetWeight(solution.tour[i + 1], solution.tour[i]);
-        assert(fw.has_value());
-        assert(bw.has_value());
-        tour_forwards_weights.push_back(*fw);
-        tour_backwards_weights.push_back(*bw);
+    for (int i = 0; i < solution.tour.size(); ++i) {
+        std::optional<int> fw = relaxed.GetWeight(solution.tour[i], solution.tour[(i + 1) % solution.tour.size()]);
+        // TODO: What's up with no value?
+        tour_forwards_weights.push_back(fw.has_value() ? *fw : 36 * 3600);
     }
 
     return SolutionStateEvaluation{
         .tour = solution.tour,
         .tour_forwards_weights = tour_forwards_weights,
-        .tour_backwards_weights = tour_backwards_weights,
         .lb = solution.optimal_value,
         .ub = result.duration_seconds,
     };
@@ -612,18 +611,18 @@ void PrintTourEvaluation(
 
     size_t max_prefix_len = 0;
     int max_fw_width = 0;
-    for (size_t i = 0; i < eval.tour.size() - 1; ++i) {
+    for (size_t i = 0; i < eval.tour.size(); ++i) {
         StopId a = eval.tour[i];
-        StopId b = eval.tour[i + 1];
+        StopId b = eval.tour[(i + 1) % eval.tour.size()];
         size_t len = stop_name(a).size() + 4 + stop_name(b).size();  // 4 for " -> "
         max_prefix_len = std::max(max_prefix_len, len);
         max_fw_width = std::max(max_fw_width, static_cast<int>(std::to_string(eval.tour_forwards_weights[i]).size()));
     }
 
     int total = 0;
-    for (size_t i = 0; i < eval.tour.size() - 1; ++i) {
+    for (size_t i = 0; i < eval.tour.size(); ++i) {
         StopId a = eval.tour[i];
-        StopId b = eval.tour[i + 1];
+        StopId b = eval.tour[(i + 1) % eval.tour.size()];
         std::string prefix = stop_name(a) + " -> " + stop_name(b);
         int fw = eval.tour_forwards_weights[i];
         total += fw;
@@ -679,12 +678,6 @@ void DoIt(
         existing_stops.push_back(origin);
     }
 
-    // anchor -> start and end -> anchor are added later to avoid being included
-    // in path completion.
-    // Hacky self-steps to keep these through all the graph transformations that
-    // sometimes drop vertices without edges.
-    minimal.adjacent[boundary.anchor].push_back({make_zero_flex_path(boundary.anchor, boundary.anchor)});
-
     // start -> *
     for (StopId stop : existing_stops) {
         minimal.adjacent[boundary.start].push_back({make_zero_flex_path(boundary.start, stop)});
@@ -695,6 +688,10 @@ void DoIt(
         minimal.adjacent[stop].push_back({make_zero_flex_path(stop, boundary.end)});
     }
 
+    // Anchor.
+    minimal.adjacent[boundary.end].push_back({make_zero_flex_path(boundary.end, boundary.anchor)});
+    minimal.adjacent[boundary.anchor].push_back({make_zero_flex_path(boundary.anchor, boundary.start)});
+
    std::cerr << "Converting to steps list..." << std::endl;
     StepsAdjacencyList minimal_steps = AdjacentPathsToStepsList(minimal);
 
@@ -702,17 +699,17 @@ void DoIt(
     BoundaryIds remapped_boundary = RemapBoundary(remapped.mapping, boundary);
 
     // Helper to get stop name from remapped id, with special case for dummy nodes.
-    auto stop_name = [&](StopId remapped_id) -> std::string {
-        StopId original_id = remapped.mapping.new_to_original[remapped_id.v];
-        if (original_id == boundary.start) {
+    auto stop_name = [&](const SolutionState& state, StopId remapped_id) -> std::string {
+        if (remapped_id == state.boundary.start) {
             return "START";
         }
-        if (original_id == boundary.end) {
+        if (remapped_id == state.boundary.end) {
             return "END";
         }
-        if (original_id == boundary.anchor) {
+        if (remapped_id == state.boundary.anchor) {
             return "ANCHOR";
         }
+        StopId original_id = state.remapping.new_to_original[remapped_id.v];
         return mapping.stop_id_to_stop_name.at(original_id);
     };
 
@@ -723,38 +720,137 @@ void DoIt(
         remapped.mapping,
     };
 
+    // Branch and bound search
+    struct BnBNode {
+        SolutionState state;
+        int lb;  // lower bound
+        int left_branches;   // number of left (forbid) branches taken to reach this node
+        int right_branches;  // number of right (require) branches taken to reach this node
+    };
+
+    auto cmp = [](const BnBNode& a, const BnBNode& b) {
+        return a.lb > b.lb;  // min-heap by lower bound
+    };
+    std::priority_queue<BnBNode, std::vector<BnBNode>, decltype(cmp)> pq(cmp);
+
+    // Evaluate initial state
     std::cout << "Evaluating initial state...\n";
-    SolutionStateEvaluation eval = EvaluateState(solution_initial_state);
-    PrintTourEvaluation(mapping, solution_initial_state, eval);
+    SolutionStateEvaluation initial_eval = EvaluateState(solution_initial_state);
+    // PrintTourEvaluation(mapping, solution_initial_state, initial_eval);
 
-    for (int i = 0; i < eval.tour.size() - 1; ++i) {
-        StopId a = eval.tour[i];
-        StopId b = eval.tour[i + 1];
+    int best_ub = initial_eval.ub;
+    SolutionState best_state = solution_initial_state;
+    SolutionStateEvaluation best_eval = initial_eval;
 
-        if (b == remapped_boundary.anchor) {
+    pq.push(BnBNode{solution_initial_state, initial_eval.lb, 0, 0});
+
+    int nodes_explored = 0;
+    while (!pq.empty()) {
+        BnBNode node = std::move(const_cast<BnBNode&>(pq.top()));
+        pq.pop();
+
+        // Prune if lower bound exceeds best upper bound
+        if (node.lb >= best_ub) {
+            std::cout << "Pruning node with lb=" << node.lb << " (best_ub=" << best_ub << ")\n";
             continue;
         }
 
-        std::cout << "\n\nRequiring " << stop_name(a) << " -> " << stop_name(b) << "\n";
+        nodes_explored++;
+        std::cout << "\n=== Node " << nodes_explored << " (lb=" << node.lb << ", best_ub=" << best_ub << ", queue=" << pq.size()
+                  << ", L=" << node.left_branches << ", R=" << node.right_branches << ") ===\n";
 
-        SolutionState solution_right_state = MakeBranchRequireEdge(solution_initial_state, a, b);
-        auto eval2 = EvaluateState(solution_right_state);
-        PrintTourEvaluation(mapping, solution_right_state, eval2);
-    }
+        SolutionStateEvaluation eval = EvaluateState(node.state);
+        // PrintTourEvaluation(mapping, node.state, eval);
 
-    for (int i = 0; i < eval.tour.size() - 1; ++i) {
-        StopId a = eval.tour[i];
-        StopId b = eval.tour[i + 1];
+        // Update best solution if this node has a better upper bound
+        if (eval.ub < best_ub) {
+            best_ub = eval.ub;
+            best_state = node.state;
+            best_eval = eval;
+            std::cout << "*** New best: ub=" << best_ub << " ***\n";
+        }
 
-        if (b == remapped_boundary.anchor) {
+        // If lb == ub, this is optimal for this subtree, no need to branch
+        if (eval.lb >= best_ub) {
+            std::cout << "Node is pruned (lb=" << eval.lb << " >= best_ub=" << best_ub << ")\n";
             continue;
         }
 
-        std::cout << "Forbidding " << stop_name(a) << " -> " << stop_name(b) << "\n";
+        // Find an edge to branch on.
+        // Collect all valid edges and randomly choose one.
+        std::vector<std::pair<StopId, StopId>> valid_edges;
+        RelaxedAdjacencyList relaxed_for_edges = MakeRelaxedAdjacencyList(node.state.adj);
+        for (size_t i = 0; i < eval.tour.size(); ++i) {
+            StopId candidate_a = eval.tour[i];
+            StopId candidate_b = eval.tour[(i + 1) % eval.tour.size()];
+            if (
+                candidate_a != node.state.boundary.anchor &&
+                candidate_b != node.state.boundary.anchor &&
+                relaxed_for_edges.GetWeight(candidate_a, candidate_b).has_value()
+            ) {
+                valid_edges.push_back({candidate_a, candidate_b});
+            }
+        }
 
-        SolutionState solution_left_state = MakeBranchForbidEdge(solution_initial_state, a, b);
-        EvaluateState(solution_left_state);
+        StopId a{-1}, b{-1};
+        if (!valid_edges.empty()) {
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            std::uniform_int_distribution<size_t> dist(0, valid_edges.size() - 1);
+            auto [chosen_a, chosen_b] = valid_edges[dist(gen)];
+            a = chosen_a;
+            b = chosen_b;
+        }
+
+        if (a.v == -1) {
+            std::cout << "Didn't find edge to branch on\n";
+            continue;
+        }
+
+
+        std::cout << "Branching on edge: " << stop_name(node.state, a) << " -> " << stop_name(node.state, b) << "\n";
+
+        // Left branch: forbid the edge
+        std::cout << "Creating left branch (forbid)...\n";
+        SolutionState left_state = MakeBranchForbidEdge(node.state, a, b);
+        SolutionStateEvaluation left_eval = EvaluateState(left_state);
+        if (left_eval.lb < eval.lb) {
+            std::cout << "\n!!! ERROR: Left branch decreased LB from " << eval.lb << " to " << left_eval.lb << " !!!\n";
+            std::cout << "BEFORE (parent):\n";
+            PrintTourEvaluation(mapping, node.state, eval);
+            std::cout << "\nAFTER (left child, forbid " << stop_name(node.state, a) << " -> " << stop_name(node.state, b) << "):\n";
+            PrintTourEvaluation(mapping, left_state, left_eval);
+            return;
+        }
+        if (left_eval.lb < best_ub) {
+            pq.push(BnBNode{std::move(left_state), left_eval.lb, node.left_branches + 1, node.right_branches});
+        } else {
+            std::cout << "Left branch pruned immediately (lb=" << left_eval.lb << ")\n";
+        }
+
+        // Right branch: require the edge
+        std::cout << "Creating right branch (require)...\n";
+        SolutionState right_state = MakeBranchRequireEdge(node.state, a, b);
+        SolutionStateEvaluation right_eval = EvaluateState(right_state);
+        if (right_eval.lb < eval.lb) {
+            std::cout << "\n!!! ERROR: Right branch decreased LB from " << eval.lb << " to " << right_eval.lb << " !!!\n";
+            std::cout << "BEFORE (parent):\n";
+            PrintTourEvaluation(mapping, node.state, eval);
+            std::cout << "\nAFTER (right child, require " << stop_name(node.state, a) << " -> " << stop_name(node.state, b) << "):\n";
+            PrintTourEvaluation(mapping, right_state, right_eval);
+            return;
+        }
+        if (right_eval.lb < best_ub) {
+            pq.push(BnBNode{std::move(right_state), right_eval.lb, node.left_branches, node.right_branches + 1});
+        } else {
+            std::cout << "Right branch pruned immediately (lb=" << right_eval.lb << ")\n";
+        }
     }
+
+    std::cout << "\n=== Branch and Bound Complete ===\n";
+    std::cout << "Nodes explored: " << nodes_explored << "\n";
+    std::cout << "Best upper bound: " << best_ub << "\n";
+    PrintTourEvaluation(mapping, best_state, best_eval);
 }
 
 }  // namespace vats5

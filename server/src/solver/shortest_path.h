@@ -6,6 +6,12 @@
 
 namespace vats5 {
 
+struct BoundaryIds {
+    StopId start;
+    StopId end;
+    StopId anchor;
+};
+
 // A step in the adjacency list with only the necessary data.
 // origin_stop and destination_stop are stored in the parent structures,
 // and is_flex is inferred from context (flex_step vs steps array).
@@ -273,13 +279,16 @@ struct HeuristicCache {
 // visited flex paths.
 //
 // If `heuristic_cache` is specified, enables A* optimization.
+// If `boundary` is specified, paths are forbidden from passing through
+// boundary.anchor (the anchor is not expanded, similar to FindShortestRelaxedPaths).
 std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex = nullptr,
-    HeuristicCache* heuristic_cache = nullptr
+    HeuristicCache* heuristic_cache = nullptr,
+    std::optional<BoundaryIds> boundary = std::nullopt
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin
@@ -290,13 +299,17 @@ std::vector<Step> FindShortestPathsAtTime(
 // (a) Any path in `adjacency_list` from `origin` to a destination can be
 // matched or beat by a path in the return. (b) If you remove any path from the
 // return value, (a) no longer holds.
+//
+// If `boundary` is specified, paths are forbidden from passing through
+// boundary.anchor (similar to FindShortestRelaxedPaths).
 std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const StepsAdjacencyList& adjacency_list,
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
     TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600},
-    const RelaxedDistances* relaxed_distances = nullptr
+    const RelaxedDistances* relaxed_distances = nullptr,
+    std::optional<BoundaryIds> boundary = std::nullopt
 );
 
 // Return an adjacency list ("reduced list") with these properties:
@@ -383,7 +396,7 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
 // distance in seconds from origin to each stop. Unreachable stops have distance
 // std::numeric_limits<int>::max().
 std::vector<int> FindShortestRelaxedPaths(
-    const RelaxedAdjacencyList& adjacency_list, StopId origin
+    const RelaxedAdjacencyList& adjacency_list, StopId origin, std::optional<BoundaryIds> boundary = std::nullopt
 );
 
 // Create a reversed relaxed adjacency list where all edges are reversed.
@@ -391,12 +404,6 @@ std::vector<int> FindShortestRelaxedPaths(
 RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
     const RelaxedAdjacencyList& adjacency_list
 );
-
-struct BoundaryIds {
-    StopId start;
-    StopId end;
-    StopId anchor;
-};
 
 // Compute all-pairs shortest paths and return a complete graph where the
 // edge i->j has weight equal to the shortest path distance from i to j.
