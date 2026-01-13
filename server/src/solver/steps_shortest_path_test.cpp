@@ -1280,8 +1280,9 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  StepsAdjacencyList reduced = AdjacentPathsToStepsList(
+  StepsAdjacencyList reduced = MakeAdjacencyList(
       ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops)
+          .AllMergedSteps()
   );
 
   // Filter self-loops from original (BART GTFS has trips with 2 adjacent SFO
@@ -1323,7 +1324,7 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
   StepPathsAdjacencyList reduced_paths =
       ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops);
   StepsAdjacencyList reduced_adjacency_list =
-      AdjacentPathsToStepsList(reduced_paths);
+      MakeAdjacencyList(reduced_paths.AllMergedSteps());
 
   // Convert bart_stops set to vector for random access
   std::vector<StopId> bart_stops_vec(bart_stops.begin(), bart_stops.end());

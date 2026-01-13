@@ -28,7 +28,7 @@ int main() {
 
     std::cout << "Reducing to minimal system paths..." << std::endl;
     StepPathsAdjacencyList minimal = ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
-    StepsAdjacencyList minimal_adj = AdjacentPathsToStepsList(minimal);
+    StepsAdjacencyList minimal_adj = MakeAdjacencyList(minimal.AllMergedSteps());
     CompactStopIdsResult minimal_compact = CompactStopIds(minimal_adj);
 
     std::cout << "Done. minimal has " << minimal.adjacent.size() << " origin stops." << std::endl;

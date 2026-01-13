@@ -152,6 +152,27 @@ struct StepsAdjacencyList {
     );
   }
 
+  // Extract all steps from the adjacency list.
+  std::vector<Step> AllSteps() const {
+    std::vector<Step> all_steps;
+    for (int stop_v = 0; stop_v < NumStops(); ++stop_v) {
+      StopId origin_stop{stop_v};
+      for (const StepGroup& group : GetGroups(origin_stop)) {
+        if (group.flex_step.has_value()) {
+          all_steps.push_back(
+              group.flex_step->ToStep(origin_stop, group.destination_stop, true)
+          );
+        }
+        for (const AdjacencyListStep& adj_step : GetSteps(group)) {
+          all_steps.push_back(
+              adj_step.ToStep(origin_stop, group.destination_stop, false)
+          );
+        }
+      }
+    }
+    return all_steps;
+  }
+
   bool operator==(const StepsAdjacencyList& other) const {
     return group_offsets == other.group_offsets && groups == other.groups &&
            steps == other.steps;
@@ -184,6 +205,19 @@ struct StepPathsAdjacencyList {
   // Mapping from stop to paths originating at that stop, grouped by destination
   // stop. Each group of paths is sorted by origin time and minimal.
   std::unordered_map<StopId, std::vector<std::vector<Path>>> adjacent;
+
+  // Extract all merged steps from all paths.
+  std::vector<Step> AllMergedSteps() const {
+    std::vector<Step> all_steps;
+    for (const auto& [origin_stop, path_groups] : adjacent) {
+      for (const auto& path_group : path_groups) {
+        for (const Path& path : path_group) {
+          all_steps.push_back(path.merged_step);
+        }
+      }
+    }
+    return all_steps;
+  }
 };
 
 // Custom JSON serialization for StepPathsAdjacencyList
@@ -204,10 +238,6 @@ inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList& adj) {
     adj.adjacent[StopId{k}] = v;
   }
 }
-
-// Convert a StepPathsAdjacencyList to a StepsAdjacencyList by extracting
-// merged steps from all paths.
-StepsAdjacencyList AdjacentPathsToStepsList(const StepPathsAdjacencyList& paths);
 
 struct StopIdMapping {
     std::vector<StopId> new_to_original;

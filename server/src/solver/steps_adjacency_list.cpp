@@ -122,19 +122,6 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-StepsAdjacencyList AdjacentPathsToStepsList(const StepPathsAdjacencyList& paths) {
-  // Extract all merged steps from paths
-  std::vector<Step> all_steps;
-  for (const auto& [origin_stop, path_groups] : paths.adjacent) {
-    for (const auto& path_group : path_groups) {
-      for (const Path& path : path_group) {
-        all_steps.push_back(path.merged_step);
-      }
-    }
-  }
-  return MakeAdjacencyList(all_steps);
-}
-
 CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
   // Collect all unique stop IDs actually used in the adjacency list
   std::vector<bool> used(original.NumStops(), false);
