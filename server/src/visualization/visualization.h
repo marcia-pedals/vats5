@@ -7,7 +7,7 @@
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
-#include "solver/shortest_path.h"
+#include "solver/steps_shortest_path.h"
 
 namespace vats5 {
 

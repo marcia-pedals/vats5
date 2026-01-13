@@ -4,7 +4,7 @@
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
-#include "solver/shortest_path.h"
+#include "solver/steps_shortest_path.h"
 #include "tools/reduction_output.h"
 
 using namespace vats5;

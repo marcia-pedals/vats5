@@ -69,14 +69,19 @@ add_library(relaxed_adjacency_list STATIC src/solver/relaxed_adjacency_list.cpp)
 target_link_libraries(relaxed_adjacency_list PUBLIC steps_adjacency_list)
 target_include_directories(relaxed_adjacency_list PUBLIC src)
 
-# Create shortest_path library target
-add_library(shortest_path STATIC src/solver/shortest_path.cpp)
-target_link_libraries(shortest_path PUBLIC relaxed_adjacency_list)
-target_include_directories(shortest_path PUBLIC src)
+# Create relaxed_shortest_path library target
+add_library(relaxed_shortest_path STATIC src/solver/relaxed_shortest_path.cpp)
+target_link_libraries(relaxed_shortest_path PUBLIC relaxed_adjacency_list)
+target_include_directories(relaxed_shortest_path PUBLIC src)
+
+# Create steps_shortest_path library target
+add_library(steps_shortest_path STATIC src/solver/steps_shortest_path.cpp)
+target_link_libraries(steps_shortest_path PUBLIC relaxed_shortest_path)
+target_include_directories(steps_shortest_path PUBLIC src)
 
 # Create visualization library target
 add_library(visualization STATIC src/visualization/visualization.cpp)
-target_link_libraries(visualization PUBLIC shortest_path)
+target_link_libraries(visualization PUBLIC steps_shortest_path)
 target_include_directories(visualization PUBLIC src)
 
 add_executable(main_server main.cpp)
@@ -88,11 +93,11 @@ target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
 
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
-target_link_libraries(benchmark_reduction PUBLIC shortest_path)
+target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path)
 
 # Add reduction diff tool
 add_executable(reduction_diff src/tools/reduction_diff.cpp)
-target_link_libraries(reduction_diff PUBLIC shortest_path)
+target_link_libraries(reduction_diff PUBLIC steps_shortest_path)
 
 # Add plain_viz tool (minimal paths only, no iteration)
 add_executable(plain_viz src/tools/plain_viz.cpp)
@@ -131,10 +136,15 @@ add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_tes
 target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list cached_test_data)
 add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
 
-# Add shortest_path test executable
-add_executable(shortest_path_test src/solver/shortest_path_test.cpp)
-target_link_libraries(shortest_path_test PUBLIC gunit shortest_path cached_test_data rapidcheck rapidcheck_gtest)
-add_test(NAME shortest_path_test COMMAND shortest_path_test)
+# Add relaxed_shortest_path test executable
+add_executable(relaxed_shortest_path_test src/solver/relaxed_shortest_path_test.cpp)
+target_link_libraries(relaxed_shortest_path_test PUBLIC gunit relaxed_shortest_path)
+add_test(NAME relaxed_shortest_path_test COMMAND relaxed_shortest_path_test)
+
+# Add steps_shortest_path test executable
+add_executable(steps_shortest_path_test src/solver/steps_shortest_path_test.cpp)
+target_link_libraries(steps_shortest_path_test PUBLIC gunit steps_shortest_path cached_test_data rapidcheck rapidcheck_gtest)
+add_test(NAME steps_shortest_path_test COMMAND steps_shortest_path_test)
 
 # Add date test executable
 add_executable(date_test src/util/date_test.cpp)
