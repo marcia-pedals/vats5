@@ -108,6 +108,22 @@ int main() {
     SolutionState state = InitializeSolutionState(steps_from_gtfs, bart_stops);
 
     RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyList(state.adj);
+    // NEXT STEP: I need to "complete" the relaxed graph so that the ATSP
+    // solution is the GATSP solution on the original relaxed graph.
+    //
+    // But I need to be careful: I don't want completions to go through the START.
+    // There are a few ways I could deal with this:
+    // a) Add START _after_ completing the graph.
+    // b) Forbid completions from going through START.
+    //
+    // While doing this, keep in mind:
+    // - I want to be able to reconstruct the actual paths.
+    // - I want to be able to branch on *->START and START->* edges.
+    //
+    // Oh I just had an interesting idea: Maybe I should be doing the
+    // "completion" on the actual steps-graph? This might give me a slightly
+    // stricter relaxation that'll get closer to the solution faster. I think
+    // this sounds really good let's start with this approach!!
     ConcordeSolution solution = SolveTspWithConcorde(relaxed);
 
     std::cout << "Concorde optimal value " << solution.optimal_value << "\n";
