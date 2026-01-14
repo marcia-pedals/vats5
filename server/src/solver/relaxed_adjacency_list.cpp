@@ -2,16 +2,14 @@
 
 #include <algorithm>
 #include <limits>
+#include "solver/data.h"
 
 namespace vats5 {
 
-RelaxedAdjacencyList MakeRelaxedAdjacencyList(
-    const StepsAdjacencyList& steps_list
+std::vector<WeightedEdge> MakeRelaxedEdges(const StepsAdjacencyList& steps_list
 ) {
   const int num_stops = steps_list.NumStops();
-
-  // For each origin, find the shortest duration to each destination
-  std::vector<std::vector<RelaxedEdge>> per_origin_edges(num_stops);
+  std::vector<WeightedEdge> edges;
 
   for (int origin_v = 0; origin_v < num_stops; ++origin_v) {
     std::span<const StepGroup> groups = steps_list.GetGroups(StopId{origin_v});
@@ -33,31 +31,43 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyList(
       }
 
       if (min_duration < std::numeric_limits<int>::max()) {
-        per_origin_edges[origin_v].push_back(
-            RelaxedEdge{group.destination_stop, min_duration}
-        );
+        edges.push_back(WeightedEdge{
+            StopId{origin_v}, group.destination_stop, min_duration
+        });
       }
     }
   }
 
-  // Build CSR format
-  RelaxedAdjacencyList result;
-  result.edge_offsets.resize(num_stops);
+  return edges;
+}
 
-  int running_offset = 0;
-  for (int i = 0; i < num_stops; ++i) {
-    result.edge_offsets[i] = running_offset;
-    running_offset += static_cast<int>(per_origin_edges[i].size());
-  }
+std::vector<WeightedEdge> MakeRelaxedEdges(
+    const StepPathsAdjacencyList& paths_list
+) {
+  std::vector<WeightedEdge> edges;
 
-  result.edges.reserve(running_offset);
-  for (int i = 0; i < num_stops; ++i) {
-    for (const RelaxedEdge& edge : per_origin_edges[i]) {
-      result.edges.push_back(edge);
+  for (const auto& [origin_stop, path_groups] : paths_list.adjacent) {
+    for (const auto& path_group : path_groups) {
+      if (path_group.empty()) {
+        continue;
+      }
+
+      // All paths in a group have the same destination
+      StopId destination = path_group[0].merged_step.destination_stop;
+
+      // Find minimum duration across all paths in this group
+      int min_duration = std::numeric_limits<int>::max();
+      for (const Path& path : path_group) {
+        min_duration = std::min(min_duration, path.DurationSeconds());
+      }
+
+      if (min_duration < std::numeric_limits<int>::max()) {
+        edges.push_back(WeightedEdge{origin_stop, destination, min_duration});
+      }
     }
   }
 
-  return result;
+  return edges;
 }
 
 RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(

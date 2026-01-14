@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>
 #include <mutex>
 #include <thread>
 
@@ -370,7 +369,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb,
     TimeSinceServiceStart origin_time_ub,
-    const RelaxedDistances* relaxed_distances
+    const RelaxedDistances* relaxed_distances,
+    bool keep_through_other_destination
 ) {
   HeuristicCache heuristic_cache(relaxed_distances);
 
@@ -481,9 +481,11 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     auto& dest_result = result[dest];
     SortSteps(dest_result);
     MakeMinimalCover(dest_result);
-    std::erase_if(dest_result, [&](const Step& s) {
-      return through_other_destination[s];
-    });
+    if (!keep_through_other_destination) {
+      std::erase_if(dest_result, [&](const Step& s) {
+        return through_other_destination[s];
+      });
+    }
 
     // Remove any paths whose origin is after the ub.
     if (dest_result.size() > 0 && !dest_result.back().is_flex &&
@@ -513,7 +515,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    bool keep_through_other_destination
 ) {
   // Convert to vector for indexed access
   std::vector<StopId> origins(system_stops.begin(), system_stops.end());
@@ -542,8 +545,8 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
   const unsigned int num_threads =
       std::max(1u, std::thread::hardware_concurrency());
 
-  std::cout << "Using " << num_threads << " threads for " << num_work_items
-            << " work items\n";
+  // std::cout << "Using " << num_threads << " threads for " << num_work_items
+  //           << " work items\n";
 
   // Worker function that grabs unclaimed work items
   auto worker = [&]() {
@@ -570,16 +573,17 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
       TimeSinceServiceStart ub{(chunk_index + 1) * kChunkSeconds};
 
       per_item_results[i] = FindMinimalPathSet(
-          adjacency_list, origin, destinations, lb, ub, &relaxed_distances
+          adjacency_list, origin, destinations, lb, ub, &relaxed_distances,
+          keep_through_other_destination
       );
 
       // Update progress (print only every 10 items)
       {
         std::lock_guard<std::mutex> lock(mutex);
         completed += 1;
-        if (completed % 10 == 0 || completed == num_work_items) {
-          std::cout << completed << " / " << num_work_items << "\n";
-        }
+        // if (completed % 10 == 0 || completed == num_work_items) {
+        //   std::cout << completed << " / " << num_work_items << "\n";
+        // }
       }
     }
   };

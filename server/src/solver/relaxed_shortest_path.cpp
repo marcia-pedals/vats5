@@ -48,7 +48,8 @@ RelaxedDistances ComputeRelaxedDistances(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& destinations
 ) {
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyList(adjacency_list);
+  std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(adjacency_list);
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
   RelaxedAdjacencyList reversed = ReverseRelaxedAdjacencyList(relaxed);
 
   RelaxedDistances result;

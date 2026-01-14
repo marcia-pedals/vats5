@@ -99,6 +99,10 @@ struct Step {
     return destination_time.seconds - origin_time.seconds;
   }
 
+  int DurationSeconds() const {
+    return destination_time.seconds - origin_time.seconds;
+  }
+
   bool operator==(const Step& other) const {
     return origin_stop == other.origin_stop &&
            destination_stop == other.destination_stop &&
@@ -123,6 +127,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
 struct Path {
   Step merged_step;
   std::vector<Step> steps;
+
+  int DurationSeconds() const {
+    return merged_step.DurationSeconds();
+  }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)
 

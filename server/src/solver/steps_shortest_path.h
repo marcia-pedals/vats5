@@ -87,7 +87,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     const std::unordered_set<StopId>& destinations,
     TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
     TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600},
-    const RelaxedDistances* relaxed_distances = nullptr
+    const RelaxedDistances* relaxed_distances = nullptr,
+    bool keep_through_other_destination = false
 );
 
 // Return an adjacency list ("reduced list") with these properties:
@@ -99,7 +100,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 // the path happen at <36:00.
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    bool keep_through_other_destination = false
 );
 
 }  // namespace vats5

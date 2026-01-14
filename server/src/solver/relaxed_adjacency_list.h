@@ -81,12 +81,19 @@ struct RelaxedDistances {
   std::unordered_map<StopId, std::vector<int>> distance_to;
 };
 
-// Create a relaxed adjacency list from a steps adjacency list.
+// Create weighted edges from a steps adjacency list.
 // For each origin-destination pair, the weight is the duration in seconds
 // of the shortest step (minimum destination_time - origin_time across all
 // steps).
-RelaxedAdjacencyList MakeRelaxedAdjacencyList(
-    const StepsAdjacencyList& steps_list
+std::vector<WeightedEdge> MakeRelaxedEdges(const StepsAdjacencyList& steps_list
+);
+
+// Create weighted edges from a step paths adjacency list.
+// For each origin-destination pair, the weight is the duration in seconds
+// of the shortest path (minimum destination_time - origin_time across all
+// paths).
+std::vector<WeightedEdge> MakeRelaxedEdges(
+    const StepPathsAdjacencyList& paths_list
 );
 
 // Create a relaxed adjacency list from a list of weighted edges.

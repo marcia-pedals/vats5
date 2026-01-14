@@ -62,7 +62,8 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
   };
 
   StepsAdjacencyList steps_list = MakeAdjacencyList(steps);
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyList(steps_list);
+  std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(steps_list);
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
   // Check structure
   EXPECT_EQ(relaxed.NumStops(), 4);  // Stops 0, 1, 2, 3
@@ -130,8 +131,9 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromWeightedEdgesEmpty) {
 
 TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromBART) {
   const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
-  RelaxedAdjacencyList relaxed =
-      MakeRelaxedAdjacencyList(test_data.adjacency_list);
+  std::vector<WeightedEdge> relaxed_edges =
+      MakeRelaxedEdges(test_data.adjacency_list);
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
   // Find Berkeley and North Berkeley stops
   StopId berkeley =
