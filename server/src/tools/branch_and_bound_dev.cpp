@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <asio/execution/start.hpp>
 #include <iostream>
+#include <optional>
 #include <unordered_set>
 
 #include "solver/concorde.h"
@@ -49,12 +50,31 @@ struct SolutionBoundary {
   StopId end;
 };
 
+struct TourStopEntry {
+  StopId stop_id;
+  TimeSinceServiceStart accumulated_weight;
+  // Defined for non-intermediate stops (first stop of each edge), nullopt for intermediate stops.
+  std::optional<std::pair<StopId, StopId>> tour_edge;
+};
+
 struct SolutionState {
   std::unordered_set<StopId> stops;
   StepsAdjacencyList adj;
   SolutionBoundary boundary;
   SolutionMetadata metadata;
 };
+
+Step ZeroEdge(StopId a, StopId b) {
+  return Step{
+    a,
+    b,
+    TimeSinceServiceStart{0},
+    TimeSinceServiceStart{0},
+    TripId{-2}, // TODO
+    TripId{-2}, // TODO
+    /*is_flex=*/true
+  };
+}
 
 SolutionState InitializeSolutionState(
   const StepsFromGtfs& steps_from_gtfs,
@@ -78,23 +98,11 @@ SolutionState InitializeSolutionState(
   solution_metadata.stop_names.push_back("END");
   assert(solution_metadata.stop_names[end_vertex.v] == "END");
 
-  auto zero_edge = [](StopId a, StopId b) -> Step {
-    return Step{
-          a,
-          b,
-          TimeSinceServiceStart{0},
-          TimeSinceServiceStart{0},
-          TripId{-2}, // TODO
-          TripId{-2}, // TODO
-          /*is_flex=*/true
-        };
-  };
-
   // ... with 0-duration flex steps START->* and *->END.
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   for (StopId actual_stop = StopId{0}; actual_stop.v < num_actual_stops; actual_stop.v += 1) {
-    steps.push_back(zero_edge(start_vertex, actual_stop));
-    steps.push_back(zero_edge(actual_stop, end_vertex));
+    steps.push_back(ZeroEdge(start_vertex, actual_stop));
+    steps.push_back(ZeroEdge(actual_stop, end_vertex));
   }
 
   std::unordered_set<StopId> stops;
@@ -108,6 +116,33 @@ SolutionState InitializeSolutionState(
     SolutionBoundary{.start=start_vertex, .end=end_vertex},
     solution_metadata,
   };
+}
+
+void ExtendFeasiblePaths(
+    std::vector<Step>& feasible_paths,
+    const StepPathsAdjacencyList& completed,
+    StopId a,
+    StopId b) {
+  auto path_groups_it = completed.adjacent.find(a);
+  if (path_groups_it == completed.adjacent.end()) {
+    std::cout << "Forbidden feasible edge?!\n";
+    feasible_paths.clear();
+    return;
+  }
+  const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
+  auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
+    return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
+  });
+  if (path_group_it == path_groups.end()) {
+    std::cout << "Forbidden feasible edge?!\n";
+    feasible_paths.clear();
+    return;
+  }
+  std::vector<Step> next_steps;
+  for (const Path& path : *path_group_it) {
+    next_steps.push_back(path.merged_step);
+  }
+  feasible_paths = PairwiseMergedSteps(std::move(feasible_paths), std::move(next_steps));
 }
 
 int main() {
@@ -155,41 +190,16 @@ int main() {
     TimeSinceServiceStart accumulated_weight{0};
 
     // Accumulates actual feasible paths along the tour.
-    std::vector<Step> feasible_paths;
+    std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
 
-    const int align_spacing = 50;
+    // Collect tour stop entries for printing.
+    std::vector<TourStopEntry> tour_entries;
 
     for (int i = 0; i < solution.tour.size() - 1; ++i) {
       StopId a = solution.tour[i];
       StopId b = solution.tour[i + 1];
 
-      // Extend `feasible_paths` along this edge.
-      {
-        auto path_groups_it = completed.adjacent.find(a);
-        if (path_groups_it == completed.adjacent.end()) {
-          std::cout << "Forbidden feasible edge?!\n";
-          feasible_paths.clear();
-        } else {
-          const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
-          auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
-            return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
-          });
-          if (path_group_it == path_groups.end()) {
-            std::cout << "Forbidden feasible edge?!\n";
-            feasible_paths.clear();
-          } else {
-            std::vector<Step> next_steps;
-            for (const Path& path : *path_group_it) {
-              next_steps.push_back(path.merged_step);
-            }
-            if (i == 0) {
-              feasible_paths = std::move(next_steps);
-            } else {
-              feasible_paths = PairwiseMergedSteps(std::move(feasible_paths), std::move(next_steps));
-            }
-          }
-        }
-      }
+      ExtendFeasiblePaths(feasible_paths, completed, a, b);
 
       const auto& path_groups = completed.adjacent.at(a);
       auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
@@ -210,10 +220,11 @@ int main() {
 
       int cur_seconds = min_duration_path->merged_step.origin_time.seconds;
       for (int j = 0; j < min_duration_path->steps.size(); ++j) {
-        const std::string indent = j == 0 ? "" : "  ";
-        std::cout << indent << std::left << std::setw(align_spacing - indent.size())
-          << StopName(min_duration_path->steps[j].origin_stop)
-          << accumulated_weight.ToString() << "\n";
+        tour_entries.push_back(TourStopEntry{
+          .stop_id = min_duration_path->steps[j].origin_stop,
+          .accumulated_weight = accumulated_weight,
+          .tour_edge = (j == 0) ? std::make_optional(std::make_pair(a, b)) : std::nullopt
+        });
 
         const Step& step = min_duration_path->steps[j];
         accumulated_weight.seconds += step.destination_time.seconds - cur_seconds;
@@ -225,29 +236,75 @@ int main() {
         cur_seconds = step.destination_time.seconds;
       }
     }
-    std::cout << std::left << std::setw(align_spacing)
-      << StopName(*(solution.tour.end() - 1))
-      << accumulated_weight.ToString() << "\n";
     assert(solution.optimal_value == accumulated_weight.seconds);
 
     // Find the feasible path with minimum duration.
+    TimeSinceServiceStart min_duration_origin_time{0};
     if (!feasible_paths.empty()) {
       const Step* min_duration_step = &feasible_paths[0];
       for (const Step& step : feasible_paths) {
-        int duration = step.destination_time.seconds - step.origin_time.seconds;
-        int min_duration = min_duration_step->destination_time.seconds - min_duration_step->origin_time.seconds;
-        if (duration < min_duration) {
+        if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
           min_duration_step = &step;
         }
       }
-      int duration_seconds = min_duration_step->destination_time.seconds - min_duration_step->origin_time.seconds;
+      min_duration_origin_time = min_duration_step->origin_time;
       std::cout << "\nMin duration feasible path:\n";
       std::cout << "  Start time: " << min_duration_step->origin_time.ToString() << "\n";
       std::cout << "  End time:   " << min_duration_step->destination_time.ToString() << "\n";
-      std::cout << "  Duration:   " << TimeSinceServiceStart{duration_seconds}.ToString() << "\n";
+      std::cout << "  Duration:   " << TimeSinceServiceStart{min_duration_step->DurationSeconds()}.ToString() << "\n";
     } else {
       std::cout << "No feasible paths!?\n";
     }
+
+    // TODO: Explain what I'm doing here. Maybe do it less-hackily.
+    std::vector<Step> min_duration_feasible = {ZeroEdge(state.boundary.start, state.boundary.start)};
+
+    // Print tour entries.
+    const int align_spacing = 50;
+    for (int i = 0; i < tour_entries.size(); ++i) {
+      const TourStopEntry& entry = tour_entries[i];
+
+      const std::string indent = entry.tour_edge.has_value() ? "" : "  ";
+      std::cout << indent << std::left << std::setw(align_spacing - indent.size())
+        << StopName(entry.stop_id)
+        << entry.accumulated_weight.ToString();
+      if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
+        std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
+      }
+      std::cout << "\n";
+
+      if (entry.tour_edge.has_value()) {
+        ExtendFeasiblePaths(
+          min_duration_feasible,
+          completed,
+          entry.tour_edge->first,
+          entry.tour_edge->second
+        );
+        if (min_duration_feasible.size() > 1) {
+          auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
+            [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
+          if (it != min_duration_feasible.end()) {
+            min_duration_feasible = {*it};
+          } else {
+            std::cout << "Didn't find step corresponding to min duration feasible path!?\n";
+            std::cout << "  Looking for: " << min_duration_origin_time.ToString() << "\n";
+            std::cout << "  Available origin times:\n";
+            for (const Step& step : min_duration_feasible) {
+              std::cout << "    " << step.origin_time.ToString() << "\n";
+            }
+            min_duration_feasible.clear();
+          }
+        }
+      }
+    }
+    std::cout << std::left << std::setw(align_spacing)
+      << StopName(*(solution.tour.end() - 1))
+      << accumulated_weight.ToString();
+    if (min_duration_feasible.size() == 1) {
+      std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
+    }
+    std::cout << "\n";
+
 
     return 0;
 }
