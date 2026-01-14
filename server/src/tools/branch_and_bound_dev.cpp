@@ -261,6 +261,7 @@ int main() {
 
     // Print tour entries.
     const int align_spacing = 50;
+    int prev_diff = 0;
     for (int i = 0; i < tour_entries.size(); ++i) {
       const TourStopEntry& entry = tour_entries[i];
 
@@ -270,6 +271,10 @@ int main() {
         << entry.accumulated_weight.ToString();
       if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
         std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
+        int cur_diff = min_duration_feasible[0].DurationSeconds() - entry.accumulated_weight.seconds;
+        int delta = cur_diff - prev_diff;
+        std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
+        prev_diff = cur_diff;
       }
       std::cout << "\n";
 
@@ -302,6 +307,9 @@ int main() {
       << accumulated_weight.ToString();
     if (min_duration_feasible.size() == 1) {
       std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
+      int cur_diff = min_duration_feasible[0].DurationSeconds() - accumulated_weight.seconds;
+      int delta = cur_diff - prev_diff;
+      std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
     }
     std::cout << "\n";
 
