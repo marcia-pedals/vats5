@@ -559,13 +559,21 @@ void InvestigateTransferTimes(const SolutionState& state) {
 
   std::vector<WeightedEdge> txr_edges;
 
-  // First make a mapping from naive to txr stops and add the within-stop-cycle edges.
+  // First make mappings between naive and txr stops and add the within-stop-cycle edges.
+  struct TxrStopInfo {
+    StopId naive_stop;
+    int group_idx;
+  };
   StopId next_txr_stop{0};
   std::unordered_map<StopId, std::vector<StopId>> naive_to_txr_stops;
+  std::unordered_map<StopId, TxrStopInfo> txr_to_naive_stop;
+  const int cycle_edge_weight = -1000;
+  int expected_num_cycle_edges = 0;
   for (const auto& [b, groups] : groups_by_b) {
     std::vector<StopId>& b_txr_stops = naive_to_txr_stops[b];
     for (int group_idx = 0; group_idx < groups.size(); ++group_idx) {
       b_txr_stops.push_back(next_txr_stop);
+      txr_to_naive_stop[next_txr_stop] = TxrStopInfo{.naive_stop = b, .group_idx = group_idx};
       next_txr_stop.v += 1;
     }
 
@@ -573,9 +581,10 @@ void InvestigateTransferTimes(const SolutionState& state) {
       txr_edges.push_back(WeightedEdge{
         .origin=b_txr_stops[group_idx],
         .destination=b_txr_stops[(group_idx + 1) % b_txr_stops.size()],
-        .weight_seconds=0,
+        .weight_seconds=cycle_edge_weight,
       });
     }
+    expected_num_cycle_edges += b_txr_stops.size() - 1;
   }
 
   // Next build all the tx+travel edges for the txr graph.
@@ -619,7 +628,57 @@ void InvestigateTransferTimes(const SolutionState& state) {
   RelaxedAdjacencyList txr_adj = MakeRelaxedAdjacencyListFromEdges(txr_edges);
 
   ConcordeSolution solution = SolveTspWithConcorde(txr_adj);
-  std::cout << "Concorde optimal value " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+  std::cout
+    << "Concorde optimal value "
+    << TimeSinceServiceStart{
+      solution.optimal_value - expected_num_cycle_edges * cycle_edge_weight
+    }.ToString() << "\n";
+
+  // Rotate the tour so that "start" vertex is first.
+  StopId start_txr_stop = start_txr_stops[0];
+  auto start_it = std::find(solution.tour.begin(), solution.tour.end(), start_txr_stop);
+  assert(start_it != solution.tour.end());
+  std::rotate(solution.tour.begin(), start_it, solution.tour.end());
+
+  // Check that the tour cycles through all vertices of a naive stop before going to the next.
+  StopId current_naive_stop = txr_to_naive_stop.at(solution.tour[0]).naive_stop;
+  int current_group_idx = txr_to_naive_stop.at(solution.tour[0]).group_idx;
+  int expected_visits_for_stop = naive_to_txr_stops.at(current_naive_stop).size();
+  int visits_in_current_stop = 0;
+
+  for (size_t i = 0; i < solution.tour.size(); ++i) {
+    StopId txr_stop = solution.tour[i];
+    const TxrStopInfo& info = txr_to_naive_stop.at(txr_stop);
+
+    if (info.naive_stop == current_naive_stop) {
+      // Still at the same naive stop - check that group_idx is incrementing by 1 (mod size).
+      int expected_group_idx = (current_group_idx + visits_in_current_stop) % expected_visits_for_stop;
+      if (info.group_idx != expected_group_idx) {
+        std::cout << "ERROR at tour position " << i << ": at naive stop " << current_naive_stop.v
+                  << ", expected group_idx " << expected_group_idx << " but got " << info.group_idx << "\n";
+      }
+      visits_in_current_stop++;
+    } else {
+      // Moved to a new naive stop - check that we visited all vertices of the previous stop.
+      if (visits_in_current_stop != expected_visits_for_stop) {
+        std::cout << "ERROR: left naive stop " << current_naive_stop.v << " after visiting "
+                  << visits_in_current_stop << " vertices, but expected " << expected_visits_for_stop << "\n";
+      }
+      // Reset for the new naive stop.
+      current_naive_stop = info.naive_stop;
+      current_group_idx = info.group_idx;
+      expected_visits_for_stop = naive_to_txr_stops.at(current_naive_stop).size();
+      visits_in_current_stop = 1;
+    }
+  }
+
+  // Check the final stop was fully visited.
+  if (visits_in_current_stop != expected_visits_for_stop) {
+    std::cout << "ERROR: ended at naive stop " << current_naive_stop.v << " after visiting "
+              << visits_in_current_stop << " vertices, but expected " << expected_visits_for_stop << "\n";
+  }
+
+  std::cout << "Tour validation complete.\n";
 }
 
 int main() {
