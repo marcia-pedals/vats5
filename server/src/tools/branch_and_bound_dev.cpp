@@ -57,6 +57,8 @@ struct TourStopEntry {
   TimeSinceServiceStart accumulated_weight;
   // Defined for non-intermediate stops (first stop of each edge), nullopt for intermediate stops.
   std::optional<std::pair<StopId, StopId>> tour_edge;
+  // Transfer time used for this edge (only for edges after the first).
+  std::optional<int> transfer_time_seconds;
 };
 
 struct SolutionState {
@@ -157,28 +159,28 @@ struct ExtremeDeltaEdge {
   int delta_seconds;
 };
 
-ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
-  StepPathsAdjacencyList completed =
-    ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
+struct MinTransferTime {
+  StopId a;
+  StopId b;
+  StopId c;
 
-  std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(completed);
-  relaxed_edges.push_back(
-    WeightedEdge{
-      .origin=state.boundary.end,
-      .destination=state.boundary.start,
-      .weight_seconds=0
-    }
-  );
+  TimeSinceServiceStart b_arrive;
+  TimeSinceServiceStart b_depart;
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
-  ConcordeSolution solution = SolveTspWithConcorde(relaxed);
-
-  std::cout << "Concorde optimal value " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
-  auto start_it = std::find(solution.tour.begin(), solution.tour.end(), state.boundary.start);
-  if (start_it != solution.tour.end()) {
-    std::rotate(solution.tour.begin(), start_it, solution.tour.end());
+  int Seconds() const {
+    return b_depart.seconds - b_arrive.seconds;
   }
-  assert(*(solution.tour.end() - 1) == state.boundary.end);
+};
+
+// Helper that processes a tour (already rotated with start first) and prints details.
+// Returns the edge with minimum delta between feasible and relaxed times.
+// If transfer_times is provided, adds transfer times to accumulated_weight.
+ExtremeDeltaEdge ProcessTour(
+    const SolutionState& state,
+    const StepPathsAdjacencyList& completed,
+    const ConcordeSolution& solution,
+    const std::vector<MinTransferTime>& transfer_times = {}) {
+  const std::vector<StopId>& tour = solution.tour;
 
   // Accumulates relaxed weight along the tour.
   TimeSinceServiceStart accumulated_weight{0};
@@ -189,9 +191,23 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
   // Collect tour stop entries for printing.
   std::vector<TourStopEntry> tour_entries;
 
-  for (int i = 0; i < solution.tour.size() - 1; ++i) {
-    StopId a = solution.tour[i];
-    StopId b = solution.tour[i + 1];
+  for (int i = 0; i < tour.size() - 1; ++i) {
+    StopId a = tour[i];
+    StopId b = tour[i + 1];
+
+    // Look up transfer time if available (for edges after the first one).
+    std::optional<int> transfer_time_seconds;
+    if (i > 0 && !transfer_times.empty()) {
+      StopId prev_a = tour[i - 1];
+      auto it = std::find_if(transfer_times.begin(), transfer_times.end(),
+        [&](const MinTransferTime& t) {
+          return t.a == prev_a && t.b == a && t.c == b;
+        });
+      if (it != transfer_times.end()) {
+        transfer_time_seconds = it->Seconds();
+        accumulated_weight.seconds += *transfer_time_seconds;
+      }
+    }
 
     ExtendFeasiblePaths(feasible_paths, completed, a, b);
 
@@ -217,7 +233,8 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
       tour_entries.push_back(TourStopEntry{
         .stop_id = min_duration_path->steps[j].origin_stop,
         .accumulated_weight = accumulated_weight,
-        .tour_edge = (j == 0) ? std::make_optional(std::make_pair(a, b)) : std::nullopt
+        .tour_edge = (j == 0) ? std::make_optional(std::make_pair(a, b)) : std::nullopt,
+        .transfer_time_seconds = (j == 0) ? transfer_time_seconds : std::nullopt,
       });
 
       const Step& step = min_duration_path->steps[j];
@@ -239,8 +256,6 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
       cur_seconds = step.destination_time.seconds;
     }
   }
-  assert(solution.optimal_value == accumulated_weight.seconds);
-
   // Find the feasible path with minimum duration.
   TimeSinceServiceStart min_duration_origin_time{0};
   if (!feasible_paths.empty()) {
@@ -271,8 +286,16 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
 
     const std::string indent = entry.tour_edge.has_value() ? "" : "  ";
     std::cout << indent << std::left << std::setw(align_spacing - indent.size())
-      << state.StopName(entry.stop_id)
-      << entry.accumulated_weight.ToString();
+      << state.StopName(entry.stop_id);
+    // Print transfer time column (or blank if not applicable).
+    if (entry.transfer_time_seconds.has_value()) {
+      std::cout << std::right << std::setw(5) << (*entry.transfer_time_seconds / 60) << ":"
+                << std::setfill('0') << std::setw(2) << (*entry.transfer_time_seconds % 60)
+                << std::setfill(' ') << std::left << "  ";
+    } else {
+      std::cout << "          ";
+    }
+    std::cout << entry.accumulated_weight.ToString();
     if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
       std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
       int cur_diff = min_duration_feasible[0].DurationSeconds() - entry.accumulated_weight.seconds;
@@ -313,7 +336,8 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
     }
   }
   std::cout << std::left << std::setw(align_spacing)
-    << state.StopName(*(solution.tour.end() - 1))
+    << state.StopName(*(tour.end() - 1))
+    << "          "  // blank transfer time column
     << accumulated_weight.ToString();
   if (min_duration_feasible.size() == 1) {
     std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
@@ -331,27 +355,40 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
     }
   }
 
-  std::cout << "Min delta edge: "
-    << state.StopName(mde.a) << " -> "
-    << state.StopName(mde.b) << ": "
-    << TimeSinceServiceStart{mde.delta_seconds}.ToString() << "\n";
+  // std::cout << "Min delta edge: "
+  //   << state.StopName(mde.a) << " -> "
+  //   << state.StopName(mde.b) << ": "
+  //   << TimeSinceServiceStart{mde.delta_seconds}.ToString() << "\n";
+  std::cout << "Concorde - Accumulated = " << solution.optimal_value - accumulated_weight.seconds << "\n";
 
   return mde;
 }
 
+ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
+  StepPathsAdjacencyList completed =
+    ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
-struct MinTransferTime {
-  StopId a;
-  StopId b;
-  StopId c;
+  std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(completed);
+  relaxed_edges.push_back(
+    WeightedEdge{
+      .origin=state.boundary.end,
+      .destination=state.boundary.start,
+      .weight_seconds=0
+    }
+  );
 
-  TimeSinceServiceStart b_arrive;
-  TimeSinceServiceStart b_depart;
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
+  ConcordeSolution solution = SolveTspWithConcorde(relaxed);
 
-  int Seconds() const {
-    return b_depart.seconds - b_arrive.seconds;
+  std::cout << "Concorde optimal value " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+  auto start_it = std::find(solution.tour.begin(), solution.tour.end(), state.boundary.start);
+  if (start_it != solution.tour.end()) {
+    std::rotate(solution.tour.begin(), start_it, solution.tour.end());
   }
-};
+  assert(*(solution.tour.end() - 1) == state.boundary.end);
+
+  return ProcessTour(state, completed, solution);
+}
 
 MinTransferTime ComputeMinTransferTime(const StepsAdjacencyList& adj, const StopId a, const StepGroup& ab, const StepGroup& bc) {
   MinTransferTime min_transfer{
@@ -443,7 +480,7 @@ struct GroupedTxEdge {
 void InvestigateTransferTimes(const SolutionState& state) {
   StepPathsAdjacencyList completed = ReduceToMinimalSystemPaths(
     state.adj, state.stops, /*keep_through_other_destination=*/true);
-  PruneUselessFlexSteps(completed, TimeSinceServiceStart{6 * 3600}, TimeSinceServiceStart{22 * 3600});
+  // PruneUselessFlexSteps(completed, TimeSinceServiceStart{6 * 3600}, TimeSinceServiceStart{22 * 3600});
   StepsAdjacencyList adj = MakeAdjacencyList(completed.AllMergedSteps());
 
   // Number of stop-to-stop edges.
@@ -619,8 +656,8 @@ void InvestigateTransferTimes(const SolutionState& state) {
   assert(end_txr_stops.size() == 1);
   txr_edges.push_back(
     WeightedEdge{
-      .origin=start_txr_stops[0],
-      .destination=end_txr_stops[0],
+      .origin=end_txr_stops[0],
+      .destination=start_txr_stops[0],
       .weight_seconds=0
     }
   );
@@ -628,11 +665,10 @@ void InvestigateTransferTimes(const SolutionState& state) {
   RelaxedAdjacencyList txr_adj = MakeRelaxedAdjacencyListFromEdges(txr_edges);
 
   ConcordeSolution solution = SolveTspWithConcorde(txr_adj);
+  solution.optimal_value -= expected_num_cycle_edges * cycle_edge_weight;
   std::cout
     << "Concorde optimal value "
-    << TimeSinceServiceStart{
-      solution.optimal_value - expected_num_cycle_edges * cycle_edge_weight
-    }.ToString() << "\n";
+    << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
 
   // Rotate the tour so that "start" vertex is first.
   StopId start_txr_stop = start_txr_stops[0];
@@ -679,6 +715,18 @@ void InvestigateTransferTimes(const SolutionState& state) {
   }
 
   std::cout << "Tour validation complete.\n";
+
+  // Convert txr tour to naive tour (deduplicate consecutive same naive stops).
+  std::vector<StopId> naive_tour;
+  for (StopId txr_stop : solution.tour) {
+    StopId naive_stop = txr_to_naive_stop.at(txr_stop).naive_stop;
+    if (naive_tour.empty() || naive_tour.back() != naive_stop) {
+      naive_tour.push_back(naive_stop);
+    }
+  }
+
+  std::cout << "\n=== ProcessTour for InvestigateTransferTimes ===\n";
+  ProcessTour(state, completed, ConcordeSolution{naive_tour, solution.optimal_value}, transfer_times);
 }
 
 int main() {
