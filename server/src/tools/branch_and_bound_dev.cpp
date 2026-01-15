@@ -163,13 +163,7 @@ struct MinTransferTime {
   StopId a;
   StopId b;
   StopId c;
-
-  TimeSinceServiceStart b_arrive;
-  TimeSinceServiceStart b_depart;
-
-  int Seconds() const {
-    return b_depart.seconds - b_arrive.seconds;
-  }
+  int seconds;
 };
 
 // Helper that processes a tour (already rotated with start first) and prints details.
@@ -204,8 +198,7 @@ ExtremeDeltaEdge ProcessTour(
           return t.a == prev_a && t.b == a && t.c == b;
         });
       if (it != transfer_times.end()) {
-        transfer_time_seconds = it->Seconds();
-        accumulated_weight.seconds += *transfer_time_seconds;
+        transfer_time_seconds = it->seconds;
       }
     }
 
@@ -238,7 +231,7 @@ ExtremeDeltaEdge ProcessTour(
       });
 
       const Step& step = min_duration_path->steps[j];
-      accumulated_weight.seconds += step.destination_time.seconds - cur_seconds;
+      // accumulated_weight.seconds += step.destination_time.seconds - cur_seconds;
 
       // Assert that the steps in the path are actual times relative to the
       // start time. (i.e. flex steps start actually when you get there instead
@@ -254,6 +247,10 @@ ExtremeDeltaEdge ProcessTour(
       }
       assert(step.origin_time.seconds >= cur_seconds);
       cur_seconds = step.destination_time.seconds;
+    }
+
+    if (transfer_time_seconds.has_value()) {
+      accumulated_weight.seconds += *transfer_time_seconds;
     }
   }
   // Find the feasible path with minimum duration.
@@ -395,36 +392,38 @@ MinTransferTime ComputeMinTransferTime(const StepsAdjacencyList& adj, const Stop
     .a=a,
     .b=ab.destination_stop,
     .c=bc.destination_stop,
-    .b_arrive=TimeSinceServiceStart{0},
-    .b_depart=TimeSinceServiceStart{std::numeric_limits<int>::max()},
+    .seconds=std::numeric_limits<int>::max(),
   };
-
-  if (ab.flex_step.has_value() || bc.flex_step.has_value()) {
-    min_transfer.b_depart = TimeSinceServiceStart{0};
-    return min_transfer;
-  }
 
   const std::span<const AdjacencyListStep> ab_steps = adj.GetSteps(ab);
   const std::span<const AdjacencyListStep> bc_steps = adj.GetSteps(bc);
 
+  if (bc.flex_step.has_value()) {
+    min_transfer.seconds = std::min(
+      min_transfer.seconds,
+      bc.flex_step->FlexDurationSeconds()
+    );
+  }
+  if (ab.flex_step.has_value()) {
+    for (const AdjacencyListStep& step : bc_steps) {
+      min_transfer.seconds = std::min(
+        min_transfer.seconds,
+        step.destination_time.seconds - step.origin_time.seconds
+      );
+    }
+  }
+
   size_t j = 0;
   for (size_t i = 0; i < ab_steps.size(); ++i) {
-    TimeSinceServiceStart arrival = ab_steps[i].destination_time;
-
-    // Advance j until bc_steps[j].origin_time >= arrival
-    while (j < bc_steps.size() && bc_steps[j].origin_time < arrival) {
+    while (j < bc_steps.size() && bc_steps[j].origin_time < ab_steps[i].destination_time) {
       ++j;
     }
 
     if (j >= bc_steps.size()) {
       break;
     }
-    int transfer = bc_steps[j].origin_time.seconds - arrival.seconds;
-
-    if (transfer < min_transfer.Seconds()) {
-      min_transfer.b_arrive = arrival;
-      min_transfer.b_depart = bc_steps[j].origin_time;
-    }
+    int transfer = bc_steps[j].destination_time.seconds - ab_steps[i].destination_time.seconds;
+    min_transfer.seconds = std::min(min_transfer.seconds, transfer);
   }
 
   return min_transfer;
@@ -499,17 +498,17 @@ void InvestigateTransferTimes(const SolutionState& state) {
   }
 
   std::sort(transfer_times.begin(), transfer_times.end(), [](const MinTransferTime& x, const MinTransferTime& y) -> bool {
-    return x.Seconds() > y.Seconds();
+    return x.seconds > y.seconds;
   });
 
   int num_feasible_zero = 0;
   int num_feasible_positive = 0;
   int num_infeasible = 0;
   for (const MinTransferTime& transfer_time : transfer_times) {
-    if (transfer_time.Seconds() == std::numeric_limits<int>::max()) {
+    if (transfer_time.seconds == std::numeric_limits<int>::max()) {
       num_infeasible += 1;
       continue;
-    } else if (transfer_time.Seconds() == 0) {
+    } else if (transfer_time.seconds == 0) {
       num_feasible_zero += 1;
       continue;
     }
@@ -518,7 +517,7 @@ void InvestigateTransferTimes(const SolutionState& state) {
     //   << state.StopName(transfer_time.a) <<  "->"
     //   << state.StopName(transfer_time.b) <<  "->"
     //   << state.StopName(transfer_time.c) <<  ": "
-    //   << TimeSinceServiceStart{transfer_time.Seconds()}.ToString() << "\n"
+    //   << TimeSinceServiceStart{transfer_time.seconds}.ToString() << "\n"
     //   << "  " << transfer_time.b_arrive.ToString() << " -> " << transfer_time.b_depart.ToString() << "\n";
   }
   std::cout << "num_feasible_zero: " << num_feasible_zero << "\n";
@@ -545,7 +544,7 @@ void InvestigateTransferTimes(const SolutionState& state) {
         group_match = true;
         for (const MinTransferTime& tt : tts) {
           auto group_it = group.tx_times_by_c.find(tt.c);
-          if (group_it == group.tx_times_by_c.end() || group_it->second != tt.Seconds()) {
+          if (group_it == group.tx_times_by_c.end() || group_it->second != tt.seconds) {
             group_match = false;
             break;
           }
@@ -566,7 +565,7 @@ void InvestigateTransferTimes(const SolutionState& state) {
         .tx_times_by_c={},
       };
       for (const MinTransferTime& tt : tts) {
-        group.tx_times_by_c[tt.c] = tt.Seconds();
+        group.tx_times_by_c[tt.c] = tt.seconds;
       }
       groups.push_back(std::move(group));
     }
@@ -591,8 +590,6 @@ void InvestigateTransferTimes(const SolutionState& state) {
   num_groups += 2;
 
   std::cout << "num_groups: " << num_groups << "\n";
-
-  RelaxedAdjacencyList naive_relaxed = MakeRelaxedAdjacencyListFromEdges(MakeRelaxedEdges(completed));
 
   std::vector<WeightedEdge> txr_edges;
 
@@ -637,13 +634,11 @@ void InvestigateTransferTimes(const SolutionState& state) {
         assert(c_group_it != c_groups.end());
         int bc_group_idx = c_group_it - c_groups.begin();
 
-        std::optional<int> naive_weight = naive_relaxed.GetWeight(b, c);
-        assert(naive_weight.has_value());
         txr_edges.push_back(WeightedEdge{
           // Offset origin by -1 for TSP trick.
           .origin=naive_to_txr_stops.at(b)[group_idx == 0 ? groups.size() - 1 : group_idx - 1],
           .destination=naive_to_txr_stops.at(c)[bc_group_idx],
-          .weight_seconds=tx_time + *naive_weight,
+          .weight_seconds=tx_time,
         });
       }
     }
