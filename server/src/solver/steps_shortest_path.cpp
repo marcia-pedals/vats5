@@ -94,6 +94,19 @@ std::vector<Step> BacktrackPath(
     state = search_result[state.origin_stop.v];
   }
   std::reverse(path.begin(), path.end());
+
+  // Advance flex steps to the latest possible moment.
+  // TODO: Consider what to do if the whole path is flex:
+  // - normalize to start the whole thing at 0?
+  // - or maybe it is already normalized such?
+  for (int i = static_cast<int>(path.size()) - 2; i >= 0; --i) {
+    if (path[i].is_flex) {
+      int flex_duration = path[i].destination_time.seconds - path[i].origin_time.seconds;
+      path[i].destination_time = path[i + 1].origin_time;
+      path[i].origin_time.seconds = path[i].destination_time.seconds - flex_duration;
+    }
+  }
+
   return path;
 }
 

@@ -57,20 +57,3 @@ lower bound that lets us quickly disprove it. Chosing an arbitrary segment from 
 bound route seems like a good heuristic for this, because the current upper bound route is probably
 close to the optimal route and therefore many of its segments are "good ones" that are costly to
 avoid.
-
-## TODOs
-
-### Verify that the different A* and non-A* solutions are "equivalent" rather
-than the A* optimization having a bug.
-
-The difference seems to be different paths that have the same start and end
-times, which is fine.
-
-But there is one sus difference: A path that is in the non-A* solution is
-completely missing from the A* solution. I suspect this might be ok -- the A*
-solution might have found an equivalent path that goes through a BART stop which
-caused it to get "cut off" earlier.
-
-This sus difference is interesting for another reason. If true, then it means
-that there might be other equivalent paths that go through BART stations and we
-could make the final reduced graph look simpler by prioritizing those. I wonder.
