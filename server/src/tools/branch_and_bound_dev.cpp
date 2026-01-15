@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "solver/concorde.h"
@@ -63,6 +64,10 @@ struct SolutionState {
   StepsAdjacencyList adj;
   SolutionBoundary boundary;
   SolutionMetadata metadata;
+
+  std::string StopName(StopId stop) const {
+    return metadata.stop_names[stop.v];
+  }
 };
 
 Step ZeroEdge(StopId a, StopId b) {
@@ -153,10 +158,6 @@ struct ExtremeDeltaEdge {
 };
 
 ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
-  auto StopName = [&](StopId stop) -> std::string {
-    return state.metadata.stop_names[stop.v];
-  };
-
   StepPathsAdjacencyList completed =
     ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
@@ -229,7 +230,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
         std::cout << "Assert about to fail! Path steps:\n";
         std::cout << "  merged_step.origin_time: " << min_duration_path->merged_step.origin_time.ToString() << "\n";
         for (const Step& s : min_duration_path->steps) {
-          std::cout << "  " << StopName(s.origin_stop) << " -> " << StopName(s.destination_stop)
+          std::cout << "  " << state.StopName(s.origin_stop) << " -> " << state.StopName(s.destination_stop)
             << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString()
             << " (flex=" << s.is_flex << ")\n";
         }
@@ -270,7 +271,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
 
     const std::string indent = entry.tour_edge.has_value() ? "" : "  ";
     std::cout << indent << std::left << std::setw(align_spacing - indent.size())
-      << StopName(entry.stop_id)
+      << state.StopName(entry.stop_id)
       << entry.accumulated_weight.ToString();
     if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
       std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
@@ -312,7 +313,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
     }
   }
   std::cout << std::left << std::setw(align_spacing)
-    << StopName(*(solution.tour.end() - 1))
+    << state.StopName(*(solution.tour.end() - 1))
     << accumulated_weight.ToString();
   if (min_duration_feasible.size() == 1) {
     std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
@@ -331,11 +332,294 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
   }
 
   std::cout << "Min delta edge: "
-    << StopName(mde.a) << " -> "
-    << StopName(mde.b) << ": "
+    << state.StopName(mde.a) << " -> "
+    << state.StopName(mde.b) << ": "
     << TimeSinceServiceStart{mde.delta_seconds}.ToString() << "\n";
 
   return mde;
+}
+
+
+struct MinTransferTime {
+  StopId a;
+  StopId b;
+  StopId c;
+
+  TimeSinceServiceStart b_arrive;
+  TimeSinceServiceStart b_depart;
+
+  int Seconds() const {
+    return b_depart.seconds - b_arrive.seconds;
+  }
+};
+
+MinTransferTime ComputeMinTransferTime(const StepsAdjacencyList& adj, const StopId a, const StepGroup& ab, const StepGroup& bc) {
+  MinTransferTime min_transfer{
+    .a=a,
+    .b=ab.destination_stop,
+    .c=bc.destination_stop,
+    .b_arrive=TimeSinceServiceStart{0},
+    .b_depart=TimeSinceServiceStart{std::numeric_limits<int>::max()},
+  };
+
+  if (ab.flex_step.has_value() || bc.flex_step.has_value()) {
+    min_transfer.b_depart = TimeSinceServiceStart{0};
+    return min_transfer;
+  }
+
+  const std::span<const AdjacencyListStep> ab_steps = adj.GetSteps(ab);
+  const std::span<const AdjacencyListStep> bc_steps = adj.GetSteps(bc);
+
+  size_t j = 0;
+  for (size_t i = 0; i < ab_steps.size(); ++i) {
+    TimeSinceServiceStart arrival = ab_steps[i].destination_time;
+
+    // Advance j until bc_steps[j].origin_time >= arrival
+    while (j < bc_steps.size() && bc_steps[j].origin_time < arrival) {
+      ++j;
+    }
+
+    if (j >= bc_steps.size()) {
+      break;
+    }
+    int transfer = bc_steps[j].origin_time.seconds - arrival.seconds;
+
+    if (transfer < min_transfer.Seconds()) {
+      min_transfer.b_arrive = arrival;
+      min_transfer.b_depart = bc_steps[j].origin_time;
+    }
+  }
+
+  return min_transfer;
+}
+
+// TODO: Think harder about this and whether it is correct.
+void PruneUselessFlexSteps(
+  StepPathsAdjacencyList& adj,
+  const TimeSinceServiceStart min_origin_time,
+  const TimeSinceServiceStart max_destination_time
+) {
+  int num_pruned = 0;
+  int num_flex = 0;
+  for (auto& [origin, groups] : adj.adjacent) {
+    for (std::vector<Path>& group : groups) {
+      if (group.size() == 0 || !group[0].merged_step.is_flex) {
+        continue;
+      }
+      num_flex += 1;
+      int flex_duration = group[0].merged_step.FlexDurationSeconds();
+
+      TimeSinceServiceStart confirmed_departure_without_flex = min_origin_time;
+      int i = 1;
+      while (confirmed_departure_without_flex.seconds <= max_destination_time.seconds - flex_duration) {
+        if (
+          i < group.size() &&
+          group[i].merged_step.destination_time.seconds <= confirmed_departure_without_flex.seconds + flex_duration
+        ) {
+          if (group[i].merged_step.origin_time > confirmed_departure_without_flex) {
+            confirmed_departure_without_flex = group[i].merged_step.origin_time;
+          }
+          i += 1;
+        } else {
+          break;
+        }
+      }
+
+      if (confirmed_departure_without_flex.seconds >= max_destination_time.seconds - flex_duration) {
+        // Flex step is useless, prune it!
+        group.erase(group.begin());
+        num_pruned += 1;
+      }
+    }
+  }
+  std::cout << "pruned flex steps: " << num_pruned << "/" << num_flex << "\n";
+}
+
+struct GroupedTxEdge {
+  std::vector<StopId> as;
+  std::unordered_map<StopId, int> tx_times_by_c;
+};
+
+void InvestigateTransferTimes(const SolutionState& state) {
+  StepPathsAdjacencyList completed = ReduceToMinimalSystemPaths(
+    state.adj, state.stops, /*keep_through_other_destination=*/true);
+  PruneUselessFlexSteps(completed, TimeSinceServiceStart{6 * 3600}, TimeSinceServiceStart{22 * 3600});
+  StepsAdjacencyList adj = MakeAdjacencyList(completed.AllMergedSteps());
+
+  // Number of stop-to-stop edges.
+  int num_edges = adj.groups.size();
+  std::cout << "num_edges: " << num_edges << "\n";
+
+  std::vector<MinTransferTime> transfer_times;
+  for (StopId a = StopId{0}; a.v < adj.group_offsets.size(); ++a.v) {
+    for (const StepGroup& ab : adj.GetGroups(a)) {
+      StopId b = ab.destination_stop;
+      for (const StepGroup& bc : adj.GetGroups(b)) {
+        StopId c = bc.destination_stop;
+        transfer_times.push_back(ComputeMinTransferTime(adj, a, ab, bc));
+      }
+    }
+  }
+
+  std::sort(transfer_times.begin(), transfer_times.end(), [](const MinTransferTime& x, const MinTransferTime& y) -> bool {
+    return x.Seconds() > y.Seconds();
+  });
+
+  int num_feasible_zero = 0;
+  int num_feasible_positive = 0;
+  int num_infeasible = 0;
+  for (const MinTransferTime& transfer_time : transfer_times) {
+    if (transfer_time.Seconds() == std::numeric_limits<int>::max()) {
+      num_infeasible += 1;
+      continue;
+    } else if (transfer_time.Seconds() == 0) {
+      num_feasible_zero += 1;
+      continue;
+    }
+    num_feasible_positive += 1;
+    // std::cout
+    //   << state.StopName(transfer_time.a) <<  "->"
+    //   << state.StopName(transfer_time.b) <<  "->"
+    //   << state.StopName(transfer_time.c) <<  ": "
+    //   << TimeSinceServiceStart{transfer_time.Seconds()}.ToString() << "\n"
+    //   << "  " << transfer_time.b_arrive.ToString() << " -> " << transfer_time.b_depart.ToString() << "\n";
+  }
+  std::cout << "num_feasible_zero: " << num_feasible_zero << "\n";
+  std::cout << "num_feasible_positive: " << num_feasible_positive << "\n";
+  std::cout << "num_infeasible: " << num_infeasible << "\n";
+
+  std::unordered_map<StopId, std::unordered_map<StopId, std::vector<MinTransferTime>>> tts_by_ba;
+  for (const MinTransferTime& transfer_time : transfer_times) {
+    tts_by_ba[transfer_time.b][transfer_time.a].push_back(transfer_time);
+  }
+
+  int num_groups = 0;
+  std::unordered_map<StopId, std::vector<GroupedTxEdge>> groups_by_b;
+  for (const auto& [b, tts_by_a] : tts_by_ba) {
+    std::vector<GroupedTxEdge>& groups = groups_by_b[b];
+    for (const auto& [a, tts] : tts_by_a) {
+      // First check if we match any existing groups.
+      bool group_match = false;
+      for (GroupedTxEdge& group : groups) {
+        if (tts.size() != group.tx_times_by_c.size()) {
+          continue;
+        }
+
+        group_match = true;
+        for (const MinTransferTime& tt : tts) {
+          auto group_it = group.tx_times_by_c.find(tt.c);
+          if (group_it == group.tx_times_by_c.end() || group_it->second != tt.Seconds()) {
+            group_match = false;
+            break;
+          }
+        }
+
+        if (group_match) {
+          group.as.push_back(a);
+          break;
+        }
+      }
+      if (group_match) {
+        continue;
+      }
+
+      // We don't match: add our own group.
+      GroupedTxEdge group{
+        .as={a},
+        .tx_times_by_c={},
+      };
+      for (const MinTransferTime& tt : tts) {
+        group.tx_times_by_c[tt.c] = tt.Seconds();
+      }
+      groups.push_back(std::move(group));
+    }
+
+    num_groups += groups.size();
+  }
+
+  // Add groups for START and END. (The above loop doesn't add them because they
+  // never appear as intermediate stops in paths a->b->c).
+  GroupedTxEdge start_group, end_group;
+  // START has edges to all non-boundary stops, and END has edges from all
+  // non-boundary stops, so add this info to their grouped edges accordingly.
+  for (StopId a = StopId{0}; a.v < adj.group_offsets.size(); ++a.v) {
+    if (a == state.boundary.start || a == state.boundary.end) {
+      continue;
+    }
+    start_group.tx_times_by_c[a] = 0;
+    end_group.as.push_back(a);
+  }
+  groups_by_b[state.boundary.start].push_back(start_group);
+  groups_by_b[state.boundary.end].push_back(end_group);
+  num_groups += 2;
+
+  std::cout << "num_groups: " << num_groups << "\n";
+
+  RelaxedAdjacencyList naive_relaxed = MakeRelaxedAdjacencyListFromEdges(MakeRelaxedEdges(completed));
+
+  std::vector<WeightedEdge> txr_edges;
+
+  // First make a mapping from naive to txr stops and add the within-stop-cycle edges.
+  StopId next_txr_stop{0};
+  std::unordered_map<StopId, std::vector<StopId>> naive_to_txr_stops;
+  for (const auto& [b, groups] : groups_by_b) {
+    std::vector<StopId>& b_txr_stops = naive_to_txr_stops[b];
+    for (int group_idx = 0; group_idx < groups.size(); ++group_idx) {
+      b_txr_stops.push_back(next_txr_stop);
+      next_txr_stop.v += 1;
+    }
+
+    for (int group_idx = 0; group_idx < b_txr_stops.size(); ++group_idx) {
+      txr_edges.push_back(WeightedEdge{
+        .origin=b_txr_stops[group_idx],
+        .destination=b_txr_stops[(group_idx + 1) % b_txr_stops.size()],
+        .weight_seconds=0,
+      });
+    }
+  }
+
+  // Next build all the tx+travel edges for the txr graph.
+  for (const auto& [b, groups] : groups_by_b) {
+    for (int group_idx = 0; group_idx < groups.size(); ++group_idx) {
+      const GroupedTxEdge& group = groups[group_idx];
+      for (const auto& [c, tx_time] : group.tx_times_by_c) {
+        // TODO: Could build a mapping to make this lookup more efficient.
+        const std::vector<GroupedTxEdge>& c_groups = groups_by_b.at(c);
+        auto c_group_it = std::find_if(c_groups.begin(), c_groups.end(), [&](const GroupedTxEdge& edge) -> bool {
+          return std::find(edge.as.begin(), edge.as.end(), b) != edge.as.end();
+        });
+        assert(c_group_it != c_groups.end());
+        int bc_group_idx = c_group_it - c_groups.begin();
+
+        std::optional<int> naive_weight = naive_relaxed.GetWeight(b, c);
+        assert(naive_weight.has_value());
+        txr_edges.push_back(WeightedEdge{
+          // Offset origin by -1 for TSP trick.
+          .origin=naive_to_txr_stops.at(b)[group_idx == 0 ? groups.size() - 1 : group_idx - 1],
+          .destination=naive_to_txr_stops.at(c)[bc_group_idx],
+          .weight_seconds=tx_time + *naive_weight,
+        });
+      }
+    }
+  }
+
+  // Finally add the END -> START edge to the txr graph and build the adjacency list.
+  const std::vector<StopId>& start_txr_stops = naive_to_txr_stops.at(state.boundary.start);
+  assert(start_txr_stops.size() == 1);
+  const std::vector<StopId>& end_txr_stops = naive_to_txr_stops.at(state.boundary.end);
+  assert(end_txr_stops.size() == 1);
+  txr_edges.push_back(
+    WeightedEdge{
+      .origin=start_txr_stops[0],
+      .destination=end_txr_stops[0],
+      .weight_seconds=0
+    }
+  );
+
+  RelaxedAdjacencyList txr_adj = MakeRelaxedAdjacencyListFromEdges(txr_edges);
+
+  ConcordeSolution solution = SolveTspWithConcorde(txr_adj);
+  std::cout << "Concorde optimal value " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
 }
 
 int main() {
@@ -352,6 +636,8 @@ int main() {
 
     std::cout << "Initializing solution state...\n";
     SolutionState state = InitializeSolutionState(steps_from_gtfs, bart_stops);
+
+    InvestigateTransferTimes(state);
 
     return 0;
 
