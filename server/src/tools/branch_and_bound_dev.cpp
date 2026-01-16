@@ -63,6 +63,10 @@ struct SolutionState {
   StepsAdjacencyList adj;
   SolutionBoundary boundary;
   SolutionMetadata metadata;
+
+  std::string StopName(StopId stop) const {
+    return metadata.stop_names[stop.v];
+  }
 };
 
 Step ZeroEdge(StopId a, StopId b) {
@@ -153,10 +157,6 @@ struct ExtremeDeltaEdge {
 };
 
 ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
-  auto StopName = [&](StopId stop) -> std::string {
-    return state.metadata.stop_names[stop.v];
-  };
-
   StepPathsAdjacencyList completed =
     ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
@@ -229,7 +229,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
         std::cout << "Assert about to fail! Path steps:\n";
         std::cout << "  merged_step.origin_time: " << min_duration_path->merged_step.origin_time.ToString() << "\n";
         for (const Step& s : min_duration_path->steps) {
-          std::cout << "  " << StopName(s.origin_stop) << " -> " << StopName(s.destination_stop)
+          std::cout << "  " << state.StopName(s.origin_stop) << " -> " << state.StopName(s.destination_stop)
             << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString()
             << " (flex=" << s.is_flex << ")\n";
         }
@@ -270,7 +270,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
 
     const std::string indent = entry.tour_edge.has_value() ? "" : "  ";
     std::cout << indent << std::left << std::setw(align_spacing - indent.size())
-      << StopName(entry.stop_id)
+      << state.StopName(entry.stop_id)
       << entry.accumulated_weight.ToString();
     if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
       std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
@@ -312,7 +312,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
     }
   }
   std::cout << std::left << std::setw(align_spacing)
-    << StopName(*(solution.tour.end() - 1))
+    << state.StopName(*(solution.tour.end() - 1))
     << accumulated_weight.ToString();
   if (min_duration_feasible.size() == 1) {
     std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
@@ -331,8 +331,8 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
   }
 
   std::cout << "Min delta edge: "
-    << StopName(mde.a) << " -> "
-    << StopName(mde.b) << ": "
+    << state.StopName(mde.a) << " -> "
+    << state.StopName(mde.b) << ": "
     << TimeSinceServiceStart{mde.delta_seconds}.ToString() << "\n";
 
   return mde;
