@@ -340,14 +340,37 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
   return mde;
 }
 
-// An edge from `origin` to `destination` in the "tarel graph".
+template <typename T>
+concept Hashable = requires(T t) {
+    { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
+};
+
+template <typename StepPartitionId>
+struct TarelState {
+  StopId stop;
+  StepPartitionId partition;
+
+  bool operator==(const TarelState&) const = default;
+};
+
+template <typename StepPartitionId>
+struct std::hash<TarelState<StepPartitionId>> {
+  std::size_t operator()(const TarelState<StepPartitionId>& v) const {
+    std::size_t seed = std::hash<StopId>{}(v.stop);
+    seed ^= std::hash<StepPartitionId>{}(v.partition) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
+// An edge from `origin.stop` to `destination.stop` in the "tarel graph".
 //
 // "What's a tarel graph?", you might ask. It stands for Transfer-Aware
 // RELaxation. It works like this:
 //
 // Each step is assigned a `StepPartitionId`. Then, the weight of a tarel edge
-// is the min possible time between _arriving_ at `origin` via an `origin_sp`
-// step and _arriving_ at `destination` via a `destination_sp` step.
+// is the min possible time between _arriving_ at `origin.stop` using a
+// `origin.partition` step and _arriving_ at `destination.stop` using a
+// `destination.partition` step.
 //
 // The idea is that if you partition steps by something like what transit line
 // they come from, then the transfer time betweent two lines is reasonably
@@ -358,12 +381,8 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
 // objective of minimizing weight on a tarel graph as a vanilla TSP.
 template <typename StepPartitionId>
 struct TarelEdge {
-  StepPartitionId origin_sp;
-  StepPartitionId destination_sp;
-
-  StopId origin;
-  StopId destination;
-
+  TarelState<StepPartitionId> origin;
+  TarelState<StepPartitionId> destination;
   int weight;
 };
 
@@ -373,25 +392,13 @@ struct ArrivalTimesScheduled {
   std::vector<TimeSinceServiceStart> times;
 };
 
-template <typename T>
-concept Hashable = requires(T t) {
-    { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
-};
-
-struct PairHash {
-    template <typename A, typename B>
-    std::size_t operator()(const std::pair<A, B>& p) const {
-        std::size_t seed = std::hash<A>{}(p.first);
-        seed ^= std::hash<B>{}(p.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        return seed;
-    }
-};
-
 template <Hashable StepPartitionId>
 std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::function<StepPartitionId(Step)> partition) {
+  using TV = TarelState<StepPartitionId>;
+
   // steps_from[x] is all steps from x, grouped by dest stop and step partition.
   // Within each group, the steps are sorted and minimal.
-  std::unordered_map<StopId, std::unordered_map<std::pair<StopId, StepPartitionId>, std::vector<Step>, PairHash>> steps_from;
+  std::unordered_map<StopId, std::unordered_map<TV, std::vector<Step>>> steps_from;
 
   // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
   // Note that I've been careful to put `ArrivalTimesScheduled` as the first
@@ -399,7 +406,7 @@ std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyL
   // starts as an empty `ArrivalTimesScheduled`.
   // After we have constructed this, times in each value are sorted ascending
   // and unique.
-  std::unordered_map<std::pair<StopId, StepPartitionId>, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>, PairHash> arrival_times_to;
+  std::unordered_map<TV, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
 
   for (const auto& [origin_stop, path_groups] : adj.adjacent) {
     for (const auto& path_group : path_groups) {
@@ -412,9 +419,9 @@ std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyL
         // `step.destination_stop`, no other path groups fom this origin have
         // the same destination stop, and order-preserving partitions preserve
         // sortedness and minimality.
-        steps_from[step.origin_stop][std::make_pair(step.destination_stop, sp)].push_back(step);
+        steps_from[step.origin_stop][TV{step.destination_stop, sp}].push_back(step);
 
-        auto& arrival_times = arrival_times_to[std::make_pair(step.destination_stop, sp)];
+        auto& arrival_times = arrival_times_to[TV{step.destination_stop, sp}];
         if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
           arrival_times = ArrivalTimesFlex();
         } else {
@@ -441,12 +448,8 @@ std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyL
 
   // TODO: Consider whether a stop can have no arrival times, and what to do about that case.
   std::vector<TarelEdge<StepPartitionId>> result;
-  for (const auto& [origin_info, arrival_times_to_origin] : arrival_times_to) {
-    StopId origin = origin_info.first;
-    StepPartitionId origin_sp = origin_info.second;
-    for (const auto& [dest_info, steps] : steps_from[origin]) {
-      StopId destination = dest_info.first;
-      StepPartitionId destination_sp = dest_info.second;
+  for (const auto& [origin_vertex, arrival_times_to_origin] : arrival_times_to) {
+    for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.stop]) {
 
       int weight = std::numeric_limits<int>::max();
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
@@ -476,10 +479,8 @@ std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyL
 
       if (weight < std::numeric_limits<int>::max()) {
         result.push_back(TarelEdge<StepPartitionId>{
-          .origin_sp=origin_sp,
-          .destination_sp=destination_sp,
-          .origin=origin,
-          .destination=destination,
+          .origin=origin_vertex,
+          .destination=dest_vertex,
           .weight=weight,
         });
       }
@@ -487,6 +488,11 @@ std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyL
   }
 
   return result;
+}
+
+template <Hashable StepPartitionId>
+void MakeTarelTspInstance(const std::vector<TarelEdge<StepPartitionId>>& edges) {
+  // Assign contiguous ids to all TarelStates.
 }
 
 void ProcessSearchNodeWithTarel(const SolutionState& state) {
