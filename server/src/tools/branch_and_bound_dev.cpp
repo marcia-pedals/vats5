@@ -338,6 +338,33 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
   return mde;
 }
 
+// An edge from `origin` to `destination` in the "tarel graph".
+//
+// "What's a tarel graph?", you might ask. It stands for Transfer-Aware
+// RELaxation. It works like this:
+//
+// Each step is assigned a `StepPartitionId`. Then, the weight of a tarel edge
+// is the min possible time between _arriving_ at `origin` via an `origin_sp`
+// step and _arriving_ at `destination` via a `destination_sp` step.
+//
+// The idea is that if you partition steps by something like what transit line
+// they come from, then the transfer time betweent two lines is reasonably
+// consistent and so the min time to transfer and get to the next stop is a
+// reasonably tight lower bound on the actual time.
+//
+// Also, as you will see later, it is reasonably straightforward to express the
+// objective of minimizing weight on a tarel graph as a vanilla TSP.
+template <typename StepPartitionId>
+struct TarelEdge {
+  StepPartitionId origin_sp;
+  StepPartitionId destination_sp;
+
+  StopId origin;
+  StopId destination;
+
+  int weight;
+};
+
 int main() {
     const std::string gtfs_path = "../data/RG_20260108_all";
 
