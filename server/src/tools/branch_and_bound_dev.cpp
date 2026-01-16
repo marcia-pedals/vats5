@@ -83,6 +83,11 @@ Step ZeroEdge(StopId a, StopId b) {
   };
 }
 
+Path ZeroPath(StopId a, StopId b) {
+  Step step = ZeroEdge(a, b);
+  return Path{step, {step}};
+}
+
 SolutionState InitializeSolutionState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
@@ -343,6 +348,7 @@ ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
 struct StepPartitionId {
   int v;
   bool operator==(const StepPartitionId&) const = default;
+  auto operator<=>(const StepPartitionId&) const = default;
 };
 
 template <>
@@ -352,11 +358,24 @@ struct std::hash<StepPartitionId> {
   }
 };
 
+template <>
+struct std::hash<std::pair<StopId, bool>> {
+  std::size_t operator()(const std::pair<StopId, bool>& v) const {
+    std::size_t seed = std::hash<StopId>{}(v.first);
+    seed ^= std::hash<bool>{}(v.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
 struct TarelState {
   StopId stop;
   StepPartitionId partition;
 
   bool operator==(const TarelState&) const = default;
+  bool operator<(const TarelState& other) const {
+    if (stop.v != other.stop.v) return stop.v < other.stop.v;
+    return partition.v < other.partition.v;
+  }
 };
 
 template <>
@@ -464,8 +483,6 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
     }
   }
 
-  std::cout << "num tarel states: " << all_tarel_states.size() << "\n";
-
   for (const auto& [_, groups_from] : steps_from) {
     for (const auto& [_, group_from] : groups_from) {
       assert(CheckSortedAndMinimal(group_from));
@@ -529,6 +546,86 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
   // Two tarel states are "equivalent" if they have the same `origin.stop`, and
   // they have the same set of `destination`s and they have matching `weights`
   // to each `destination`.
+
+  // Step 1: Build the "edge signature" for each TarelState.
+  // The signature is the sorted list of (destination, weight) pairs.
+  std::unordered_map<TarelState, std::vector<std::pair<TarelState, int>>> outgoing_edges;
+  for (const TarelEdge& edge : edges) {
+    outgoing_edges[edge.origin].push_back({edge.destination, edge.weight});
+
+    // Insert empty-vector for the destination if it doesn't already have a
+    // value. This ensures that all states, even those that never appear as
+    // `origin`, appear in `outgoing_edges`.
+    outgoing_edges.try_emplace(edge.destination);
+  }
+  for (auto& [_, edge_list] : outgoing_edges) {
+    std::ranges::sort(edge_list, [](const auto& a, const auto& b) {
+      if (a.first != b.first) return a.first < b.first;
+      return a.second < b.second;
+    });
+  }
+
+  // Step 2: For each stop, group partitions by their edge signature and pick a canonical one.
+  std::unordered_map<TarelState, TarelState> canonical_state;
+
+  std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
+  for (const auto& [origin, _] : outgoing_edges) {
+    states_by_stop[origin.stop].push_back(origin);
+  }
+
+  for (const auto& [stop, states] : states_by_stop) {
+    std::map<std::vector<std::pair<TarelState, int>>, TarelState> signature_to_canonical;
+
+    for (const TarelState& ts : states) {
+      const auto& signature = outgoing_edges.at(ts);
+      auto [it, _] = signature_to_canonical.try_emplace(signature, ts);
+      canonical_state[ts] = it->second;
+    }
+  }
+
+  // Step 3: Collect all canonical states and reassign contiguous partition IDs per stop.
+  std::unordered_set<TarelState> all_canonical_states;
+  for (const auto& [ts, canonical] : canonical_state) {
+    all_canonical_states.insert(canonical);
+  }
+
+  // Group canonical states by stop and assign contiguous IDs.
+  std::unordered_map<StopId, std::vector<TarelState>> canonical_by_stop;
+  for (const TarelState& ts : all_canonical_states) {
+    canonical_by_stop[ts.stop].push_back(ts);
+  }
+
+  std::unordered_map<TarelState, TarelState> renumbered_state;
+  for (auto& [stop, states] : canonical_by_stop) {
+    // Sort for deterministic ordering.
+    std::ranges::sort(states, [](const TarelState& a, const TarelState& b) { return a < b; });
+    for (int i = 0; i < states.size(); ++i) {
+      renumbered_state[states[i]] = TarelState{stop, StepPartitionId{i}};
+    }
+  }
+
+  // Compose: original -> canonical -> renumbered
+  auto final_state = [&](const TarelState& ts) -> TarelState {
+    return renumbered_state[canonical_state[ts]];
+  };
+
+  std::vector<TarelEdge> result;
+  for (const TarelEdge& edge : edges) {
+    TarelState canonical_origin = canonical_state[edge.origin];
+    // Only emit edges from canonical origins (skip duplicates).
+    if (canonical_origin != edge.origin) {
+      continue;
+    }
+    TarelState new_origin = final_state(edge.origin);
+    TarelState new_dest = final_state(edge.destination);
+    result.push_back(TarelEdge{
+      .origin = new_origin,
+      .destination = new_dest,
+      .weight = edge.weight,
+    });
+  }
+
+  return result;
 }
 
 void MakeTarelTspInstance(const std::vector<TarelEdge>& edges) {
@@ -557,7 +654,25 @@ int main() {
     // Dummy code for typechecking.
     StepPathsAdjacencyList completed =
       ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
-    MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) -> StopId { return s.origin_stop; }));
+
+    // Add END -> START edge.
+    // It's safe to push a new group without checking for an existing group with
+    // `start` dest because no edges (other than this one we're adding right
+    // now) go into `start`.
+    completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
+
+    auto tarel_es = MakeTarelEdges(completed, std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
+      return std::make_pair(s.origin_stop, s.is_flex);
+    }));
+    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_es);
+    // TODO: Think about whether it's possible for there to be a situation where
+    // merging multiple times makes progress each time.
+    // ... it seems like merging states could make it be so that some states who
+    // previously had distinct dest states could now have the same dest states.
+    // But:
+    // - Maybe there's a reason why anything that ends up with same dest states must have started with same dest states anyways.
+    // - Or not quite, but where there has to be a very unlikely coincidence of unrelated weights for dest states to get merged in such a way.
+    MergeEquivalentTarelStates(tarel_es_2);
 
     return 0;
 
