@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -628,8 +629,116 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
   return result;
 }
 
-void MakeTarelTspInstance(const std::vector<TarelEdge>& edges) {
+constexpr int kCycleEdgeWeight = -1000;
+
+void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary boundary) {
   // Assign contiguous ids to all TarelStates.
+  std::vector<TarelState> state_by_id;
+  std::unordered_map<TarelState, StopId> id_by_state;
+  auto insert_state_if_new = [&](const TarelState& state) {
+    auto [_, inserted] = id_by_state.try_emplace(state, StopId{static_cast<int>(state_by_id.size())});
+    if (inserted) {
+      state_by_id.push_back(state);
+    }
+  };
+  for (const TarelEdge& edge : edges) {
+    insert_state_if_new(edge.origin);
+    insert_state_if_new(edge.destination);
+  }
+
+  // Count how many `TarelStates` each stop has.
+  // (Then, the states should be {stop, 0}, {stop, 1}, ..., {stop, num_states - 1}).
+  std::unordered_map<StopId, int> num_states_by_stop;
+  for (const TarelState& state : state_by_id) {
+    num_states_by_stop[state.stop] += 1;
+  }
+  assert(num_states_by_stop.at(boundary.start) == 1);
+  assert(num_states_by_stop.at(boundary.end) == 1);
+
+  // Start building up TSP edges.
+  std::vector<WeightedEdge> tsp_edges;
+
+  // Add TSP edges: within-stop-cycles.
+  int expected_num_cycle_edges = 0;
+  for (const auto& [stop, num_states] : num_states_by_stop) {
+    for (StepPartitionId partition{0}; partition.v < num_states; ++partition.v) {
+      StepPartitionId next_partition{(partition.v + 1) % num_states};
+      tsp_edges.push_back(WeightedEdge{
+        .origin=id_by_state.at(TarelState{stop, partition}),
+        .destination=id_by_state.at(TarelState{stop, next_partition}),
+        .weight_seconds=kCycleEdgeWeight,
+      });
+    }
+    expected_num_cycle_edges += num_states - 1;
+  }
+
+  // Add TSP edges: inter-stop travel.
+  for (const TarelEdge& edge : edges) {
+    // Offset origin by -1 for TSP trick.
+    TarelState origin = edge.origin;
+    origin.partition.v -= 1;
+    if (origin.partition.v < 0) {
+      origin.partition.v += num_states_by_stop.at(origin.stop);
+    }
+    tsp_edges.push_back(WeightedEdge{
+      .origin=id_by_state.at(origin),
+      .destination=id_by_state.at(edge.destination),
+      .weight_seconds=edge.weight,
+    });
+  }
+
+  // Solve TSP!!!!
+  std::cout << "Solving TSP with " << state_by_id.size() << " vertices and " << tsp_edges.size() << " edges...\n";
+  ConcordeSolution solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(tsp_edges));
+
+  // Adjust optimal value and rotate tour.
+  solution.optimal_value -= expected_num_cycle_edges * kCycleEdgeWeight;
+  auto tour_start_it = std::find(solution.tour.begin(), solution.tour.end(), id_by_state.at(TarelState{boundary.start, 0}));
+  assert(tour_start_it != solution.tour.end());
+  std::rotate(solution.tour.begin(), tour_start_it, solution.tour.end());
+  assert(*(solution.tour.end()) == id_by_state.at(TarelState{boundary.end, 0}));
+  std::cout << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+
+  // Validate tour.
+  std::vector<std::string> tour_errors;
+  TarelState cur_state = TarelState{boundary.start, 0};
+  int cur_stop_visited_states = 1;
+  for (int tour_idx = 1; tour_idx < solution.tour.size() + 1; ++tour_idx) {
+    int cur_stop_num_states = num_states_by_stop.at(cur_state.stop);
+
+    if (tour_idx == solution.tour.size() || state_by_id[solution.tour[tour_idx].v].stop != cur_state.stop) {
+      // We're exiting the current stop: validate that we visited all of its states.
+      if (cur_stop_visited_states != cur_stop_num_states) {
+        tour_errors.push_back(
+          "Visited only "
+          + std::to_string(cur_stop_visited_states) + " / " + std::to_string(cur_stop_num_states)
+          + " for " + std::to_string(cur_state.stop.v)
+        );
+      }
+    }
+
+    if (tour_idx == solution.tour.size()) {
+      continue;
+    }
+
+    TarelState next_state = state_by_id[solution.tour[tour_idx].v];
+    if (next_state.stop == cur_state.stop) {
+      if (next_state.partition.v != (cur_state.partition.v + 1) % cur_stop_num_states) {
+        tour_errors.push_back(
+          "Forbidden transition "
+          + std::to_string(cur_state.partition.v) + " -> " + std::to_string(next_state.partition.v)
+          + " for " + std::to_string(cur_state.stop.v)
+        );
+      }
+      cur_stop_visited_states += 1;
+    }
+
+    cur_state = next_state;
+  }
+  for (const std::string& error : tour_errors) {
+    std::cout << error << "\n";
+  }
+  assert(tour_errors.size() == 0);
 }
 
 void ProcessSearchNodeWithTarel(const SolutionState& state) {
@@ -665,6 +774,7 @@ int main() {
       return std::make_pair(s.origin_stop, s.is_flex);
     }));
     auto tarel_es_2 = MergeEquivalentTarelStates(tarel_es);
+    SolveTarelTspInstance(tarel_es_2, state.boundary);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
     // ... it seems like merging states could make it be so that some states who
@@ -672,7 +782,7 @@ int main() {
     // But:
     // - Maybe there's a reason why anything that ends up with same dest states must have started with same dest states anyways.
     // - Or not quite, but where there has to be a very unlikely coincidence of unrelated weights for dest states to get merged in such a way.
-    MergeEquivalentTarelStates(tarel_es_2);
+    // MergeEquivalentTarelStates(tarel_es_2);
 
     return 0;
 

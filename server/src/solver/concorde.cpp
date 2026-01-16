@@ -183,7 +183,7 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed) {
 
     // Invoke Concorde
     std::ostringstream cmd;
-    cmd << "concorde -x -o " << solution_path << " " << problem_path << " 2>/dev/null";
+    cmd << "concorde -x -o " << solution_path << " " << problem_path << " 2>&1";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
@@ -193,6 +193,8 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed) {
     std::string concorde_output;
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        fputs(buffer, stdout);
+        fflush(stdout);
         concorde_output += buffer;
     }
     pclose(pipe);
