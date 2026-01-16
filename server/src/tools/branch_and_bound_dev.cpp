@@ -163,7 +163,10 @@ struct MinTransferTime {
   StopId a;
   StopId b;
   StopId c;
-  int seconds;
+  TimeSinceServiceStart b_arrival;
+  TimeSinceServiceStart c_arrival;
+
+  int Seconds() const { return c_arrival.seconds - b_arrival.seconds; }
 };
 
 // Helper that processes a tour (already rotated with start first) and prints details.
@@ -198,7 +201,8 @@ ExtremeDeltaEdge ProcessTour(
           return t.a == prev_a && t.b == a && t.c == b;
         });
       if (it != transfer_times.end()) {
-        transfer_time_seconds = it->seconds;
+        // std::cout << "  " << it->b_arrival.ToString() << " -> " << it->c_arrival.ToString() << "\n";
+        transfer_time_seconds = it->Seconds();
       }
     }
 
@@ -392,26 +396,40 @@ MinTransferTime ComputeMinTransferTime(const StepsAdjacencyList& adj, const Stop
     .a=a,
     .b=ab.destination_stop,
     .c=bc.destination_stop,
-    .seconds=std::numeric_limits<int>::max(),
+    .b_arrival=TimeSinceServiceStart{0},
+    .c_arrival=TimeSinceServiceStart{std::numeric_limits<int>::max()},
   };
 
   const std::span<const AdjacencyListStep> ab_steps = adj.GetSteps(ab);
   const std::span<const AdjacencyListStep> bc_steps = adj.GetSteps(bc);
 
   if (bc.flex_step.has_value()) {
-    min_transfer.seconds = std::min(
-      min_transfer.seconds,
-      bc.flex_step->FlexDurationSeconds()
-    );
-  }
-  if (ab.flex_step.has_value()) {
-    for (const AdjacencyListStep& step : bc_steps) {
-      min_transfer.seconds = std::min(
-        min_transfer.seconds,
-        step.destination_time.seconds - step.origin_time.seconds
-      );
+    int flex_seconds = bc.flex_step->FlexDurationSeconds();
+    if (flex_seconds < min_transfer.Seconds()) {
+      min_transfer.b_arrival = TimeSinceServiceStart{0};
+      min_transfer.c_arrival = TimeSinceServiceStart{flex_seconds};
     }
   }
+
+  // TODO: Figure out how to enable without completely destroying the LB.
+  //
+  // Ok here's what we're going to do. We accept a "step partition function" and
+  // use this plus the source/target stops when building the relaxed graph.
+  // Then, step_partition(flex) = 0, step_partition(non-flex) = 1.
+  // This will split the flex=>scheduled connections from the non-flex=>scheduled connections.
+  // The flex=>scheduled will be really slow cuz flex is really slow and they
+  // won't interfere with the LB unless they're actually useful relative to the
+  // other available steps.
+  //
+  // if (ab.flex_step.has_value()) {
+  //   for (const AdjacencyListStep& step : bc_steps) {
+  //     int step_seconds = step.destination_time.seconds - step.origin_time.seconds;
+  //     if (step_seconds < min_transfer.Seconds()) {
+  //       min_transfer.b_arrival = step.origin_time;
+  //       min_transfer.c_arrival = step.destination_time;
+  //     }
+  //   }
+  // }
 
   size_t j = 0;
   for (size_t i = 0; i < ab_steps.size(); ++i) {
@@ -423,7 +441,10 @@ MinTransferTime ComputeMinTransferTime(const StepsAdjacencyList& adj, const Stop
       break;
     }
     int transfer = bc_steps[j].destination_time.seconds - ab_steps[i].destination_time.seconds;
-    min_transfer.seconds = std::min(min_transfer.seconds, transfer);
+    if (transfer < min_transfer.Seconds()) {
+      min_transfer.b_arrival = ab_steps[i].destination_time;
+      min_transfer.c_arrival = bc_steps[j].destination_time;
+    }
   }
 
   return min_transfer;
@@ -498,17 +519,17 @@ void InvestigateTransferTimes(const SolutionState& state) {
   }
 
   std::sort(transfer_times.begin(), transfer_times.end(), [](const MinTransferTime& x, const MinTransferTime& y) -> bool {
-    return x.seconds > y.seconds;
+    return x.Seconds() > y.Seconds();
   });
 
   int num_feasible_zero = 0;
   int num_feasible_positive = 0;
   int num_infeasible = 0;
   for (const MinTransferTime& transfer_time : transfer_times) {
-    if (transfer_time.seconds == std::numeric_limits<int>::max()) {
+    if (transfer_time.Seconds() == std::numeric_limits<int>::max()) {
       num_infeasible += 1;
       continue;
-    } else if (transfer_time.seconds == 0) {
+    } else if (transfer_time.Seconds() == 0) {
       num_feasible_zero += 1;
       continue;
     }
@@ -517,12 +538,16 @@ void InvestigateTransferTimes(const SolutionState& state) {
     //   << state.StopName(transfer_time.a) <<  "->"
     //   << state.StopName(transfer_time.b) <<  "->"
     //   << state.StopName(transfer_time.c) <<  ": "
-    //   << TimeSinceServiceStart{transfer_time.seconds}.ToString() << "\n"
-    //   << "  " << transfer_time.b_arrive.ToString() << " -> " << transfer_time.b_depart.ToString() << "\n";
+    //   << TimeSinceServiceStart{transfer_time.Seconds()}.ToString() << "\n"
+    //   << "  " << transfer_time.b_arrival.ToString() << " -> " << transfer_time.c_arrival.ToString() << "\n";
   }
   std::cout << "num_feasible_zero: " << num_feasible_zero << "\n";
   std::cout << "num_feasible_positive: " << num_feasible_positive << "\n";
   std::cout << "num_infeasible: " << num_infeasible << "\n";
+
+  std::erase_if(transfer_times, [](const MinTransferTime& x) {
+    return x.Seconds() == std::numeric_limits<int>::max();
+  });
 
   std::unordered_map<StopId, std::unordered_map<StopId, std::vector<MinTransferTime>>> tts_by_ba;
   for (const MinTransferTime& transfer_time : transfer_times) {
@@ -544,7 +569,7 @@ void InvestigateTransferTimes(const SolutionState& state) {
         group_match = true;
         for (const MinTransferTime& tt : tts) {
           auto group_it = group.tx_times_by_c.find(tt.c);
-          if (group_it == group.tx_times_by_c.end() || group_it->second != tt.seconds) {
+          if (group_it == group.tx_times_by_c.end() || group_it->second != tt.Seconds()) {
             group_match = false;
             break;
           }
@@ -565,7 +590,7 @@ void InvestigateTransferTimes(const SolutionState& state) {
         .tx_times_by_c={},
       };
       for (const MinTransferTime& tt : tts) {
-        group.tx_times_by_c[tt.c] = tt.seconds;
+        group.tx_times_by_c[tt.c] = tt.Seconds();
       }
       groups.push_back(std::move(group));
     }
