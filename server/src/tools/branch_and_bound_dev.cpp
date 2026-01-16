@@ -3,7 +3,9 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 #include "solver/concorde.h"
 #include "solver/data.h"
@@ -365,6 +367,132 @@ struct TarelEdge {
   int weight;
 };
 
+struct ArrivalTimesFlex {};
+
+struct ArrivalTimesScheduled {
+  std::vector<TimeSinceServiceStart> times;
+};
+
+template <typename T>
+concept Hashable = requires(T t) {
+    { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
+};
+
+struct PairHash {
+    template <typename A, typename B>
+    std::size_t operator()(const std::pair<A, B>& p) const {
+        std::size_t seed = std::hash<A>{}(p.first);
+        seed ^= std::hash<B>{}(p.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        return seed;
+    }
+};
+
+template <Hashable StepPartitionId>
+std::vector<TarelEdge<StepPartitionId>> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::function<StepPartitionId(Step)> partition) {
+  // steps_from[x] is all steps from x, grouped by dest stop and step partition.
+  // Within each group, the steps are sorted and minimal.
+  std::unordered_map<StopId, std::unordered_map<std::pair<StopId, StepPartitionId>, std::vector<Step>, PairHash>> steps_from;
+
+  // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
+  // Note that I've been careful to put `ArrivalTimesScheduled` as the first
+  // alternative so that when you []-access a value that doesn't exist yet, it
+  // starts as an empty `ArrivalTimesScheduled`.
+  // After we have constructed this, times in each value are sorted ascending
+  // and unique.
+  std::unordered_map<std::pair<StopId, StepPartitionId>, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>, PairHash> arrival_times_to;
+
+  for (const auto& [origin_stop, path_groups] : adj.adjacent) {
+    for (const auto& path_group : path_groups) {
+      for (const Path& path : path_group) {
+        const Step& step = path.merged_step;
+        StepPartitionId sp = partition(step);
+
+        // Preserves sorted-and-minimal property because: The paths within
+        // `path_group` are sorted and minimal, they all have the same
+        // `step.destination_stop`, no other path groups fom this origin have
+        // the same destination stop, and order-preserving partitions preserve
+        // sortedness and minimality.
+        steps_from[step.origin_stop][std::make_pair(step.destination_stop, sp)].push_back(step);
+
+        auto& arrival_times = arrival_times_to[std::make_pair(step.destination_stop, sp)];
+        if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
+          arrival_times = ArrivalTimesFlex();
+        } else {
+          std::get<ArrivalTimesScheduled>(arrival_times).times.push_back(step.destination_time);
+        }
+      }
+    }
+  }
+
+  for (const auto& [_, groups_from] : steps_from) {
+    for (const auto& [_, group_from] : groups_from) {
+      assert(CheckSortedAndMinimal(group_from));
+    }
+  }
+
+  for (auto& [_, times_to] : arrival_times_to) {
+    if (std::holds_alternative<ArrivalTimesScheduled>(times_to)) {
+      std::vector<TimeSinceServiceStart>& times = std::get<ArrivalTimesScheduled>(times_to).times;
+      std::ranges::sort(times);
+      auto [first, last] = std::ranges::unique(times);
+      times.erase(first, last);
+    }
+  }
+
+  // TODO: Consider whether a stop can have no arrival times, and what to do about that case.
+  std::vector<TarelEdge<StepPartitionId>> result;
+  for (const auto& [origin_info, arrival_times_to_origin] : arrival_times_to) {
+    StopId origin = origin_info.first;
+    StepPartitionId origin_sp = origin_info.second;
+    for (const auto& [dest_info, steps] : steps_from[origin]) {
+      StopId destination = dest_info.first;
+      StepPartitionId destination_sp = dest_info.second;
+
+      int weight = std::numeric_limits<int>::max();
+      if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
+        // If the arrival is flex, we have to assume we can arrive any time, so
+        // the weight is simply the duration of the longest step out.
+        for (const Step& step : steps) {
+          if (step.DurationSeconds() < weight) {
+            weight = step.DurationSeconds();
+          }
+        }
+      } else {
+        // The arrival is scheduled.
+        int step_idx = 0;
+        for (const TimeSinceServiceStart arrival_time : std::get<ArrivalTimesScheduled>(arrival_times_to_origin).times) {
+          while (step_idx < steps.size() && steps[step_idx].origin_time < arrival_time) {
+            step_idx += 1;
+          }
+          if (step_idx >= steps.size()) {
+            break;
+          }
+          int duration = steps[step_idx].destination_time.seconds - arrival_time.seconds;
+          if (duration < weight) {
+            weight = duration;
+          }
+        }
+      }
+
+      if (weight < std::numeric_limits<int>::max()) {
+        result.push_back(TarelEdge<StepPartitionId>{
+          .origin_sp=origin_sp,
+          .destination_sp=destination_sp,
+          .origin=origin,
+          .destination=destination,
+          .weight=weight,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+void ProcessSearchNodeWithTarel(const SolutionState& state) {
+
+}
+
 int main() {
     const std::string gtfs_path = "../data/RG_20260108_all";
 
@@ -379,6 +507,11 @@ int main() {
 
     std::cout << "Initializing solution state...\n";
     SolutionState state = InitializeSolutionState(steps_from_gtfs, bart_stops);
+
+    // Dummy code for typechecking.
+    StepPathsAdjacencyList completed =
+      ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
+    MakeTarelEdges<int>(completed, [](const Step& s) -> int { return 0; });
 
     return 0;
 
