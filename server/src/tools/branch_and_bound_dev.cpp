@@ -635,7 +635,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
 
 constexpr int kCycleEdgeWeight = -1000;
 
-void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionState& state) {
+void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionState& state, const StepPathsAdjacencyList& completed) {
   // Assign contiguous ids to all TarelStates.
   std::vector<TarelState> state_by_id;
   std::unordered_map<TarelState, StopId> id_by_state;
@@ -706,9 +706,22 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
   assert(*(solution.tour.end() - 1) == id_by_state.at(TarelState{state.boundary.end, 0}));
   std::cout << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
 
+  // Build lookup for tarel edge weights: (origin, destination) -> weight
+  auto find_tarel_edge_weight = [&edges](const TarelState& origin, const TarelState& dest) -> int {
+    for (const TarelEdge& edge : edges) {
+      if (edge.origin == origin && edge.destination == dest) {
+        return edge.weight;
+      }
+    }
+    return 0; // Should not happen for valid tours
+  };
+
   // Validate tour and extract original StopIds.
   std::vector<std::string> tour_errors;
   std::vector<StopId> original_stop_tour;
+  std::vector<TimeSinceServiceStart> cumulative_weights;
+  std::vector<std::pair<StopId, StopId>> tour_edges;  // All edges including START->first and last->END
+  TimeSinceServiceStart accumulated_weight{0};
   TarelState cur_state = TarelState{state.boundary.start, 0};
   int cur_stop_visited_states = 1;
   for (int tour_idx = 1; tour_idx < solution.tour.size() + 1; ++tour_idx) {
@@ -740,6 +753,16 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
       }
       cur_stop_visited_states += 1;
     } else {
+      // Inter-stop transition: compute the tarel edge weight.
+      // The TSP edge from cur_state to next_state corresponds to a tarel edge
+      // with origin partition = (cur_state.partition + 1) % num_states.
+      TarelState tarel_origin = cur_state;
+      tarel_origin.partition.v = (cur_state.partition.v + 1) % cur_stop_num_states;
+      int edge_weight = find_tarel_edge_weight(tarel_origin, next_state);
+      accumulated_weight.seconds += edge_weight;
+      cumulative_weights.push_back(accumulated_weight);
+      tour_edges.push_back({cur_state.stop, next_state.stop});
+
       cur_stop_visited_states = 1;
       if (cur_state.stop != state.boundary.start) {
         // Note: Intentionally missing the last stop of `tour` because that is END.
@@ -754,8 +777,68 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
   }
   assert(tour_errors.size() == 0);
 
-  for (const StopId stop : original_stop_tour) {
-    std::cout << state.StopName(stop) << "\n";
+  // Compute min duration feasible path.
+  std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
+  for (const auto& [a, b] : tour_edges) {
+    ExtendFeasiblePaths(feasible_paths, completed, a, b);
+  }
+
+  TimeSinceServiceStart min_duration_origin_time{0};
+  if (!feasible_paths.empty()) {
+    const Step* min_duration_step = &feasible_paths[0];
+    for (const Step& step : feasible_paths) {
+      if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
+        min_duration_step = &step;
+      }
+    }
+    min_duration_origin_time = min_duration_step->origin_time;
+    std::cout << "\nMin duration feasible path:\n";
+    std::cout << "  Start time: " << min_duration_step->origin_time.ToString() << "\n";
+    std::cout << "  End time:   " << min_duration_step->destination_time.ToString() << "\n";
+    std::cout << "  Duration:   " << TimeSinceServiceStart{min_duration_step->DurationSeconds()}.ToString() << "\n";
+  } else {
+    std::cout << "No feasible paths!?\n";
+  }
+
+  // Recompute feasible paths, tracking min duration path for printing.
+  std::vector<Step> min_duration_feasible = {ZeroEdge(state.boundary.start, state.boundary.start)};
+  std::vector<TimeSinceServiceStart> feasible_durations;
+
+  for (int edge_idx = 0; edge_idx < tour_edges.size(); ++edge_idx) {
+    const auto& [a, b] = tour_edges[edge_idx];
+    ExtendFeasiblePaths(min_duration_feasible, completed, a, b);
+
+    if (min_duration_feasible.size() > 1) {
+      auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
+        [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
+      if (it != min_duration_feasible.end()) {
+        min_duration_feasible = {*it};
+      } else {
+        min_duration_feasible.clear();
+      }
+    }
+
+    if (min_duration_feasible.size() == 1) {
+      feasible_durations.push_back(TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()});
+    } else {
+      feasible_durations.push_back(TimeSinceServiceStart{-1});  // Marker for unavailable
+    }
+  }
+
+  // Print tour with cumulative tarel weight and feasible duration.
+  const int align_spacing = 50;
+  int prev_diff = 0;
+  for (int i = 0; i < original_stop_tour.size(); ++i) {
+    std::cout << std::left << std::setw(align_spacing) << state.StopName(original_stop_tour[i])
+      << cumulative_weights[i].ToString();
+    if (feasible_durations[i].seconds >= 0) {
+      std::cout << "  " << feasible_durations[i].ToString();
+      int cur_diff = feasible_durations[i].seconds - cumulative_weights[i].seconds;
+      int delta = cur_diff - prev_diff;
+      std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
+      prev_diff = cur_diff;
+    }
+    std::cout << "\n";
   }
 }
 
@@ -799,7 +882,7 @@ int main() {
     //   return StopId{0};
     // }));
     auto tarel_es_2 = MergeEquivalentTarelStates(tarel_es);
-    SolveTarelTspInstance(tarel_es_2, state);
+    SolveTarelTspInstance(tarel_es_2, state, completed);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
     // ... it seems like merging states could make it be so that some states who
