@@ -411,6 +411,11 @@ struct TarelEdge {
   int weight;
 };
 
+struct TarelEdgesResult {
+  std::vector<TarelEdge> edges;
+  std::unordered_map<TarelState, std::string> state_descriptions;
+};
+
 template <typename T>
 concept Hashable = requires(T t) {
     { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
@@ -423,11 +428,17 @@ struct ArrivalTimesScheduled {
 };
 
 template <Hashable PartitionKey>
-std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::function<PartitionKey(Step)> partition) {
+TarelEdgesResult MakeTarelEdges(
+    const StepPathsAdjacencyList& adj,
+    std::function<PartitionKey(Step)> partition,
+    std::function<std::string(PartitionKey)> describe_partition = nullptr) {
   // Maps (stop, partition_key) -> StepPartitionId, assigning contiguous ids per stop.
   std::unordered_map<StopId, std::unordered_map<PartitionKey, StepPartitionId>> partition_id_map;
 
-  auto get_partition_id = [&partition_id_map](StopId stop, PartitionKey key) -> StepPartitionId {
+  // State descriptions populated when describe_partition is provided.
+  std::unordered_map<TarelState, std::string> state_descriptions;
+
+  auto get_partition_id = [&partition_id_map, &state_descriptions, &describe_partition](StopId stop, PartitionKey key) -> StepPartitionId {
     auto& stop_map = partition_id_map[stop];
     auto it = stop_map.find(key);
     if (it != stop_map.end()) {
@@ -435,6 +446,9 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
     }
     StepPartitionId new_id{static_cast<int>(stop_map.size())};
     stop_map[key] = new_id;
+    if (describe_partition) {
+      state_descriptions[TarelState{stop, new_id}] = describe_partition(key);
+    }
     return new_id;
   };
 
@@ -499,7 +513,7 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
     }
   }
 
-  std::vector<TarelEdge> result;
+  std::vector<TarelEdge> edges;
   for (const auto& [origin_vertex, arrival_times_to_origin] : arrival_times_to) {
     for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.stop]) {
       int weight = std::numeric_limits<int>::max();
@@ -535,7 +549,7 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
       }
 
       if (weight < std::numeric_limits<int>::max()) {
-        result.push_back(TarelEdge{
+        edges.push_back(TarelEdge{
           .origin=origin_vertex,
           .destination=dest_vertex,
           .weight=weight,
@@ -544,7 +558,10 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
     }
   }
 
-  return result;
+  return TarelEdgesResult{
+    .edges = std::move(edges),
+    .state_descriptions = std::move(state_descriptions),
+  };
 }
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& edges) {
@@ -872,16 +889,16 @@ int main() {
     assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
-    auto tarel_es = MakeTarelEdges(completed, std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
+    auto tarel_result = MakeTarelEdges(completed, std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
       return std::make_pair(s.origin_stop, s.is_flex);
     }));
-    // auto tarel_es = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
+    // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
     //   return s.origin_stop;
     // }));
-    // auto tarel_es = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
+    // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
     //   return StopId{0};
     // }));
-    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_es);
+    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges);
     SolveTarelTspInstance(tarel_es_2, state, completed);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
