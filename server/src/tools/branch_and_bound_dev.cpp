@@ -499,15 +499,13 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
     }
   }
 
-  // TODO: Consider whether a stop can have no arrival times, and what to do about that case.
   std::vector<TarelEdge> result;
   for (const auto& [origin_vertex, arrival_times_to_origin] : arrival_times_to) {
     for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.stop]) {
-
       int weight = std::numeric_limits<int>::max();
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
         // If the arrival is flex, we have to assume we can arrive any time, so
-        // the weight is simply the duration of the longest step out.
+        // the weight is simply the duration of the shortest step out.
         for (const Step& step : steps) {
           if (step.DurationSeconds() < weight) {
             weight = step.DurationSeconds();
@@ -516,6 +514,12 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj, std::fu
       } else {
         // The arrival is scheduled.
         int step_idx = 0;
+        if (steps.size() > 0 && steps[0].is_flex) {
+          if (steps[0].FlexDurationSeconds() < weight) {
+            weight = steps[0].FlexDurationSeconds();
+          }
+          step_idx = 1;
+        }
         for (const TimeSinceServiceStart arrival_time : std::get<ArrivalTimesScheduled>(arrival_times_to_origin).times) {
           while (step_idx < steps.size() && steps[step_idx].origin_time < arrival_time) {
             step_idx += 1;
@@ -631,7 +635,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
 
 constexpr int kCycleEdgeWeight = -1000;
 
-void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary boundary) {
+void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionState& state) {
   // Assign contiguous ids to all TarelStates.
   std::vector<TarelState> state_by_id;
   std::unordered_map<TarelState, StopId> id_by_state;
@@ -652,8 +656,8 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary
   for (const TarelState& state : state_by_id) {
     num_states_by_stop[state.stop] += 1;
   }
-  assert(num_states_by_stop.at(boundary.start) == 1);
-  assert(num_states_by_stop.at(boundary.end) == 1);
+  assert(num_states_by_stop.at(state.boundary.start) == 1);
+  assert(num_states_by_stop.at(state.boundary.end) == 1);
 
   // Start building up TSP edges.
   std::vector<WeightedEdge> tsp_edges;
@@ -687,21 +691,25 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary
     });
   }
 
+  // Old: 596 vertices and 28077 edges
+  // New: 596 vertices and 29984 edges
+
   // Solve TSP!!!!
   std::cout << "Solving TSP with " << state_by_id.size() << " vertices and " << tsp_edges.size() << " edges...\n";
   ConcordeSolution solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(tsp_edges));
 
   // Adjust optimal value and rotate tour.
   solution.optimal_value -= expected_num_cycle_edges * kCycleEdgeWeight;
-  auto tour_start_it = std::find(solution.tour.begin(), solution.tour.end(), id_by_state.at(TarelState{boundary.start, 0}));
+  auto tour_start_it = std::find(solution.tour.begin(), solution.tour.end(), id_by_state.at(TarelState{state.boundary.start, 0}));
   assert(tour_start_it != solution.tour.end());
   std::rotate(solution.tour.begin(), tour_start_it, solution.tour.end());
-  assert(*(solution.tour.end()) == id_by_state.at(TarelState{boundary.end, 0}));
+  assert(*(solution.tour.end() - 1) == id_by_state.at(TarelState{state.boundary.end, 0}));
   std::cout << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
 
-  // Validate tour.
+  // Validate tour and extract original StopIds.
   std::vector<std::string> tour_errors;
-  TarelState cur_state = TarelState{boundary.start, 0};
+  std::vector<StopId> original_stop_tour;
+  TarelState cur_state = TarelState{state.boundary.start, 0};
   int cur_stop_visited_states = 1;
   for (int tour_idx = 1; tour_idx < solution.tour.size() + 1; ++tour_idx) {
     int cur_stop_num_states = num_states_by_stop.at(cur_state.stop);
@@ -731,6 +739,12 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary
         );
       }
       cur_stop_visited_states += 1;
+    } else {
+      cur_stop_visited_states = 1;
+      if (cur_state.stop != state.boundary.start) {
+        // Note: Intentionally missing the last stop of `tour` because that is END.
+        original_stop_tour.push_back(cur_state.stop);
+      }
     }
 
     cur_state = next_state;
@@ -739,6 +753,10 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, SolutionBoundary
     std::cout << error << "\n";
   }
   assert(tour_errors.size() == 0);
+
+  for (const StopId stop : original_stop_tour) {
+    std::cout << state.StopName(stop) << "\n";
+  }
 }
 
 void ProcessSearchNodeWithTarel(const SolutionState& state) {
@@ -768,13 +786,20 @@ int main() {
     // It's safe to push a new group without checking for an existing group with
     // `start` dest because no edges (other than this one we're adding right
     // now) go into `start`.
+    assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
     auto tarel_es = MakeTarelEdges(completed, std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
       return std::make_pair(s.origin_stop, s.is_flex);
     }));
+    // auto tarel_es = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
+    //   return s.origin_stop;
+    // }));
+    // auto tarel_es = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
+    //   return StopId{0};
+    // }));
     auto tarel_es_2 = MergeEquivalentTarelStates(tarel_es);
-    SolveTarelTspInstance(tarel_es_2, state.boundary);
+    SolveTarelTspInstance(tarel_es_2, state);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
     // ... it seems like merging states could make it be so that some states who
