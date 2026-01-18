@@ -241,11 +241,7 @@ TarelEdgesResult MakeTarelEdges(
     const SolutionBoundary& boundary,
     std::function<PartitionKey(Step)> partition,
     std::function<std::string(PartitionKey)> describe_partition = nullptr) {
-  // Maps (stop, partition_key) -> StepPartitionId, assigning contiguous ids per stop.
-  // std::unordered_map<StopId, std::unordered_map<PartitionKey, StepPartitionId>> partition_id_map;
   std::unordered_map<std::pair<StopId, PartitionKey>, StepPartitionId> partition_id_map;
-
-  // State descriptions populated when describe_partition is provided.
   std::unordered_map<StepPartitionId, std::string> state_descriptions;
 
   auto get_partition_id = [&partition_id_map, &state_descriptions, &describe_partition](StopId dest_stop, PartitionKey key) -> StepPartitionId {
@@ -255,18 +251,6 @@ TarelEdgesResult MakeTarelEdges(
       state_descriptions[it->second] = describe_partition(key);
     }
     return it->second;
-
-    // auto& stop_map = partition_id_map[key];
-    // auto it = stop_map.find(key);
-    // if (it != stop_map.end()) {
-    //   return TarelState{stop, it->second};
-    // }
-    // StepPartitionId new_id{static_cast<int>(stop_map.size())};
-    // stop_map[key] = new_id;
-    // if (describe_partition) {
-    //   state_descriptions[TarelState{stop, new_id}] = describe_partition(key);
-    // }
-    // return TarelState{stop, new_id};
   };
 
   // steps_from[x] is all steps from x.
