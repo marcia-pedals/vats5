@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include "solver/data.h"
 
 namespace vats5 {
 
@@ -303,6 +304,40 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
       last.destination_trip,
       is_flex
   };
+}
+
+std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates) {
+  if (candidates.size() == 0) {
+    return std::nullopt;
+  }
+
+  std::optional<Step> best;
+  int first_sched_step = 0;
+
+  if (candidates[0].is_flex) {
+    best = candidates[0];
+    first_sched_step = 1;
+
+    // Adjust this flex step to start when `cur` ends.
+    int duration = best->FlexDurationSeconds();
+    best->origin_time = cur.destination_time;
+    best->destination_time = TimeSinceServiceStart{cur.destination_time.seconds + duration};
+  }
+
+  for (int i = first_sched_step; i < candidates.size(); ++i) {
+    const Step& candidate = candidates[i];
+    if (candidate.origin_time < cur.destination_time) {
+      continue;
+    }
+    if (!best.has_value() || candidate.destination_time < best->destination_time) {
+      best = candidate;
+    }
+    // Because the steps are sorted and minimal, we can break after checking the
+    // first achievable one.
+    break;
+  }
+
+  return best;
 }
 
 }  // namespace vats5

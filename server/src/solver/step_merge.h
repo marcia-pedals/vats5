@@ -49,4 +49,10 @@ Step MergedStep(Step ab, Step bc);
 // transition to fixed trips.
 Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 
+// Return the best (earliest arriving at destination) step from `candidates` following `cur`, if any exist.
+// Preconditions:
+// - cur.destination_stop == c.origin_stop for all candidates
+// - candidates satisfies CheckSortedAndMinimal.
+std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates);
+
 }  // namespace vats5

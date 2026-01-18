@@ -1,7 +1,7 @@
 #include <algorithm>
+#include <ios>
 #include <iostream>
 #include <limits>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -737,7 +737,7 @@ void SolveTarelTspInstance(
     );
   }
 
-  TimeSinceServiceStart min_duration_origin_time{-1};
+  std::optional<TimeSinceServiceStart> min_duration_origin_time;
   if (!feasible_paths.empty()) {
     const Step* min_duration_step = &feasible_paths[0];
     for (const Step& step : feasible_paths) {
@@ -759,42 +759,29 @@ void SolveTarelTspInstance(
   // feasible_arrivals[i] is the time we **arrive** the i-th stop of the
   // feasible path, to match the cumulative tarel weights.
   std::vector<TimeSinceServiceStart> feasible_arrivals;
-  TimeSinceServiceStart cur_time = min_duration_origin_time;
+  std::optional<Step> cur_step;
+  if (min_duration_origin_time.has_value()) {
+    cur_step = ZeroEdge(state.boundary.start, state.boundary.start);
+    cur_step->origin_time = *min_duration_origin_time;
+    cur_step->destination_time = *min_duration_origin_time;
+  }
   for (int edge_idx = 0; edge_idx < tour_edges.size(); ++edge_idx) {
-    if (cur_time.seconds == -1) {
-      feasible_arrivals.push_back(cur_time);
+    const TarelEdge& edge = tour_edges[edge_idx];
+    if (!cur_step.has_value()) {
+      feasible_arrivals.push_back(TimeSinceServiceStart{-1});
       continue;
     }
-
-    const TarelEdge& edge = tour_edges[edge_idx];
-    const auto& paths = completed.PathsBetween(edge.origin.stop, edge.destination.stop);
-
-    Step best_step;
-    best_step.origin_time = TimeSinceServiceStart{0};
-    best_step.destination_time = TimeSinceServiceStart{std::numeric_limits<int>::max()};
-    int first_sched_step = 0;
-    if (paths.size() > 0 && paths[0].merged_step.is_flex) {
-      best_step = paths[0].merged_step;
-      best_step.origin_time = cur_time;
-      best_step.destination_time.seconds = cur_time.seconds + paths[0].merged_step.FlexDurationSeconds();
-      first_sched_step = 1;
-    }
-    for (int i = first_sched_step; i < paths.size(); ++i) {
-      if (
-        paths[i].merged_step.origin_time >= cur_time &&
-        paths[i].merged_step.destination_time < best_step.destination_time
-      ) {
-        best_step = paths[i].merged_step;
-      }
-    }
-    feasible_arrivals.push_back(cur_time);
-    if (best_step.destination_time.seconds < std::numeric_limits<int>::max()) {
-      cur_time = best_step.destination_time;
-    } else {
-      cur_time = TimeSinceServiceStart{-1};
-    }
+    feasible_arrivals.push_back(cur_step->destination_time);
+    cur_step = SelectBestNextStep(
+      *cur_step,
+      // TODO: AAAA unfortunate allocation.
+      completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
+    );
   }
 
+  // feasible_durations[i] is the time between arriving at the START and
+  // arriving at the (i+1)-th stop of the feasible path. (i+1 to disregard the
+  // START).
   std::vector<TimeSinceServiceStart> feasible_durations;
   for (int i = 1; i < feasible_arrivals.size(); ++i) {
     feasible_durations.push_back(TimeSinceServiceStart{feasible_arrivals[i].seconds - feasible_arrivals[0].seconds});
