@@ -207,6 +207,7 @@ struct StepPathsAdjacencyList {
   std::unordered_map<StopId, std::vector<std::vector<Path>>> adjacent;
 
   // Extract all merged steps from all paths.
+  // TODO: It is unfortunate that we have to materialize the steps into a new vector.
   std::vector<Step> AllMergedSteps() const {
     std::vector<Step> all_steps;
     for (const auto& [origin_stop, path_groups] : adjacent) {
@@ -217,6 +218,32 @@ struct StepPathsAdjacencyList {
       }
     }
     return all_steps;
+  }
+
+  std::span<const Path> PathsBetween(StopId a, StopId b) const {
+    auto path_groups_it = adjacent.find(a);
+    if (path_groups_it == adjacent.end()) {
+      return {};
+    }
+    const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
+    auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
+      return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
+    });
+    if (path_group_it == path_groups.end()) {
+      return {};
+    }
+    return std::span(*path_group_it);
+  }
+
+  // TODO: It is unfortunate that we have to materialize the steps into a new vector.
+  std::vector<Step> MergedStepsBetween(StopId a, StopId b) const {
+    auto ps = PathsBetween(a, b);
+    std::vector<Step> result;
+    result.reserve(ps.size());
+    for (const Path& p : ps) {
+      result.push_back(p.merged_step);
+    }
+    return result;
   }
 };
 

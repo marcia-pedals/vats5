@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <asio/execution/start.hpp>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -53,13 +52,6 @@ SolutionMetadata InitializeSolutionMetadata(const DataGtfsMapping& mapping) {
 struct SolutionBoundary {
   StopId start;
   StopId end;
-};
-
-struct TourStopEntry {
-  StopId stop_id;
-  TimeSinceServiceStart accumulated_weight;
-  // Defined for non-intermediate stops (first stop of each edge), nullopt for intermediate stops.
-  std::optional<std::pair<StopId, StopId>> tour_edge;
 };
 
 struct SolutionState {
@@ -155,214 +147,8 @@ void ExtendFeasiblePaths(
     const StepPathsAdjacencyList& completed,
     StopId a,
     StopId b) {
-  auto path_groups_it = completed.adjacent.find(a);
-  if (path_groups_it == completed.adjacent.end()) {
-    std::cout << "Forbidden feasible edge?!\n";
-    feasible_paths.clear();
-    return;
-  }
-  const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
-  auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
-    return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
-  });
-  if (path_group_it == path_groups.end()) {
-    std::cout << "Forbidden feasible edge?!\n";
-    feasible_paths.clear();
-    return;
-  }
-  std::vector<Step> next_steps;
-  for (const Path& path : *path_group_it) {
-    next_steps.push_back(path.merged_step);
-  }
+  std::vector<Step> next_steps = completed.MergedStepsBetween(a, b);
   feasible_paths = PairwiseMergedSteps(std::move(feasible_paths), std::move(next_steps));
-}
-
-struct ExtremeDeltaEdge {
-  StopId a;
-  StopId b;
-  int delta_seconds;
-};
-
-ExtremeDeltaEdge ProcessSearchNode(const SolutionState& state) {
-  StepPathsAdjacencyList completed =
-    ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
-
-  std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(completed);
-  relaxed_edges.push_back(
-    WeightedEdge{
-      .origin=state.boundary.end,
-      .destination=state.boundary.start,
-      .weight_seconds=0
-    }
-  );
-
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
-  ConcordeSolution solution = SolveTspWithConcorde(relaxed);
-
-  std::cout << "Concorde optimal value " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
-  auto start_it = std::find(solution.tour.begin(), solution.tour.end(), state.boundary.start);
-  if (start_it != solution.tour.end()) {
-    std::rotate(solution.tour.begin(), start_it, solution.tour.end());
-  }
-  assert(*(solution.tour.end() - 1) == state.boundary.end);
-
-  // Accumulates relaxed weight along the tour.
-  TimeSinceServiceStart accumulated_weight{0};
-
-  // Accumulates actual feasible paths along the tour.
-  std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
-
-  // Collect tour stop entries for printing.
-  std::vector<TourStopEntry> tour_entries;
-
-  for (int i = 0; i < solution.tour.size() - 1; ++i) {
-    StopId a = solution.tour[i];
-    StopId b = solution.tour[i + 1];
-
-    ExtendFeasiblePaths(feasible_paths, completed, a, b);
-
-    const auto& path_groups = completed.adjacent.at(a);
-    auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
-      return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
-    });
-    if (path_group_it == path_groups.end()) {
-      std::cout << "Forbidden edge!?\n";
-      continue;
-    }
-    const std::vector<Path>& path_group = *path_group_it;
-
-    const Path* min_duration_path = &path_group[0];
-    for (const Path& candidate : path_group) {
-      if (candidate.DurationSeconds() < min_duration_path->DurationSeconds()) {
-        min_duration_path = &candidate;
-      }
-    }
-
-    int cur_seconds = min_duration_path->merged_step.origin_time.seconds;
-    for (int j = 0; j < min_duration_path->steps.size(); ++j) {
-      tour_entries.push_back(TourStopEntry{
-        .stop_id = min_duration_path->steps[j].origin_stop,
-        .accumulated_weight = accumulated_weight,
-        .tour_edge = (j == 0) ? std::make_optional(std::make_pair(a, b)) : std::nullopt
-      });
-
-      const Step& step = min_duration_path->steps[j];
-      accumulated_weight.seconds += step.destination_time.seconds - cur_seconds;
-
-      // Assert that the steps in the path are actual times relative to the
-      // start time. (i.e. flex steps start actually when you get there instead
-      // of having a base time of 0).
-      if (step.origin_time.seconds < cur_seconds) {
-        std::cout << "Assert about to fail! Path steps:\n";
-        std::cout << "  merged_step.origin_time: " << min_duration_path->merged_step.origin_time.ToString() << "\n";
-        for (const Step& s : min_duration_path->steps) {
-          std::cout << "  " << state.StopName(s.origin_stop) << " -> " << state.StopName(s.destination_stop)
-            << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString()
-            << " (flex=" << s.is_flex << ")\n";
-        }
-      }
-      assert(step.origin_time.seconds >= cur_seconds);
-      cur_seconds = step.destination_time.seconds;
-    }
-  }
-  assert(solution.optimal_value == accumulated_weight.seconds);
-
-  // Find the feasible path with minimum duration.
-  TimeSinceServiceStart min_duration_origin_time{0};
-  if (!feasible_paths.empty()) {
-    const Step* min_duration_step = &feasible_paths[0];
-    for (const Step& step : feasible_paths) {
-      if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
-        min_duration_step = &step;
-      }
-    }
-    min_duration_origin_time = min_duration_step->origin_time;
-    std::cout << "\nMin duration feasible path:\n";
-    std::cout << "  Start time: " << min_duration_step->origin_time.ToString() << "\n";
-    std::cout << "  End time:   " << min_duration_step->destination_time.ToString() << "\n";
-    std::cout << "  Duration:   " << TimeSinceServiceStart{min_duration_step->DurationSeconds()}.ToString() << "\n";
-  } else {
-    std::cout << "No feasible paths!?\n";
-  }
-
-  // TODO: Explain what I'm doing here. Maybe do it less-hackily.
-  std::vector<Step> min_duration_feasible = {ZeroEdge(state.boundary.start, state.boundary.start)};
-
-  // Print tour entries.
-  const int align_spacing = 50;
-  int prev_diff = 0;
-  ExtremeDeltaEdge mde{StopId{-1}, StopId{-1}, std::numeric_limits<int>::max()};
-  for (int i = 0; i < tour_entries.size(); ++i) {
-    const TourStopEntry& entry = tour_entries[i];
-
-    const std::string indent = entry.tour_edge.has_value() ? "" : "  ";
-    std::cout << indent << std::left << std::setw(align_spacing - indent.size())
-      << state.StopName(entry.stop_id)
-      << entry.accumulated_weight.ToString();
-    if (entry.tour_edge.has_value() && min_duration_feasible.size() == 1) {
-      std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
-      int cur_diff = min_duration_feasible[0].DurationSeconds() - entry.accumulated_weight.seconds;
-      int delta = cur_diff - prev_diff;
-      std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
-      prev_diff = cur_diff;
-
-      // TODO: Add mde calculation to the ->END edge.
-      if (i > 0 && delta < mde.delta_seconds) {
-        mde.b = entry.tour_edge->first;
-        mde.delta_seconds = delta;
-      }
-    }
-    std::cout << "\n";
-
-    if (entry.tour_edge.has_value()) {
-      ExtendFeasiblePaths(
-        min_duration_feasible,
-        completed,
-        entry.tour_edge->first,
-        entry.tour_edge->second
-      );
-      if (min_duration_feasible.size() > 1) {
-        auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
-          [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
-        if (it != min_duration_feasible.end()) {
-          min_duration_feasible = {*it};
-        } else {
-          std::cout << "Didn't find step corresponding to min duration feasible path!?\n";
-          std::cout << "  Looking for: " << min_duration_origin_time.ToString() << "\n";
-          std::cout << "  Available origin times:\n";
-          for (const Step& step : min_duration_feasible) {
-            std::cout << "    " << step.origin_time.ToString() << "\n";
-          }
-          min_duration_feasible.clear();
-        }
-      }
-    }
-  }
-  std::cout << std::left << std::setw(align_spacing)
-    << state.StopName(*(solution.tour.end() - 1))
-    << accumulated_weight.ToString();
-  if (min_duration_feasible.size() == 1) {
-    std::cout << "  " << TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()}.ToString();
-    int cur_diff = min_duration_feasible[0].DurationSeconds() - accumulated_weight.seconds;
-    int delta = cur_diff - prev_diff;
-    std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
-  }
-  std::cout << "\n";
-
-  for (int i = 0; i < tour_entries.size(); ++i) {
-    const TourStopEntry& entry = tour_entries[i];
-    if (entry.tour_edge.has_value() && entry.tour_edge->second == mde.b) {
-      mde.a = entry.tour_edge->first;
-      break;
-    }
-  }
-
-  std::cout << "Min delta edge: "
-    << state.StopName(mde.a) << " -> "
-    << state.StopName(mde.b) << ": "
-    << TimeSinceServiceStart{mde.delta_seconds}.ToString() << "\n";
-
-  return mde;
 }
 
 struct StepPartitionId {
@@ -945,7 +731,10 @@ void SolveTarelTspInstance(
   // Compute min duration feasible path.
   std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
   for (const auto& edge : tour_edges) {
-    ExtendFeasiblePaths(feasible_paths, completed, edge.origin.stop, edge.destination.stop);
+    feasible_paths = PairwiseMergedSteps(
+      feasible_paths,
+      completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
+    );
   }
 
   TimeSinceServiceStart min_duration_origin_time{-1};
@@ -978,63 +767,38 @@ void SolveTarelTspInstance(
     }
 
     const TarelEdge& edge = tour_edges[edge_idx];
-    const auto& groups = completed.adjacent.at(edge.origin.stop);
-    auto steps_it = std::find_if(groups.begin(), groups.end(), [&](const auto& group) -> bool {
-      return group.size() > 0 && group[0].merged_step.destination_stop == edge.destination.stop;
-    });
-    if (steps_it == groups.end()) {
-      cur_time = TimeSinceServiceStart{-1};
-      feasible_arrivals.push_back(cur_time);
-      continue;
-    }
-    const auto& steps = *steps_it;
+    const auto& paths = completed.PathsBetween(edge.origin.stop, edge.destination.stop);
 
     Step best_step;
     best_step.origin_time = TimeSinceServiceStart{0};
     best_step.destination_time = TimeSinceServiceStart{std::numeric_limits<int>::max()};
     int first_sched_step = 0;
-    if (steps.size() > 0 && steps[0].merged_step.is_flex) {
-      best_step = steps[0].merged_step;
+    if (paths.size() > 0 && paths[0].merged_step.is_flex) {
+      best_step = paths[0].merged_step;
       best_step.origin_time = cur_time;
-      best_step.destination_time.seconds = cur_time.seconds + steps[0].merged_step.FlexDurationSeconds();
+      best_step.destination_time.seconds = cur_time.seconds + paths[0].merged_step.FlexDurationSeconds();
+      first_sched_step = 1;
     }
-    for (int i = first_sched_step; i < steps.size(); ++i) {
+    for (int i = first_sched_step; i < paths.size(); ++i) {
       if (
-        steps[i].merged_step.origin_time >= cur_time &&
-        steps[i].merged_step.destination_time < best_step.destination_time
+        paths[i].merged_step.origin_time >= cur_time &&
+        paths[i].merged_step.destination_time < best_step.destination_time
       ) {
-        best_step = steps[i].merged_step;
+        best_step = paths[i].merged_step;
       }
     }
     feasible_arrivals.push_back(cur_time);
-    cur_time = best_step.destination_time;
+    if (best_step.destination_time.seconds < std::numeric_limits<int>::max()) {
+      cur_time = best_step.destination_time;
+    } else {
+      cur_time = TimeSinceServiceStart{-1};
+    }
   }
 
   std::vector<TimeSinceServiceStart> feasible_durations;
   for (int i = 1; i < feasible_arrivals.size(); ++i) {
     feasible_durations.push_back(TimeSinceServiceStart{feasible_arrivals[i].seconds - feasible_arrivals[0].seconds});
   }
-
-  // for (int edge_idx = 0; edge_idx < tour_edges.size(); ++edge_idx) {
-  //   const auto& edge = tour_edges[edge_idx];
-  //   ExtendFeasiblePaths(min_duration_feasible, completed, edge.origin.stop, edge.destination.stop);
-
-  //   if (min_duration_feasible.size() > 1) {
-  //     auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
-  //       [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
-  //     if (it != min_duration_feasible.end()) {
-  //       min_duration_feasible = {*it};
-  //     } else {
-  //       min_duration_feasible.clear();
-  //     }
-  //   }
-
-  //   if (min_duration_feasible.size() == 1) {
-  //     feasible_durations.push_back(TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()});
-  //   } else {
-  //     feasible_durations.push_back(TimeSinceServiceStart{-1});  // Marker for unavailable
-  //   }
-  // }
 
   // Print tour with cumulative tarel weight and feasible duration.
   const int align_spacing = 50;
@@ -1060,10 +824,6 @@ void SolveTarelTspInstance(
       std::cout << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
     }
   }
-}
-
-void ProcessSearchNodeWithTarel(const SolutionState& state) {
-
 }
 
 int main() {
@@ -1092,7 +852,6 @@ int main() {
     assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
-
     auto tarel_result = MakeTarelEdges(
       completed,
       state.boundary,
@@ -1105,25 +864,6 @@ int main() {
       std::function([&](std::string pk) -> std::string {
         return pk;
       }));
-    // auto tarel_result = MakeTarelEdges(
-    //   completed,
-    //   state.boundary,
-    //   std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
-    //     return std::make_pair(s.origin_stop, s.is_flex);
-    //   }),
-    //   std::function([&](std::pair<StopId, bool> pk) -> std::string {
-    //     std::string res = "from " + state.StopName(pk.first);
-    //     if (pk.second) {
-    //       res += " (flex)";
-    //     }
-    //     return res;
-    //   }));
-    // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
-    //   return s.origin_stop;
-    // }));
-    // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
-    //   return StopId{0};
-    // }));
     auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges, state, tarel_result.state_descriptions);
     SolveTarelTspInstance(tarel_es_2, state, completed, tarel_result.state_descriptions);
     // SolveTarelTspInstance(tarel_es_2, state, completed);
@@ -1135,21 +875,6 @@ int main() {
     // - Maybe there's a reason why anything that ends up with same dest states must have started with same dest states anyways.
     // - Or not quite, but where there has to be a very unlikely coincidence of unrelated weights for dest states to get merged in such a way.
     // auto tarel_es_3 = MergeEquivalentTarelStates(tarel_es_2, state, tarel_result.state_descriptions);
-
-    return 0;
-
-    for (int i = 0; i < 10; ++i) {
-      std::cout << "Forbid step " << i << "\n";
-      ExtremeDeltaEdge mde = ProcessSearchNode(state);
-      std::cout << "\n";
-
-      // Forbid the ExtremeDeltaEdge.
-      std::vector<Step> steps_with_forbid = state.adj.AllSteps();
-      std::erase_if(steps_with_forbid, [&](const Step& step) -> bool {
-        return step.origin_stop == mde.a && step.destination_stop == mde.b;
-      });
-      state.adj = MakeAdjacencyList(steps_with_forbid);
-    }
 
     return 0;
 }
