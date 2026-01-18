@@ -84,6 +84,11 @@ add_library(steps_shortest_path STATIC src/solver/steps_shortest_path.cpp)
 target_link_libraries(steps_shortest_path PUBLIC relaxed_shortest_path)
 target_include_directories(steps_shortest_path PUBLIC src)
 
+# Create tarel_graph library target
+add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
+target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
+target_include_directories(tarel_graph PUBLIC src)
+
 # Create visualization library target
 add_library(visualization STATIC src/visualization/visualization.cpp)
 target_link_libraries(visualization PUBLIC steps_shortest_path)
@@ -110,7 +115,7 @@ target_link_libraries(plain_viz PUBLIC visualization)
 
 # Add branch_and_bound_dev tool
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
-target_link_libraries(branch_and_bound_dev PUBLIC steps_shortest_path concorde)
+target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph)
 
 # Create cached_test_data header-only library for test utilities
 add_library(cached_test_data INTERFACE)
