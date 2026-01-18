@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -67,6 +68,8 @@ struct SolutionState {
   SolutionBoundary boundary;
   SolutionMetadata metadata;
 
+  std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
+
   std::string StopName(StopId stop) const {
     return metadata.stop_names[stop.v];
   }
@@ -96,6 +99,40 @@ SolutionState InitializeSolutionState(
   // Compute minimal adj list.
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
+
+  std::unordered_map<std::string, int> partition_count;
+  for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
+    for (const auto& group : groups) {
+      for (const auto& path : group) {
+        for (const auto& step : path.steps) {
+          if (!step.is_flex) {
+            partition_count[steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip)] += 1;
+          }
+        }
+      }
+    }
+  }
+
+  std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
+  for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
+    for (const auto& group : groups) {
+      for (const auto& path : group) {
+        if (path.merged_step.is_flex) {
+          continue;
+        }
+        int best_count = 0;
+        std::string best_desc;
+        for (const auto& step : path.steps) {
+          const std::string& desc = steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip);
+          if (partition_count[desc] > best_count) {
+            best_count = partition_count[desc];
+            best_desc = desc;
+          }
+        }
+        dest_trip_id_to_partition[path.merged_step.destination_trip] = best_desc;
+      }
+    }
+  }
 
   // Compact minimal adj list and make compact solution metadata.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
@@ -128,6 +165,7 @@ SolutionState InitializeSolutionState(
     MakeAdjacencyList(steps),
     SolutionBoundary{.start=start_vertex, .end=end_vertex},
     solution_metadata,
+    dest_trip_id_to_partition,
   };
 }
 
@@ -388,6 +426,15 @@ struct std::hash<TarelState> {
   }
 };
 
+template <typename T>
+struct std::hash<std::pair<StopId, T>> {
+  std::size_t operator()(const std::pair<StopId, T>& v) const {
+    std::size_t seed = std::hash<StopId>{}(v.first);
+    seed ^= std::hash<T>{}(v.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
 // An edge from `origin.stop` to `destination.stop` in the "tarel graph".
 //
 // "What's a tarel graph?", you might ask. It stands for Transfer-Aware
@@ -409,11 +456,13 @@ struct TarelEdge {
   TarelState origin;
   TarelState destination;
   int weight;
+  std::vector<TarelState> original_origins;
+  std::vector<TarelState> original_destinations;
 };
 
 struct TarelEdgesResult {
   std::vector<TarelEdge> edges;
-  std::unordered_map<TarelState, std::string> state_descriptions;
+  std::unordered_map<StepPartitionId, std::string> state_descriptions;
 };
 
 template <typename T>
@@ -430,33 +479,40 @@ struct ArrivalTimesScheduled {
 template <Hashable PartitionKey>
 TarelEdgesResult MakeTarelEdges(
     const StepPathsAdjacencyList& adj,
+    const SolutionBoundary& boundary,
     std::function<PartitionKey(Step)> partition,
     std::function<std::string(PartitionKey)> describe_partition = nullptr) {
   // Maps (stop, partition_key) -> StepPartitionId, assigning contiguous ids per stop.
-  std::unordered_map<StopId, std::unordered_map<PartitionKey, StepPartitionId>> partition_id_map;
+  // std::unordered_map<StopId, std::unordered_map<PartitionKey, StepPartitionId>> partition_id_map;
+  std::unordered_map<std::pair<StopId, PartitionKey>, StepPartitionId> partition_id_map;
 
   // State descriptions populated when describe_partition is provided.
-  std::unordered_map<TarelState, std::string> state_descriptions;
+  std::unordered_map<StepPartitionId, std::string> state_descriptions;
 
-  auto get_partition_id = [&partition_id_map, &state_descriptions, &describe_partition](StopId stop, PartitionKey key) -> StepPartitionId {
-    auto& stop_map = partition_id_map[stop];
-    auto it = stop_map.find(key);
-    if (it != stop_map.end()) {
-      return it->second;
+  auto get_partition_id = [&partition_id_map, &state_descriptions, &describe_partition](StopId dest_stop, PartitionKey key) -> StepPartitionId {
+    auto with_dest = std::make_pair(dest_stop, key);
+    auto [it, inserted] = partition_id_map.try_emplace(with_dest, StepPartitionId{static_cast<int>(partition_id_map.size())});
+    if (inserted) {
+      state_descriptions[it->second] = describe_partition(key);
     }
-    StepPartitionId new_id{static_cast<int>(stop_map.size())};
-    stop_map[key] = new_id;
-    if (describe_partition) {
-      state_descriptions[TarelState{stop, new_id}] = describe_partition(key);
-    }
-    return new_id;
+    return it->second;
+
+    // auto& stop_map = partition_id_map[key];
+    // auto it = stop_map.find(key);
+    // if (it != stop_map.end()) {
+    //   return TarelState{stop, it->second};
+    // }
+    // StepPartitionId new_id{static_cast<int>(stop_map.size())};
+    // stop_map[key] = new_id;
+    // if (describe_partition) {
+    //   state_descriptions[TarelState{stop, new_id}] = describe_partition(key);
+    // }
+    // return TarelState{stop, new_id};
   };
 
-  std::unordered_set<TarelState> all_tarel_states;
-
-  // steps_from[x] is all steps from x, grouped by dest stop and step partition.
+  // steps_from[x] is all steps from x.
   // Within each group, the steps are sorted and minimal.
-  std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>> steps_from;
+  std::unordered_map<StopId, std::unordered_map<std::pair<StopId, PartitionKey>, std::vector<Step>>> steps_from;
 
   // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
   // Note that I've been careful to put `ArrivalTimesScheduled` as the first
@@ -464,31 +520,33 @@ TarelEdgesResult MakeTarelEdges(
   // starts as an empty `ArrivalTimesScheduled`.
   // After we have constructed this, times in each value are sorted ascending
   // and unique.
-  std::unordered_map<TarelState, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
+  std::unordered_map<std::pair<StopId, PartitionKey>, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
+
+  bool saw_start_as_origin = false;
+  bool saw_start_as_dest = false;
 
   for (const auto& [origin_stop, path_groups] : adj.adjacent) {
     for (const auto& path_group : path_groups) {
       for (const Path& path : path_group) {
         const Step& step = path.merged_step;
+        assert(step.origin_stop == origin_stop);
         PartitionKey pk = partition(step);
 
-        StepPartitionId origin_partition = get_partition_id(step.origin_stop, pk);
-        StepPartitionId dest_partition = get_partition_id(step.destination_stop, pk);
-
-        TarelState origin_ts{step.origin_stop, origin_partition};
-        TarelState dest_ts{step.destination_stop, dest_partition};
-
-        all_tarel_states.insert(origin_ts);
-        all_tarel_states.insert(dest_ts);
+        if (step.origin_stop == boundary.start) {
+          saw_start_as_origin = true;
+        }
+        if (step.destination_stop == boundary.start) {
+          saw_start_as_dest = true;
+        }
 
         // Preserves sorted-and-minimal property because: The paths within
         // `path_group` are sorted and minimal, they all have the same
         // `step.destination_stop`, no other path groups fom this origin have
         // the same destination stop, and order-preserving partitions preserve
         // sortedness and minimality.
-        steps_from[step.origin_stop][dest_ts].push_back(step);
+        steps_from[step.origin_stop][std::make_pair(step.destination_stop, pk)].push_back(step);
 
-        auto& arrival_times = arrival_times_to[dest_ts];
+        auto& arrival_times = arrival_times_to[std::make_pair(step.destination_stop, pk)];
         if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
           arrival_times = ArrivalTimesFlex();
         } else {
@@ -498,11 +556,21 @@ TarelEdgesResult MakeTarelEdges(
     }
   }
 
-  for (const auto& [_, groups_from] : steps_from) {
+  assert(saw_start_as_origin);
+  assert(saw_start_as_dest);
+
+  bool sf_has_start = false;
+
+  for (const auto& [x, groups_from] : steps_from) {
+    if (x == boundary.start) {
+      sf_has_start = true;
+    }
     for (const auto& [_, group_from] : groups_from) {
       assert(CheckSortedAndMinimal(group_from));
     }
   }
+
+  assert(sf_has_start);
 
   for (auto& [_, times_to] : arrival_times_to) {
     if (std::holds_alternative<ArrivalTimesScheduled>(times_to)) {
@@ -515,7 +583,7 @@ TarelEdgesResult MakeTarelEdges(
 
   std::vector<TarelEdge> edges;
   for (const auto& [origin_vertex, arrival_times_to_origin] : arrival_times_to) {
-    for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.stop]) {
+    for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.first]) {
       int weight = std::numeric_limits<int>::max();
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
         // If the arrival is flex, we have to assume we can arrive any time, so
@@ -549,14 +617,21 @@ TarelEdgesResult MakeTarelEdges(
       }
 
       if (weight < std::numeric_limits<int>::max()) {
+        TarelState origin{origin_vertex.first, get_partition_id(origin_vertex.first, origin_vertex.second)};
+        TarelState dest{dest_vertex.first, get_partition_id(dest_vertex.first, dest_vertex.second)};
+
         edges.push_back(TarelEdge{
-          .origin=origin_vertex,
-          .destination=dest_vertex,
+          .origin=origin,
+          .destination=dest,
           .weight=weight,
+          .original_origins={origin},
+          .original_destinations={dest},
         });
       }
     }
   }
+
+  std::cout << "start is " << boundary.start << ", end is " << boundary.end << "\n";
 
   return TarelEdgesResult{
     .edges = std::move(edges),
@@ -564,45 +639,81 @@ TarelEdgesResult MakeTarelEdges(
   };
 }
 
-std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& edges) {
+struct EdgeSignature {
+ std::vector<std::pair<TarelState, int>> outgoing;
+
+ bool operator<(const EdgeSignature& other) const {
+   return outgoing < other.outgoing;
+ }
+
+ std::string ToString(
+   const SolutionState& state,
+   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+ ) const {
+   std::ostringstream oss;
+   oss << "EdgeSignature {\n";
+   oss << "  outgoing (" << outgoing.size() << "):\n";
+   for (const auto& [ts, weight] : outgoing) {
+     oss << "    " << state.StopName(ts.stop) << " [" << state_descriptions.at(ts.partition) << "] w=" << weight << "\n";
+   }
+   oss << "}";
+   return oss.str();
+ }
+};
+
+std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& edges, const SolutionState& state, const std::unordered_map<StepPartitionId, std::string>& state_descriptions) {
   // Two tarel states are "equivalent" if they have the same `origin.stop`, and
   // they have the same set of `destination`s and they have matching `weights`
   // to each `destination`.
 
+  bool has_start = false;
+  for (const TarelEdge& edge : edges) {
+    if (edge.origin.stop == state.boundary.start || edge.destination.stop == state.boundary.start) {
+      has_start = true;
+      break;
+    }
+  }
+  assert(has_start);
+
   // Step 1: Build the "edge signature" for each TarelState.
   // The signature is the sorted list of (destination, weight) pairs.
-  std::unordered_map<TarelState, std::vector<std::pair<TarelState, int>>> outgoing_edges;
+  std::unordered_map<TarelState, EdgeSignature> signatures;
   for (const TarelEdge& edge : edges) {
-    outgoing_edges[edge.origin].push_back({edge.destination, edge.weight});
-
-    // Insert empty-vector for the destination if it doesn't already have a
-    // value. This ensures that all states, even those that never appear as
-    // `origin`, appear in `outgoing_edges`.
-    outgoing_edges.try_emplace(edge.destination);
+    signatures[edge.origin].outgoing.push_back({edge.destination, edge.weight});
   }
-  for (auto& [_, edge_list] : outgoing_edges) {
-    std::ranges::sort(edge_list, [](const auto& a, const auto& b) {
+  for (auto& [_, signature] : signatures) {
+    std::ranges::sort(signature.outgoing, [](const auto& a, const auto& b) {
       if (a.first != b.first) return a.first < b.first;
       return a.second < b.second;
     });
+    // auto [out_begin, out_end] = std::ranges::unique(signature.outgoing);
+    // signature.outgoing.erase(out_begin, out_end);
   }
 
   // Step 2: For each stop, group partitions by their edge signature and pick a canonical one.
   std::unordered_map<TarelState, TarelState> canonical_state;
 
   std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
-  for (const auto& [origin, _] : outgoing_edges) {
+  for (const auto& [origin, _] : signatures) {
     states_by_stop[origin.stop].push_back(origin);
   }
+  assert(states_by_stop[state.boundary.start].size() > 0);
+  assert(states_by_stop[state.boundary.end].size() > 0);
 
   for (const auto& [stop, states] : states_by_stop) {
-    std::map<std::vector<std::pair<TarelState, int>>, TarelState> signature_to_canonical;
+    std::map<EdgeSignature, TarelState> signature_to_canonical;
 
     for (const TarelState& ts : states) {
-      const auto& signature = outgoing_edges.at(ts);
+      const auto& signature = signatures.at(ts);
       auto [it, _] = signature_to_canonical.try_emplace(signature, ts);
       canonical_state[ts] = it->second;
     }
+
+    // if (stop == state.boundary.end) {
+    //   for (const auto& [sig, _] : signature_to_canonical) {
+    //     std::cout << sig.ToString(state, state_descriptions) << "\n";
+    //   }
+    // }
   }
 
   // Step 3: Collect all canonical states and reassign contiguous partition IDs per stop.
@@ -631,19 +742,69 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     return renumbered_state[canonical_state[ts]];
   };
 
-  std::vector<TarelEdge> result;
+  // Collect original states and weight for each merged edge.
+  // Key is (new_origin, new_dest).
+  struct MergedEdgeData {
+    int weight;
+    std::vector<TarelState> original_origins;
+    std::vector<TarelState> original_destinations;
+  };
+  std::map<std::pair<TarelState, TarelState>, MergedEdgeData> merged_edges;
   for (const TarelEdge& edge : edges) {
-    TarelState canonical_origin = canonical_state[edge.origin];
-    // Only emit edges from canonical origins (skip duplicates).
-    if (canonical_origin != edge.origin) {
-      continue;
-    }
     TarelState new_origin = final_state(edge.origin);
     TarelState new_dest = final_state(edge.destination);
+    auto [it, inserted] = merged_edges.try_emplace({new_origin, new_dest}, MergedEdgeData{.weight = edge.weight});
+    auto& data = it->second;
+    if (!inserted) {
+      // TODO: Think harder about whether taking the min merged edge weight makes sense.
+      if (edge.weight < data.weight) {
+        data.weight = edge.weight;
+      }
+
+      // if (data.weight != edge.weight) {
+      //   std::cout << "Merged edge weight mismatch!!!\n";
+      //   for (int i = 0; i < data.original_origins.size(); ++i) {
+      //     std::cout << "Existing edge: "
+      //       << state.StopName(data.original_origins[i].stop) << " " << state_descriptions.at(data.original_origins[i].partition) << " -> "
+      //       << state.StopName(data.original_destinations[i].stop) << " " << state_descriptions.at(data.original_destinations[i].partition) << "\n";
+      //   }
+      //   std::cout << "New edge: "
+      //     << state.StopName(new_origin.stop) << " " << state_descriptions.at(edge.origin.partition) << " -> "
+      //     << state.StopName(new_dest.stop) << " " << state_descriptions.at(edge.destination.partition) << "\n";
+      //   std::cout << "Existing weight: " << data.weight << "\n";
+      //   std::cout << "New weight: " << edge.weight << "\n";
+
+      //   // auto signature = outgoing_edges[edge.destination];
+      //   // std::cout << "Signature:\n";
+      //   // for (const auto& [ts, w] : signature) {
+      //   //   std::cout << state.StopName(ts.stop)  << " " << state_descriptions.at(ts.partition) << ": " << w << "\n";
+      //   // }
+      // }
+      // assert(data.weight == edge.weight);
+    }
+    for (const TarelState& orig : edge.original_origins) {
+      data.original_origins.push_back(orig);
+    }
+    for (const TarelState& orig : edge.original_destinations) {
+      data.original_destinations.push_back(orig);
+    }
+  }
+
+  std::vector<TarelEdge> result;
+  for (const auto& [key, data] : merged_edges) {
+    const auto& [new_origin, new_dest] = key;
+    auto sorted_origins = data.original_origins;
+    auto sorted_destinations = data.original_destinations;
+    std::ranges::sort(sorted_origins, [](const TarelState& a, const TarelState& b) { return a < b; });
+    std::ranges::sort(sorted_destinations, [](const TarelState& a, const TarelState& b) { return a < b; });
+    sorted_origins.erase(std::unique(sorted_origins.begin(), sorted_origins.end()), sorted_origins.end());
+    sorted_destinations.erase(std::unique(sorted_destinations.begin(), sorted_destinations.end()), sorted_destinations.end());
     result.push_back(TarelEdge{
       .origin = new_origin,
       .destination = new_dest,
-      .weight = edge.weight,
+      .weight = data.weight,
+      .original_origins = std::move(sorted_origins),
+      .original_destinations = std::move(sorted_destinations),
     });
   }
 
@@ -652,7 +813,12 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
 
 constexpr int kCycleEdgeWeight = -1000;
 
-void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionState& state, const StepPathsAdjacencyList& completed) {
+void SolveTarelTspInstance(
+  const std::vector<TarelEdge>& edges,
+  const SolutionState& state,
+  const StepPathsAdjacencyList& completed,
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+) {
   // Assign contiguous ids to all TarelStates.
   std::vector<TarelState> state_by_id;
   std::unordered_map<TarelState, StopId> id_by_state;
@@ -673,8 +839,9 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
   for (const TarelState& state : state_by_id) {
     num_states_by_stop[state.stop] += 1;
   }
-  assert(num_states_by_stop.at(state.boundary.start) == 1);
-  assert(num_states_by_stop.at(state.boundary.end) == 1);
+  assert(num_states_by_stop[state.boundary.start] == 1);
+  // std::cout << num_states_by_stop[state.boundary.end] << "\n";
+  // assert(num_states_by_stop[state.boundary.end] == 1);
 
   // Start building up TSP edges.
   std::vector<WeightedEdge> tsp_edges;
@@ -724,20 +891,20 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
   std::cout << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
 
   // Build lookup for tarel edge weights: (origin, destination) -> weight
-  auto find_tarel_edge_weight = [&edges](const TarelState& origin, const TarelState& dest) -> int {
+  auto find_tarel_edge = [&edges](const TarelState& origin, const TarelState& dest) -> TarelEdge {
     for (const TarelEdge& edge : edges) {
       if (edge.origin == origin && edge.destination == dest) {
-        return edge.weight;
+        return edge;
       }
     }
-    return 0; // Should not happen for valid tours
+    assert(false);
   };
 
   // Validate tour and extract original StopIds.
   std::vector<std::string> tour_errors;
   std::vector<StopId> original_stop_tour;
   std::vector<TimeSinceServiceStart> cumulative_weights;
-  std::vector<std::pair<StopId, StopId>> tour_edges;  // All edges including START->first and last->END
+  std::vector<TarelEdge> tour_edges;  // All edges including START->first and last->END
   TimeSinceServiceStart accumulated_weight{0};
   TarelState cur_state = TarelState{state.boundary.start, 0};
   int cur_stop_visited_states = 1;
@@ -775,10 +942,10 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
       // with origin partition = (cur_state.partition + 1) % num_states.
       TarelState tarel_origin = cur_state;
       tarel_origin.partition.v = (cur_state.partition.v + 1) % cur_stop_num_states;
-      int edge_weight = find_tarel_edge_weight(tarel_origin, next_state);
-      accumulated_weight.seconds += edge_weight;
+      TarelEdge edge = find_tarel_edge(tarel_origin, next_state);
+      accumulated_weight.seconds += edge.weight;
       cumulative_weights.push_back(accumulated_weight);
-      tour_edges.push_back({cur_state.stop, next_state.stop});
+      tour_edges.push_back(edge);
 
       cur_stop_visited_states = 1;
       if (cur_state.stop != state.boundary.start) {
@@ -796,11 +963,11 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
 
   // Compute min duration feasible path.
   std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
-  for (const auto& [a, b] : tour_edges) {
-    ExtendFeasiblePaths(feasible_paths, completed, a, b);
+  for (const auto& edge : tour_edges) {
+    ExtendFeasiblePaths(feasible_paths, completed, edge.origin.stop, edge.destination.stop);
   }
 
-  TimeSinceServiceStart min_duration_origin_time{0};
+  TimeSinceServiceStart min_duration_origin_time{-1};
   if (!feasible_paths.empty()) {
     const Step* min_duration_step = &feasible_paths[0];
     for (const Step& step : feasible_paths) {
@@ -817,30 +984,76 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
     std::cout << "No feasible paths!?\n";
   }
 
-  // Recompute feasible paths, tracking min duration path for printing.
-  std::vector<Step> min_duration_feasible = {ZeroEdge(state.boundary.start, state.boundary.start)};
-  std::vector<TimeSinceServiceStart> feasible_durations;
-
+  // Compute departure times for the min duration feasible path.
+  //
+  // feasible_arrivals[i] is the time we **arrive** the i-th stop of the
+  // feasible path, to match the cumulative tarel weights.
+  std::vector<TimeSinceServiceStart> feasible_arrivals;
+  TimeSinceServiceStart cur_time = min_duration_origin_time;
   for (int edge_idx = 0; edge_idx < tour_edges.size(); ++edge_idx) {
-    const auto& [a, b] = tour_edges[edge_idx];
-    ExtendFeasiblePaths(min_duration_feasible, completed, a, b);
+    if (cur_time.seconds == -1) {
+      feasible_arrivals.push_back(cur_time);
+      continue;
+    }
 
-    if (min_duration_feasible.size() > 1) {
-      auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
-        [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
-      if (it != min_duration_feasible.end()) {
-        min_duration_feasible = {*it};
-      } else {
-        min_duration_feasible.clear();
+    const TarelEdge& edge = tour_edges[edge_idx];
+    const auto& groups = completed.adjacent.at(edge.origin.stop);
+    auto steps_it = std::find_if(groups.begin(), groups.end(), [&](const auto& group) -> bool {
+      return group.size() > 0 && group[0].merged_step.destination_stop == edge.destination.stop;
+    });
+    if (steps_it == groups.end()) {
+      cur_time = TimeSinceServiceStart{-1};
+      feasible_arrivals.push_back(cur_time);
+      continue;
+    }
+    const auto& steps = *steps_it;
+
+    Step best_step;
+    best_step.origin_time = TimeSinceServiceStart{0};
+    best_step.destination_time = TimeSinceServiceStart{std::numeric_limits<int>::max()};
+    int first_sched_step = 0;
+    if (steps.size() > 0 && steps[0].merged_step.is_flex) {
+      best_step = steps[0].merged_step;
+      best_step.origin_time = cur_time;
+      best_step.destination_time.seconds = cur_time.seconds + steps[0].merged_step.FlexDurationSeconds();
+    }
+    for (int i = first_sched_step; i < steps.size(); ++i) {
+      if (
+        steps[i].merged_step.origin_time >= cur_time &&
+        steps[i].merged_step.destination_time < best_step.destination_time
+      ) {
+        best_step = steps[i].merged_step;
       }
     }
-
-    if (min_duration_feasible.size() == 1) {
-      feasible_durations.push_back(TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()});
-    } else {
-      feasible_durations.push_back(TimeSinceServiceStart{-1});  // Marker for unavailable
-    }
+    feasible_arrivals.push_back(cur_time);
+    cur_time = best_step.destination_time;
   }
+
+  std::vector<TimeSinceServiceStart> feasible_durations;
+  for (int i = 1; i < feasible_arrivals.size(); ++i) {
+    feasible_durations.push_back(TimeSinceServiceStart{feasible_arrivals[i].seconds - feasible_arrivals[0].seconds});
+  }
+
+  // for (int edge_idx = 0; edge_idx < tour_edges.size(); ++edge_idx) {
+  //   const auto& edge = tour_edges[edge_idx];
+  //   ExtendFeasiblePaths(min_duration_feasible, completed, edge.origin.stop, edge.destination.stop);
+
+  //   if (min_duration_feasible.size() > 1) {
+  //     auto it = std::find_if(min_duration_feasible.begin(), min_duration_feasible.end(),
+  //       [&](const Step& step) { return step.origin_time == min_duration_origin_time; });
+  //     if (it != min_duration_feasible.end()) {
+  //       min_duration_feasible = {*it};
+  //     } else {
+  //       min_duration_feasible.clear();
+  //     }
+  //   }
+
+  //   if (min_duration_feasible.size() == 1) {
+  //     feasible_durations.push_back(TimeSinceServiceStart{min_duration_feasible[0].DurationSeconds()});
+  //   } else {
+  //     feasible_durations.push_back(TimeSinceServiceStart{-1});  // Marker for unavailable
+  //   }
+  // }
 
   // Print tour with cumulative tarel weight and feasible duration.
   const int align_spacing = 50;
@@ -856,6 +1069,15 @@ void SolveTarelTspInstance(const std::vector<TarelEdge>& edges, const SolutionSt
       prev_diff = cur_diff;
     }
     std::cout << "\n";
+
+    TarelEdge& edge = tour_edges[i + 1];
+    for (auto origin : edge.original_origins) {
+      std::cout << "  [origin] " << state_descriptions.at(origin.partition) << "\n";
+    }
+
+    for (auto destination : edge.original_destinations) {
+      std::cout << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
+    }
   }
 }
 
@@ -889,17 +1111,41 @@ int main() {
     assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
-    auto tarel_result = MakeTarelEdges(completed, std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
-      return std::make_pair(s.origin_stop, s.is_flex);
-    }));
+
+    auto tarel_result = MakeTarelEdges(
+      completed,
+      state.boundary,
+      std::function<std::string(Step)>([&](const Step& s) -> std::string {
+        if (s.is_flex) {
+          return "flex";
+        }
+        return state.dest_trip_id_to_partition[s.destination_trip];
+      }),
+      std::function([&](std::string pk) -> std::string {
+        return pk;
+      }));
+    // auto tarel_result = MakeTarelEdges(
+    //   completed,
+    //   state.boundary,
+    //   std::function<std::pair<StopId, bool>(Step)>([](const Step& s) {
+    //     return std::make_pair(s.origin_stop, s.is_flex);
+    //   }),
+    //   std::function([&](std::pair<StopId, bool> pk) -> std::string {
+    //     std::string res = "from " + state.StopName(pk.first);
+    //     if (pk.second) {
+    //       res += " (flex)";
+    //     }
+    //     return res;
+    //   }));
     // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
     //   return s.origin_stop;
     // }));
     // auto tarel_result = MakeTarelEdges(completed, std::function<StopId(Step)>([](const Step& s) {
     //   return StopId{0};
     // }));
-    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges);
-    SolveTarelTspInstance(tarel_es_2, state, completed);
+    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges, state, tarel_result.state_descriptions);
+    SolveTarelTspInstance(tarel_es_2, state, completed, tarel_result.state_descriptions);
+    // SolveTarelTspInstance(tarel_es_2, state, completed);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
     // ... it seems like merging states could make it be so that some states who
@@ -907,7 +1153,7 @@ int main() {
     // But:
     // - Maybe there's a reason why anything that ends up with same dest states must have started with same dest states anyways.
     // - Or not quite, but where there has to be a very unlikely coincidence of unrelated weights for dest states to get merged in such a way.
-    // MergeEquivalentTarelStates(tarel_es_2);
+    // auto tarel_es_3 = MergeEquivalentTarelStates(tarel_es_2, state, tarel_result.state_descriptions);
 
     return 0;
 
