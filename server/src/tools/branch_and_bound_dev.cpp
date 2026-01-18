@@ -36,19 +36,26 @@ int main() {
     assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
+    std::unordered_map<std::string, StepPartitionId> partition_to_id;
+    std::unordered_map<StepPartitionId, std::string> id_to_partition;
+    for (const auto& [_, v] : state.dest_trip_id_to_partition) {
+      auto [it, inserted] = partition_to_id.try_emplace(v, StepPartitionId{static_cast<int>(partition_to_id.size())});
+      if (inserted) {
+        id_to_partition[it->second] = it->first;
+      }
+    }
+
     auto tarel_result = MakeTarelEdges(
       completed,
-      std::function<std::string(Step)>([&](const Step& s) -> std::string {
+      std::function<StepPartitionId(Step)>([&](const Step& s) -> StepPartitionId {
         if (s.is_flex) {
-          return "flex";
+          return partition_to_id.at("flex");
         }
-        return state.dest_trip_id_to_partition[s.destination_trip];
-      }),
-      std::function([&](std::string pk) -> std::string {
-        return pk;
-      }));
-    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges);
-    SolveTarelTspInstance(tarel_es_2, state, completed, tarel_result.state_descriptions);
+        return partition_to_id.at(state.dest_trip_id_to_partition[s.destination_trip]);
+      })
+    );
+    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result);
+    SolveTarelTspInstance(tarel_es_2, state, completed, id_to_partition);
     // SolveTarelTspInstance(tarel_es_2, state, completed);
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.

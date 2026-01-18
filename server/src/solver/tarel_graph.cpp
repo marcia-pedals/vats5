@@ -137,25 +137,13 @@ struct ArrivalTimesScheduled {
   std::vector<TimeSinceServiceStart> times;
 };
 
-TarelEdgesResult MakeTarelEdges(
+std::vector<TarelEdge> MakeTarelEdges(
     const StepPathsAdjacencyList& adj,
-    std::function<std::string(Step)> partition,
-    std::function<std::string(std::string)> describe_partition) {
-  std::unordered_map<std::pair<StopId, std::string>, StepPartitionId> partition_id_map;
-  std::unordered_map<StepPartitionId, std::string> state_descriptions;
-
-  auto get_partition_id = [&partition_id_map, &state_descriptions, &describe_partition](StopId dest_stop, std::string key) -> StepPartitionId {
-    auto with_dest = std::make_pair(dest_stop, key);
-    auto [it, inserted] = partition_id_map.try_emplace(with_dest, StepPartitionId{static_cast<int>(partition_id_map.size())});
-    if (inserted) {
-      state_descriptions[it->second] = describe_partition(key);
-    }
-    return it->second;
-  };
-
+    const std::function<StepPartitionId(Step)>& partition
+) {
   // steps_from[x] is all steps from x.
   // Within each group, the steps are sorted and minimal.
-  std::unordered_map<StopId, std::unordered_map<std::pair<StopId, std::string>, std::vector<Step>>> steps_from;
+  std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>> steps_from;
 
   // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
   // Note that I've been careful to put `ArrivalTimesScheduled` as the first
@@ -163,23 +151,24 @@ TarelEdgesResult MakeTarelEdges(
   // starts as an empty `ArrivalTimesScheduled`.
   // After we have constructed this, times in each value are sorted ascending
   // and unique.
-  std::unordered_map<std::pair<StopId, std::string>, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
+  std::unordered_map<TarelState, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
 
   for (const auto& [origin_stop, path_groups] : adj.adjacent) {
     for (const auto& path_group : path_groups) {
       for (const Path& path : path_group) {
         const Step& step = path.merged_step;
         assert(step.origin_stop == origin_stop);
-        std::string pk = partition(step);
+        StepPartitionId pid = partition(step);
+        TarelState destination_state{step.destination_stop, pid};
 
         // Preserves sorted-and-minimal property because: The paths within
         // `path_group` are sorted and minimal, they all have the same
         // `step.destination_stop`, no other path groups fom this origin have
         // the same destination stop, and order-preserving partitions preserve
         // sortedness and minimality.
-        steps_from[step.origin_stop][std::make_pair(step.destination_stop, pk)].push_back(step);
+        steps_from[step.origin_stop][destination_state].push_back(step);
 
-        auto& arrival_times = arrival_times_to[std::make_pair(step.destination_stop, pk)];
+        auto& arrival_times = arrival_times_to[destination_state];
         if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
           arrival_times = ArrivalTimesFlex();
         } else {
@@ -205,8 +194,8 @@ TarelEdgesResult MakeTarelEdges(
   }
 
   std::vector<TarelEdge> edges;
-  for (const auto& [origin_vertex, arrival_times_to_origin] : arrival_times_to) {
-    for (const auto& [dest_vertex, steps] : steps_from[origin_vertex.first]) {
+  for (const auto& [origin, arrival_times_to_origin] : arrival_times_to) {
+    for (const auto& [dest, steps] : steps_from[origin.stop]) {
       int weight = std::numeric_limits<int>::max();
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
         // If the arrival is flex, we have to assume we can arrive any time, so
@@ -240,9 +229,6 @@ TarelEdgesResult MakeTarelEdges(
       }
 
       if (weight < std::numeric_limits<int>::max()) {
-        TarelState origin{origin_vertex.first, get_partition_id(origin_vertex.first, origin_vertex.second)};
-        TarelState dest{dest_vertex.first, get_partition_id(dest_vertex.first, dest_vertex.second)};
-
         edges.push_back(TarelEdge{
           .origin=origin,
           .destination=dest,
@@ -254,10 +240,7 @@ TarelEdgesResult MakeTarelEdges(
     }
   }
 
-  return TarelEdgesResult{
-    .edges = std::move(edges),
-    .state_descriptions = std::move(state_descriptions),
-  };
+  return edges;
 }
 
 struct EdgeSignature {

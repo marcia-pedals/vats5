@@ -111,11 +111,6 @@ struct TarelEdge {
   std::vector<TarelState> original_destinations;
 };
 
-struct TarelEdgesResult {
-  std::vector<TarelEdge> edges;
-  std::unordered_map<StepPartitionId, std::string> state_descriptions;
-};
-
 Step ZeroEdge(StopId a, StopId b);
 Path ZeroPath(StopId a, StopId b);
 
@@ -135,9 +130,9 @@ void SolveTarelTspInstance(
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 );
 
-TarelEdgesResult MakeTarelEdges(
+std::vector<TarelEdge> MakeTarelEdges(
     const StepPathsAdjacencyList& adj,
-    std::function<std::string(Step)> partition,
-    std::function<std::string(std::string)> describe_partition);
+    const std::function<StepPartitionId(Step)>& partition
+);
 
 }  // namespace vats5
