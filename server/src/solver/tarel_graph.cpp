@@ -155,6 +155,17 @@ std::vector<TarelEdge> MakeTarelEdges(
 
   for (const auto& [origin_stop, path_groups] : adj.adjacent) {
     for (const auto& path_group : path_groups) {
+      {
+        std::vector<Step> steps;
+        for (const Path& p : path_group) {
+          steps.push_back(p.merged_step);
+        }
+        if (!CheckSortedAndMinimal(steps)) {
+          std::cout << "Not sorted and minimal: " << origin_stop << " -> " << steps[0].destination_stop << "\n";
+          assert(false);
+        }
+      }
+
       for (const Path& path : path_group) {
         const Step& step = path.merged_step;
         assert(step.origin_stop == origin_stop);
@@ -178,9 +189,11 @@ std::vector<TarelEdge> MakeTarelEdges(
     }
   }
 
-  for (const auto& [x, groups_from] : steps_from) {
-    for (const auto& [_, group_from] : groups_from) {
-      assert(CheckSortedAndMinimal(group_from));
+  for (const auto& [origin, groups_from] : steps_from) {
+    for (const auto& [dest, group_from] : groups_from) {
+      if (!CheckSortedAndMinimal(group_from)) {
+        std::cout << "Not sorted and minimal: " << origin << " -> " << dest << "\n";
+      }
     }
   }
 

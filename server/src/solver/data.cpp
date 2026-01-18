@@ -136,8 +136,6 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   );
 
   // Sliding window to find stops within specified walking distance
-  const double WALKING_SPEED_MS = 1.0;  // 1 meter per second
-
   for (size_t i = 0; i < stop_positions.size(); ++i) {
     const auto& current_stop = stop_positions[i];
 
@@ -170,7 +168,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
             current_stop.stop_id,
             other_stop.stop_id,
             static_cast<int>(
-                distance / WALKING_SPEED_MS
+                distance / options.walking_speed_ms
             )  // duration in seconds
         };
 
@@ -191,7 +189,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
             current_stop.stop_id,
             other_stop.stop_id,
             TimeSinceServiceStart{0},  // origin time
-            TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
+            TimeSinceServiceStart{static_cast<int>(distance / options.walking_speed_ms)
             },  // duration as destination time
             walk_trip_id,
             walk_trip_id,
@@ -205,7 +203,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         FlexTrip reverse_flex_trip{
             other_stop.stop_id,
             current_stop.stop_id,
-            static_cast<int>(distance / WALKING_SPEED_MS)  // same duration
+            static_cast<int>(distance / options.walking_speed_ms)  // same duration
         };
 
         result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
@@ -220,7 +218,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
             other_stop.stop_id,
             current_stop.stop_id,
             TimeSinceServiceStart{0},  // origin time
-            TimeSinceServiceStart{static_cast<int>(distance / WALKING_SPEED_MS)
+            TimeSinceServiceStart{static_cast<int>(distance / options.walking_speed_ms)
             },  // duration as destination time
             reverse_walk_trip_id,
             reverse_walk_trip_id,

@@ -212,8 +212,11 @@ namespace vats5 {
 
 struct GetStepsOptions {
   double max_walking_distance_meters = 500.0;
+  double walking_speed_ms = 1.0;  // meters per second
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(GetStepsOptions, max_walking_distance_meters)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    GetStepsOptions, max_walking_distance_meters, walking_speed_ms
+)
 
 struct FlexTrip {
   StopId origin;

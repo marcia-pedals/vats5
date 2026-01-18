@@ -17,7 +17,13 @@ int main() {
     GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
 
     gtfs_day = GtfsNormalizeStops(gtfs_day);
-    StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+    StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(
+      gtfs_day,
+      GetStepsOptions{
+        .max_walking_distance_meters=1000.0,
+        .walking_speed_ms=1.0,
+      }
+    );
 
     std::unordered_set<StopId> bart_stops =
         GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");

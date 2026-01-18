@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -47,6 +48,14 @@ struct TarelState {
   bool operator==(const TarelState&) const = default;
   bool operator<(const TarelState& other) const;
 };
+
+inline std::ostream& operator<<(std::ostream& os, const StepPartitionId& value) {
+  return os << "Partition{" << value.v << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& os, const TarelState& value) {
+  return os << "TarelState{" << value.stop << ", " << value.partition << "}";
+}
 
 }  // namespace vats5
 

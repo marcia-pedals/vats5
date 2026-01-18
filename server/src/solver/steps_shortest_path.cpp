@@ -594,9 +594,9 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
       {
         std::lock_guard<std::mutex> lock(mutex);
         completed += 1;
-        // if (completed % 10 == 0 || completed == num_work_items) {
-        //   std::cout << completed << " / " << num_work_items << "\n";
-        // }
+        if (completed % 10 == 0 || completed == num_work_items) {
+          std::cout << completed << " / " << num_work_items << "\n";
+        }
       }
     }
   };
@@ -613,7 +613,7 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     thread.join();
   }
 
-  // Combine results per origin, merging flex steps
+  // Combine results per origin
   StepPathsAdjacencyList result;
   result.adjacent.reserve(num_origins);
 
@@ -632,27 +632,30 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
       }
     }
 
-    // For each destination, reorder flex steps to the beginning and keep only
-    // one
+    // Make the results sorted and minimal. (It might not be sorted because each
+    // chunk could emit a flex step, and it might not be minimal because of
+    // boundary effects).
+    //
+    // TODO: Aaaaa lotsa unnecessary allocations. If we made SortSteps and
+    // MakeMinimalCover able to operate directly on std::vector<Path> we could
+    // avoid all of these.
     std::vector<std::vector<Path>> origin_result;
     origin_result.reserve(dest_to_paths.size());
-
-    for (auto& [dest, paths] : dest_to_paths) {
-      // Partition flex paths to the front (stable to preserve order of
-      // non-flex)
-      auto first_non_flex =
-          std::stable_partition(paths.begin(), paths.end(), [](const Path& p) {
-            return p.merged_step.is_flex;
-          });
-
-      // Keep at most one flex path (they're all equivalent after normalization)
-      if (first_non_flex - paths.begin() > 1) {
-        paths.erase(paths.begin() + 1, first_non_flex);
+    for (const auto& [dest, paths] : dest_to_paths) {
+      std::unordered_map<Step, Path> merged_step_to_path;
+      std::vector<Step> steps;
+      for (const auto& path : paths) {
+        merged_step_to_path[path.merged_step] = path;
+        steps.push_back(path.merged_step);
       }
-
-      if (!paths.empty()) {
-        origin_result.push_back(std::move(paths));
+      SortSteps(steps);
+      MakeMinimalCover(steps);
+      std::vector<Path> updated_paths;
+      updated_paths.reserve(steps.size());
+      for (const Step& s : steps) {
+        updated_paths.push_back(merged_step_to_path.at(s));
       }
+      origin_result.push_back(updated_paths);
     }
 
     result.adjacent[origin] = std::move(origin_result);
