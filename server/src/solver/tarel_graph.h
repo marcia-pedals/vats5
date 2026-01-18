@@ -125,9 +125,7 @@ SolutionState InitializeSolutionState(
 );
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(
-  const std::vector<TarelEdge>& edges,
-  const SolutionState& state,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+  const std::vector<TarelEdge>& edges
 );
 
 void SolveTarelTspInstance(
@@ -139,7 +137,6 @@ void SolveTarelTspInstance(
 
 TarelEdgesResult MakeTarelEdges(
     const StepPathsAdjacencyList& adj,
-    const SolutionBoundary& boundary,
     std::function<std::string(Step)> partition,
     std::function<std::string(std::string)> describe_partition);
 

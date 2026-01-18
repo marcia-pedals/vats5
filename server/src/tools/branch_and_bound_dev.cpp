@@ -38,7 +38,6 @@ int main() {
 
     auto tarel_result = MakeTarelEdges(
       completed,
-      state.boundary,
       std::function<std::string(Step)>([&](const Step& s) -> std::string {
         if (s.is_flex) {
           return "flex";
@@ -48,7 +47,7 @@ int main() {
       std::function([&](std::string pk) -> std::string {
         return pk;
       }));
-    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges, state, tarel_result.state_descriptions);
+    auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result.edges);
     SolveTarelTspInstance(tarel_es_2, state, completed, tarel_result.state_descriptions);
     // SolveTarelTspInstance(tarel_es_2, state, completed);
     // TODO: Think about whether it's possible for there to be a situation where
