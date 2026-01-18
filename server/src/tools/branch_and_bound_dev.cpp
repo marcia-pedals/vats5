@@ -100,36 +100,17 @@ SolutionState InitializeSolutionState(
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
-  std::unordered_map<std::string, int> partition_count;
-  for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
-    for (const auto& group : groups) {
-      for (const auto& path : group) {
-        for (const auto& step : path.steps) {
-          if (!step.is_flex) {
-            partition_count[steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip)] += 1;
-          }
-        }
-      }
-    }
-  }
-
   std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
   for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
     for (const auto& group : groups) {
       for (const auto& path : group) {
-        if (path.merged_step.is_flex) {
-          continue;
-        }
-        int best_count = 0;
-        std::string best_desc;
+        std::string& partition = dest_trip_id_to_partition[path.merged_step.destination_trip];
+        partition = "flex";
         for (const auto& step : path.steps) {
-          const std::string& desc = steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip);
-          if (partition_count[desc] > best_count) {
-            best_count = partition_count[desc];
-            best_desc = desc;
+          if (!step.is_flex) {
+            partition = steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip);
           }
         }
-        dest_trip_id_to_partition[path.merged_step.destination_trip] = best_desc;
       }
     }
   }
