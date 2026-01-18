@@ -92,6 +92,7 @@ SolutionState InitializeSolutionState(
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
+  // Partition steps based on their path's last non-flex step's route description.
   std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
   for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
     for (const auto& group : groups) {
@@ -140,15 +141,6 @@ SolutionState InitializeSolutionState(
     solution_metadata,
     dest_trip_id_to_partition,
   };
-}
-
-void ExtendFeasiblePaths(
-    std::vector<Step>& feasible_paths,
-    const StepPathsAdjacencyList& completed,
-    StopId a,
-    StopId b) {
-  std::vector<Step> next_steps = completed.MergedStepsBetween(a, b);
-  feasible_paths = PairwiseMergedSteps(std::move(feasible_paths), std::move(next_steps));
 }
 
 struct StepPartitionId {
