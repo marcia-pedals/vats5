@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ostream>
 #include <vector>
 
 #include "solver/data.h"
@@ -17,6 +18,7 @@ struct ConcordeSolution {
 
 // Solves TSP using Concorde and returns the tour.
 // The tour visits all stops in the relaxed adjacency list exactly once.
-ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed);
+// If tsp_log is non-null, Concorde's output is written to it.
+ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log = nullptr);
 
 }  // namespace vats5

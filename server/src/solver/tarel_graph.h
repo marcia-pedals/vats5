@@ -119,6 +119,9 @@ struct TarelEdge {
   int weight;
   std::vector<TarelState> original_origins;
   std::vector<TarelState> original_destinations;
+
+  // All steps to `destination` that achieve the minimum `weight`.
+  std::vector<Step> steps;
 };
 
 Step ZeroEdge(StopId a, StopId b);
@@ -160,13 +163,21 @@ TspGraphData MakeTspGraphEdges(
 TspTourResult SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
-  const SolutionBoundary& boundary
+  const SolutionBoundary& boundary,
+  std::ostream* tsp_log = nullptr
+);
+
+std::vector<Path> ComputeMinDurationFeasiblePaths(
+  const TspTourResult& tour_result,
+  const SolutionState& state,
+  const StepPathsAdjacencyList& completed
 );
 
 void PrintTarelTourResults(
+  std::ostream& out,
   const TspTourResult& tour_result,
   const SolutionState& state,
-  const StepPathsAdjacencyList& completed,
+  const Path& feasible_path,
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 );
 

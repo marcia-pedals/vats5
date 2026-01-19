@@ -210,12 +210,17 @@ std::vector<TarelEdge> MakeTarelEdges(
   for (const auto& [origin, arrival_times_to_origin] : arrival_times_to) {
     for (const auto& [dest, steps] : steps_from[origin.stop]) {
       int weight = std::numeric_limits<int>::max();
+      std::vector<Step> weight_steps;
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
         // If the arrival is flex, we have to assume we can arrive any time, so
         // the weight is simply the duration of the shortest step out.
         for (const Step& step : steps) {
           if (step.DurationSeconds() < weight) {
             weight = step.DurationSeconds();
+            weight_steps.clear();
+          }
+          if (step.DurationSeconds() == weight) {
+            weight_steps.push_back(step);
           }
         }
       } else {
@@ -224,6 +229,8 @@ std::vector<TarelEdge> MakeTarelEdges(
         if (steps.size() > 0 && steps[0].is_flex) {
           if (steps[0].FlexDurationSeconds() < weight) {
             weight = steps[0].FlexDurationSeconds();
+            weight_steps.clear();
+            weight_steps.push_back(steps[0]);
           }
           step_idx = 1;
         }
@@ -237,6 +244,10 @@ std::vector<TarelEdge> MakeTarelEdges(
           int duration = steps[step_idx].destination_time.seconds - arrival_time.seconds;
           if (duration < weight) {
             weight = duration;
+            weight_steps.clear();
+          }
+          if (duration == weight) {
+            weight_steps.push_back(steps[step_idx]);
           }
         }
       }
@@ -248,6 +259,7 @@ std::vector<TarelEdge> MakeTarelEdges(
           .weight=weight,
           .original_origins={origin},
           .original_destinations={dest},
+          .steps=std::move(weight_steps),
         });
       }
     }
@@ -334,6 +346,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     int weight;
     std::vector<TarelState> original_origins;
     std::vector<TarelState> original_destinations;
+    std::vector<Step> steps;
   };
   std::map<std::pair<TarelState, TarelState>, MergedEdgeData> merged_edges;
   for (const TarelEdge& edge : edges) {
@@ -343,6 +356,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     auto& data = it->second;
     if (!inserted) {
       // TODO: Think harder about whether taking the min merged edge weight makes sense.
+      // TODO: Consider whether we have to clear `original_origins`, `original_destinations`, and `steps`.
       if (edge.weight < data.weight) {
         data.weight = edge.weight;
       }
@@ -352,6 +366,9 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     }
     for (const TarelState& orig : edge.original_destinations) {
       data.original_destinations.push_back(orig);
+    }
+    for (const Step& s : edge.steps) {
+      data.steps.push_back(s);
     }
   }
 
@@ -370,6 +387,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
       .weight = data.weight,
       .original_origins = std::move(sorted_origins),
       .original_destinations = std::move(sorted_destinations),
+      .steps = std::move(data.steps),
     });
   }
 
@@ -436,11 +454,14 @@ TspGraphData MakeTspGraphEdges(
 TspTourResult SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
-  const SolutionBoundary& boundary
+  const SolutionBoundary& boundary,
+  std::ostream* tsp_log
 ) {
   // Solve TSP!!!!
-  std::cout << "Solving TSP with " << graph.state_by_id.size() << " vertices and " << graph.tsp_edges.size() << " edges...\n";
-  ConcordeSolution solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges));
+  if (tsp_log) {
+    *tsp_log << "Solving TSP with " << graph.state_by_id.size() << " vertices and " << graph.tsp_edges.size() << " edges...\n";
+  }
+  ConcordeSolution solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), tsp_log);
 
   // Adjust optimal value and rotate tour.
   solution.optimal_value -= graph.expected_num_cycle_edges * kCycleEdgeWeight;
@@ -448,7 +469,9 @@ TspTourResult SolveTspAndExtractTour(
   assert(tour_start_it != solution.tour.end());
   std::rotate(solution.tour.begin(), tour_start_it, solution.tour.end());
   assert(*(solution.tour.end() - 1) == graph.id_by_state.at(TarelState{boundary.end, 0}));
-  std::cout << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+  if (tsp_log) {
+    *tsp_log << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+  }
 
   // Build lookup for tarel edge weights: (origin, destination) -> weight
   auto FindTarelEdge = [&edges](const TarelState& origin, const TarelState& dest) -> TarelEdge {
@@ -523,11 +546,10 @@ TspTourResult SolveTspAndExtractTour(
   return result;
 }
 
-void PrintTarelTourResults(
+std::vector<Path> ComputeMinDurationFeasiblePaths(
   const TspTourResult& tour_result,
   const SolutionState& state,
-  const StepPathsAdjacencyList& completed,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+  const StepPathsAdjacencyList& completed
 ) {
   // Compute min duration feasible path.
   std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
@@ -538,78 +560,79 @@ void PrintTarelTourResults(
     );
   }
 
-  std::optional<TimeSinceServiceStart> min_duration_origin_time;
-  if (!feasible_paths.empty()) {
-    const Step* min_duration_step = &feasible_paths[0];
-    for (const Step& step : feasible_paths) {
-      if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
-        min_duration_step = &step;
-      }
+  if (feasible_paths.empty()) {
+    return {};
+  }
+  const Step* min_duration_step = &feasible_paths[0];
+  for (const Step& step : feasible_paths) {
+    if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
+      min_duration_step = &step;
     }
-    min_duration_origin_time = min_duration_step->origin_time;
-    std::cout << "\nMin duration feasible path:\n";
-    std::cout << "  Start time: " << min_duration_step->origin_time.ToString() << "\n";
-    std::cout << "  End time:   " << min_duration_step->destination_time.ToString() << "\n";
-    std::cout << "  Duration:   " << TimeSinceServiceStart{min_duration_step->DurationSeconds()}.ToString() << "\n";
-  } else {
-    std::cout << "No feasible paths!?\n";
   }
 
-  // Compute departure times for the min duration feasible path.
-  //
-  // feasible_arrivals[i] is the time we **arrive** the i-th stop of the
-  // feasible path, to match the cumulative tarel weights.
-  std::vector<TimeSinceServiceStart> feasible_arrivals;
-  std::optional<Step> cur_step;
-  if (min_duration_origin_time.has_value()) {
-    cur_step = ZeroEdge(state.boundary.start, state.boundary.start);
-    cur_step->origin_time = *min_duration_origin_time;
-    cur_step->destination_time = *min_duration_origin_time;
-  }
-  for (int edge_idx = 0; edge_idx < tour_result.tour_edges.size(); ++edge_idx) {
-    const TarelEdge& edge = tour_result.tour_edges[edge_idx];
-    if (!cur_step.has_value()) {
-      feasible_arrivals.push_back(TimeSinceServiceStart{-1});
+  std::vector<Path> result;
+  for (const Step& merged_step : feasible_paths) {
+    if (merged_step.DurationSeconds() > min_duration_step->DurationSeconds()) {
       continue;
     }
-    feasible_arrivals.push_back(cur_step->destination_time);
-    cur_step = SelectBestNextStep(
-      *cur_step,
-      // TODO: AAAA unfortunate allocation.
-      completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
-    );
+
+    Path path;
+    path.merged_step = merged_step;
+
+    // Build up the individual steps along the tour.
+    Step cur_step = ZeroEdge(state.boundary.start, state.boundary.start);
+    cur_step.origin_time = merged_step.origin_time;
+    cur_step.destination_time = merged_step.origin_time;
+
+    for (const auto& edge : tour_result.tour_edges) {
+      std::optional<Step> next_step = SelectBestNextStep(
+        cur_step,
+        // TODO: AAAA unfortunate allocation.
+        completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
+      );
+      if (!next_step.has_value()) {
+        break;
+      }
+      path.steps.push_back(*next_step);
+      cur_step = *next_step;
+    }
+
+    result.push_back(path);
   }
 
-  // feasible_durations[i] is the time between arriving at the START and
-  // arriving at the (i+1)-th stop of the feasible path. (i+1 to disregard the
-  // START).
-  std::vector<TimeSinceServiceStart> feasible_durations;
-  for (int i = 1; i < feasible_arrivals.size(); ++i) {
-    feasible_durations.push_back(TimeSinceServiceStart{feasible_arrivals[i].seconds - feasible_arrivals[0].seconds});
-  }
+  return result;
+}
 
+void PrintTarelTourResults(
+  std::ostream& out,
+  const TspTourResult& tour_result,
+  const SolutionState& state,
+  const Path& feasible_path,
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+) {
   // Print tour with cumulative tarel weight and feasible duration.
   const int align_spacing = 50;
   int prev_diff = 0;
   for (int i = 0; i < tour_result.original_stop_tour.size(); ++i) {
-    std::cout << std::left << std::setw(align_spacing) << state.StopName(tour_result.original_stop_tour[i])
+    out << std::left << std::setw(align_spacing) << state.StopName(tour_result.original_stop_tour[i])
       << tour_result.cumulative_weights[i].ToString();
-    if (feasible_durations[i].seconds >= 0) {
-      std::cout << "  " << feasible_durations[i].ToString();
-      int cur_diff = feasible_durations[i].seconds - tour_result.cumulative_weights[i].seconds;
+    if (i < feasible_path.steps.size()) {
+      int feasible_duration = feasible_path.steps[i].destination_time.seconds - feasible_path.merged_step.origin_time.seconds;
+      out << "  " << TimeSinceServiceStart{feasible_duration}.ToString();
+      int cur_diff = feasible_duration - tour_result.cumulative_weights[i].seconds;
       int delta = cur_diff - prev_diff;
-      std::cout << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
+      out << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
       prev_diff = cur_diff;
     }
-    std::cout << "\n";
+    out << "\n";
 
     const TarelEdge& edge = tour_result.tour_edges[i + 1];
     for (const auto& origin : edge.original_origins) {
-      std::cout << "  [origin] " << state_descriptions.at(origin.partition) << "\n";
+      out << "  [origin] " << state_descriptions.at(origin.partition) << "\n";
     }
 
     for (const auto& destination : edge.original_destinations) {
-      std::cout << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
+      out << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
     }
   }
 }

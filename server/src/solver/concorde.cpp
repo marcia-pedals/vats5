@@ -166,7 +166,7 @@ std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
     return tour;
 }
 
-ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed) {
+ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
     // Create temp directory
     std::string temp_dir = "/tmp/vats5_tsp_XXXXXX";
     if (mkdtemp(temp_dir.data()) == nullptr) {
@@ -193,8 +193,9 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed) {
     std::string concorde_output;
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        fputs(buffer, stdout);
-        fflush(stdout);
+        if (tsp_log) {
+            *tsp_log << buffer << std::flush;
+        }
         concorde_output += buffer;
     }
     pclose(pipe);
@@ -223,11 +224,11 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed) {
 
 }  // namespace
 
-ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed) {
+ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
     constexpr int kMaxRetries = 5;
     for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
         try {
-            return SolveTspWithConcordeImpl(relaxed);
+            return SolveTspWithConcordeImpl(relaxed, tsp_log);
         } catch (const InvalidTourStructure&) {
             // Don't retry - indicates insufficient kInterVertexOffset or a bug, not transient.
             throw;
