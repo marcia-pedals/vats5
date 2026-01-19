@@ -61,8 +61,11 @@ int main() {
       })
     );
     auto tarel_es_2 = MergeEquivalentTarelStates(tarel_result);
-    SolveTarelTspInstance(tarel_es_2, state, completed, id_to_partition);
-    // SolveTarelTspInstance(tarel_es_2, state, completed);
+
+    TspGraphData graph = MakeTspGraphEdges(tarel_es_2, state.boundary);
+    TspTourResult tour_result = SolveTspAndExtractTour(tarel_es_2, graph, state.boundary);
+    PrintTarelTourResults(tour_result, state, completed, id_to_partition);
+
     // TODO: Think about whether it's possible for there to be a situation where
     // merging multiple times makes progress each time.
     // ... it seems like merging states could make it be so that some states who

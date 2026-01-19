@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "solver/data.h"
+#include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
 
 namespace vats5 {
@@ -123,6 +124,25 @@ struct TarelEdge {
 Step ZeroEdge(StopId a, StopId b);
 Path ZeroPath(StopId a, StopId b);
 
+constexpr int kCycleEdgeWeight = -1000;
+
+// Return type for MakeTspGraphEdges.
+struct TspGraphData {
+  std::vector<TarelState> state_by_id;
+  std::unordered_map<TarelState, StopId> id_by_state;
+  std::unordered_map<StopId, int> num_states_by_stop;
+  std::vector<WeightedEdge> tsp_edges;
+  int expected_num_cycle_edges;
+};
+
+// Return type for SolveTspAndExtractTour.
+struct TspTourResult {
+  std::vector<StopId> original_stop_tour;
+  std::vector<TimeSinceServiceStart> cumulative_weights;
+  std::vector<TarelEdge> tour_edges;
+  int optimal_value;
+};
+
 SolutionState InitializeSolutionState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
@@ -132,8 +152,19 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
   const std::vector<TarelEdge>& edges
 );
 
-void SolveTarelTspInstance(
+TspGraphData MakeTspGraphEdges(
   const std::vector<TarelEdge>& edges,
+  const SolutionBoundary& boundary
+);
+
+TspTourResult SolveTspAndExtractTour(
+  const std::vector<TarelEdge>& edges,
+  const TspGraphData& graph,
+  const SolutionBoundary& boundary
+);
+
+void PrintTarelTourResults(
+  const TspTourResult& tour_result,
   const SolutionState& state,
   const StepPathsAdjacencyList& completed,
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
