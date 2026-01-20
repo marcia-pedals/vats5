@@ -31,6 +31,8 @@ struct TripId {
   static const TripId NOOP;
 
   bool operator==(const TripId& other) const { return v == other.v; }
+  bool operator!=(const TripId& other) const { return v != other.v; }
+  bool operator<(const TripId& other) const { return v < other.v; }
 };
 inline void to_json(nlohmann::json& j, const TripId& id) { j = id.v; }
 inline void from_json(const nlohmann::json& j, TripId& id) {

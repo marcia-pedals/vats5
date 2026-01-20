@@ -220,6 +220,18 @@ struct StepPathsAdjacencyList {
     return all_steps;
   }
 
+  std::vector<Path> AllPaths() const {
+    std::vector<Path> all_paths;
+    for (const auto& [origin_stop, path_groups] : adjacent) {
+      for (const auto& path_group : path_groups) {
+        for (const Path& path : path_group) {
+          all_paths.push_back(path);
+        }
+      }
+    }
+    return all_paths;
+  }
+
   std::span<const Path> PathsBetween(StopId a, StopId b) const {
     auto path_groups_it = adjacent.find(a);
     if (path_groups_it == adjacent.end()) {

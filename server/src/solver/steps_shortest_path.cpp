@@ -594,9 +594,9 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
       {
         std::lock_guard<std::mutex> lock(mutex);
         completed += 1;
-        if (completed % 10 == 0 || completed == num_work_items) {
-          std::cout << completed << " / " << num_work_items << "\n";
-        }
+        // if (completed % 10 == 0 || completed == num_work_items) {
+        //   std::cout << completed << " / " << num_work_items << "\n";
+        // }
       }
     }
   };

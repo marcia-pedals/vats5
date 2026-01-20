@@ -3,13 +3,21 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <memory>
+#include <queue>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 #include "solver/data.h"
+#include "solver/step_merge.h"
+#include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 
@@ -22,6 +30,111 @@ std::string GetTimestampDir() {
     std::ostringstream oss;
     oss << std::put_time(&tm_now, "%Y%m%d_%H%M%S");
     return oss.str();
+}
+
+std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::string& tour_dir) {
+  std::filesystem::create_directory(tour_dir);
+  std::ofstream log(tour_dir + "/log");
+
+  StepPathsAdjacencyList completed =
+    ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
+
+  // TODO: Path from start to all and from all to end are clearly necessary for
+  // a tour to exist, but is this sufficient? Probably not... Probably better to
+  // detect during TSP solving. Perhaps invalid path means infeasible constraints?
+  for (StopId a : state.stops) {
+    if (a == state.boundary.end || a == state.boundary.start) {
+      continue;
+    }
+    if (completed.PathsBetween(state.boundary.start, a).size() == 0) {
+      std::cout << "Infeasible constraints, no path from: " << state.StopName(state.boundary.start) << " to " << state.StopName(a) << "\n";
+      return std::nullopt;
+    }
+    if (completed.PathsBetween(a, state.boundary.end).size() == 0) {
+      std::cout << "Infeasible constraints, no path from: " << state.StopName(a) << " to " << state.StopName(state.boundary.end) << "\n";
+      return std::nullopt;
+    }
+  }
+
+  // Add END -> START edge.
+  // It's safe to push a new group without checking for an existing group with
+  // `start` dest because no edges (other than this one we're adding right
+  // now) go into `start`.
+  assert(completed.adjacent[state.boundary.end].size() == 0);
+  completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
+
+  std::unordered_map<std::string, StepPartitionId> partition_to_id;
+  std::unordered_map<StepPartitionId, std::string> id_to_partition;
+  auto GetId = [&](const std::string& partition) -> StepPartitionId {
+    auto [it, inserted] = partition_to_id.try_emplace(partition, StepPartitionId{static_cast<int>(partition_to_id.size())});
+    if (inserted) {
+      id_to_partition[it->second] = it->first;
+    }
+    return it->second;
+  };
+
+  std::vector<TarelEdge> raw_tarel_edges = MakeTarelEdges(
+    completed,
+    std::function<StepPartitionId(Step)>([&](const Step& s) -> StepPartitionId {
+      return GetId((s.is_flex ? "flex" : state.dest_trip_id_to_partition.at(s.destination_trip)));
+    })
+  );
+  std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
+
+  log << "Active partitions:\n";
+  std::vector<std::string> active_partitions;
+  for (const auto& [_, x] : id_to_partition) {
+    active_partitions.push_back(x);
+  }
+  std::ranges::sort(active_partitions);
+  for (const std::string& x : active_partitions) {
+    log << "  " << x << "\n";
+  }
+  log << std::flush;
+
+  TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
+  std::ofstream tsp_log(tour_dir + "/tsp_log");
+  TspTourResult tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
+  std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(tour_result, state, completed);
+  if (feasible_paths.size() > 0) {
+    log << feasible_paths.size() << " feasible paths with start times:";
+    for (const Path& p : feasible_paths) {
+      log << " " << p.merged_step.origin_time.ToString();
+    }
+    log << "\n";
+    log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
+    PrintTarelTourResults(log, tour_result, state, feasible_paths[0], id_to_partition, completed);
+  } else {
+    log << "No feasible path?!\n";
+  }
+  log << std::flush;
+
+  return tour_result;
+}
+
+SolutionState BranchRequire(const SolutionState& state, StopId branch_a, StopId branch_b) {
+  // Make it so that the only incoming edges to branch_b are those from branch_a.
+  std::vector<Step> branched_steps = state.adj.AllSteps();
+  std::erase_if(branched_steps, [&](const Step& s) -> bool {
+    return s.destination_stop == branch_b && s.origin_stop != branch_a;
+  });
+  SolutionState branched_state = state;
+  branched_state.adj = MakeAdjacencyList(branched_steps);
+  branched_state.stops.erase(branch_a);
+  if (branch_a == state.boundary.start) {
+    branched_state.boundary.start = branch_b;
+  }
+  return branched_state;
+}
+
+SolutionState BranchForbid(const SolutionState& state, StopId branch_a, StopId branch_b) {
+  std::vector<Step> branched_steps = state.adj.AllSteps();
+  std::erase_if(branched_steps, [&](const Step& s) -> bool {
+    return s.destination_stop == branch_b && s.origin_stop == branch_a;
+  });
+  SolutionState branched_state = state;
+  branched_state.adj = MakeAdjacencyList(branched_steps);
+  return branched_state;
 }
 
 int main() {
@@ -43,9 +156,98 @@ int main() {
         GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
     std::cout << "Initializing solution state...\n";
-    SolutionState state = InitializeSolutionState(steps_from_gtfs, bart_stops);
+    SolutionState initial_state = InitializeSolutionState(steps_from_gtfs, bart_stops);
 
-    // Dummy code for typechecking.
+    std::string run_dir = GetTimestampDir();
+    std::filesystem::create_directory(run_dir);
+    std::cout << "Output directory: " << run_dir << std::endl;
+
+    int searched = 0;
+    auto cmp = [](const std::pair<TspTourResult, SolutionState>& a,
+                  const std::pair<TspTourResult, SolutionState>& b) {
+      return a.first.optimal_value > b.first.optimal_value;  // min-heap by optimal_value
+    };
+    std::priority_queue<std::pair<TspTourResult, SolutionState>,
+                        std::vector<std::pair<TspTourResult, SolutionState>>,
+                        decltype(cmp)> q(cmp);
+
+    auto initial_solve_result = DoSolve(initial_state, run_dir + "/search" + std::to_string(searched));
+    assert(initial_solve_result.has_value());
+    q.push(std::make_pair(*initial_solve_result, initial_state));
+    searched += 1;
+
+    while (!q.empty()) {
+      auto [tour, state] = q.top();
+      q.pop();
+
+      std::cout << "Visiting LB: " << TimeSinceServiceStart{tour.optimal_value}.ToString() << "\n";
+
+      // auto branch_edge = tour.tour_edges[1];
+      // std::string branch_desc = state.StopName(branch_edge.origin.stop) + " -> " + state.StopName(branch_edge.destination.stop);
+      std::vector<Step> primitive_steps;
+      StepPathsAdjacencyList completed =
+        ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
+      for (const TarelEdge& e : tour.tour_edges) {
+        const auto& paths = completed.PathsBetween(e.origin.stop, e.destination.stop);
+        assert(paths.size() > 0);
+        Path best = paths[0];
+        for (const Path& p : paths) {
+          if (p.DurationSeconds() < best.DurationSeconds()) {
+            best = p;
+          }
+        }
+        for (const Step& s : best.steps) {
+          primitive_steps.push_back(s);
+        }
+      }
+
+      const Step& branch_step = primitive_steps[rand() % primitive_steps.size()];
+
+      SolutionState require1 = BranchRequire(state, branch_step.origin_stop, branch_step.destination_stop);
+      SolutionState require2 = BranchRequire(BranchForbid(state, branch_step.origin_stop, branch_step.destination_stop), branch_step.destination_stop, branch_step.origin_stop);
+      SolutionState forbid = BranchForbid(BranchForbid(state, branch_step.origin_stop, branch_step.destination_stop), branch_step.destination_stop, branch_step.origin_stop);
+
+      std::string dir1 = run_dir + "/search" + std::to_string(searched);
+      std::string dir2 = run_dir + "/search" + std::to_string(searched + 1);
+      std::string dir3 = run_dir + "/search" + std::to_string(searched + 2);
+      searched += 3;
+
+      auto future1 = std::async(std::launch::async, [=]() { return DoSolve(require1, dir1); });
+      auto future2 = std::async(std::launch::async, [=]() { return DoSolve(require2, dir2); });
+      auto future3 = std::async(std::launch::async, [=]() { return DoSolve(forbid, dir3); });
+
+      std::optional<TspTourResult> require_result1 = future1.get();
+      std::optional<TspTourResult> require_result2 = future2.get();
+      std::optional<TspTourResult> forbid_result = future3.get();
+
+      std::cout << "  require " << state.StopName(branch_step.origin_stop) + " -> " + state.StopName(branch_step.destination_stop) << ": ";
+      if (require_result1.has_value()) {
+        std::cout << TimeSinceServiceStart{require_result1->optimal_value}.ToString() << "\n";
+        q.push(std::make_pair(*require_result1, require1));
+      } else {
+        std::cout << "infeasible\n";
+      }
+
+      std::cout << "  require " << state.StopName(branch_step.origin_stop) + " <- " + state.StopName(branch_step.destination_stop) << ": ";
+      if (require_result2.has_value()) {
+        std::cout << TimeSinceServiceStart{require_result2->optimal_value}.ToString() << "\n";
+        q.push(std::make_pair(*require_result2, require2));
+      } else {
+        std::cout << "infeasible\n";
+      }
+
+      std::cout << "  forbid " << state.StopName(branch_step.origin_stop) + " <-> " + state.StopName(branch_step.destination_stop) << ": ";
+      if (forbid_result.has_value()) {
+        std::cout << TimeSinceServiceStart{forbid_result->optimal_value}.ToString() << "\n";
+        q.push(std::make_pair(*forbid_result, forbid));
+      } else {
+        std::cout << "infeasible\n";
+      }
+    }
+
+    return 0;
+
+    SolutionState state = initial_state;
     StepPathsAdjacencyList completed =
       ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
@@ -56,16 +258,26 @@ int main() {
     assert(completed.adjacent[state.boundary.end].size() == 0);
     completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
 
-    std::string run_dir = GetTimestampDir();
-    std::filesystem::create_directory(run_dir);
-    std::cout << "Output directory: " << run_dir << std::endl;
+    std::unordered_map<Step, TripId> last_non_flex_tid;
+    for (const Path& p : completed.AllPaths()) {
+      TripId tid = TripId::NOOP;
+      for (const Step& s : p.steps) {
+        if (!s.is_flex) {
+          tid = s.destination_trip;
+        }
+      }
+      last_non_flex_tid[p.merged_step] = tid;
+    }
 
+    // BEGIN: Attempt at bound refinement.
     {
       std::unordered_map<Step, std::string> step_to_tours;
 
       for (int tour_idx = 0; tour_idx < 100; ++tour_idx) {
         std::string tour_dir = run_dir + "/tour" + std::to_string(tour_idx);
         std::filesystem::create_directory(tour_dir);
+        std::string tarel_summary_dir = tour_dir + "/tarel_summary";
+        std::filesystem::create_directory(tarel_summary_dir);
         std::ofstream log(tour_dir + "/log");
 
         std::unordered_map<std::string, StepPartitionId> partition_to_id;
@@ -85,6 +297,8 @@ int main() {
           })
         );
         std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
+
+        WriteTarelSummary(state, tarel_summary_dir, tarel_edges, id_to_partition);
 
         log << "Active partitions:\n";
         std::vector<std::string> active_partitions;
@@ -109,24 +323,118 @@ int main() {
           }
           log << "\n";
           log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-          PrintTarelTourResults(log, tour_result, state, feasible_paths[0], id_to_partition);
+          PrintTarelTourResults(log, tour_result, state, feasible_paths[0], id_to_partition, completed);
         } else {
           log << "No feasible path?!\n";
         }
         log << std::flush;
 
-        int num_steps_partitioned = 0;
-        const std::string suffix = "-T" + std::to_string(tour_idx);
+        // Ok so we are going to print out "runs" of achievable Tarel weights starting from any point along the tour.
+        // What does this even mean?
+        for (int run_start_idx = 0; run_start_idx < tour_result.tour_edges.size() - 1; ++run_start_idx) {
+          StopId run_start_stop = tour_result.tour_edges[run_start_idx].origin.stop;
+          std::vector<Step> feasible_paths = {ZeroEdge(run_start_stop, run_start_stop)};
+          for (int edge_idx = run_start_idx; edge_idx < tour_result.tour_edges.size(); ++edge_idx) {
+            const TarelEdge edge = tour_result.tour_edges[edge_idx];
+            feasible_paths = PairwiseMergedSteps(feasible_paths, edge.steps);
+            if (feasible_paths.size() == 0) {
+              log << "Run ended: " << state.StopName(run_start_stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+              break;
+            }
+          }
+          if (feasible_paths.size() > 0) {
+            log << "Run completed: " << state.StopName(run_start_stop) << " -> END\n";
+            break;
+          }
+        }
+        log << std::flush;
+
+        std::map<std::pair<StopId, TripId>, int> tour_dest_and_tids;
         for (const TarelEdge& e : tour_result.tour_edges) {
           for (const Step& s : e.steps) {
-            if (!step_to_tours[s].ends_with(suffix)) {
-              step_to_tours[s] += suffix;
-              num_steps_partitioned += 1;
+            if (last_non_flex_tid[s] != TripId::NOOP) {
+              tour_dest_and_tids[std::make_pair(e.destination.stop, last_non_flex_tid[s])] = 1;
             }
           }
         }
-        log << "Num steps partitioned: " << num_steps_partitioned << "\n";
-        log << std::flush;
+
+        // std::unordered_set<TripId> tour_tids_feas;
+        // for (const Path& p : feasible_paths) {
+        //   for (const Step& s : p.steps) {
+        //     tour_tids_feas.insert(last_non_flex_tid[s]);
+        //   }
+        // }
+
+        const std::string suffix = "-R" + std::to_string(tour_idx);
+        for (const Path& p : completed.AllPaths()) {
+          if (
+            tour_dest_and_tids[std::make_pair(p.merged_step.destination_stop, last_non_flex_tid[p.merged_step])] > 0 &&
+            !step_to_tours[p.merged_step].ends_with(suffix)
+          ) {
+            step_to_tours[p.merged_step] += suffix;
+          }
+        }
+
+        // const std::string suffix_feas = "-F" + std::to_string(tour_idx);
+        // for (const Path& p : completed.AllPaths()) {
+        //   if (
+        //     last_non_flex_tid[p.merged_step] != TripId::NOOP &&
+        //     tour_tids_feas.contains(last_non_flex_tid[p.merged_step]) &&
+        //     !step_to_tours[p.merged_step].ends_with(suffix_feas)
+        //   ) {
+        //     step_to_tours[p.merged_step] += suffix_feas;
+        //   }
+        // }
+
+        // std::unordered_set<Step> tour_steps;
+        // for (const TarelEdge& e : tour_result.tour_edges) {
+        //   for (const Step& s : e.steps) {
+        //     tour_steps.insert(s);
+        //   }
+        // }
+
+        // std::unordered_set<TripId> last_scheduled_trip_ids_in_tour_steps;
+        // for (const Path& p : completed.AllPaths()) {
+        //   TripId tid{-1};
+        //   if (tour_steps.contains(p.merged_step)) {
+        //     for (const Step& s : p.steps) {
+        //       if (!s.is_flex) {
+        //         tid = s.destination_trip;
+        //       }
+        //     }
+        //   }
+        //   if (tid.v != -1) {
+        //     last_scheduled_trip_ids_in_tour_steps.insert(tid);
+        //   }
+        // }
+
+        // const std::string suffix = "-T" + std::to_string(tour_idx);
+        // for (const Path& p : completed.AllPaths()) {
+        //   TripId tid{-1};
+        //   for (const Step& s : p.steps) {
+        //     if (!s.is_flex) {
+        //       tid = s.destination_trip;
+        //     }
+        //   }
+        //   if (tid.v != -1) {
+        //     if (last_scheduled_trip_ids_in_tour_steps.contains(tid) && !step_to_tours[p.merged_step].ends_with(suffix)) {
+        //       step_to_tours[p.merged_step] += suffix;
+        //     }
+        //   }
+        // }
+
+        // int num_steps_partitioned = 0;
+        // const std::string suffix = "-T" + std::to_string(tour_idx);
+        // for (const TarelEdge& e : tour_result.tour_edges) {
+        //   for (const Step& s : e.steps) {
+        //     if (!step_to_tours[s].ends_with(suffix)) {
+        //       step_to_tours[s] += suffix;
+        //       num_steps_partitioned += 1;
+        //     }
+        //   }
+        // }
+        // log << "Num steps partitioned: " << num_steps_partitioned << "\n";
+        // log << std::flush;
       }
     }
 
@@ -164,7 +472,7 @@ int main() {
         }
         std::cout << "\n";
         std::cout << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-        PrintTarelTourResults(std::cout, tour_result, state, feasible_paths[0], id_to_partition);
+        PrintTarelTourResults(std::cout, tour_result, state, feasible_paths[0], id_to_partition, completed);
       } else {
         std::cout << "No feasible path?!\n";
       }

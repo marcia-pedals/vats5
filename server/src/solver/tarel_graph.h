@@ -122,6 +122,12 @@ struct TarelEdge {
 
   // All steps to `destination` that achieve the minimum `weight`.
   std::vector<Step> steps;
+
+  // All arrival times that achieve the minimum `weight`.
+  std::vector<TimeSinceServiceStart> arrival_times;
+
+  // All steps from origin to destination.
+  std::vector<Step> all_steps;
 };
 
 Step ZeroEdge(StopId a, StopId b);
@@ -178,12 +184,20 @@ void PrintTarelTourResults(
   const TspTourResult& tour_result,
   const SolutionState& state,
   const Path& feasible_path,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions,
+  const StepPathsAdjacencyList& completed
 );
 
 std::vector<TarelEdge> MakeTarelEdges(
     const StepPathsAdjacencyList& adj,
     const std::function<StepPartitionId(Step)>& partition
+);
+
+void WriteTarelSummary(
+  const SolutionState& state,
+  const std::string& dir,
+  const std::vector<TarelEdge>& edges,
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 );
 
 }  // namespace vats5

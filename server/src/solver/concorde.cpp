@@ -181,9 +181,9 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, s
         OutputConcordeTsp(out, relaxed);
     }
 
-    // Invoke Concorde
+    // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel
     std::ostringstream cmd;
-    cmd << "concorde -x -o " << solution_path << " " << problem_path << " 2>&1";
+    cmd << "cd " << temp_dir << " && concorde -x -o solution problem 2>&1";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
