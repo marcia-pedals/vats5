@@ -494,13 +494,20 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
   const SolutionBoundary& boundary,
+  std::optional<int> ub,
   std::ostream* tsp_log
 ) {
   // Solve TSP!!!!
   if (tsp_log) {
     *tsp_log << "Solving TSP with " << graph.state_by_id.size() << " vertices and " << graph.tsp_edges.size() << " edges...\n";
   }
-  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), tsp_log);
+
+  std::optional<int> atsp_ub;
+  if (ub.has_value()) {
+    atsp_ub = *ub + graph.expected_num_cycle_edges * kCycleEdgeWeight;
+  }
+
+  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), atsp_ub, tsp_log);
   if (!solution.has_value()) {
     return std::nullopt;
   }

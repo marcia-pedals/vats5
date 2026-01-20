@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -203,8 +204,9 @@ std::vector<StopId> ValidateAndExtractTour(const std::vector<int>& doubled_tour)
     return tour;
 }
 
-std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
+std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, std::optional<int> ub, std::ostream* tsp_log) {
     DoubledGraphWeights weights(relaxed);
+    int n = weights.NumStops();
 
     // Create temp directory
     std::string temp_dir = "/tmp/vats5_tsp_XXXXXX";
@@ -220,9 +222,18 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
         OutputConcordeTsp(out, weights);
     }
 
+    std::optional<int> concorde_ub;
+    if (ub.has_value()) {
+      concorde_ub = *ub + n * kInterVertexOffset;
+    }
+
     // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel
     std::ostringstream cmd;
-    cmd << "cd " << temp_dir << " && concorde -x -o solution problem 2>&1";
+    cmd << "cd " << temp_dir << " && concorde";
+    if (concorde_ub.has_value()) {
+      cmd << " -u " << *concorde_ub;
+    }
+    cmd << " -x -o solution problem 2>&1";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
@@ -245,6 +256,14 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
     }
     int raw_optimal_value = static_cast<int>(std::round(std::stod(concorde_output.substr(pos + 17))));
 
+    if (ub.has_value() && raw_optimal_value >= concorde_ub) {
+      // Cleanup temp directory before returning
+      std::remove(problem_path.c_str());
+      std::remove(solution_path.c_str());
+      rmdir(temp_dir.c_str());
+      return std::nullopt;
+    }
+
     // Read the doubled tour
     std::vector<int> doubled_tour = ReadDoubledTour(solution_path);
 
@@ -259,7 +278,6 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
 
     // Validate structure and extract original tour
     std::vector<StopId> tour = ValidateAndExtractTour(doubled_tour);
-    int n = static_cast<int>(tour.size());
 
     // Subtract the inter-vertex offset that was added during graph construction.
     // The proper tour has exactly n inter-vertex edges, so we subtract n * offset.
@@ -275,11 +293,11 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
 
 }  // namespace
 
-std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
+std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::optional<int> ub, std::ostream* tsp_log) {
     constexpr int kMaxRetries = 5;
     for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
         try {
-            return SolveTspWithConcordeImpl(relaxed, tsp_log);
+            return SolveTspWithConcordeImpl(relaxed, ub, tsp_log);
         } catch (const InvalidTourStructure&) {
             // Don't retry - indicates insufficient kInterVertexOffset or a bug, not transient.
             throw;

@@ -21,6 +21,6 @@ struct ConcordeSolution {
 // The tour visits all stops in the relaxed adjacency list exactly once.
 // If tsp_log is non-null, Concorde's output is written to it.
 // Returns nullopt if the optimal tour uses a forbidden edge (no valid tour exists).
-std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log = nullptr);
+std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::optional<int> ub = std::nullopt, std::ostream* tsp_log = nullptr);
 
 }  // namespace vats5

@@ -171,6 +171,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
   const SolutionBoundary& boundary,
+  std::optional<int> ub = std::nullopt,
   std::ostream* tsp_log = nullptr
 );
 

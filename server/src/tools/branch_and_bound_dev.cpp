@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <random>
 #include <sstream>
@@ -49,7 +50,7 @@ std::string GetTimestampDir() {
     return oss.str();
 }
 
-std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::string& tour_dir) {
+std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::string& tour_dir, std::optional<int> ub) {
   std::filesystem::create_directory(tour_dir);
   std::ofstream log(tour_dir + "/log");
 
@@ -94,7 +95,7 @@ std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::stri
 
   TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
   std::ofstream tsp_log(tour_dir + "/tsp_log");
-  std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
+  std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, ub, &tsp_log);
   if (!tour_result.has_value()) {
     log << "No valid TSP tour exists (uses forbidden edges)\n";
     return std::nullopt;
@@ -183,6 +184,8 @@ int main() {
     //                     std::vector<std::pair<TspTourResult, SolutionState>>,
     //                     decltype(cmp)> q(cmp);
 
+    std::vector<Path> best_feasible_paths;
+
     auto cmp = [](const std::unique_ptr<SearchNode>& a, const std::unique_ptr<SearchNode>& b) -> bool {
       return a->lb > b->lb;
     };
@@ -197,14 +200,29 @@ int main() {
       std::unique_ptr<SearchNode> node = std::move(q.back());
       q.pop_back();
 
-      std::cout << "Searching " << node->id << ": " << TimeSinceServiceStart{node->lb}.ToString() << "\n";
-      std::optional<TspTourResult> result = DoSolve(node->state, run_dir + "/node" + std::to_string(node->id));
+      std::optional<TspTourResult> result = DoSolve(
+        node->state,
+        run_dir + "/node" + std::to_string(node->id),
+        best_feasible_paths.size() > 0 ? std::make_optional(best_feasible_paths[0].DurationSeconds()) : std::nullopt
+      );
       if (!result.has_value()) {
         std::cout << node->id << ": infeasible\n";
         continue;
       }
 
+      std::cout << "Solved " << node->id
+        << " (" << node->required_edges.size() << " required, " << node->forbidden_edges.size() << " forbidden): "
+        << TimeSinceServiceStart{node->lb}.ToString() << " -> "
+        << TimeSinceServiceStart{result->optimal_value}.ToString()
+        << " (" << q.size() << " active nodes)\n";
+
+      if (best_feasible_paths.size() > 0 && result->optimal_value >= best_feasible_paths[0].DurationSeconds()) {
+        std::cout << node->id << ": pruned\n";
+        continue;
+      }
+
       std::vector<Step> primitive_steps;
+      // TODO: DoSolve also computes `completed`.
       StepPathsAdjacencyList completed =
         ReduceToMinimalSystemPaths(node->state.adj, node->state.stops, /*keep_through_other_destination=*/true);
       for (const TarelEdge& e : result->tour_edges) {
@@ -219,6 +237,15 @@ int main() {
         for (const Step& s : best.steps) {
           primitive_steps.push_back(s);
         }
+      }
+
+      std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*result, node->state, completed);
+      if (
+        feasible_paths.size() > 0 &&
+        (best_feasible_paths.size() == 0 || feasible_paths[0].DurationSeconds() < best_feasible_paths[0].DurationSeconds())
+      ) {
+        std::cout << "Found new UB: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
+        best_feasible_paths = feasible_paths;
       }
 
       const Step& branch_step = primitive_steps[rand() % primitive_steps.size()];
@@ -338,7 +365,7 @@ int main() {
 
         TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
         std::ofstream tsp_log(tour_dir + "/tsp_log");
-        std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
+        std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, std::nullopt, &tsp_log);
         if (!tour_result.has_value()) {
           log << "No valid TSP tour exists (uses forbidden edges)\n";
           std::cout << "Tour " << tour_idx << ": No valid tour\n";
