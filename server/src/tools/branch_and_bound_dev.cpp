@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
@@ -22,6 +23,22 @@
 #include "solver/tarel_graph.h"
 
 using namespace vats5;
+
+struct BranchEdge {
+  StopId a;
+  StopId b;
+
+  bool operator==(const BranchEdge& other) const = default;
+};
+
+template <>
+struct std::hash<BranchEdge> {
+  std::size_t operator()(const BranchEdge& e) const noexcept {
+    std::size_t h1 = std::hash<int>{}(e.a.v);
+    std::size_t h2 = std::hash<int>{}(e.b.v);
+    return h1 ^ (h2 << 1);
+  }
+};
 
 std::string GetTimestampDir() {
     auto now = std::chrono::system_clock::now();
@@ -124,6 +141,14 @@ SolutionState BranchForbid(const SolutionState& state, StopId branch_a, StopId b
   return branched_state;
 }
 
+struct SearchNode {
+  int id;
+  int lb;
+  SolutionState state;
+  std::unordered_set<BranchEdge> required_edges;
+  std::unordered_set<BranchEdge> forbidden_edges;
+};
+
 int main() {
     const std::string gtfs_path = "../data/RG_20260108_all";
 
@@ -150,31 +175,39 @@ int main() {
     std::cout << "Output directory: " << run_dir << std::endl;
 
     int searched = 0;
-    auto cmp = [](const std::pair<TspTourResult, SolutionState>& a,
-                  const std::pair<TspTourResult, SolutionState>& b) {
-      return a.first.optimal_value > b.first.optimal_value;  // min-heap by optimal_value
-    };
-    std::priority_queue<std::pair<TspTourResult, SolutionState>,
-                        std::vector<std::pair<TspTourResult, SolutionState>>,
-                        decltype(cmp)> q(cmp);
+    // auto cmp = [](const std::pair<TspTourResult, SolutionState>& a,
+    //               const std::pair<TspTourResult, SolutionState>& b) {
+    //   return a.first.optimal_value > b.first.optimal_value;  // min-heap by optimal_value
+    // };
+    // std::priority_queue<std::pair<TspTourResult, SolutionState>,
+    //                     std::vector<std::pair<TspTourResult, SolutionState>>,
+    //                     decltype(cmp)> q(cmp);
 
-    auto initial_solve_result = DoSolve(initial_state, run_dir + "/search" + std::to_string(searched));
-    assert(initial_solve_result.has_value());
-    q.push(std::make_pair(*initial_solve_result, initial_state));
-    searched += 1;
+    auto cmp = [](const std::unique_ptr<SearchNode>& a, const std::unique_ptr<SearchNode>& b) -> bool {
+      return a->lb > b->lb;
+    };
+    std::vector<std::unique_ptr<SearchNode>> q;
+    int next_node_id = 0;
+
+    q.push_back(std::make_unique<SearchNode>(next_node_id, 0, initial_state));
+    next_node_id += 1;
 
     while (!q.empty()) {
-      auto [tour, state] = q.top();
-      q.pop();
+      std::pop_heap(q.begin(), q.end(), cmp);
+      std::unique_ptr<SearchNode> node = std::move(q.back());
+      q.pop_back();
 
-      std::cout << "Visiting LB: " << TimeSinceServiceStart{tour.optimal_value}.ToString() << "\n";
+      std::cout << "Searching " << node->id << ": " << TimeSinceServiceStart{node->lb}.ToString() << "\n";
+      std::optional<TspTourResult> result = DoSolve(node->state, run_dir + "/node" + std::to_string(node->id));
+      if (!result.has_value()) {
+        std::cout << node->id << ": infeasible\n";
+        continue;
+      }
 
-      // auto branch_edge = tour.tour_edges[1];
-      // std::string branch_desc = state.StopName(branch_edge.origin.stop) + " -> " + state.StopName(branch_edge.destination.stop);
       std::vector<Step> primitive_steps;
       StepPathsAdjacencyList completed =
-        ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
-      for (const TarelEdge& e : tour.tour_edges) {
+        ReduceToMinimalSystemPaths(node->state.adj, node->state.stops, /*keep_through_other_destination=*/true);
+      for (const TarelEdge& e : result->tour_edges) {
         const auto& paths = completed.PathsBetween(e.origin.stop, e.destination.stop);
         assert(paths.size() > 0);
         Path best = paths[0];
@@ -189,46 +222,51 @@ int main() {
       }
 
       const Step& branch_step = primitive_steps[rand() % primitive_steps.size()];
+      BranchEdge branch_edge{branch_step.origin_stop, branch_step.destination_stop};
+      BranchEdge branch_edge_bw{branch_edge.b, branch_edge.a};
 
-      SolutionState require1 = BranchRequire(state, branch_step.origin_stop, branch_step.destination_stop);
-      SolutionState require2 = BranchRequire(BranchForbid(state, branch_step.origin_stop, branch_step.destination_stop), branch_step.destination_stop, branch_step.origin_stop);
-      SolutionState forbid = BranchForbid(BranchForbid(state, branch_step.origin_stop, branch_step.destination_stop), branch_step.destination_stop, branch_step.origin_stop);
-
-      std::string dir1 = run_dir + "/search" + std::to_string(searched);
-      std::string dir2 = run_dir + "/search" + std::to_string(searched + 1);
-      std::string dir3 = run_dir + "/search" + std::to_string(searched + 2);
-      searched += 3;
-
-      auto future1 = std::async(std::launch::async, [=]() { return DoSolve(require1, dir1); });
-      auto future2 = std::async(std::launch::async, [=]() { return DoSolve(require2, dir2); });
-      auto future3 = std::async(std::launch::async, [=]() { return DoSolve(forbid, dir3); });
-
-      std::optional<TspTourResult> require_result1 = future1.get();
-      std::optional<TspTourResult> require_result2 = future2.get();
-      std::optional<TspTourResult> forbid_result = future3.get();
-
-      std::cout << "  require " << state.StopName(branch_step.origin_stop) + " -> " + state.StopName(branch_step.destination_stop) << ": ";
-      if (require_result1.has_value()) {
-        std::cout << TimeSinceServiceStart{require_result1->optimal_value}.ToString() << "\n";
-        q.push(std::make_pair(*require_result1, require1));
-      } else {
-        std::cout << "infeasible\n";
+      {
+        std::unique_ptr<SearchNode> node_require_fw = std::make_unique<SearchNode>(
+          next_node_id,
+          result->optimal_value,
+          BranchRequire(node->state, branch_edge.a, branch_edge.b),
+          node->required_edges,
+          node->forbidden_edges
+        );
+        next_node_id += 1;
+        node_require_fw->required_edges.insert(branch_edge);
+        q.push_back(std::move(node_require_fw));
+        std::push_heap(q.begin(), q.end(), cmp);
       }
 
-      std::cout << "  require " << state.StopName(branch_step.origin_stop) + " <- " + state.StopName(branch_step.destination_stop) << ": ";
-      if (require_result2.has_value()) {
-        std::cout << TimeSinceServiceStart{require_result2->optimal_value}.ToString() << "\n";
-        q.push(std::make_pair(*require_result2, require2));
-      } else {
-        std::cout << "infeasible\n";
+      {
+        std::unique_ptr<SearchNode> node_forbid_fw_require_bw = std::make_unique<SearchNode>(
+          next_node_id,
+          result->optimal_value,
+          BranchRequire(BranchForbid(node->state, branch_edge.a, branch_edge.b), branch_edge.b, branch_edge.a),
+          node->required_edges,
+          node->forbidden_edges
+        );
+        next_node_id += 1;
+        node_forbid_fw_require_bw->forbidden_edges.insert(branch_edge);
+        node_forbid_fw_require_bw->required_edges.insert(branch_edge_bw);
+        q.push_back(std::move(node_forbid_fw_require_bw));
+        std::push_heap(q.begin(), q.end(), cmp);
       }
 
-      std::cout << "  forbid " << state.StopName(branch_step.origin_stop) + " <-> " + state.StopName(branch_step.destination_stop) << ": ";
-      if (forbid_result.has_value()) {
-        std::cout << TimeSinceServiceStart{forbid_result->optimal_value}.ToString() << "\n";
-        q.push(std::make_pair(*forbid_result, forbid));
-      } else {
-        std::cout << "infeasible\n";
+      {
+        std::unique_ptr<SearchNode> node_forbid_fw_bw = std::make_unique<SearchNode>(
+          next_node_id,
+          result->optimal_value,
+          BranchForbid(BranchForbid(node->state, branch_edge.a, branch_edge.b), branch_edge.b, branch_edge.a),
+          node->required_edges,
+          node->forbidden_edges
+        );
+        next_node_id += 1;
+        node_forbid_fw_bw->forbidden_edges.insert(branch_edge);
+        node_forbid_fw_bw->forbidden_edges.insert(branch_edge_bw);
+        q.push_back(std::move(node_forbid_fw_bw));
+        std::push_heap(q.begin(), q.end(), cmp);
       }
     }
 
