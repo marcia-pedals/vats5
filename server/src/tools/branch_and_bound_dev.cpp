@@ -39,23 +39,6 @@ std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::stri
   StepPathsAdjacencyList completed =
     ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
-  // TODO: Path from start to all and from all to end are clearly necessary for
-  // a tour to exist, but is this sufficient? Probably not... Probably better to
-  // detect during TSP solving. Perhaps invalid path means infeasible constraints?
-  for (StopId a : state.stops) {
-    if (a == state.boundary.end || a == state.boundary.start) {
-      continue;
-    }
-    if (completed.PathsBetween(state.boundary.start, a).size() == 0) {
-      std::cout << "Infeasible constraints, no path from: " << state.StopName(state.boundary.start) << " to " << state.StopName(a) << "\n";
-      return std::nullopt;
-    }
-    if (completed.PathsBetween(a, state.boundary.end).size() == 0) {
-      std::cout << "Infeasible constraints, no path from: " << state.StopName(a) << " to " << state.StopName(state.boundary.end) << "\n";
-      return std::nullopt;
-    }
-  }
-
   // Add END -> START edge.
   // It's safe to push a new group without checking for an existing group with
   // `start` dest because no edges (other than this one we're adding right
@@ -94,8 +77,12 @@ std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::stri
 
   TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
   std::ofstream tsp_log(tour_dir + "/tsp_log");
-  TspTourResult tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
-  std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(tour_result, state, completed);
+  std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
+  if (!tour_result.has_value()) {
+    log << "No valid TSP tour exists (uses forbidden edges)\n";
+    return std::nullopt;
+  }
+  std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*tour_result, state, completed);
   if (feasible_paths.size() > 0) {
     log << feasible_paths.size() << " feasible paths with start times:";
     for (const Path& p : feasible_paths) {
@@ -103,7 +90,7 @@ std::optional<TspTourResult> DoSolve(const SolutionState& state, const std::stri
     }
     log << "\n";
     log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-    PrintTarelTourResults(log, tour_result, state, feasible_paths[0], id_to_partition, completed);
+    PrintTarelTourResults(log, *tour_result, state, feasible_paths[0], id_to_partition, completed);
   } else {
     log << "No feasible path?!\n";
   }
@@ -313,9 +300,14 @@ int main() {
 
         TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
         std::ofstream tsp_log(tour_dir + "/tsp_log");
-        TspTourResult tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
-        std::cout << "Tour " << tour_idx << " LB: " << TimeSinceServiceStart{tour_result.optimal_value}.ToString() << "\n";
-        std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(tour_result, state, completed);
+        std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary, &tsp_log);
+        if (!tour_result.has_value()) {
+          log << "No valid TSP tour exists (uses forbidden edges)\n";
+          std::cout << "Tour " << tour_idx << ": No valid tour\n";
+          continue;
+        }
+        std::cout << "Tour " << tour_idx << " LB: " << TimeSinceServiceStart{tour_result->optimal_value}.ToString() << "\n";
+        std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*tour_result, state, completed);
         if (feasible_paths.size() > 0) {
           log << feasible_paths.size() << " feasible paths with start times:";
           for (const Path& p : feasible_paths) {
@@ -323,7 +315,7 @@ int main() {
           }
           log << "\n";
           log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-          PrintTarelTourResults(log, tour_result, state, feasible_paths[0], id_to_partition, completed);
+          PrintTarelTourResults(log, *tour_result, state, feasible_paths[0], id_to_partition, completed);
         } else {
           log << "No feasible path?!\n";
         }
@@ -331,11 +323,11 @@ int main() {
 
         // Ok so we are going to print out "runs" of achievable Tarel weights starting from any point along the tour.
         // What does this even mean?
-        for (int run_start_idx = 0; run_start_idx < tour_result.tour_edges.size() - 1; ++run_start_idx) {
-          StopId run_start_stop = tour_result.tour_edges[run_start_idx].origin.stop;
+        for (int run_start_idx = 0; run_start_idx < tour_result->tour_edges.size() - 1; ++run_start_idx) {
+          StopId run_start_stop = tour_result->tour_edges[run_start_idx].origin.stop;
           std::vector<Step> feasible_paths = {ZeroEdge(run_start_stop, run_start_stop)};
-          for (int edge_idx = run_start_idx; edge_idx < tour_result.tour_edges.size(); ++edge_idx) {
-            const TarelEdge edge = tour_result.tour_edges[edge_idx];
+          for (int edge_idx = run_start_idx; edge_idx < tour_result->tour_edges.size(); ++edge_idx) {
+            const TarelEdge edge = tour_result->tour_edges[edge_idx];
             feasible_paths = PairwiseMergedSteps(feasible_paths, edge.steps);
             if (feasible_paths.size() == 0) {
               log << "Run ended: " << state.StopName(run_start_stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
@@ -350,7 +342,7 @@ int main() {
         log << std::flush;
 
         std::map<std::pair<StopId, TripId>, int> tour_dest_and_tids;
-        for (const TarelEdge& e : tour_result.tour_edges) {
+        for (const TarelEdge& e : tour_result->tour_edges) {
           for (const Step& s : e.steps) {
             if (last_non_flex_tid[s] != TripId::NOOP) {
               tour_dest_and_tids[std::make_pair(e.destination.stop, last_non_flex_tid[s])] = 1;
@@ -463,18 +455,22 @@ int main() {
       std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
 
       TspGraphData graph = MakeTspGraphEdges(tarel_edges, state.boundary);
-      TspTourResult tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary);
-      std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(tour_result, state, completed);
-      if (feasible_paths.size() > 0) {
-        std::cout << feasible_paths.size() << " feasible paths with start times:";
-        for (const Path& p : feasible_paths) {
-          std::cout << " " << p.merged_step.origin_time.ToString();
-        }
-        std::cout << "\n";
-        std::cout << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-        PrintTarelTourResults(std::cout, tour_result, state, feasible_paths[0], id_to_partition, completed);
+      std::optional<TspTourResult> tour_result = SolveTspAndExtractTour(tarel_edges, graph, state.boundary);
+      if (!tour_result.has_value()) {
+        std::cout << "No valid TSP tour exists (uses forbidden edges)\n";
       } else {
-        std::cout << "No feasible path?!\n";
+        std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*tour_result, state, completed);
+        if (feasible_paths.size() > 0) {
+          std::cout << feasible_paths.size() << " feasible paths with start times:";
+          for (const Path& p : feasible_paths) {
+            std::cout << " " << p.merged_step.origin_time.ToString();
+          }
+          std::cout << "\n";
+          std::cout << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
+          PrintTarelTourResults(std::cout, *tour_result, state, feasible_paths[0], id_to_partition, completed);
+        } else {
+          std::cout << "No feasible path?!\n";
+        }
       }
     }
 

@@ -490,7 +490,7 @@ TspGraphData MakeTspGraphEdges(
   return result;
 }
 
-TspTourResult SolveTspAndExtractTour(
+std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
   const SolutionBoundary& boundary,
@@ -500,16 +500,19 @@ TspTourResult SolveTspAndExtractTour(
   if (tsp_log) {
     *tsp_log << "Solving TSP with " << graph.state_by_id.size() << " vertices and " << graph.tsp_edges.size() << " edges...\n";
   }
-  ConcordeSolution solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), tsp_log);
+  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), tsp_log);
+  if (!solution.has_value()) {
+    return std::nullopt;
+  }
 
   // Adjust optimal value and rotate tour.
-  solution.optimal_value -= graph.expected_num_cycle_edges * kCycleEdgeWeight;
-  auto tour_start_it = std::find(solution.tour.begin(), solution.tour.end(), graph.id_by_state.at(TarelState{boundary.start, 0}));
-  assert(tour_start_it != solution.tour.end());
-  std::rotate(solution.tour.begin(), tour_start_it, solution.tour.end());
-  assert(*(solution.tour.end() - 1) == graph.id_by_state.at(TarelState{boundary.end, 0}));
+  solution->optimal_value -= graph.expected_num_cycle_edges * kCycleEdgeWeight;
+  auto tour_start_it = std::find(solution->tour.begin(), solution->tour.end(), graph.id_by_state.at(TarelState{boundary.start, 0}));
+  assert(tour_start_it != solution->tour.end());
+  std::rotate(solution->tour.begin(), tour_start_it, solution->tour.end());
+  assert(*(solution->tour.end() - 1) == graph.id_by_state.at(TarelState{boundary.end, 0}));
   if (tsp_log) {
-    *tsp_log << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution.optimal_value}.ToString() << "\n";
+    *tsp_log << "Tarel TSP optimal value: " << TimeSinceServiceStart{solution->optimal_value}.ToString() << "\n";
   }
 
   // Build lookup for tarel edge weights: (origin, destination) -> weight
@@ -525,14 +528,14 @@ TspTourResult SolveTspAndExtractTour(
   // Validate tour and extract original StopIds.
   std::vector<std::string> tour_errors;
   TspTourResult result;
-  result.optimal_value = solution.optimal_value;
+  result.optimal_value = solution->optimal_value;
   TimeSinceServiceStart accumulated_weight{0};
   TarelState cur_state = TarelState{boundary.start, 0};
   int cur_stop_visited_states = 1;
-  for (int tour_idx = 1; tour_idx < solution.tour.size() + 1; ++tour_idx) {
+  for (int tour_idx = 1; tour_idx < solution->tour.size() + 1; ++tour_idx) {
     int cur_stop_num_states = graph.num_states_by_stop.at(cur_state.stop);
 
-    if (tour_idx == solution.tour.size() || graph.state_by_id[solution.tour[tour_idx].v].stop != cur_state.stop) {
+    if (tour_idx == solution->tour.size() || graph.state_by_id[solution->tour[tour_idx].v].stop != cur_state.stop) {
       // We're exiting the current stop: validate that we visited all of its states.
       if (cur_stop_visited_states != cur_stop_num_states) {
         tour_errors.push_back(
@@ -543,11 +546,11 @@ TspTourResult SolveTspAndExtractTour(
       }
     }
 
-    if (tour_idx == solution.tour.size()) {
+    if (tour_idx == solution->tour.size()) {
       continue;
     }
 
-    TarelState next_state = graph.state_by_id[solution.tour[tour_idx].v];
+    TarelState next_state = graph.state_by_id[solution->tour[tour_idx].v];
     if (next_state.stop == cur_state.stop) {
       if (next_state.partition.v != (cur_state.partition.v + 1) % cur_stop_num_states) {
         tour_errors.push_back(

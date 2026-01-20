@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <unordered_map>
@@ -166,7 +167,7 @@ TspGraphData MakeTspGraphEdges(
   const SolutionBoundary& boundary
 );
 
-TspTourResult SolveTspAndExtractTour(
+std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
   const SolutionBoundary& boundary,

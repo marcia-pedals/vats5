@@ -13,8 +13,8 @@
 namespace vats5 {
 namespace {
 
-constexpr int kForbiddenEdgeWeight = 32767;
-constexpr int kInterVertexOffset = 10000;
+constexpr int kForbiddenEdgeWeight = 16000;
+constexpr int kInterVertexOffset = 4000;
 
 // Exception thrown when Concorde returns a tour that doesn't have proper in/out pairing.
 // This indicates insufficient kInterVertexOffset or a bug, not a transient error.
@@ -26,28 +26,31 @@ private:
     std::string message_;
 };
 
-// Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW format.
+// Helper class for computing edge weights in the doubled graph.
 // Uses vertex doubling to convert asymmetric TSP to symmetric TSP.
-void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
-    int n = relaxed.NumStops();
-    int doubled_n = 2 * n;
-
-    // Build edge lookup: edge_weights[origin * n + dest] = weight
-    std::vector<int> edge_weights(n * n, kForbiddenEdgeWeight);
-    for (int origin = 0; origin < n; ++origin) {
-        for (const auto& edge : relaxed.GetEdges(StopId{origin})) {
-            edge_weights[origin * n + edge.destination_stop.v] = edge.weight_seconds;
+// Vertices: 2i = in(i), 2i+1 = out(i)
+class DoubledGraphWeights {
+public:
+    explicit DoubledGraphWeights(const RelaxedAdjacencyList& relaxed)
+        : n_(relaxed.NumStops()), edge_weights_(n_ * n_, kForbiddenEdgeWeight) {
+        for (int origin = 0; origin < n_; ++origin) {
+            for (const auto& edge : relaxed.GetEdges(StopId{origin})) {
+                edge_weights_[origin * n_ + edge.destination_stop.v] = edge.weight_seconds;
+            }
         }
     }
 
-    // Helper to get asymmetric weight
-    auto get_weight = [&](int from, int to) -> int {
-        return edge_weights[from * n + to];
-    };
+    int NumStops() const { return n_; }
+    int DoubledN() const { return 2 * n_; }
 
-    // Helper to compute symmetric edge weight in doubled graph
-    // Vertices: 2i = in(i), 2i+1 = out(i)
-    auto get_doubled_weight = [&](int a, int b) -> int {
+    // Get asymmetric weight from original vertex `from` to `to`.
+    int GetAsymmetricWeight(int from, int to) const {
+        return edge_weights_[from * n_ + to];
+    }
+
+    // Compute symmetric edge weight in doubled graph.
+    // Requires a < b.
+    int GetDoubledWeight(int a, int b) const {
         assert(a < b);
         int a_orig = a / 2;
         int b_orig = b / 2;
@@ -62,15 +65,30 @@ void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
         // Different original vertices
         if (!a_is_in && b_is_in) {
             // out(a_orig) <-> in(b_orig): asymmetric weight w(a_orig, b_orig)
-            return get_weight(a_orig, b_orig) + kInterVertexOffset;
+            return GetAsymmetricWeight(a_orig, b_orig) + kInterVertexOffset;
         } else if (a_is_in && !b_is_in) {
             // in(a_orig) <-> out(b_orig): asymmetric weight w(b_orig, a_orig)
-            return get_weight(b_orig, a_orig) + kInterVertexOffset;
+            return GetAsymmetricWeight(b_orig, a_orig) + kInterVertexOffset;
         } else {
             // Both in or both out: forbidden
             return kForbiddenEdgeWeight;
         }
-    };
+    }
+
+    // Check if an edge in the doubled tour uses a forbidden weight.
+    bool IsForbiddenEdge(int a, int b) const {
+        if (a > b) std::swap(a, b);
+        return GetDoubledWeight(a, b) >= kForbiddenEdgeWeight;
+    }
+
+private:
+    int n_;
+    std::vector<int> edge_weights_;
+};
+
+// Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW format.
+void OutputConcordeTsp(std::ostream& out, const DoubledGraphWeights& weights) {
+    int doubled_n = weights.DoubledN();
 
     // Output TSP header
     out << "NAME: vats5\n";
@@ -84,7 +102,7 @@ void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
     // For row i, output weights to j for all j > i
     for (int i = 0; i < doubled_n; ++i) {
         for (int j = i + 1; j < doubled_n; ++j) {
-            int weight = get_doubled_weight(i, j);
+            int weight = weights.GetDoubledWeight(i, j);
             out << weight;
             if (j < doubled_n - 1) {
                 out << " ";
@@ -97,7 +115,8 @@ void OutputConcordeTsp(std::ostream& out, const RelaxedAdjacencyList& relaxed) {
     out << "\nEOF\n";
 }
 
-std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
+// Read the raw doubled tour from Concorde's solution file.
+std::vector<int> ReadDoubledTour(const std::string& solution_path) {
     std::ifstream in(solution_path);
     if (!in) {
         throw std::runtime_error("Failed to open solution file: " + solution_path);
@@ -113,7 +132,25 @@ std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
         in >> node;
         doubled_tour.push_back(node);
     }
+    return doubled_tour;
+}
 
+// Check if any edge in the doubled tour uses a forbidden weight.
+bool DoubledTourUsesForbiddenEdge(const std::vector<int>& doubled_tour, const DoubledGraphWeights& weights) {
+    int doubled_n = static_cast<int>(doubled_tour.size());
+    for (int i = 0; i < doubled_n; ++i) {
+        int a = doubled_tour[i];
+        int b = doubled_tour[(i + 1) % doubled_n];
+        if (weights.IsForbiddenEdge(a, b)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Validate the doubled tour structure and extract the original tour.
+std::vector<StopId> ValidateAndExtractTour(const std::vector<int>& doubled_tour) {
+    int doubled_n = static_cast<int>(doubled_tour.size());
     int n = doubled_n / 2;
     auto orig = [](int v) { return v / 2; };
     auto is_in = [](int v) { return v % 2 == 0; };
@@ -166,7 +203,9 @@ std::vector<StopId> ParseConcordeSolution(const std::string& solution_path) {
     return tour;
 }
 
-ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
+std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
+    DoubledGraphWeights weights(relaxed);
+
     // Create temp directory
     std::string temp_dir = "/tmp/vats5_tsp_XXXXXX";
     if (mkdtemp(temp_dir.data()) == nullptr) {
@@ -178,7 +217,7 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, s
     // Write TSP problem to temp file
     {
         std::ofstream out(problem_path);
-        OutputConcordeTsp(out, relaxed);
+        OutputConcordeTsp(out, weights);
     }
 
     // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel
@@ -206,12 +245,24 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, s
     }
     int raw_optimal_value = static_cast<int>(std::round(std::stod(concorde_output.substr(pos + 17))));
 
-    // Parse solution
-    std::vector<StopId> tour = ParseConcordeSolution(solution_path);
+    // Read the doubled tour
+    std::vector<int> doubled_tour = ReadDoubledTour(solution_path);
+
+    // Check if tour uses any forbidden edges before structural validation
+    if (DoubledTourUsesForbiddenEdge(doubled_tour, weights)) {
+        // Cleanup temp directory before returning
+        std::remove(problem_path.c_str());
+        std::remove(solution_path.c_str());
+        rmdir(temp_dir.c_str());
+        return std::nullopt;
+    }
+
+    // Validate structure and extract original tour
+    std::vector<StopId> tour = ValidateAndExtractTour(doubled_tour);
+    int n = static_cast<int>(tour.size());
 
     // Subtract the inter-vertex offset that was added during graph construction.
     // The proper tour has exactly n inter-vertex edges, so we subtract n * offset.
-    int n = static_cast<int>(tour.size());
     int optimal_value = raw_optimal_value - n * kInterVertexOffset;
 
     // Cleanup temp directory
@@ -224,7 +275,7 @@ ConcordeSolution SolveTspWithConcordeImpl(const RelaxedAdjacencyList& relaxed, s
 
 }  // namespace
 
-ConcordeSolution SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
+std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log) {
     constexpr int kMaxRetries = 5;
     for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
         try {
