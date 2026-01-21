@@ -50,6 +50,14 @@ ProblemState ApplyConstraints(
       required_stops.insert(ab);
       required_stops.erase(require.a);
       required_stops.erase(require.b);
+      assert(boundary.start != require.b);
+      assert(boundary.end != require.a);
+      if (boundary.start == require.a) {
+        boundary.start = ab;
+      }
+      if (boundary.end == require.b) {
+        boundary.end = ab;
+      }
 
       // Collect some steps that we'll need for constructing the steps to and from "ab".
       // Steps from a to b.
