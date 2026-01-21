@@ -76,22 +76,6 @@ SolutionState InitializeSolutionState(
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
-  // Partition steps based on their path's last non-flex step's route description.
-  std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
-  for (const auto& [_, groups] : minimal_paths_sparse.adjacent) {
-    for (const auto& group : groups) {
-      for (const auto& path : group) {
-        std::string& partition = dest_trip_id_to_partition[path.merged_step.destination_trip];
-        partition = "flex";
-        for (const auto& step : path.steps) {
-          if (!step.is_flex) {
-            partition = steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination_trip);
-          }
-        }
-      }
-    }
-  }
-
   // Compact minimal adj list and make compact solution metadata.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
   SolutionMetadata solution_metadata = InitializeSolutionMetadata(steps_from_gtfs.mapping).Remapped(minimal_compact.mapping);
@@ -125,7 +109,6 @@ SolutionState InitializeSolutionState(
     MakeAdjacencyList(steps),
     SolutionBoundary{.start=start_vertex, .end=end_vertex},
     solution_metadata,
-    dest_trip_id_to_partition,
   };
 }
 
@@ -690,45 +673,45 @@ void PrintTarelTourResults(
     out << "\n";
 
 
-    const TarelEdge& edge = tour_result.tour_edges[i + 1];
-    out << "  [weight] " << TimeSinceServiceStart{edge.weight}.ToString() << "\n";
+  //   const TarelEdge& edge = tour_result.tour_edges[i + 1];
+  //   out << "  [weight] " << TimeSinceServiceStart{edge.weight}.ToString() << "\n";
 
-    for (const auto& origin : edge.original_origins) {
-      out << "  [origin] " << state_descriptions.at(origin.partition) << "\n";
-    }
+  //   for (const auto& origin : edge.original_origins) {
+  //     out << "  [origin] " << state_descriptions.at(origin.partition) << "\n";
+  //   }
 
-    for (const auto& destination : edge.original_destinations) {
-      out << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
-    }
+  //   for (const auto& destination : edge.original_destinations) {
+  //     out << "  [dest] " << state_descriptions.at(destination.partition) << "\n";
+  //   }
 
-    out << "  [steps]\n";
-    if (edge.steps.size() > 0) {
-      int cur_hour = edge.steps[0].origin_time.seconds / 3600;
-      for (const Step& s : edge.steps) {
-        int next_hour = s.origin_time.seconds / 3600;
-        if (next_hour > cur_hour) {
-          cur_hour = next_hour;
-          out << "\n";
-        }
-        out << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString() << " (" << last_non_flex_tid.at(s).v << ") |";
-      }
-      out << "\n";
-    }
+  //   out << "  [steps]\n";
+  //   if (edge.steps.size() > 0) {
+  //     int cur_hour = edge.steps[0].origin_time.seconds / 3600;
+  //     for (const Step& s : edge.steps) {
+  //       int next_hour = s.origin_time.seconds / 3600;
+  //       if (next_hour > cur_hour) {
+  //         cur_hour = next_hour;
+  //         out << "\n";
+  //       }
+  //       out << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString() << " (" << last_non_flex_tid.at(s).v << ") |";
+  //     }
+  //     out << "\n";
+  //   }
 
 
-    out << "  [all steps]\n";
-    if (edge.all_steps.size() > 0) {
-      int cur_hour = edge.all_steps[0].origin_time.seconds / 3600;
-      for (const Step& s : edge.all_steps) {
-        int next_hour = s.origin_time.seconds / 3600;
-        if (next_hour > cur_hour) {
-          cur_hour = next_hour;
-          out << "\n";
-        }
-        out << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString() << " (" << last_non_flex_tid.at(s).v << ") |";
-      }
-      out << "\n";
-    }
+  //   out << "  [all steps]\n";
+  //   if (edge.all_steps.size() > 0) {
+  //     int cur_hour = edge.all_steps[0].origin_time.seconds / 3600;
+  //     for (const Step& s : edge.all_steps) {
+  //       int next_hour = s.origin_time.seconds / 3600;
+  //       if (next_hour > cur_hour) {
+  //         cur_hour = next_hour;
+  //         out << "\n";
+  //       }
+  //       out << " " << s.origin_time.ToString() << " -> " << s.destination_time.ToString() << " (" << last_non_flex_tid.at(s).v << ") |";
+  //     }
+  //     out << "\n";
+  //   }
   }
 }
 

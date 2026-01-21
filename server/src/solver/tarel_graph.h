@@ -32,8 +32,6 @@ struct SolutionState {
   SolutionBoundary boundary;
   SolutionMetadata metadata;
 
-  std::unordered_map<TripId, std::string> dest_trip_id_to_partition;
-
   std::string StopName(StopId stop) const;
 };
 
