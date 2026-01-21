@@ -84,6 +84,10 @@ add_library(steps_shortest_path STATIC src/solver/steps_shortest_path.cpp)
 target_link_libraries(steps_shortest_path PUBLIC relaxed_shortest_path)
 target_include_directories(steps_shortest_path PUBLIC src)
 
+# Create branch_and_bound library target
+add_library(branch_and_bound STATIC src/solver/branch_and_bound.cpp)
+target_include_directories(branch_and_bound PUBLIC src)
+
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
@@ -169,3 +173,8 @@ add_test(NAME steps_shortest_path_test COMMAND steps_shortest_path_test)
 add_executable(date_test src/util/date_test.cpp)
 target_link_libraries(date_test PUBLIC gunit date)
 add_test(NAME date_test COMMAND date_test)
+
+# Add branch_and_bound test executable
+add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
+target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound)
+add_test(NAME branch_and_bound_test COMMAND branch_and_bound_test)
