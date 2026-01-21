@@ -14,26 +14,42 @@
 
 namespace vats5 {
 
-struct SolutionMetadata {
-  // stop_names[stop_id.v] is the name of stop_id
-  std::vector<std::string> stop_names;
-
-  SolutionMetadata Remapped(const StopIdMapping& mapping);
-};
-
-struct SolutionBoundary {
+struct ProblemBoundary {
   StopId start;
   StopId end;
 };
 
-struct SolutionState {
-  std::unordered_set<StopId> stops;
-  StepsAdjacencyList adj;
-  SolutionBoundary boundary;
-  SolutionMetadata metadata;
+struct ProblemState {
+  // The graph of minimal steps, i.e. the steps from which all possible tours
+  // can be made, with the property that deleting one step will make at least
+  // one tour impossible.
+  StepsAdjacencyList minimal;
 
-  std::string StopName(StopId stop) const;
+  // The completion of `minimal`, i.e. every possible route between elements of
+  // `stops` is a path. Also includes a zero-duration END->START edge to
+  // complete the cycle for TSP formulation.
+  StepPathsAdjacencyList completed;
+
+  // Which stops in `minimal`/`completed` are the START and END.
+  ProblemBoundary boundary;
+
+  // All stops that are required to be visited, including START and END.
+  std::unordered_set<StopId> stops;
+
+  // Names of all the stops for display purposes.
+  std::unordered_map<StopId, std::string> stop_names;
+
+  std::string StopName(StopId stop) const {
+    return stop_names.at(stop);
+  }
 };
+
+ProblemState MakeProblemState(
+  StepsAdjacencyList minimal,
+  ProblemBoundary boundary,
+  std::unordered_set<StopId> stops,
+  std::unordered_map<StopId, std::string> stop_names
+);
 
 struct StepPartitionId {
   int v;
@@ -151,7 +167,7 @@ struct TspTourResult {
   int optimal_value;
 };
 
-SolutionState InitializeSolutionState(
+ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
 );
@@ -162,30 +178,28 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
 
 TspGraphData MakeTspGraphEdges(
   const std::vector<TarelEdge>& edges,
-  const SolutionBoundary& boundary
+  const ProblemBoundary& boundary
 );
 
 std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
-  const SolutionBoundary& boundary,
+  const ProblemBoundary& boundary,
   std::optional<int> ub = std::nullopt,
   std::ostream* tsp_log = nullptr
 );
 
 std::vector<Path> ComputeMinDurationFeasiblePaths(
   const TspTourResult& tour_result,
-  const SolutionState& state,
-  const StepPathsAdjacencyList& completed
+  const ProblemState& state
 );
 
 void PrintTarelTourResults(
   std::ostream& out,
   const TspTourResult& tour_result,
-  const SolutionState& state,
+  const ProblemState& state,
   const Path& feasible_path,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions,
-  const StepPathsAdjacencyList& completed
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 );
 
 std::vector<TarelEdge> MakeTarelEdges(
@@ -194,7 +208,7 @@ std::vector<TarelEdge> MakeTarelEdges(
 );
 
 void WriteTarelSummary(
-  const SolutionState& state,
+  const ProblemState& state,
   const std::string& dir,
   const std::vector<TarelEdge>& edges,
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions

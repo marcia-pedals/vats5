@@ -2,7 +2,7 @@
 
 #include <memory>
 #include "solver/data.h"
-#include "solver/steps_adjacency_list.h"
+#include "solver/tarel_graph.h"
 
 namespace vats5 {
 
@@ -25,31 +25,6 @@ struct SearchEdge {
   // This edge's parent's edge. (so nullptr for children of the root node).
   // Owned by the search.
   SearchEdge* parent_edge;
-};
-
-struct ProblemBoundary {
-  StopId start;
-  StopId end;
-};
-
-struct ProblemState {
-  // The graph of minimal steps, i.e. the steps from which all possible tours
-  // can be made, with the property that deleting one step will make at least
-  // one tour impossible.
-  StepsAdjacencyList minimal;
-
-  // The completion of `minimal`, i.e. every possible route between elements of
-  // `stops` is a path.
-  StepPathsAdjacencyList completed;
-
-  // Which stops in `minimal`/`completed` are the START and END.
-  ProblemBoundary boundary;
-
-  // All stops that are required to be visited, including START and END.
-  std::unordered_set<StopId> stops;
-
-  // Names of all the stops for display purposes.
-  std::unordered_map<StopId, std::string> stop_names;
 };
 
 struct SearchNode {

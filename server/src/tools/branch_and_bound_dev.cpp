@@ -51,12 +51,9 @@ std::string GetTimestampDir() {
     return oss.str();
 }
 
-std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const SolutionState& state, const std::string& tour_dir, std::optional<int> ub) {
+std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const ProblemState& state, const std::string& tour_dir, std::optional<int> ub) {
   std::filesystem::create_directory(tour_dir);
   std::ofstream log(tour_dir + "/log");
-
-  StepPathsAdjacencyList completed =
-    ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
 
   std::unordered_set<StopId> stops_without_origin = state.stops;
   std::unordered_set<StopId> stops_without_destination = state.stops;
@@ -64,7 +61,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
   stops_without_origin.erase(state.boundary.end);
 
   std::unordered_map<Step, std::string> step_to_last_scheduled_route_desc;
-  for (const Path& p : completed.AllPaths()) {
+  for (const Path& p : state.completed.AllPaths()) {
     std::string route_desc = "flex";
     for (const Step& s : p.steps) {
       // TODO: Fix the !=-2 badness.
@@ -93,13 +90,6 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
     return std::nullopt;
   }
 
-  // Add END -> START edge.
-  // It's safe to push a new group without checking for an existing group with
-  // `start` dest because no edges (other than this one we're adding right
-  // now) go into `start`.
-  assert(completed.adjacent[state.boundary.end].size() == 0);
-  completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
-
   std::unordered_map<std::string, StepPartitionId> partition_to_id;
   std::unordered_map<StepPartitionId, std::string> id_to_partition;
   auto GetId = [&](const std::string& partition) -> StepPartitionId {
@@ -111,7 +101,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
   };
 
   std::vector<TarelEdge> raw_tarel_edges = MakeTarelEdges(
-    completed,
+    state.completed,
     std::function<StepPartitionId(Step)>([&](const Step& s) -> StepPartitionId {
       if (s.is_flex) {
         return GetId("flex");
@@ -142,7 +132,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
     log << "No valid TSP tour exists (uses forbidden edges)\n";
     return std::nullopt;
   }
-  std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*tour_result, state, completed);
+  std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*tour_result, state);
   if (feasible_paths.size() > 0) {
     log << feasible_paths.size() << " feasible paths with start times:";
     for (const Path& p : feasible_paths) {
@@ -150,7 +140,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
     }
     log << "\n";
     log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
-    PrintTarelTourResults(log, *tour_result, state, feasible_paths[0], id_to_partition, completed);
+    PrintTarelTourResults(log, *tour_result, state, feasible_paths[0], id_to_partition);
   } else {
     log << "No feasible path?!\n";
   }
@@ -195,21 +185,23 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Solut
 //   return branched_state;
 // }
 
-SolutionState BranchRequire(const SolutionState& state, StopId branch_a, StopId branch_b) {
+ProblemState BranchRequire(const ProblemState& state, StopId branch_a, StopId branch_b) {
   // Remove `branch_b` from the required stops but replace all the steps out of
   // `branch_a` with those combined with the steps out of `branch_b`.
-  SolutionState branched_state = state;
-  branched_state.stops.erase(branch_b);
-  branched_state.metadata.stop_names[branch_a.v] = (
-    branched_state.metadata.stop_names[branch_a.v] + "-> (" +
-    branched_state.metadata.stop_names[branch_b.v] + ")"
+  std::unordered_set<StopId> new_stops = state.stops;
+  new_stops.erase(branch_b);
+
+  std::unordered_map<StopId, std::string> new_stop_names = state.stop_names;
+  new_stop_names[branch_a] = (
+    new_stop_names.at(branch_a) + "-> (" +
+    new_stop_names.at(branch_b) + ")"
   );
 
   // First pull the steps out into a few pieces.
   std::vector<Step> a_to_b_steps;
   std::unordered_map<StopId, std::vector<Step>> b_to_star_steps;
   std::vector<Step> other_steps;
-  for (const Step& s : state.adj.AllSteps()) {
+  for (const Step& s : state.minimal.AllSteps()) {
     if (s.origin_stop == branch_a && s.destination_stop == branch_b) {
       a_to_b_steps.push_back(s);
     } else if (s.origin_stop == branch_b) {
@@ -226,25 +218,31 @@ SolutionState BranchRequire(const SolutionState& state, StopId branch_a, StopId 
     }
   }
 
-  branched_state.adj = MakeAdjacencyList(other_steps);
-
-  return branched_state;
+  return MakeProblemState(
+    MakeAdjacencyList(other_steps),
+    state.boundary,
+    new_stops,
+    new_stop_names
+  );
 }
 
-SolutionState BranchForbid(const SolutionState& state, StopId branch_a, StopId branch_b) {
-  std::vector<Step> branched_steps = state.adj.AllSteps();
+ProblemState BranchForbid(const ProblemState& state, StopId branch_a, StopId branch_b) {
+  std::vector<Step> branched_steps = state.minimal.AllSteps();
   std::erase_if(branched_steps, [&](const Step& s) -> bool {
     return s.destination_stop == branch_b && s.origin_stop == branch_a;
   });
-  SolutionState branched_state = state;
-  branched_state.adj = MakeAdjacencyList(branched_steps);
-  return branched_state;
+  return MakeProblemState(
+    MakeAdjacencyList(branched_steps),
+    state.boundary,
+    state.stops,
+    state.stop_names
+  );
 }
 
 struct SearchNode {
   int id;
   int lb;
-  SolutionState state;
+  ProblemState state;
   std::vector<BranchEdge> required_edges;
   int newly_required = 0;
   std::vector<BranchEdge> forbidden_edges;
@@ -277,7 +275,7 @@ int main() {
         GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
     std::cout << "Initializing solution state...\n";
-    SolutionState initial_state = InitializeSolutionState(steps_from_gtfs, bart_stops);
+    ProblemState initial_state = InitializeProblemState(steps_from_gtfs, bart_stops);
 
     std::string run_dir = GetTimestampDir();
     std::filesystem::create_directory(run_dir);
@@ -381,11 +379,8 @@ int main() {
       assert(result->optimal_value >= node->lb);
 
       std::vector<Step> primitive_steps;
-      // TODO: DoSolve also computes `completed`.
-      StepPathsAdjacencyList completed =
-        ReduceToMinimalSystemPaths(node->state.adj, node->state.stops, /*keep_through_other_destination=*/true);
       for (const TarelEdge& e : result->tour_edges) {
-        const auto& paths = completed.PathsBetween(e.origin.stop, e.destination.stop);
+        const auto& paths = node->state.completed.PathsBetween(e.origin.stop, e.destination.stop);
         assert(paths.size() > 0);
         Path best = paths[0];
         for (const Path& p : paths) {
@@ -429,7 +424,7 @@ int main() {
       //   assert(false);
       // }
 
-      std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*result, node->state, completed);
+      std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(*result, node->state);
       if (
         feasible_paths.size() > 0 &&
         (best_feasible_paths.size() == 0 || feasible_paths[0].DurationSeconds() < best_feasible_paths[0].DurationSeconds())
@@ -531,19 +526,10 @@ int main() {
 
     return 0;
 
-    SolutionState state = initial_state;
-    StepPathsAdjacencyList completed =
-      ReduceToMinimalSystemPaths(state.adj, state.stops, /*keep_through_other_destination=*/true);
-
-    // Add END -> START edge.
-    // It's safe to push a new group without checking for an existing group with
-    // `start` dest because no edges (other than this one we're adding right
-    // now) go into `start`.
-    assert(completed.adjacent[state.boundary.end].size() == 0);
-    completed.adjacent[state.boundary.end].push_back({ZeroPath(state.boundary.end, state.boundary.start)});
+    ProblemState state = initial_state;
 
     std::unordered_map<Step, TripId> last_non_flex_tid;
-    for (const Path& p : completed.AllPaths()) {
+    for (const Path& p : state.completed.AllPaths()) {
       TripId tid = TripId::NOOP;
       for (const Step& s : p.steps) {
         if (!s.is_flex) {

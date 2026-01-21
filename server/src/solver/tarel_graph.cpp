@@ -20,35 +20,22 @@
 
 namespace vats5 {
 
-SolutionMetadata SolutionMetadata::Remapped(const StopIdMapping& mapping) {
-  SolutionMetadata result;
-  result.stop_names.resize(mapping.new_to_original.size(), "");
-  for (int i = 0; i < mapping.new_to_original.size(); ++i) {
-    result.stop_names[i] = this->stop_names[mapping.new_to_original[i].v];
-  }
-  return result;
-}
-
-std::string SolutionState::StopName(StopId stop) const {
-  return metadata.stop_names[stop.v];
-}
-
-SolutionMetadata InitializeSolutionMetadata(const DataGtfsMapping& mapping) {
-  int max_stop_id = 0;
-  for (const auto& [stop_id, _]: mapping.stop_id_to_stop_name) {
-    if (stop_id.v > max_stop_id) {
-      max_stop_id = stop_id.v;
-    }
-  }
-
-  SolutionMetadata result;
-  result.stop_names.resize(max_stop_id + 1, "");
-
-  for (const auto& [stop_id, stop_name]: mapping.stop_id_to_stop_name) {
-    result.stop_names[stop_id.v] = stop_name;
-  }
-
-  return result;
+ProblemState MakeProblemState(
+  StepsAdjacencyList minimal,
+  ProblemBoundary boundary,
+  std::unordered_set<StopId> stops,
+  std::unordered_map<StopId, std::string> stop_names
+) {
+  StepPathsAdjacencyList completed = ReduceToMinimalSystemPaths(minimal, stops, true);
+  // Add END->START edge to complete the cycle for TSP formulation.
+  completed.adjacent[boundary.end].push_back({ZeroPath(boundary.end, boundary.start)});
+  return ProblemState{
+    std::move(minimal),
+    std::move(completed),
+    boundary,
+    std::move(stops),
+    std::move(stop_names)
+  };
 }
 
 Step ZeroEdge(StopId a, StopId b) {
@@ -68,7 +55,7 @@ Path ZeroPath(StopId a, StopId b) {
   return Path{step, {step}};
 }
 
-SolutionState InitializeSolutionState(
+ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
 ) {
@@ -76,26 +63,30 @@ SolutionState InitializeSolutionState(
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
-  // Compact minimal adj list and make compact solution metadata.
+  // Compact minimal adj list and remap stop names.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
-  SolutionMetadata solution_metadata = InitializeSolutionMetadata(steps_from_gtfs.mapping).Remapped(minimal_compact.mapping);
+
+  std::unordered_map<StopId, std::string> stop_names;
+  for (int i = 0; i < minimal_compact.mapping.new_to_original.size(); ++i) {
+    StopId original_stop = minimal_compact.mapping.new_to_original[i];
+    auto it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
+    if (it != steps_from_gtfs.mapping.stop_id_to_stop_name.end()) {
+      stop_names[StopId{i}] = it->second;
+    }
+  }
 
   int num_actual_stops = minimal_compact.list.NumStops();
 
   // Add the "START" and "END" vertices.
   StopId start_vertex = StopId{num_actual_stops};
-  solution_metadata.stop_names.push_back("START");
-  assert(solution_metadata.stop_names[start_vertex.v] == "START");
+  stop_names[start_vertex] = "START";
   StopId end_vertex = StopId{num_actual_stops + 1};
-  solution_metadata.stop_names.push_back("END");
-  assert(solution_metadata.stop_names[end_vertex.v] == "END");
+  stop_names[end_vertex] = "END";
 
   // ... with 0-duration flex steps START->* and *->END.
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   for (StopId actual_stop = StopId{0}; actual_stop.v < num_actual_stops; actual_stop.v += 1) {
-    // if (solution_metadata.stop_names[actual_stop.v] == "Berryessa / North San Jose") {
-      steps.push_back(ZeroEdge(start_vertex, actual_stop));
-    // }
+    steps.push_back(ZeroEdge(start_vertex, actual_stop));
     steps.push_back(ZeroEdge(actual_stop, end_vertex));
   }
 
@@ -104,12 +95,12 @@ SolutionState InitializeSolutionState(
     stops.insert(stop);
   }
 
-  return SolutionState{
-    stops,
+  return MakeProblemState(
     MakeAdjacencyList(steps),
-    SolutionBoundary{.start=start_vertex, .end=end_vertex},
-    solution_metadata,
-  };
+    ProblemBoundary{.start=start_vertex, .end=end_vertex},
+    stops,
+    stop_names
+  );
 }
 
 bool TarelState::operator<(const TarelState& other) const {
@@ -418,7 +409,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
 
 TspGraphData MakeTspGraphEdges(
   const std::vector<TarelEdge>& edges,
-  const SolutionBoundary& boundary
+  const ProblemBoundary& boundary
 ) {
   TspGraphData result;
 
@@ -476,7 +467,7 @@ TspGraphData MakeTspGraphEdges(
 std::optional<TspTourResult> SolveTspAndExtractTour(
   const std::vector<TarelEdge>& edges,
   const TspGraphData& graph,
-  const SolutionBoundary& boundary,
+  const ProblemBoundary& boundary,
   std::optional<int> ub,
   std::ostream* tsp_log
 ) {
@@ -580,8 +571,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
 std::vector<Path> ComputeMinDurationFeasiblePaths(
   const TspTourResult& tour_result,
-  const SolutionState& state,
-  const StepPathsAdjacencyList& completed
+  const ProblemState& state
 ) {
   // Compute min duration feasible path.
   std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
@@ -589,7 +579,7 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
     feasible_paths = PairwiseMergedSteps(
       feasible_paths,
       // edge.all_steps // TODO: Nope nope this is just an experiment, must change it back to MergedStepsBetween for actual UB. Or have a flag to switch between.
-      completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
+      state.completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
     );
   }
 
@@ -621,7 +611,7 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
       std::optional<Step> next_step = SelectBestNextStep(
         cur_step,
         // TODO: AAAA unfortunate allocation.
-        completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
+        state.completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
       );
       if (!next_step.has_value()) {
         break;
@@ -639,13 +629,12 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
 void PrintTarelTourResults(
   std::ostream& out,
   const TspTourResult& tour_result,
-  const SolutionState& state,
+  const ProblemState& state,
   const Path& feasible_path,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions,
-  const StepPathsAdjacencyList& completed
+  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 ) {
   std::unordered_map<Step, TripId> last_non_flex_tid;
-  for (const Path& p : completed.AllPaths()) {
+  for (const Path& p : state.completed.AllPaths()) {
     TripId tid = TripId::NOOP;
     for (const Step& s : p.steps) {
       if (!s.is_flex) {
@@ -716,7 +705,7 @@ void PrintTarelTourResults(
 }
 
 void WriteTarelSummary(
-  const SolutionState& state,
+  const ProblemState& state,
   const std::string& dir,
   const std::vector<TarelEdge>& edges,
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
