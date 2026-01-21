@@ -6,21 +6,23 @@
 
 namespace vats5 {
 
-struct BranchRequireEdge {
+struct ConstraintRequireEdge {
   StopId a;
   StopId b;
 };
 
-struct BranchForbidEdge {
+struct ConstraintForbidEdge {
   StopId a;
   StopId b;
 };
+
+using ProblemConstraint = std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
 
 // The minimal amount of information needed to reconstruct the entire state of a
 // search node from the initial problem.
 struct SearchEdge {
   // Additional constraints added to the parent, in order.
-  std::vector<std::variant<BranchRequireEdge, BranchForbidEdge>> constraints;
+  std::vector<ProblemConstraint> constraints;
 
   // This edge's parent's edge. (so nullptr for children of the root node).
   // Owned by the search.
@@ -45,6 +47,11 @@ struct SearchNode {
   // around after we're done with it.
   std::unique_ptr<ProblemState> state;
 };
+
+ProblemState ApplyConstraints(
+  const ProblemState& state,
+  const std::vector<ProblemConstraint>& constraints
+);
 
 // Stub function for branch and bound solver.
 // Returns 0 for now.

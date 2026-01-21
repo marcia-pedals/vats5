@@ -55,8 +55,8 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
   std::filesystem::create_directory(tour_dir);
   std::ofstream log(tour_dir + "/log");
 
-  std::unordered_set<StopId> stops_without_origin = state.stops;
-  std::unordered_set<StopId> stops_without_destination = state.stops;
+  std::unordered_set<StopId> stops_without_origin = state.required_stops;
+  std::unordered_set<StopId> stops_without_destination = state.required_stops;
   stops_without_destination.erase(state.boundary.start);
   stops_without_origin.erase(state.boundary.end);
 
@@ -188,7 +188,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
 ProblemState BranchRequire(const ProblemState& state, StopId branch_a, StopId branch_b) {
   // Remove `branch_b` from the required stops but replace all the steps out of
   // `branch_a` with those combined with the steps out of `branch_b`.
-  std::unordered_set<StopId> new_stops = state.stops;
+  std::unordered_set<StopId> new_stops = state.required_stops;
   new_stops.erase(branch_b);
 
   std::unordered_map<StopId, std::string> new_stop_names = state.stop_names;
@@ -200,26 +200,40 @@ ProblemState BranchRequire(const ProblemState& state, StopId branch_a, StopId br
   // First pull the steps out into a few pieces.
   std::vector<Step> a_to_b_steps;
   std::unordered_map<StopId, std::vector<Step>> b_to_star_steps;
-  std::vector<Step> other_steps;
+  std::unordered_map<StopId, std::vector<Step>> a_to_star_steps;
+  std::unordered_map<StopId, std::vector<Step>> star_to_a_steps;
+  std::vector<Step> result_steps;
   for (const Step& s : state.minimal.AllSteps()) {
     if (s.origin_stop == branch_a && s.destination_stop == branch_b) {
       a_to_b_steps.push_back(s);
     } else if (s.origin_stop == branch_b) {
       b_to_star_steps[s.destination_stop].push_back(s);
-    } else if (s.origin_stop != branch_a) {
-      other_steps.push_back(s);
+    } else if (s.origin_stop == branch_a) {
+      a_to_star_steps[s.destination_stop].push_back(s);
+    } else if (s.destination_stop == branch_a) {
+      star_to_a_steps[s.origin_stop].push_back(s);
+      result_steps.push_back(s);
+    } else {
+      result_steps.push_back(s);
     }
   }
 
   // Then build up the combined steps and put them in `other_steps`.
   for (const auto& [star, b_to_star] : b_to_star_steps) {
     for (const Step& s : PairwiseMergedSteps(a_to_b_steps, b_to_star)) {
-      other_steps.push_back(s);
+      result_steps.push_back(s);
+    }
+  }
+  for (const auto& [x, x_to_a] : star_to_a_steps) {
+    for (const auto& [y, a_to_y] : a_to_star_steps) {
+      for (const Step& s : PairwiseMergedSteps(x_to_a, a_to_y)) {
+        result_steps.push_back(s);
+      }
     }
   }
 
   return MakeProblemState(
-    MakeAdjacencyList(other_steps),
+    MakeAdjacencyList(result_steps),
     state.boundary,
     new_stops,
     new_stop_names
@@ -234,7 +248,7 @@ ProblemState BranchForbid(const ProblemState& state, StopId branch_a, StopId bra
   return MakeProblemState(
     MakeAdjacencyList(branched_steps),
     state.boundary,
-    state.stops,
+    state.required_stops,
     state.stop_names
   );
 }

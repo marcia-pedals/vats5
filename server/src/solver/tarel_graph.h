@@ -34,7 +34,7 @@ struct ProblemState {
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
-  std::unordered_set<StopId> stops;
+  std::unordered_set<StopId> required_stops;
 
   // Names of all the stops for display purposes.
   std::unordered_map<StopId, std::string> stop_names;

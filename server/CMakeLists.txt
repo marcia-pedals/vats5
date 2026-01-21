@@ -86,6 +86,7 @@ target_include_directories(steps_shortest_path PUBLIC src)
 
 # Create branch_and_bound library target
 add_library(branch_and_bound STATIC src/solver/branch_and_bound.cpp)
+target_link_libraries(branch_and_bound PUBLIC tarel_graph)
 target_include_directories(branch_and_bound PUBLIC src)
 
 # Create tarel_graph library target
