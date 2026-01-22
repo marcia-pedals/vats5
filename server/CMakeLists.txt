@@ -122,10 +122,18 @@ target_link_libraries(plain_viz PUBLIC visualization)
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
 target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph)
 
-# Create cached_test_data header-only library for test utilities
+# Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
 target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)
 target_include_directories(cached_test_data INTERFACE src)
+
+add_library(problem_state_gen src/solver/test_util/problem_state_gen.cpp)
+target_link_libraries(problem_state_gen PUBLIC tarel_graph rapidcheck)
+target_include_directories(problem_state_gen PUBLIC src)
+
+add_library(naive_solve src/solver/test_util/naive_solve.cpp)
+target_link_libraries(naive_solve PUBLIC tarel_graph step_merge)
+target_include_directories(naive_solve PUBLIC src)
 
 # Enable CMake testing
 enable_testing()
@@ -177,5 +185,10 @@ add_test(NAME date_test COMMAND date_test)
 
 # Add branch_and_bound test executable
 add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
-target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound)
+target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME branch_and_bound_test COMMAND branch_and_bound_test)
+
+# Add tarel_graph test executable
+add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
+target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve rapidcheck_gtest)
+add_test(NAME tarel_graph_test COMMAND tarel_graph_test)

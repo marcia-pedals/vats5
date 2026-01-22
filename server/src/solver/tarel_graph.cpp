@@ -55,6 +55,25 @@ Path ZeroPath(StopId a, StopId b) {
   return Path{step, {step}};
 }
 
+void AddBoundary(
+ std::vector<Step>& steps,
+ std::unordered_set<StopId>& stops,
+ std::unordered_map<StopId, std::string>& stop_names,
+ ProblemBoundary bounday
+) {
+  // ... with 0-duration flex steps START->* and *->END.
+  for (StopId stop : stops) {
+    steps.push_back(ZeroEdge(bounday.start, stop));
+    steps.push_back(ZeroEdge(stop, bounday.end));
+  }
+
+  // Add the "START" and "END" vertices.
+  stops.insert(bounday.start);
+  stop_names[bounday.start] = "START";
+  stops.insert(bounday.end);
+  stop_names[bounday.end] = "END";
+}
+
 ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
@@ -66,38 +85,29 @@ ProblemState InitializeProblemState(
   // Compact minimal adj list and remap stop names.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
 
+  std::unordered_set<StopId> stops;
   std::unordered_map<StopId, std::string> stop_names;
   for (int i = 0; i < minimal_compact.mapping.new_to_original.size(); ++i) {
+    StopId stop = StopId{i};
+    stops.insert(stop);
     StopId original_stop = minimal_compact.mapping.new_to_original[i];
     auto it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
-    if (it != steps_from_gtfs.mapping.stop_id_to_stop_name.end()) {
-      stop_names[StopId{i}] = it->second;
-    }
+    assert (it != steps_from_gtfs.mapping.stop_id_to_stop_name.end());
+    stop_names[stop] = it->second;
   }
 
   int num_actual_stops = minimal_compact.list.NumStops();
+  ProblemBoundary boundary{
+    .start=StopId{num_actual_stops},
+    .end=StopId{num_actual_stops + 1}
+  };
 
-  // Add the "START" and "END" vertices.
-  StopId start_vertex = StopId{num_actual_stops};
-  stop_names[start_vertex] = "START";
-  StopId end_vertex = StopId{num_actual_stops + 1};
-  stop_names[end_vertex] = "END";
-
-  // ... with 0-duration flex steps START->* and *->END.
   std::vector<Step> steps = minimal_compact.list.AllSteps();
-  for (StopId actual_stop = StopId{0}; actual_stop.v < num_actual_stops; actual_stop.v += 1) {
-    steps.push_back(ZeroEdge(start_vertex, actual_stop));
-    steps.push_back(ZeroEdge(actual_stop, end_vertex));
-  }
-
-  std::unordered_set<StopId> stops;
-  for (StopId stop = StopId{0}; stop.v < end_vertex.v + 1; stop.v += 1) {
-    stops.insert(stop);
-  }
+  AddBoundary(steps, stops, stop_names, boundary);
 
   return MakeProblemState(
     MakeAdjacencyList(steps),
-    ProblemBoundary{.start=start_vertex, .end=end_vertex},
+    boundary,
     stops,
     stop_names
   );

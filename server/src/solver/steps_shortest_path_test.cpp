@@ -11,7 +11,7 @@
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
-#include "solver/cached_test_data.h"
+#include "solver/test_util/cached_test_data.h"
 #include "solver/data.h"
 #include "solver/step_merge.h"
 

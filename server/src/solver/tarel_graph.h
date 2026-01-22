@@ -167,6 +167,15 @@ struct TspTourResult {
   int optimal_value;
 };
 
+// Adds the `boundary` START and END to `stops` and `stop_names`, and adds
+// START->* and *->END zero-duration flex steps to `steps`.
+void AddBoundary(
+ std::vector<Step>& steps,
+ std::unordered_set<StopId>& stops,
+ std::unordered_map<StopId, std::string>& stop_names,
+ ProblemBoundary bounday
+);
+
 ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
