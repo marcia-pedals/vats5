@@ -16,8 +16,7 @@ namespace vats5 {
 namespace {
 
 RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
-  CycleIsFlex cycle_is_flex = *rc::gen::element(CycleIsFlex::kNo, CycleIsFlex::kYes);
-  ProblemState state = *GenProblemState(cycle_is_flex);
+  ProblemState state = *GenProblemState();
 
   // TODO: Maybe partition based on minimal steps to make it closer to how
   // partitioning works in the real solver.
@@ -49,7 +48,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
 // If there are no flex steps and if each step is in a different partition, then
 // the lower bound should reach the optimal value.
 RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
-  ProblemState state = *GenProblemState(CycleIsFlex::kNo);
+  ProblemState state = *GenProblemState(rc::gen::just(CycleIsFlex::kNo));
   std::unordered_map<Step, StepPartitionId> partition;
   auto edges = MakeTarelEdges(state.completed, [&](const Step& s) -> StepPartitionId {
     const auto [it, _] = partition.try_emplace(s, partition.size());

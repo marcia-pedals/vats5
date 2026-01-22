@@ -14,8 +14,7 @@
 namespace vats5 {
 
 RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesOptimalValue, ()) {
-  CycleIsFlex cycle_is_flex = *rc::gen::element(CycleIsFlex::kNo, CycleIsFlex::kYes);
-  ProblemState state = *GenProblemState(cycle_is_flex);
+  ProblemState state = *GenProblemState();
 
   std::unordered_set<StopId> non_boundary = state.required_stops;
   non_boundary.erase(state.boundary.start);

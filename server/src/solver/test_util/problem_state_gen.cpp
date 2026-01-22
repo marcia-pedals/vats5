@@ -74,10 +74,11 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "}";
 }
 
-rc::Gen<ProblemState> GenProblemState(CycleIsFlex cycle_is_flex) {
-  rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
+rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
+  return rc::gen::mapcat(std::move(cycle_is_flex_gen), [](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
+    rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
 
-  return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex](int num_actual_stops) -> rc::Gen<ProblemState> {
+    return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex](int num_actual_stops) -> rc::Gen<ProblemState> {
     auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration) -> Step {
       int destination = (origin + 1 + dest_offset) % num_actual_stops;
       return Step{
@@ -137,6 +138,7 @@ rc::Gen<ProblemState> GenProblemState(CycleIsFlex cycle_is_flex) {
       AddBoundary(steps, stops, stop_names, boundary);
 
       return MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names);
+    });
     });
   });
 }
