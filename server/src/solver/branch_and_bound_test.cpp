@@ -23,14 +23,37 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesOptimalValue, ()) {
   StopId a = *rc::gen::elementOf(non_boundary);
   StopId b = *rc::gen::distinctFrom(rc::gen::elementOf(non_boundary), a);
 
-  ProblemState state_left = ApplyConstraints(state, {ConstraintForbidEdge(a, b)});
-  ProblemState state_right = ApplyConstraints(state, {ConstraintRequireEdge(a, b)});
+  ProblemState state_forbid = ApplyConstraints(state, {ConstraintForbidEdge(a, b)});
+  ProblemState state_require = ApplyConstraints(state, {ConstraintRequireEdge(a, b)});
 
-  int opt_orig = NaiveSolve(state);
-  int opt_left = NaiveSolve(state_left);
-  int opt_right = NaiveSolve(state_right);
+  auto result_orig = NaiveSolve(state);
+  auto result_forbid = NaiveSolve(state_forbid);
+  auto result_require = NaiveSolve(state_require);
 
-  RC_ASSERT(opt_orig == std::min(opt_left, opt_right));
+  int opt_orig = result_orig.value;
+  int opt_forbid = result_forbid.value;
+  int opt_require = result_require.value;
+
+  auto log_perms = [&](const char* label, const ProblemState& s, const NaiveSolveResult& result) {
+    RC_LOG() << label << " (opt=" << result.value << "):\n";
+    showValue(s, RC_LOG());
+    RC_LOG() << "\n  optimal permutations:\n";
+    for (const auto& perm : result.optimal_permutations) {
+      RC_LOG() << "    ";
+      for (size_t i = 0; i < perm.stops.size(); ++i) {
+        if (i > 0) RC_LOG() << " -> ";
+        RC_LOG() << s.stop_names.at(perm.stops[i]);
+      }
+      RC_LOG() << " [" << perm.origin_time.ToString() << " -> " << perm.destination_time.ToString() << "]\n";
+    }
+    RC_LOG() << "\n";
+  };
+  log_perms("[state]", state, result_orig);
+  RC_LOG() << "branch on " << state.StopName(a) << " -> " << state.StopName(b) << "\n";
+  log_perms("[state_forbid]", state_forbid, result_forbid);
+  log_perms("[state_require]", state_require, result_require);
+
+  RC_ASSERT(opt_orig == std::min(opt_forbid, opt_require));
 }
 
 }  // namespace vats5

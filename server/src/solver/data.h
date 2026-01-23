@@ -69,10 +69,13 @@ struct TimeSinceServiceStart {
   }
 
   std::string ToString() const {
-    int hours = seconds / 3600;
-    int minutes = (seconds % 3600) / 60;
-    int secs = seconds % 60;
-    return (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
+    std::string prefix = seconds < 0 ? "-" : "";
+    int abs_seconds = seconds < 0 ? -seconds : seconds;
+    int hours = abs_seconds / 3600;
+    int minutes = (abs_seconds % 3600) / 60;
+    int secs = abs_seconds % 60;
+    return prefix +
+           (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
            (minutes < 10 ? "0" : "") + std::to_string(minutes) + ":" +
            (secs < 10 ? "0" : "") + std::to_string(secs);
   }

@@ -18,7 +18,7 @@ ProblemState ApplyConstraints(
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
-  std::unordered_map<StopId, std::string> stop_names;
+  std::unordered_map<StopId, std::string> stop_names = state.stop_names;
   StopId next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.
@@ -69,9 +69,11 @@ ProblemState ApplyConstraints(
       for (const Step& s : steps) {
         if (s.origin_stop == require.a && s.destination_stop == require.b) {
           a_to_b.push_back(s);
-        } else if (s.destination_stop == require.a) {
+        }
+        if (s.destination_stop == require.a) {
           star_to_a[s.origin_stop].push_back(s);
-        } else if (s.origin_stop == require.b) {
+        }
+        if (s.origin_stop == require.b) {
           b_to_star.push_back(s);
         }
       }

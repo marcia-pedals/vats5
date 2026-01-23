@@ -11,7 +11,7 @@
 
 namespace vats5 {
 
-int NaiveSolve(const ProblemState& state) {
+NaiveSolveResult NaiveSolve(const ProblemState& state) {
   std::vector<StopId> middle_stops;
   for (StopId stop : state.required_stops) {
     if (stop != state.boundary.start && stop != state.boundary.end) {
@@ -32,6 +32,7 @@ int NaiveSolve(const ProblemState& state) {
   };
 
   int min_duration = std::numeric_limits<int>::max();
+  std::vector<NaiveSolveResult::OptimalPermutation> optimal_permutations;
   do {
     std::vector<StopId> perm;
     perm.push_back(state.boundary.start);
@@ -47,13 +48,24 @@ int NaiveSolve(const ProblemState& state) {
     }
 
     for (const Step& step : accumulated) {
-      min_duration = std::min(min_duration, step.DurationSeconds());
+      if (step.origin_time < TimeSinceServiceStart{0}) {
+        // See function doc comment.
+        continue;
+      }
+      int duration = step.DurationSeconds();
+      if (duration < min_duration) {
+        min_duration = duration;
+        optimal_permutations.clear();
+        optimal_permutations.push_back({perm, step.origin_time, step.destination_time});
+      } else if (duration == min_duration) {
+        optimal_permutations.push_back({perm, step.origin_time, step.destination_time});
+      }
     }
   } while (std::next_permutation(middle_stops.begin(), middle_stops.end(), [](StopId a, StopId b) {
     return a.v < b.v;
   }));
 
-  return min_duration;
+  return NaiveSolveResult{min_duration, std::move(optimal_permutations)};
 }
 
 }  // namespace vats5

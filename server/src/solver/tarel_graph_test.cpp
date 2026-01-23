@@ -38,7 +38,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   RC_ASSERT(result.has_value());
 
   int lower_bound = result->optimal_value;
-  int actual_value = NaiveSolve(state);
+  int actual_value = NaiveSolve(state).value;
 
   RC_CLASSIFY(lower_bound == actual_value);
 
@@ -59,7 +59,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   auto result = SolveTspAndExtractTour(merged_edges, graph, state.boundary);
   RC_ASSERT(result.has_value());
   int lower_bound = result->optimal_value;
-  int actual_value = NaiveSolve(state);
+  int actual_value = NaiveSolve(state).value;
   RC_ASSERT(lower_bound == actual_value);
 }
 
