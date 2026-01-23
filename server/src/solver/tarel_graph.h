@@ -51,12 +51,6 @@ ProblemState MakeProblemState(
   std::unordered_map<StopId, std::string> stop_names
 );
 
-struct StepPartitionId {
-  int v;
-  bool operator==(const StepPartitionId&) const = default;
-  auto operator<=>(const StepPartitionId&) const = default;
-};
-
 struct TarelState {
   StopId stop;
   StepPartitionId partition;

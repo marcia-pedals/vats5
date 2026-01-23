@@ -137,6 +137,12 @@ target_include_directories(naive_solve PUBLIC src)
 
 # Enable CMake testing
 enable_testing()
+set(CMAKE_CTEST_ARGUMENTS "--label-exclude;slow")
+
+add_custom_target(test-all
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 # Add test executable
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
@@ -167,6 +173,7 @@ add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
 add_executable(concorde_test src/solver/concorde_test.cpp)
 target_link_libraries(concorde_test PUBLIC gunit concorde rapidcheck rapidcheck_gtest)
 add_test(NAME concorde_test COMMAND concorde_test)
+set_tests_properties(concorde_test PROPERTIES LABELS "slow")
 
 # Add relaxed_shortest_path test executable
 add_executable(relaxed_shortest_path_test src/solver/relaxed_shortest_path_test.cpp)
@@ -187,8 +194,10 @@ add_test(NAME date_test COMMAND date_test)
 add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
 target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME branch_and_bound_test COMMAND branch_and_bound_test)
+set_tests_properties(branch_and_bound_test PROPERTIES LABELS "slow")
 
 # Add tarel_graph test executable
 add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
+set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")

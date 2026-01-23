@@ -18,42 +18,10 @@ TEST(RelaxedShortestPathTest, FindShortestRelaxedPathsBasic) {
   //   3 --------+
 
   std::vector<Step> steps = {
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{10},
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = true
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{3},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{5},
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = true
-      },
-      Step{
-          .origin_stop = StopId{3},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{15},
-          .origin_trip = TripId{3},
-          .destination_trip = TripId{3},
-          .is_flex = true
-      },
-      Step{
-          .origin_stop = StopId{2},
-          .destination_stop = StopId{4},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{20},
-          .origin_trip = TripId{4},
-          .destination_trip = TripId{4},
-          .is_flex = true
-      },
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 10, TripId{1}),
+      Step::PrimitiveFlex(StopId{1}, StopId{3}, 5, TripId{2}),
+      Step::PrimitiveFlex(StopId{3}, StopId{2}, 15, TripId{3}),
+      Step::PrimitiveFlex(StopId{2}, StopId{4}, 20, TripId{4}),
   };
 
   StepsAdjacencyList steps_list = MakeAdjacencyList(steps);

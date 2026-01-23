@@ -41,15 +41,15 @@ nlohmann::json MakeVisualization(
         VisualizationPath viz_path;
         for (const auto& step : path.steps) {
           viz_path.steps.push_back(VisualizationStep{
-              .origin_stop = step.origin_stop,
-              .destination_stop = step.destination_stop,
-              .origin_time = step.origin_time,
-              .destination_time = step.destination_time,
+              .origin_stop = step.origin.stop,
+              .destination_stop = step.destination.stop,
+              .origin_time = step.origin.time,
+              .destination_time = step.destination.time,
               .trip_description =
-                  steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip),
+                  steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin.trip),
               .system_step =
-                  IsBartTrip(steps_from_gtfs.mapping, step.origin_trip) &&
-                  IsBartTrip(steps_from_gtfs.mapping, step.destination_trip),
+                  IsBartTrip(steps_from_gtfs.mapping, step.origin.trip) &&
+                  IsBartTrip(steps_from_gtfs.mapping, step.destination.trip),
           });
         }
         viz_paths.push_back(viz_path);

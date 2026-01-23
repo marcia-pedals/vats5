@@ -39,15 +39,7 @@ ProblemState MakeProblemState(
 }
 
 Step ZeroEdge(StopId a, StopId b) {
-  return Step{
-    a,
-    b,
-    TimeSinceServiceStart{0},
-    TimeSinceServiceStart{0},
-    TripId{-2}, // TODO
-    TripId{-2}, // TODO
-    /*is_flex=*/true
-  };
+  return Step::PrimitiveFlex(a, b, 0, TripId{-2});
 }
 
 Path ZeroPath(StopId a, StopId b) {
@@ -148,29 +140,29 @@ std::vector<TarelEdge> MakeTarelEdges(
           steps.push_back(p.merged_step);
         }
         if (!CheckSortedAndMinimal(steps)) {
-          std::cout << "Not sorted and minimal: " << origin_stop << " -> " << steps[0].destination_stop << "\n";
+          std::cout << "Not sorted and minimal: " << origin_stop << " -> " << steps[0].destination.stop << "\n";
           assert(false);
         }
       }
 
       for (const Path& path : path_group) {
         const Step& step = path.merged_step;
-        assert(step.origin_stop == origin_stop);
+        assert(step.origin.stop == origin_stop);
         StepPartitionId pid = partition(step);
-        TarelState destination_state{step.destination_stop, pid};
+        TarelState destination_state{step.destination.stop, pid};
 
         // Preserves sorted-and-minimal property because: The paths within
         // `path_group` are sorted and minimal, they all have the same
-        // `step.destination_stop`, no other path groups fom this origin have
+        // `step.destination.stop`, no other path groups fom this origin have
         // the same destination stop, and order-preserving partitions preserve
         // sortedness and minimality.
-        steps_from[step.origin_stop][destination_state].push_back(step);
+        steps_from[step.origin.stop][destination_state].push_back(step);
 
         auto& arrival_times = arrival_times_to[destination_state];
         if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
           arrival_times = ArrivalTimesFlex();
         } else {
-          std::get<ArrivalTimesScheduled>(arrival_times).times.push_back(step.destination_time);
+          std::get<ArrivalTimesScheduled>(arrival_times).times.push_back(step.destination.time);
         }
       }
     }
@@ -227,13 +219,13 @@ std::vector<TarelEdge> MakeTarelEdges(
           step_idx = 1;
         }
         for (const TimeSinceServiceStart arrival_time : std::get<ArrivalTimesScheduled>(arrival_times_to_origin).times) {
-          while (step_idx < steps.size() && steps[step_idx].origin_time < arrival_time) {
+          while (step_idx < steps.size() && steps[step_idx].origin.time < arrival_time) {
             step_idx += 1;
           }
           if (step_idx >= steps.size()) {
             break;
           }
-          int duration = steps[step_idx].destination_time.seconds - arrival_time.seconds;
+          int duration = steps[step_idx].destination.time.seconds - arrival_time.seconds;
           if (duration < weight) {
             weight = duration;
             weight_steps.clear();
@@ -614,8 +606,8 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
 
     // Build up the individual steps along the tour.
     Step cur_step = ZeroEdge(state.boundary.start, state.boundary.start);
-    cur_step.origin_time = merged_step.origin_time;
-    cur_step.destination_time = merged_step.origin_time;
+    cur_step.origin.time = merged_step.origin.time;
+    cur_step.destination.time = merged_step.origin.time;
 
     for (const auto& edge : tour_result.tour_edges) {
       std::optional<Step> next_step = SelectBestNextStep(
@@ -648,7 +640,7 @@ void PrintTarelTourResults(
     TripId tid = TripId::NOOP;
     for (const Step& s : p.steps) {
       if (!s.is_flex) {
-        tid = s.destination_trip;
+        tid = s.destination.trip;
       }
     }
     last_non_flex_tid[p.merged_step] = tid;
@@ -661,9 +653,9 @@ void PrintTarelTourResults(
     out << std::left << std::setw(align_spacing) << state.StopName(tour_result.original_stop_tour[i])
       << tour_result.cumulative_weights[i].ToString();
     if (i < feasible_path.steps.size()) {
-      int feasible_duration = feasible_path.steps[i].destination_time.seconds - feasible_path.merged_step.origin_time.seconds;
+      int feasible_duration = feasible_path.steps[i].destination.time.seconds - feasible_path.merged_step.origin.time.seconds;
       out << "  " << TimeSinceServiceStart{feasible_duration}.ToString();
-      out << "  " << feasible_path.steps[i].destination_time.ToString();
+      out << "  " << feasible_path.steps[i].destination.time.ToString();
       int cur_diff = feasible_duration - tour_result.cumulative_weights[i].seconds;
       int delta = cur_diff - prev_diff;
       out << "  " << std::right << std::setw(2) << (delta / 60) << ":" << std::setfill('0') << std::setw(2) << (delta % 60) << std::setfill(' ') << std::left;
@@ -730,7 +722,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     origins.insert(origin_stop);
     for (const auto& path_group : path_groups) {
       if (!path_group.empty()) {
-        destinations.insert(path_group[0].merged_step.destination_stop);
+        destinations.insert(path_group[0].merged_step.destination.stop);
       }
     }
   }

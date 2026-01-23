@@ -54,7 +54,7 @@ void MakeMinimalCover(std::vector<Step>& steps, std::vector<T>* parallel = nullp
     if (i == 0) {
       flex_step_duration = steps[i].FlexDurationSeconds();
     } else {
-      steps[i].origin_stop = deletion_marker;
+      steps[i].origin.stop = deletion_marker;
     }
   }
 
@@ -64,21 +64,20 @@ void MakeMinimalCover(std::vector<Step>& steps, std::vector<T>* parallel = nullp
   int earliest_destination_time = std::numeric_limits<int>::max();
   for (int i = static_cast<int>(steps.size()) - 1; i >= 0 && !steps[i].is_flex;
        i--) {
-    if (steps[i].destination_time.seconds >= earliest_destination_time ||
-        steps[i].destination_time.seconds - steps[i].origin_time.seconds >=
-            flex_step_duration) {
+    if (steps[i].destination.time.seconds >= earliest_destination_time ||
+        steps[i].DurationSeconds() >= flex_step_duration) {
       // This step is dominated.
-      steps[i].origin_stop = deletion_marker;
+      steps[i].origin.stop = deletion_marker;
     } else {
       // This step is not dominated, update earliest destination time
-      earliest_destination_time = steps[i].destination_time.seconds;
+      earliest_destination_time = steps[i].destination.time.seconds;
     }
   }
 
   // Remove marked steps in-place using two-pointer technique
   size_t write_pos = 0;
   for (size_t read_pos = 0; read_pos < steps.size(); read_pos++) {
-    if (steps[read_pos].origin_stop != deletion_marker) {
+    if (steps[read_pos].origin.stop != deletion_marker) {
       if (write_pos != read_pos) {
         steps[write_pos] = std::move(steps[read_pos]);
         if (parallel) {
@@ -119,7 +118,7 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 
 // Return the best (earliest arriving at destination) step from `candidates` following `cur`, if any exist.
 // Preconditions:
-// - cur.destination_stop == c.origin_stop for all candidates
+// - cur.destination.stop == c.origin.stop for all candidates
 // - candidates satisfies CheckSortedAndMinimal.
 std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates);
 

@@ -6,24 +6,8 @@ namespace vats5 {
 
 TEST(StepsAdjacencyListTest, MakeAdjacencyListBasic) {
   std::vector<Step> steps = {
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{100},
-          .destination_time = TimeSinceServiceStart{200},
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{150},
-          .destination_time = TimeSinceServiceStart{250},
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = false
-      }
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{2})
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
@@ -41,24 +25,8 @@ TEST(StepsAdjacencyListTest, RemapStopIdsBasic) {
   // Create a sparse adjacency list: stops 10 -> 50, 10 -> 100
   // This will have NumStops() = 101 but only 3 stops actually used
   std::vector<Step> steps = {
-      Step{
-          .origin_stop = StopId{10},
-          .destination_stop = StopId{50},
-          .origin_time = TimeSinceServiceStart{100},
-          .destination_time = TimeSinceServiceStart{200},
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{10},
-          .destination_stop = StopId{100},
-          .origin_time = TimeSinceServiceStart{300},
-          .destination_time = TimeSinceServiceStart{400},
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = false
-      },
+      Step::PrimitiveScheduled(StopId{10}, StopId{50}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{10}, StopId{100}, TimeSinceServiceStart{300}, TimeSinceServiceStart{400}, TripId{2}),
   };
 
   StepsAdjacencyList original = MakeAdjacencyList(steps);

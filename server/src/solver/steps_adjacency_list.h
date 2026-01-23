@@ -20,12 +20,8 @@ struct AdjacencyListStep {
   // Convert to a full Step given the context.
   Step ToStep(StopId origin_stop, StopId destination_stop, bool is_flex) const {
     return Step{
-        origin_stop,
-        destination_stop,
-        origin_time,
-        destination_time,
-        origin_trip,
-        destination_trip,
+        StepEndpoint{origin_stop, is_flex, StepPartitionId::NONE, origin_time, origin_trip},
+        StepEndpoint{destination_stop, is_flex, StepPartitionId::NONE, destination_time, destination_trip},
         is_flex
     };
   }
@@ -33,10 +29,10 @@ struct AdjacencyListStep {
   // Create from a full Step.
   static AdjacencyListStep FromStep(const Step& step) {
     return AdjacencyListStep{
-        step.origin_time,
-        step.destination_time,
-        step.origin_trip,
-        step.destination_trip
+        step.origin.time,
+        step.destination.time,
+        step.origin.trip,
+        step.destination.trip
     };
   }
 
@@ -239,7 +235,7 @@ struct StepPathsAdjacencyList {
     }
     const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
     auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
-      return path_group.size() > 0 && path_group[0].merged_step.destination_stop == b;
+      return path_group.size() > 0 && path_group[0].merged_step.destination.stop == b;
     });
     if (path_group_it == path_groups.end()) {
       return {};

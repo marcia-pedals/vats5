@@ -27,7 +27,7 @@ ProblemState ApplyConstraints(
       const ConstraintForbidEdge& forbid = std::get<ConstraintForbidEdge>(constraint);
       // Forbid is super simple. We just erase all minimal steps a->b.
       std::erase_if(steps, [&](const Step& s) -> bool {
-        return s.origin_stop == forbid.a && s.destination_stop == forbid.b;
+        return s.origin.stop == forbid.a && s.destination.stop == forbid.b;
       });
     } else if (std::holds_alternative<ConstraintRequireEdge>(constraint)) {
       const ConstraintRequireEdge& require = std::get<ConstraintRequireEdge>(constraint);
@@ -68,13 +68,13 @@ ProblemState ApplyConstraints(
       // Steps from b to *, not grouped by anything.
       std::vector<Step> b_to_star;
       for (const Step& s : steps) {
-        if (s.origin_stop == require.a && s.destination_stop == require.b) {
+        if (s.origin.stop == require.a && s.destination.stop == require.b) {
           a_to_b.push_back(s);
         }
-        if (s.destination_stop == require.a) {
-          star_to_a[s.origin_stop].push_back(s);
+        if (s.destination.stop == require.a) {
+          star_to_a[s.origin.stop].push_back(s);
         }
-        if (s.origin_stop == require.b) {
+        if (s.origin.stop == require.b) {
           b_to_star.push_back(s);
         }
       }
@@ -83,14 +83,14 @@ ProblemState ApplyConstraints(
       for (const auto& [x, x_to_a] : star_to_a) {
         std::vector<Step> x_to_ab = PairwiseMergedSteps(x_to_a, a_to_b);
         for (Step s : x_to_ab) {
-          s.destination_stop = ab;
+          s.destination.stop = ab;
           steps.push_back(s);
         }
       }
 
       // The steps from "ab" are the steps "b->x".
       for (Step s : b_to_star) {
-        s.origin_stop = ab;
+        s.origin.stop = ab;
         steps.push_back(s);
       }
     } else {

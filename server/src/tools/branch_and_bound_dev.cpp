@@ -65,17 +65,17 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
     std::string route_desc = "flex";
     for (const Step& s : p.steps) {
       // TODO: Fix the !=-2 badness.
-      if (!s.is_flex && s.destination_trip.v != -2) {
-        if (mapping.trip_id_to_route_desc.find(s.destination_trip) == mapping.trip_id_to_route_desc.end()) {
-          std::cout << s.destination_trip << "\n";
+      if (!s.is_flex && s.destination.trip.v != -2) {
+        if (mapping.trip_id_to_route_desc.find(s.destination.trip) == mapping.trip_id_to_route_desc.end()) {
+          std::cout << s.destination.trip << "\n";
         }
-        route_desc = mapping.trip_id_to_route_desc.at(s.destination_trip);
+        route_desc = mapping.trip_id_to_route_desc.at(s.destination.trip);
       }
     }
     step_to_last_scheduled_route_desc[p.merged_step] = route_desc;
 
-    stops_without_origin.erase(p.merged_step.origin_stop);
-    stops_without_destination.erase(p.merged_step.destination_stop);
+    stops_without_origin.erase(p.merged_step.origin.stop);
+    stops_without_destination.erase(p.merged_step.destination.stop);
   }
 
   if (stops_without_origin.size() > 0 || stops_without_destination.size() > 0) {
@@ -136,7 +136,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
   if (feasible_paths.size() > 0) {
     log << feasible_paths.size() << " feasible paths with start times:";
     for (const Path& p : feasible_paths) {
-      log << " " << p.merged_step.origin_time.ToString();
+      log << " " << p.merged_step.origin.time.ToString();
     }
     log << "\n";
     log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
@@ -153,7 +153,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
 //   // Make it so that the only incoming edges to branch_b are those from branch_a.
 //   std::vector<Step> branched_steps = state.adj.AllSteps();
 //   std::erase_if(branched_steps, [&](const Step& s) -> bool {
-//     return s.destination_stop == branch_b && s.origin_stop != branch_a;
+//     return s.destination.stop == branch_b && s.origin.stop != branch_a;
 //   });
 //   SolutionState branched_state = state;
 //   branched_state.adj = MakeAdjacencyList(branched_steps);
@@ -173,7 +173,7 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
 //     while (state.actually_ends_up_at.find(actually) != state.actually_ends_up_at.end()) {
 //       actually = state.actually_ends_up_at.at(actually);
 //     }
-//     return s.origin_stop == actually && s.destination_stop != branch_b;
+//     return s.origin.stop == actually && s.destination.stop != branch_b;
 //   });
 //   SolutionState branched_state = state;
 //   branched_state.adj = MakeAdjacencyList(branched_steps);
@@ -204,14 +204,14 @@ ProblemState BranchRequire(const ProblemState& state, StopId branch_a, StopId br
   std::unordered_map<StopId, std::vector<Step>> star_to_a_steps;
   std::vector<Step> result_steps;
   for (const Step& s : state.minimal.AllSteps()) {
-    if (s.origin_stop == branch_a && s.destination_stop == branch_b) {
+    if (s.origin.stop == branch_a && s.destination.stop == branch_b) {
       a_to_b_steps.push_back(s);
-    } else if (s.origin_stop == branch_b) {
-      b_to_star_steps[s.destination_stop].push_back(s);
-    } else if (s.origin_stop == branch_a) {
-      a_to_star_steps[s.destination_stop].push_back(s);
-    } else if (s.destination_stop == branch_a) {
-      star_to_a_steps[s.origin_stop].push_back(s);
+    } else if (s.origin.stop == branch_b) {
+      b_to_star_steps[s.destination.stop].push_back(s);
+    } else if (s.origin.stop == branch_a) {
+      a_to_star_steps[s.destination.stop].push_back(s);
+    } else if (s.destination.stop == branch_a) {
+      star_to_a_steps[s.origin.stop].push_back(s);
       result_steps.push_back(s);
     } else {
       result_steps.push_back(s);
@@ -243,7 +243,7 @@ ProblemState BranchRequire(const ProblemState& state, StopId branch_a, StopId br
 ProblemState BranchForbid(const ProblemState& state, StopId branch_a, StopId branch_b) {
   std::vector<Step> branched_steps = state.minimal.AllSteps();
   std::erase_if(branched_steps, [&](const Step& s) -> bool {
-    return s.destination_stop == branch_b && s.origin_stop == branch_a;
+    return s.destination.stop == branch_b && s.origin.stop == branch_a;
   });
   return MakeProblemState(
     MakeAdjacencyList(branched_steps),
@@ -410,8 +410,8 @@ int main() {
       // // Check that the primitive steps visit all the stops.
       // std::unordered_set<StopId> unvisited_stops = initial_state.stops;
       // for (const Step& s : primitive_steps) {
-      //   unvisited_stops.erase(s.origin_stop);
-      //   unvisited_stops.erase(s.destination_stop);
+      //   unvisited_stops.erase(s.origin.stop);
+      //   unvisited_stops.erase(s.destination.stop);
       // }
       // if (unvisited_stops.size() > 0) {
       //   std::cout << "Unvisited stops!\n";
@@ -431,7 +431,7 @@ int main() {
       //     }
       //     for (int steps_i = 0; steps_i < best.steps.size(); ++steps_i) {
       //       const Step& s = best.steps[steps_i];
-      //       std::cout << "    " << initial_state.StopName(s.origin_stop) << " -> " << initial_state.StopName(s.destination_stop) << "\n";
+      //       std::cout << "    " << initial_state.StopName(s.origin.stop) << " -> " << initial_state.StopName(s.destination.stop) << "\n";
       //     }
       //     std::cout << "  " << initial_state.StopName(e.destination.stop) << "\n";
       //   }
@@ -454,11 +454,11 @@ int main() {
       //   StopId cur = node->state.boundary.start;
       //   reduced_primitive_route.push_back(node->state.boundary.start);
       //   for (const Step& s : primitive_steps) {
-      //     assert(s.origin_stop == cur);
-      //     if (node->state.stops.contains(s.destination_stop)) {
-      //       reduced_primitive_route.push_back(s.destination_stop);
+      //     assert(s.origin.stop == cur);
+      //     if (node->state.stops.contains(s.destination.stop)) {
+      //       reduced_primitive_route.push_back(s.destination.stop);
       //     }
-      //     cur = s.destination_stop;
+      //     cur = s.destination.stop;
       //   }
       // }
       // assert(reduced_primitive_route[0] == node->state.boundary.start);
@@ -480,7 +480,7 @@ int main() {
         continue;
       }
       Step branch_step = primitive_steps[((rand() + 1) % (primitive_steps.size() - 2)) + 1];
-      BranchEdge branch_edge{branch_step.origin_stop, branch_step.destination_stop};
+      BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
       BranchEdge branch_edge_bw{branch_edge.b, branch_edge.a};
 
       {
@@ -547,7 +547,7 @@ int main() {
       TripId tid = TripId::NOOP;
       for (const Step& s : p.steps) {
         if (!s.is_flex) {
-          tid = s.destination_trip;
+          tid = s.destination.trip;
         }
       }
       last_non_flex_tid[p.merged_step] = tid;
@@ -577,7 +577,7 @@ int main() {
     //     std::vector<TarelEdge> raw_tarel_edges = MakeTarelEdges(
     //       completed,
     //       std::function<StepPartitionId(Step)>([&](const Step& s) -> StepPartitionId {
-    //         return GetId((s.is_flex ? "flex" : state.dest_trip_id_to_partition[s.destination_trip]) + step_to_tours[s]);
+    //         return GetId((s.is_flex ? "flex" : state.dest_trip_id_to_partition[s.destination.trip]) + step_to_tours[s]);
     //       })
     //     );
     //     std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
@@ -608,7 +608,7 @@ int main() {
     //     if (feasible_paths.size() > 0) {
     //       log << feasible_paths.size() << " feasible paths with start times:";
     //       for (const Path& p : feasible_paths) {
-    //         log << " " << p.merged_step.origin_time.ToString();
+    //         log << " " << p.merged_step.origin.time.ToString();
     //       }
     //       log << "\n";
     //       log << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";
@@ -657,7 +657,7 @@ int main() {
     //     const std::string suffix = "-R" + std::to_string(tour_idx);
     //     for (const Path& p : completed.AllPaths()) {
     //       if (
-    //         tour_dest_and_tids[std::make_pair(p.merged_step.destination_stop, last_non_flex_tid[p.merged_step])] > 0 &&
+    //         tour_dest_and_tids[std::make_pair(p.merged_step.destination.stop, last_non_flex_tid[p.merged_step])] > 0 &&
     //         !step_to_tours[p.merged_step].ends_with(suffix)
     //       ) {
     //         step_to_tours[p.merged_step] += suffix;
@@ -688,7 +688,7 @@ int main() {
     //     //   if (tour_steps.contains(p.merged_step)) {
     //     //     for (const Step& s : p.steps) {
     //     //       if (!s.is_flex) {
-    //     //         tid = s.destination_trip;
+    //     //         tid = s.destination.trip;
     //     //       }
     //     //     }
     //     //   }
@@ -702,7 +702,7 @@ int main() {
     //     //   TripId tid{-1};
     //     //   for (const Step& s : p.steps) {
     //     //     if (!s.is_flex) {
-    //     //       tid = s.destination_trip;
+    //     //       tid = s.destination.trip;
     //     //     }
     //     //   }
     //     //   if (tid.v != -1) {
@@ -746,7 +746,7 @@ int main() {
     //       if (s.is_flex) {
     //         return partition_to_id.at("flex");
     //       }
-    //       return partition_to_id.at(state.dest_trip_id_to_partition[s.destination_trip]);
+    //       return partition_to_id.at(state.dest_trip_id_to_partition[s.destination.trip]);
     //     })
     //   );
     //   std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
@@ -760,7 +760,7 @@ int main() {
     //     if (feasible_paths.size() > 0) {
     //       std::cout << feasible_paths.size() << " feasible paths with start times:";
     //       for (const Path& p : feasible_paths) {
-    //         std::cout << " " << p.merged_step.origin_time.ToString();
+    //         std::cout << " " << p.merged_step.origin.time.ToString();
     //       }
     //       std::cout << "\n";
     //       std::cout << "Duration: " << TimeSinceServiceStart{feasible_paths[0].DurationSeconds()}.ToString() << "\n";

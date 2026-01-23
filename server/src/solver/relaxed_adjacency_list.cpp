@@ -53,7 +53,7 @@ std::vector<WeightedEdge> MakeRelaxedEdges(
       }
 
       // All paths in a group have the same destination
-      StopId destination = path_group[0].merged_step.destination_stop;
+      StopId destination = path_group[0].merged_step.destination.stop;
 
       // Find minimum duration across all paths in this group
       int min_duration = std::numeric_limits<int>::max();

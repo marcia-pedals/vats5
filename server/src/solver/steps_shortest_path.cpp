@@ -89,9 +89,9 @@ std::vector<Step> BacktrackPath(
 ) {
   std::vector<Step> path;
   Step state = search_result[dest.v];
-  while (state.origin_trip != TripId::NOOP) {
+  while (state.origin.trip != TripId::NOOP) {
     path.push_back(state);
-    state = search_result[state.origin_stop.v];
+    state = search_result[state.origin.stop.v];
   }
   std::reverse(path.begin(), path.end());
 
@@ -101,9 +101,9 @@ std::vector<Step> BacktrackPath(
   // - or maybe it is already normalized such?
   for (int i = static_cast<int>(path.size()) - 2; i >= 0; --i) {
     if (path[i].is_flex) {
-      int flex_duration = path[i].destination_time.seconds - path[i].origin_time.seconds;
-      path[i].destination_time = path[i + 1].origin_time;
-      path[i].origin_time.seconds = path[i].destination_time.seconds - flex_duration;
+      int flex_duration = path[i].DurationSeconds();
+      path[i].destination.time = path[i + 1].origin.time;
+      path[i].origin.time.seconds = path[i].destination.time.seconds - flex_duration;
     }
   }
 
@@ -111,15 +111,12 @@ std::vector<Step> BacktrackPath(
 }
 
 // Sentinel Step representing an unvisited stop.
-const Step kUnvisitedStep{
-    StopId{-1},
-    StopId{-1},
+const Step kUnvisitedStep = Step::PrimitiveScheduled(
+    StopId{-1}, StopId{-1},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
-    TripId{-1},
-    TripId{-1},
-    false
-};
+    TripId{-1}
+);
 
 const std::vector<int>* HeuristicCache::GetOrCompute(
     const std::unordered_set<StopId>& destinations
@@ -205,15 +202,9 @@ std::vector<Step> FindShortestPathsAtTime(
   std::vector<int16_t> best_destinations_visited(adjacency_list.NumStops(), -1);
 
   // The state at the origin stop.
-  const Step initial_step{
-      origin_stop,
-      origin_stop,
-      origin_time,
-      origin_time,
-      TripId::NOOP,
-      TripId::NOOP,
-      false  // is_flex
-  };
+  const Step initial_step = Step::PrimitiveScheduled(
+      origin_stop, origin_stop, origin_time, origin_time, TripId::NOOP
+  );
 frontier.push_back(FrontierEntry{
       origin_stop, origin_time, /*destinations_visited=*/0,
       /*is_flex=*/true, GetHeuristic(origin_stop)
@@ -280,19 +271,15 @@ frontier.push_back(FrontierEntry{
           // arrival with more destinations visited).
           const bool is_better =
               arrival_time.seconds <
-                  best_arrival[next_stop.v].destination_time.seconds ||
+                  best_arrival[next_stop.v].destination.time.seconds ||
               (arrival_time.seconds ==
-                   best_arrival[next_stop.v].destination_time.seconds &&
+                   best_arrival[next_stop.v].destination.time.seconds &&
                next_destinations_visited >
                    best_destinations_visited[next_stop.v]);
           if (is_better) {
             Step flex_step_at_now{
-                current_stop,
-                next_stop,
-                current_time,
-                arrival_time,
-                flex_step.origin_trip,
-                flex_step.destination_trip,
+                StepEndpoint{current_stop, true, StepPartitionId::NONE, current_time, flex_step.origin_trip},
+                StepEndpoint{next_stop, true, StepPartitionId::NONE, arrival_time, flex_step.destination_trip},
                 true  // is_flex
             };
 
@@ -351,9 +338,9 @@ frontier.push_back(FrontierEntry{
         // arrival with more destinations visited).
         const bool is_better =
             adj_step.destination_time.seconds <
-                best_arrival[next_stop.v].destination_time.seconds ||
+                best_arrival[next_stop.v].destination.time.seconds ||
             (adj_step.destination_time.seconds ==
-                 best_arrival[next_stop.v].destination_time.seconds &&
+                 best_arrival[next_stop.v].destination.time.seconds &&
              next_destinations_visited >
                  best_destinations_visited[next_stop.v]);
         if (is_better) {
@@ -362,7 +349,7 @@ frontier.push_back(FrontierEntry{
           best_destinations_visited[next_stop.v] = next_destinations_visited;
           frontier.push_back(FrontierEntry{
               next_stop,
-              next_step.destination_time,
+              next_step.destination.time,
               next_destinations_visited,
               /*is_flex=*/false,
               GetHeuristic(next_stop)
@@ -435,7 +422,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     // Push all results and update current origin times.
     for (const auto& dest : destinations_to_query) {
       const Step& path_state = search_result[dest.v];
-      if (path_state.destination_time.seconds ==
+      if (path_state.destination.time.seconds ==
           std::numeric_limits<int>::max()) {
         // There are no more steps for this destination.
         current_origin_time[dest] = big_time;
@@ -459,8 +446,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
       // Check if path goes through another destination
       for (const Step& step : path_steps) {
-        if (step.destination_stop != dest &&
-            destinations.find(step.destination_stop) != destinations.end()) {
+        if (step.destination.stop != dest &&
+            destinations.find(step.destination.stop) != destinations.end()) {
           through_other_destination[merged_step] = true;
           break;
         }
@@ -482,7 +469,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
         // Non-flex step: This is the best step up until
         // merged_step.origin_time, so advance current origin time to 1 past
         // that.
-        current_origin_time[dest] = merged_step.origin_time;
+        current_origin_time[dest] = merged_step.origin.time;
         current_origin_time[dest].seconds += 1;
       }
     }
@@ -502,7 +489,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
     // Remove any paths whose origin is after the ub.
     if (dest_result.size() > 0 && !dest_result.back().is_flex &&
-        dest_result.back().origin_time >= origin_time_ub) {
+        dest_result.back().origin.time >= origin_time_ub) {
       dest_result.pop_back();
     }
 
@@ -511,12 +498,12 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
       Path path = full_paths[whole_step];
       // Normalize flex steps: shift origin_time back to 00:00:00
       if (path.merged_step.is_flex) {
-        int32_t offset = path.merged_step.origin_time.seconds;
-        path.merged_step.origin_time.seconds = 0;
-        path.merged_step.destination_time.seconds -= offset;
+        int32_t offset = path.merged_step.origin.time.seconds;
+        path.merged_step.origin.time.seconds = 0;
+        path.merged_step.destination.time.seconds -= offset;
         for (Step& step : path.steps) {
-          step.origin_time.seconds -= offset;
-          step.destination_time.seconds -= offset;
+          step.origin.time.seconds -= offset;
+          step.destination.time.seconds -= offset;
         }
       }
       dest_paths.push_back(path);

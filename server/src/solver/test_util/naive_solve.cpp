@@ -44,7 +44,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
         for (const Path& p : edge_paths) {
           accumulated_actual_paths.push_back({});
           for (const Step& s : p.steps) {
-            accumulated_actual_paths.back().push_back(s.origin_stop);
+            accumulated_actual_paths.back().push_back(s.origin.stop);
           }
           assert(accumulated_actual_paths.back().size() > 0);
           assert(accumulated_actual_paths.back()[0] == state.boundary.start);
@@ -58,7 +58,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
           assert(step_provenance.bc_index < edge_paths.size());
           new_accumulated_actual_paths.push_back(accumulated_actual_paths[step_provenance.ab_index]);
           for (const Step& s : edge_paths[step_provenance.bc_index].steps) {
-            new_accumulated_actual_paths.back().push_back(s.origin_stop);
+            new_accumulated_actual_paths.back().push_back(s.origin.stop);
           }
           assert(new_accumulated_actual_paths.back()[0] == state.boundary.start);
         }
@@ -68,7 +68,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
       assert(accumulated_steps.size() == accumulated_actual_paths.size());
     }
     for (int i = 0; i < accumulated_steps.size(); ++i) {
-      if (accumulated_steps[i].origin_time < TimeSinceServiceStart{0}) {
+      if (accumulated_steps[i].origin.time < TimeSinceServiceStart{0}) {
         // See function doc comment.
         continue;
       }

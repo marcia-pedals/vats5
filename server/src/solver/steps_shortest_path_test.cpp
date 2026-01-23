@@ -19,10 +19,10 @@ namespace vats5 {
 
 // GoogleTest printer for Step - makes EXPECT_THAT output readable
 void PrintTo(const Step& step, std::ostream* os) {
-  *os << "Step{origin_stop: " << step.origin_stop
-      << ", destination_stop: " << step.destination_stop << ", origin_time: \""
-      << step.origin_time.ToString() << "\""
-      << ", destination_time: \"" << step.destination_time.ToString() << "\""
+  *os << "Step{origin.stop: " << step.origin.stop
+      << ", destination.stop: " << step.destination.stop << ", origin_time: \""
+      << step.origin.time.ToString() << "\""
+      << ", destination_time: \"" << step.destination.time.ToString() << "\""
       << ", is_flex: " << (step.is_flex ? "true" : "false") << "}";
 }
 
@@ -54,7 +54,7 @@ void VerifyPathResult(
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
 
   ASSERT_TRUE(
-      shortest_paths[destination_stop.v].destination_time.seconds !=
+      shortest_paths[destination_stop.v].destination.time.seconds !=
       std::numeric_limits<int>::max()
   ) << destination_stop_name
     << " path not found";
@@ -65,21 +65,21 @@ void VerifyPathResult(
 
   Step step = ConsecutiveMergedSteps(path_steps);
 
-  EXPECT_EQ(step.origin_time.ToString(), expected_origin_time_str)
+  EXPECT_EQ(step.origin.time.ToString(), expected_origin_time_str)
       << destination_stop_name << " departure time";
-  EXPECT_EQ(step.destination_time.ToString(), expected_destination_time_str)
+  EXPECT_EQ(step.destination.time.ToString(), expected_destination_time_str)
       << destination_stop_name << " arrival time";
 
   if (!expected_origin_route_desc.empty()) {
     std::string actual_origin_route_desc =
-        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin_trip);
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin.trip);
     EXPECT_EQ(actual_origin_route_desc, expected_origin_route_desc)
         << destination_stop_name << " origin route desc";
   }
 
   if (!expected_destination_route_desc.empty()) {
     std::string actual_destination_route_desc =
-        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.destination_trip);
+        steps_from_gtfs.mapping.GetRouteDescFromTrip(step.destination.trip);
     EXPECT_EQ(actual_destination_route_desc, expected_destination_route_desc)
         << destination_stop_name << " destination route desc";
   }
@@ -249,27 +249,10 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
 
   std::vector<Step> steps = {
       // Regular scheduled trip from stop 1 to stop 2
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{100},       // Departs at 100
-          .destination_time = TimeSinceServiceStart{200},  // Arrives at 200
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),  // Departs at 100, Arrives at 200
       // Flex trip (walking) from stop 1 to stop 2 - should be first in group to
       // trigger bug
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{0},  // origin time for flex
-          .destination_time = TimeSinceServiceStart{300
-          },  // Duration of 300 seconds (5 minutes)
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = true
-      }
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 300, TripId{2})  // Duration of 300 seconds (5 minutes)
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
@@ -291,9 +274,9 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
   // With the bug, this will be 350 (50 + 300 flex duration)
   // Without the bug, this should be 200 (scheduled trip arrival)
   EXPECT_EQ(
-      result.destination_time.seconds, 200
+      result.destination.time.seconds, 200
   ) << "Should take scheduled trip arriving at 200, not flex trip arriving at "
-    << result.destination_time.seconds;
+    << result.destination.time.seconds;
 }
 
 MATCHER_P5(
@@ -305,10 +288,10 @@ MATCHER_P5(
     is_flex,
     ""
 ) {
-  return arg.origin_stop == origin_stop &&
-         arg.destination_stop == destination_stop &&
-         arg.origin_time.ToString() == origin_time &&
-         arg.destination_time.ToString() == destination_time &&
+  return arg.origin.stop == origin_stop &&
+         arg.destination.stop == destination_stop &&
+         arg.origin.time.ToString() == origin_time &&
+         arg.destination.time.ToString() == destination_time &&
          arg.is_flex == is_flex;
 }
 
@@ -340,11 +323,11 @@ std::string FormatPath(
     } else {
       ss << "  ";
     }
-    ss << mapping.stop_id_to_stop_name.at(step.origin_stop) << " -> "
-       << mapping.stop_id_to_stop_name.at(step.destination_stop) << " (\""
-       << step.origin_time.ToString() << "\" -> \""
-       << step.destination_time.ToString() << "\", "
-       << mapping.GetRouteDescFromTrip(step.origin_trip) << ")\n";
+    ss << mapping.stop_id_to_stop_name.at(step.origin.stop) << " -> "
+       << mapping.stop_id_to_stop_name.at(step.destination.stop) << " (\""
+       << step.origin.time.ToString() << "\" -> \""
+       << step.destination.time.ToString() << "\", "
+       << mapping.GetRouteDescFromTrip(step.origin.trip) << ")\n";
   }
   return ss.str();
 }
@@ -360,10 +343,10 @@ void PrintPaths(
     if (s.is_flex) {
       std::cout << "Flex";
     }
-    std::cout << "(\"" << s.origin_time.ToString() << "\", \""
-              << s.destination_time.ToString() << "\")";
+    std::cout << "(\"" << s.origin.time.ToString() << "\", \""
+              << s.destination.time.ToString() << "\")";
     if (mapping != nullptr) {
-      const auto& trip_info = mapping->trip_id_to_trip_info.at(s.origin_trip).v;
+      const auto& trip_info = mapping->trip_id_to_trip_info.at(s.origin.trip).v;
       if (std::holds_alternative<GtfsTripId>(trip_info)) {
         std::cout << " trip=" << std::get<GtfsTripId>(trip_info).v;
       }
@@ -376,14 +359,14 @@ void PrintPaths(
           std::cout << "Flex ";
         }
         const auto& origin_name =
-            mapping->stop_id_to_stop_name.at(step.origin_stop);
+            mapping->stop_id_to_stop_name.at(step.origin.stop);
         const auto& dest_name =
-            mapping->stop_id_to_stop_name.at(step.destination_stop);
+            mapping->stop_id_to_stop_name.at(step.destination.stop);
         const auto& route_desc =
-            mapping->GetRouteDescFromTrip(step.origin_trip);
+            mapping->GetRouteDescFromTrip(step.origin.trip);
         std::cout << "(" << origin_name << " -> " << dest_name << ", \""
-                  << step.origin_time.ToString() << "\" -> \""
-                  << step.destination_time.ToString() << "\", " << route_desc
+                  << step.origin.time.ToString() << "\" -> \""
+                  << step.destination.time.ToString() << "\", " << route_desc
                   << ")\n";
       }
     }
@@ -1196,47 +1179,15 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   std::vector<Step> steps = {
       // Frequent trips from A (stop 1) to B (stop 2)
       // Trip 1: A->B departing at 100, arriving at 110
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{100},
-          .destination_time = TimeSinceServiceStart{110},
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110}, TripId{1}),
       // Trip 2: A->B departing at 120, arriving at 130
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{120},
-          .destination_time = TimeSinceServiceStart{130},
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = false
-      },
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{120}, TimeSinceServiceStart{130}, TripId{2}),
       // Trip 3: A->B departing at 180, arriving at 190
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{180},
-          .destination_time = TimeSinceServiceStart{190},
-          .origin_trip = TripId{3},
-          .destination_trip = TripId{3},
-          .is_flex = false
-      },
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{180}, TimeSinceServiceStart{190}, TripId{3}),
 
       // Infrequent trips from B (stop 2) to C (stop 3)
       // Only one trip: B->C departing at 200, arriving at 210
-      Step{
-          .origin_stop = StopId{2},
-          .destination_stop = StopId{3},
-          .origin_time = TimeSinceServiceStart{200},
-          .destination_time = TimeSinceServiceStart{210},
-          .origin_trip = TripId{4},
-          .destination_trip = TripId{4},
-          .is_flex = false
-      }
+      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{200}, TimeSinceServiceStart{210}, TripId{4})
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
@@ -1269,8 +1220,8 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
 
   // Assert the "suboptimal" returned result.
   ASSERT_FALSE(path_steps.empty());
-  EXPECT_EQ(path_steps.front().origin_time.seconds, 100);
-  EXPECT_EQ(path_steps.back().destination_time.seconds, 210);
+  EXPECT_EQ(path_steps.front().origin.time.seconds, 100);
+  EXPECT_EQ(path_steps.back().destination.time.seconds, 210);
 }
 
 TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
@@ -1373,9 +1324,9 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
     const auto& original_state = original_paths[destination.v];
     const auto& reduced_state = reduced_result[destination.v];
 
-    bool original_found = original_state.destination_time.seconds !=
+    bool original_found = original_state.destination.time.seconds !=
                           std::numeric_limits<int>::max();
-    bool reduced_found = reduced_state.destination_time.seconds !=
+    bool reduced_found = reduced_state.destination.time.seconds !=
                          std::numeric_limits<int>::max();
 
     if (!original_found) {
@@ -1406,10 +1357,10 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
 
     if (original_merged.is_flex || reduced_merged.is_flex) {
       // For flex paths, compare total duration
-      int original_duration = original_merged.destination_time.seconds -
-                              original_merged.origin_time.seconds;
-      int reduced_duration = reduced_merged.destination_time.seconds -
-                             reduced_merged.origin_time.seconds;
+      int original_duration = original_merged.destination.time.seconds -
+                              original_merged.origin.time.seconds;
+      int reduced_duration = reduced_merged.destination.time.seconds -
+                             reduced_merged.origin.time.seconds;
       EXPECT_EQ(original_duration, reduced_duration)
           << "Flex path duration mismatch\n"
           << format_both_paths();
@@ -1419,8 +1370,8 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
       // doesn't guarantee optimal departure times (see
       // SuboptimalDepartureTimeExposure test).
       EXPECT_EQ(
-          original_merged.destination_time.seconds,
-          reduced_merged.destination_time.seconds
+          original_merged.destination.time.seconds,
+          reduced_merged.destination.time.seconds
       ) << "Destination time mismatch\n"
         << format_both_paths();
     }

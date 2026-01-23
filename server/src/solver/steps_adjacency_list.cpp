@@ -21,9 +21,9 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
 
   int max_stop_id = 0;
   for (const Step& step : steps) {
-    temp_groups[step.origin_stop][step.destination_stop].push_back(step);
-    max_stop_id = std::max(max_stop_id, step.origin_stop.v);
-    max_stop_id = std::max(max_stop_id, step.destination_stop.v);
+    temp_groups[step.origin.stop][step.destination.stop].push_back(step);
+    max_stop_id = std::max(max_stop_id, step.origin.stop.v);
+    max_stop_id = std::max(max_stop_id, step.destination.stop.v);
   }
 
   // Build per-origin TempStepGroups

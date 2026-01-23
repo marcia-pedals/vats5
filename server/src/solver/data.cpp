@@ -91,15 +91,12 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
       TripId trip_id =
           result.mapping.gtfs_trip_id_to_trip_id[current_stop_time.trip_id];
 
-      Step step{
-          origin_stop_id,
-          destination_stop_id,
+      Step step = Step::PrimitiveScheduled(
+          origin_stop_id, destination_stop_id,
           TimeSinceServiceStart{current_stop_time.departure_time.seconds},
           TimeSinceServiceStart{next_stop_time.arrival_time.seconds},
-          trip_id,
-          trip_id,
-          false  // is_flex
-      };
+          trip_id
+      );
 
       result.steps.push_back(step);
     }
@@ -185,16 +182,11 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         result.mapping.trip_id_to_route_desc[walk_trip_id] = walk_desc;
 
         // Create walking step with flex time markers
-        Step walk_step{
-            current_stop.stop_id,
-            other_stop.stop_id,
-            TimeSinceServiceStart{0},  // origin time
-            TimeSinceServiceStart{static_cast<int>(distance / options.walking_speed_ms)
-            },  // duration as destination time
-            walk_trip_id,
-            walk_trip_id,
-            true  // is_flex
-        };
+        int walk_duration = static_cast<int>(distance / options.walking_speed_ms);
+        Step walk_step = Step::PrimitiveFlex(
+            current_stop.stop_id, other_stop.stop_id,
+            walk_duration, walk_trip_id
+        );
 
         result.steps.push_back(walk_step);
 
@@ -214,16 +206,10 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         result.mapping.trip_id_to_route_desc[reverse_walk_trip_id] =
             reverse_walk_desc;
 
-        Step reverse_walk_step{
-            other_stop.stop_id,
-            current_stop.stop_id,
-            TimeSinceServiceStart{0},  // origin time
-            TimeSinceServiceStart{static_cast<int>(distance / options.walking_speed_ms)
-            },  // duration as destination time
-            reverse_walk_trip_id,
-            reverse_walk_trip_id,
-            true  // is_flex
-        };
+        Step reverse_walk_step = Step::PrimitiveFlex(
+            other_stop.stop_id, current_stop.stop_id,
+            walk_duration, reverse_walk_trip_id
+        );
 
         result.steps.push_back(reverse_walk_step);
       }

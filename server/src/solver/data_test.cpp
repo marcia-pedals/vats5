@@ -20,9 +20,9 @@ using ::testing::UnorderedElementsAre;
 namespace vats5 {
 
 MATCHER_P3(WalkingStep, origin, destination, seconds, "") {
-  return arg.origin_stop.v == origin && arg.destination_stop.v == destination &&
-         arg.is_flex && (arg.destination_time.seconds > seconds - 5) &&
-         (arg.destination_time.seconds < seconds + 5);
+  return arg.origin.stop.v == origin && arg.destination.stop.v == destination &&
+         arg.is_flex && (arg.destination.time.seconds > seconds - 5) &&
+         (arg.destination.time.seconds < seconds + 5);
 }
 
 TEST(DataTest, GetStepsFromGtfs) {
@@ -86,114 +86,34 @@ TEST(DataTest, GetStepsFromGtfs) {
   // Construct expected steps with hardcoded times from gtfs_test.cpp
   std::vector<Step> expected_steps = {
       // San Jose Diridon (07:22:00) -> Sunnyvale (07:32:00)
-      Step{
-          san_jose_diridon_id,
-          sunnyvale_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(san_jose_diridon_id, sunnyvale_id, TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds}, mapped_trip_id),
 
       // Sunnyvale (07:32:00) -> Mountain View (07:36:00)
-      Step{
-          sunnyvale_id,
-          mountain_view_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(sunnyvale_id, mountain_view_id, TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, mapped_trip_id),
 
       // Mountain View (07:36:00) -> Palo Alto (07:43:00)
-      Step{
-          mountain_view_id,
-          palo_alto_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(mountain_view_id, palo_alto_id, TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds}, mapped_trip_id),
 
       // Palo Alto (07:43:00) -> Redwood City (07:49:00)
-      Step{
-          palo_alto_id,
-          redwood_city_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(palo_alto_id, redwood_city_id, TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds}, mapped_trip_id),
 
       // Redwood City (07:49:00) -> Hillsdale (07:56:00)
-      Step{
-          redwood_city_id,
-          hillsdale_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(redwood_city_id, hillsdale_id, TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds}, mapped_trip_id),
 
       // Hillsdale (07:56:00) -> San Mateo (07:59:00)
-      Step{
-          hillsdale_id,
-          san_mateo_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(hillsdale_id, san_mateo_id, TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds}, mapped_trip_id),
 
       // San Mateo (07:59:00) -> Millbrae (08:04:00)
-      Step{
-          san_mateo_id,
-          millbrae_id,
-          TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(san_mateo_id, millbrae_id, TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds}, mapped_trip_id),
 
       // Millbrae (08:04:00) -> South SF (08:09:00)
-      Step{
-          millbrae_id,
-          south_sf_id,
-          TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(millbrae_id, south_sf_id, TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds}, mapped_trip_id),
 
       // South SF (08:09:00) -> 22nd Street (08:16:00)
-      Step{
-          south_sf_id,
-          sf_22nd_street_id,
-          TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      },
+      Step::PrimitiveScheduled(south_sf_id, sf_22nd_street_id, TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds}, mapped_trip_id),
 
       // 22nd Street (08:16:00) -> 4th & King (08:22:00)
-      Step{
-          sf_22nd_street_id,
-          sf_4th_king_id,
-          TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
-          mapped_trip_id,
-          mapped_trip_id,
-          false  // is_flex
-      }
+      Step::PrimitiveScheduled(sf_22nd_street_id, sf_4th_king_id, TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds}, mapped_trip_id)
   };
 
   // Assert that the actual steps match the expected steps

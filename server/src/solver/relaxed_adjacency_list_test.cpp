@@ -14,51 +14,11 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
   // Stop 1 -> Stop 3: duration 50 (fixed)
   // Stop 2 -> Stop 3: duration 30 (flex)
   std::vector<Step> steps = {
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{100},
-          .destination_time = TimeSinceServiceStart{200},  // duration 100
-          .origin_trip = TripId{1},
-          .destination_trip = TripId{1},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{300},
-          .destination_time = TimeSinceServiceStart{380},  // duration 80
-          .origin_trip = TripId{2},
-          .destination_trip = TripId{2},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{2},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{120},  // flex, duration 120
-          .origin_trip = TripId{3},
-          .destination_trip = TripId{3},
-          .is_flex = true
-      },
-      Step{
-          .origin_stop = StopId{1},
-          .destination_stop = StopId{3},
-          .origin_time = TimeSinceServiceStart{500},
-          .destination_time = TimeSinceServiceStart{550},  // duration 50
-          .origin_trip = TripId{4},
-          .destination_trip = TripId{4},
-          .is_flex = false
-      },
-      Step{
-          .origin_stop = StopId{2},
-          .destination_stop = StopId{3},
-          .origin_time = TimeSinceServiceStart{0},
-          .destination_time = TimeSinceServiceStart{30},  // flex, duration 30
-          .origin_trip = TripId{5},
-          .destination_trip = TripId{5},
-          .is_flex = true
-      },
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),  // duration 100
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{300}, TimeSinceServiceStart{380}, TripId{2}),  // duration 80
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 120, TripId{3}),  // flex, duration 120
+      Step::PrimitiveScheduled(StopId{1}, StopId{3}, TimeSinceServiceStart{500}, TimeSinceServiceStart{550}, TripId{4}),  // duration 50
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 30, TripId{5}),  // flex, duration 30
   };
 
   StepsAdjacencyList steps_list = MakeAdjacencyList(steps);

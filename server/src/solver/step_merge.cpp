@@ -18,10 +18,10 @@ static bool SmallerStep(const Step& a, const Step& b) {
   }
 
   // Among non-flex steps, sort by origin time then destination time
-  if (a.origin_time.seconds != b.origin_time.seconds) {
-    return a.origin_time.seconds < b.origin_time.seconds;
+  if (a.origin.time.seconds != b.origin.time.seconds) {
+    return a.origin.time.seconds < b.origin.time.seconds;
   }
-  return a.destination_time.seconds > b.destination_time.seconds;
+  return a.destination.time.seconds > b.destination.time.seconds;
 }
 
 static bool SmallerOrEqualStep(const Step& a, const Step& b) {
@@ -50,8 +50,7 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
     }
 
     // Can't have any non-flex step that takes as long as the flex step.
-    if (curr.destination_time.seconds - curr.origin_time.seconds >=
-        flex_duration) {
+    if (curr.DurationSeconds() >= flex_duration) {
       return false;
     }
 
@@ -59,12 +58,12 @@ bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
       const Step& prev = steps[i - 1];
 
       // Must be sorted by origin time ascending.
-      if (curr.origin_time.seconds <= prev.origin_time.seconds) {
+      if (curr.origin.time.seconds <= prev.origin.time.seconds) {
         return false;
       }
 
       // Must be sorted by destination time ascending.
-      if (curr.destination_time.seconds <= prev.destination_time.seconds) {
+      if (curr.destination.time.seconds <= prev.destination.time.seconds) {
         return false;
       }
     }
@@ -80,19 +79,29 @@ Step MergedStep(Step ab, Step bc) {
         ab.FlexDurationSeconds() + bc.FlexDurationSeconds();
   } else {
     origin_time.seconds =
-        ab.is_flex ? bc.origin_time.seconds - ab.FlexDurationSeconds()
-                   : ab.origin_time.seconds;
+        ab.is_flex ? bc.origin.time.seconds - ab.FlexDurationSeconds()
+                   : ab.origin.time.seconds;
     destination_time.seconds =
-        bc.is_flex ? ab.destination_time.seconds + bc.FlexDurationSeconds()
-                   : bc.destination_time.seconds;
+        bc.is_flex ? ab.destination.time.seconds + bc.FlexDurationSeconds()
+                   : bc.destination.time.seconds;
   }
   return Step{
-      ab.origin_stop,
-      bc.destination_stop,
-      origin_time,
-      destination_time,
-      ab.origin_trip,
-      bc.destination_trip,
+      StepEndpoint{
+        ab.origin.stop,
+        ab.origin.is_flex,
+        // Use the origin partition of the first non-flex step, falling back to ab if both are flex.
+        (ab.is_flex && !bc.is_flex) ? bc.origin.partition : ab.origin.partition,
+        origin_time,
+        ab.origin.trip
+      },
+      StepEndpoint{
+        bc.destination.stop,
+        bc.destination.is_flex,
+        // Use the destination partition of the last non-flex step, falling back to bc if both are flex.
+        (bc.is_flex && !ab.is_flex) ? ab.destination.partition : bc.destination.partition,
+        destination_time,
+        bc.destination.trip
+      },
       ab.is_flex && bc.is_flex  // is_flex
   };
 }
@@ -154,28 +163,25 @@ std::vector<Step> PairwiseMergedSteps(
       [&non_flex_ab_i, &non_flex_bc_i, &ab, &bc]() {
         // first make the connection valid by advancing bc_i
         while (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size() &&
-               ab[non_flex_ab_i].destination_time >
-                   bc[non_flex_bc_i].origin_time) {
+               ab[non_flex_ab_i].destination.time >
+                   bc[non_flex_bc_i].origin.time) {
           non_flex_bc_i += 1;
         }
         // then make the conection minimal by advancing ab_i
         while (non_flex_ab_i + 1 < ab.size() && non_flex_bc_i < bc.size() &&
-               ab[non_flex_ab_i + 1].destination_time <=
-                   bc[non_flex_bc_i].origin_time) {
+               ab[non_flex_ab_i + 1].destination.time <=
+                   bc[non_flex_bc_i].origin.time) {
           non_flex_ab_i += 1;
         }
       };
   MakeNonFlexValidMinimal();
 
-  Step BAD_STEP{
-      StopId{0},
-      StopId{0},
+  Step BAD_STEP = Step::PrimitiveScheduled(
+      StopId{0}, StopId{0},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
-      TripId{0},
-      TripId{0},
-      false
-  };
+      TripId{0}
+  );
 
   const auto GetABFlexStep = [&ab_flex_bc_i, &ab, &bc, &BAD_STEP]() {
     return ab_flex_bc_i < bc.size() ? MergedStep(ab[0], bc[ab_flex_bc_i])
@@ -197,7 +203,7 @@ std::vector<Step> PairwiseMergedSteps(
   Step non_flex_step = GetNonFlexStep();
 
   const auto StepGood = [](const Step& s) {
-    return s.origin_time.seconds != std::numeric_limits<int>::max();
+    return s.origin.time.seconds != std::numeric_limits<int>::max();
   };
 
   while (StepGood(ab_flex_step) || StepGood(bc_flex_step) ||
@@ -248,33 +254,49 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
   const Step& last = path.back();
 
   // Calculate origin time with flex adjustment
-  TimeSinceServiceStart origin_time = first.origin_time;
+  TimeSinceServiceStart origin_time = first.origin.time;
   bool is_flex = first.is_flex;
 
   if (is_flex && path.size() > 1) {
     // If the path starts with flex and transitions to a fixed trip,
     // we can delay departure. Find where flex ends.
-    TimeSinceServiceStart flex_arrival = first.destination_time;
+    TimeSinceServiceStart flex_arrival = first.destination.time;
     for (size_t i = 1; i < path.size(); ++i) {
       if (!path[i].is_flex) {
         // Found transition from flex to fixed
         // We can wait: (fixed_departure - flex_arrival) extra time
         origin_time.seconds +=
-            path[i].origin_time.seconds - flex_arrival.seconds;
+            path[i].origin.time.seconds - flex_arrival.seconds;
         is_flex = false;  // Path becomes non-flex when we connect to fixed
         break;
       }
-      flex_arrival = path[i].destination_time;
+      flex_arrival = path[i].destination.time;
+    }
+  }
+
+  // Scan left-to-right for first non-flex step's origin partition, falling back
+  // to the first step's origin partition if they are all flex.
+  StepPartitionId origin_partition = path[0].origin.partition;
+  for (const Step& s : path) {
+    if (!s.is_flex) {
+      origin_partition = s.origin.partition;
+      break;
+    }
+  }
+
+  // Scan right-to-left for last non-flex step's destination partition, falling
+  // back to the last step's destination partition if they are all flex.
+  StepPartitionId destination_partition = path.back().destination.partition;
+  for (int i = path.size() - 1; i >= 0; --i) {
+    if (!path[i].is_flex) {
+      destination_partition = path[i].destination.partition;
+      break;
     }
   }
 
   return Step{
-      first.origin_stop,
-      last.destination_stop,
-      origin_time,
-      last.destination_time,
-      first.origin_trip,
-      last.destination_trip,
+      StepEndpoint{first.origin.stop, first.origin.is_flex, origin_partition, origin_time, first.origin.trip},
+      StepEndpoint{last.destination.stop, last.destination.is_flex, destination_partition, last.destination.time, last.destination.trip},
       is_flex
   };
 }
@@ -293,16 +315,16 @@ std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& 
 
     // Adjust this flex step to start when `cur` ends.
     int duration = best->FlexDurationSeconds();
-    best->origin_time = cur.destination_time;
-    best->destination_time = TimeSinceServiceStart{cur.destination_time.seconds + duration};
+    best->origin.time = cur.destination.time;
+    best->destination.time = TimeSinceServiceStart{cur.destination.time.seconds + duration};
   }
 
   for (int i = first_sched_step; i < candidates.size(); ++i) {
     const Step& candidate = candidates[i];
-    if (candidate.origin_time < cur.destination_time) {
+    if (candidate.origin.time < cur.destination.time) {
       continue;
     }
-    if (!best.has_value() || candidate.destination_time < best->destination_time) {
+    if (!best.has_value() || candidate.destination.time < best->destination.time) {
       best = candidate;
     }
     // Because the steps are sorted and minimal, we can break after checking the

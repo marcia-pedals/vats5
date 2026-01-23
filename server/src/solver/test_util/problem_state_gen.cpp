@@ -20,14 +20,14 @@ void showValue(const ProblemState& state, std::ostream& os) {
   StopId end = state.boundary.end;
 
   auto sort_key = [&](const Step& s) {
-    bool adj_start = (s.origin_stop == start || s.destination_stop == start);
-    bool adj_end = (s.origin_stop == end || s.destination_stop == end);
+    bool adj_start = (s.origin.stop == start || s.destination.stop == start);
+    bool adj_end = (s.origin.stop == end || s.destination.stop == end);
     int group;
     if (adj_start) group = 2;
     else if (adj_end) group = 3;
     else if (!s.is_flex) group = 0;
     else group = 1;
-    return std::tuple(group, s.origin_stop.v, s.destination_stop.v);
+    return std::tuple(group, s.origin.stop.v, s.destination.stop.v);
   };
   std::sort(steps.begin(), steps.end(), [&](const Step& a, const Step& b) {
     return sort_key(a) < sort_key(b);
@@ -61,12 +61,12 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "]\n";
   os << "  steps=[\n";
   for (const auto& step : steps) {
-    os << "    " << state.stop_names.at(step.origin_stop)
-       << " -> " << state.stop_names.at(step.destination_stop);
+    os << "    " << state.stop_names.at(step.origin.stop)
+       << " -> " << state.stop_names.at(step.destination.stop);
     if (step.is_flex) {
       os << " (flex " << TimeSinceServiceStart{step.FlexDurationSeconds()}.ToString() << ")";
     } else {
-      os << " [" << step.origin_time.ToString() << " -> " << step.destination_time.ToString() << "]";
+      os << " [" << step.origin.time.ToString() << " -> " << step.destination.time.ToString() << "]";
     }
     os << "\n";
   }
@@ -76,8 +76,8 @@ void showValue(const ProblemState& state, std::ostream& os) {
   std::unordered_set<StopId> completed_origins;
   std::unordered_set<StopId> completed_destinations;
   for (const Step& step : merged_steps) {
-    completed_origins.insert(step.origin_stop);
-    completed_destinations.insert(step.destination_stop);
+    completed_origins.insert(step.origin.stop);
+    completed_destinations.insert(step.destination.stop);
   }
 
   std::vector<StopId> origin_ids(completed_origins.begin(), completed_origins.end());
@@ -108,15 +108,7 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
     return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex](int num_actual_stops) -> rc::Gen<ProblemState> {
     auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration) -> Step {
       int destination = (origin + 1 + dest_offset) % num_actual_stops;
-      return Step{
-        .origin_stop=StopId{origin},
-        .destination_stop=StopId{destination},
-        .origin_time=TimeSinceServiceStart{origin_time},
-        .destination_time=TimeSinceServiceStart{origin_time + duration},
-        .origin_trip=TripId::NOOP,
-        .destination_trip=TripId::NOOP,
-        .is_flex=false,
-      };
+      return Step::PrimitiveScheduled(StopId{origin}, StopId{destination}, TimeSinceServiceStart{origin_time}, TimeSinceServiceStart{origin_time + duration}, TripId::NOOP);
     }, rc::gen::inRange(0, num_actual_stops), rc::gen::inRange(0, num_actual_stops - 1), rc::gen::inRange(0, 3600), rc::gen::inRange(0, 600));
 
     rc::Gen<std::vector<Step>> steps_gen = rc::gen::mapcat(rc::gen::inRange(0, 100), [step_gen](int num_steps) -> rc::Gen<std::vector<Step>> {
@@ -136,8 +128,8 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
       // Fix up the trip ids for the random steps.
       TripId next_trip_id{0};
       for (Step& step : steps) {
-        step.origin_trip = next_trip_id;
-        step.destination_trip = next_trip_id;
+        step.origin.trip = next_trip_id;
+        step.destination.trip = next_trip_id;
         next_trip_id.v += 1;
       }
 
@@ -146,15 +138,10 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
       for (int i = 0; i < num_actual_stops; ++i) {
         TripId trip_id = next_trip_id;
         next_trip_id.v += 1;
-        steps.push_back(Step{
-          .origin_stop=StopId{i},
-          .destination_stop=StopId{(i + 1) % num_actual_stops},
-          .origin_time=TimeSinceServiceStart{flex ? 0 : 1200 * i},
-          .destination_time=TimeSinceServiceStart{flex ? 1200 : 1200 * (i + 1)},
-          .origin_trip=trip_id,
-          .destination_trip=trip_id,
-          .is_flex=flex,
-        });
+        steps.push_back(flex
+          ? Step::PrimitiveFlex(StopId{i}, StopId{(i + 1) % num_actual_stops}, 1200, trip_id)
+          : Step::PrimitiveScheduled(StopId{i}, StopId{(i + 1) % num_actual_stops}, TimeSinceServiceStart{1200 * i}, TimeSinceServiceStart{1200 * (i + 1)}, trip_id)
+        );
       }
 
       // Add the boundary.

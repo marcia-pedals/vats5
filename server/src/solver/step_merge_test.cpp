@@ -19,8 +19,8 @@ struct DistinctTripIds {
   int cur = 1;
   void Assign(std::vector<vats5::Step>& steps) {
     for (auto& step : steps) {
-      step.origin_trip.v = cur;
-      step.destination_trip.v = cur;
+      step.origin.trip.v = cur;
+      step.destination.trip.v = cur;
       cur += 1;
     }
   }
@@ -68,12 +68,8 @@ struct Arbitrary<StepFromTo<Origin, Destination>> {
               is_flex ? duration_offset : origin_time.seconds + duration_offset
           };
           StepFromTo<Origin, Destination> step{
-              Origin,
-              Destination,
-              actual_origin_time,
-              dest_time,
-              vats5::TripId{0},
-              vats5::TripId{0},
+              vats5::StepEndpoint{vats5::StopId{Origin}, is_flex, vats5::StepPartitionId::NONE, actual_origin_time, vats5::TripId{0}},
+              vats5::StepEndpoint{vats5::StopId{Destination}, is_flex, vats5::StepPartitionId::NONE, dest_time, vats5::TripId{0}},
               is_flex
           };
           return step;
@@ -95,120 +91,48 @@ TEST(StepMergeTest, CheckSortedAndMinimalEmptyVector) {
 
 TEST(StepMergeTest, CheckSortedAndMinimalSingleStep) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{1},
-       TripId{1},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1})
   };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalSortedByOriginTime) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250},
-       TripId{2},
-       TripId{2},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{200},
-       TimeSinceServiceStart{300},
-       TripId{3},
-       TripId{3},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{2}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{300}, TripId{3})
   };
   EXPECT_TRUE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByOriginTime) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{200},
-       TimeSinceServiceStart{250},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300},
-       TripId{2},
-       TripId{2},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{250}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{2})
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalNotSortedByDestinationTime) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{200},
-       TripId{2},
-       TripId{2},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{200}, TripId{2})
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalEqualOriginTimes) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{250},
-       TripId{2},
-       TripId{2},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{250}, TripId{2})
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
 
 TEST(StepMergeTest, CheckSortedAndMinimalEqualDestinationTimes) {
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{200},
-       TripId{2},
-       TripId{2},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{200}, TripId{2})
   };
   EXPECT_FALSE(CheckSortedAndMinimal(steps));
 }
@@ -237,7 +161,7 @@ TEST(StepMergeTest, MergeStepsTest) {
   // Construct ab vector (steps from A to B)
   std::vector<Step> ab;
   for (const auto& step : result.steps) {
-    if (step.origin_stop == stop_a && step.destination_stop == stop_b) {
+    if (step.origin.stop == stop_a && step.destination.stop == stop_b) {
       ab.push_back(step);
     }
   }
@@ -245,7 +169,7 @@ TEST(StepMergeTest, MergeStepsTest) {
   // Construct bc vector (steps from B to C)
   std::vector<Step> bc;
   for (const auto& step : result.steps) {
-    if (step.origin_stop == stop_b && step.destination_stop == stop_c) {
+    if (step.origin.stop == stop_b && step.destination.stop == stop_c) {
       bc.push_back(step);
     }
   }
@@ -277,69 +201,13 @@ TEST(StepMergeTest, MergeStepsTest) {
       result.mapping.gtfs_trip_id_to_trip_id.at(GtfsTripId{"CT:527"});
 
   std::vector<Step> expected_ac = {
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("06:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("06:36:00").seconds},
-          ct503,
-          ct503,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
-          ct507,
-          ct507,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("08:36:00").seconds},
-          ct511,
-          ct511,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("15:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("15:36:00").seconds},
-          ct515,
-          ct515,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("16:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("16:36:00").seconds},
-          ct519,
-          ct519,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("17:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("17:36:00").seconds},
-          ct523,
-          ct523,
-          false
-      },
-      Step{
-          stop_a,
-          stop_c,
-          TimeSinceServiceStart{ParseGtfsTime("18:22:00").seconds},
-          TimeSinceServiceStart{ParseGtfsTime("18:36:00").seconds},
-          ct527,
-          ct527,
-          false
-      },
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("06:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("06:36:00").seconds}, ct503),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, ct507),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:36:00").seconds}, ct511),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("15:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("15:36:00").seconds}, ct515),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("16:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("16:36:00").seconds}, ct519),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("17:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("17:36:00").seconds}, ct523),
+      Step::PrimitiveScheduled(stop_a, stop_c, TimeSinceServiceStart{ParseGtfsTime("18:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("18:36:00").seconds}, ct527),
   };
 
   EXPECT_EQ(ac, expected_ac);
@@ -348,132 +216,66 @@ TEST(StepMergeTest, MergeStepsTest) {
 TEST(StepMergeTest, SortByOriginAndDestinationTimeWithSecondarySort) {
   // Test case with same origin times but different destination times
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{2},
-       TripId{2},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{400},
-       TripId{3},
-       TripId{3},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250},
-       TripId{4},
-       TripId{4},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{2}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{400}, TripId{3}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{4})
   };
 
   SortSteps(steps);
 
   // Verify primary sort by origin_time ascending
   for (size_t i = 1; i < steps.size(); ++i) {
-    EXPECT_LE(steps[i - 1].origin_time.seconds, steps[i].origin_time.seconds);
+    EXPECT_LE(steps[i - 1].origin.time.seconds, steps[i].origin.time.seconds);
   }
 
   // Verify secondary sort by destination_time descending when origin times are
   // equal
-  EXPECT_EQ(steps[0].origin_time.seconds, 100);
+  EXPECT_EQ(steps[0].origin.time.seconds, 100);
   EXPECT_EQ(
-      steps[0].destination_time.seconds,
+      steps[0].destination.time.seconds,
       400
   );  // highest destination time first
-  EXPECT_EQ(steps[1].origin_time.seconds, 100);
-  EXPECT_EQ(steps[1].destination_time.seconds, 300);
-  EXPECT_EQ(steps[2].origin_time.seconds, 100);
+  EXPECT_EQ(steps[1].origin.time.seconds, 100);
+  EXPECT_EQ(steps[1].destination.time.seconds, 300);
+  EXPECT_EQ(steps[2].origin.time.seconds, 100);
   EXPECT_EQ(
-      steps[2].destination_time.seconds,
+      steps[2].destination.time.seconds,
       200
   );  // lowest destination time last
-  EXPECT_EQ(steps[3].origin_time.seconds, 150);
+  EXPECT_EQ(steps[3].origin.time.seconds, 150);
 }
 
 TEST(StepMergeTest, MakeMinimalCoverSimpleTest) {
   // Simple test case: step 2 dominates step 1 (departs later, arrives earlier)
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300},
-       TripId{1},
-       TripId{1},
-       false},  // dominated
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250},
-       TripId{2},
-       TripId{2},
-       false}  // dominates step 1
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}),  // dominated
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{2})  // dominates step 1
   };
 
   MakeMinimalCover(steps);
 
   EXPECT_EQ(steps.size(), 1);
-  EXPECT_EQ(steps[0].origin_time.seconds, 150);
-  EXPECT_EQ(steps[0].destination_time.seconds, 250);
+  EXPECT_EQ(steps[0].origin.time.seconds, 150);
+  EXPECT_EQ(steps[0].destination.time.seconds, 250);
 }
 
 TEST(StepMergeTest, MakeMinimalCoverTest) {
   // Test case where only the last step (earliest arrival) should remain
   std::vector<Step> steps = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300},
-       TripId{1},
-       TripId{1},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{120},
-       TimeSinceServiceStart{350},
-       TripId{2},
-       TripId{2},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250},
-       TripId{3},
-       TripId{3},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{180},
-       TimeSinceServiceStart{280},
-       TripId{4},
-       TripId{4},
-       false},
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{200},
-       TimeSinceServiceStart{240},
-       TripId{5},
-       TripId{5},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{120}, TimeSinceServiceStart{350}, TripId{2}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{3}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{180}, TimeSinceServiceStart{280}, TripId{4}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{240}, TripId{5})
   };
 
   MakeMinimalCover(steps);
 
   // Only the last step should remain (arrives earliest at 240)
   EXPECT_EQ(steps.size(), 1);
-  EXPECT_EQ(steps[0].origin_time.seconds, 200);
-  EXPECT_EQ(steps[0].destination_time.seconds, 240);
+  EXPECT_EQ(steps[0].origin.time.seconds, 200);
+  EXPECT_EQ(steps[0].destination.time.seconds, 240);
 }
 
 TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
@@ -484,13 +286,7 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
 
   // Single step
   std::vector<Step> single_step = {
-      {StopId{1},
-       StopId{2},
-       TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200},
-       TripId{1},
-       TripId{1},
-       false}
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1})
   };
   MakeMinimalCover(single_step);
   EXPECT_EQ(single_step.size(), 1);
@@ -499,16 +295,11 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
 TEST(StepMergeTest, MakeMinimalCoverParallel) {
   // Same data as MakeMinimalCoverTest but with a parallel vector of labels.
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{300}, TripId{1}, TripId{1}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{120},
-       TimeSinceServiceStart{350}, TripId{2}, TripId{2}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{250}, TripId{3}, TripId{3}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{180},
-       TimeSinceServiceStart{280}, TripId{4}, TripId{4}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{240}, TripId{5}, TripId{5}, false},
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{300}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{120}, TimeSinceServiceStart{350}, TripId{2}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{3}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{180}, TimeSinceServiceStart{280}, TripId{4}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{240}, TripId{5}),
   };
   std::vector<int> labels = {10, 20, 30, 40, 50};
 
@@ -517,21 +308,17 @@ TEST(StepMergeTest, MakeMinimalCoverParallel) {
   // Only the last step survives (arrives earliest at 240, dominates all others)
   ASSERT_EQ(steps.size(), 1);
   ASSERT_EQ(labels.size(), 1);
-  EXPECT_EQ(steps[0].origin_time.seconds, 200);
+  EXPECT_EQ(steps[0].origin.time.seconds, 200);
   EXPECT_EQ(labels[0], 50);
 }
 
 TEST(StepMergeTest, MakeMinimalCoverParallelMultipleSurvivors) {
   // Three non-dominated steps: each departs later and arrives later.
   std::vector<Step> steps = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{200}, TripId{1}, TripId{1}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
-       TimeSinceServiceStart{280}, TripId{2}, TripId{2}, false},  // dominated
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{250}, TripId{3}, TripId{3}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{300},
-       TimeSinceServiceStart{350}, TripId{4}, TripId{4}, false},
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{280}, TripId{2}),  // dominated
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{250}, TripId{3}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{300}, TimeSinceServiceStart{350}, TripId{4}),
   };
   std::vector<std::string> labels = {"first", "dominated", "middle", "last"};
 
@@ -598,8 +385,8 @@ RC_GTEST_PROP(
         }
 
         // Flex steps dominate non-flex steps by duration.
-        if (!orig_step.is_flex && orig_step.destination_time.seconds -
-                                          orig_step.origin_time.seconds >=
+        if (!orig_step.is_flex && orig_step.destination.time.seconds -
+                                          orig_step.origin.time.seconds >=
                                       cover_step.FlexDurationSeconds()) {
           dominated_or_kept = true;
           break;
@@ -607,9 +394,9 @@ RC_GTEST_PROP(
         continue;
       }
 
-      if (cover_step.origin_time.seconds >= orig_step.origin_time.seconds &&
-          cover_step.destination_time.seconds <=
-              orig_step.destination_time.seconds) {
+      if (cover_step.origin.time.seconds >= orig_step.origin.time.seconds &&
+          cover_step.destination.time.seconds <=
+              orig_step.destination.time.seconds) {
         dominated_or_kept = true;
         break;
       }
@@ -646,16 +433,16 @@ RC_GTEST_PROP(
 
   // Verify non-flex steps are sorted by origin_time ascending
   for (size_t i = first_non_flex + 1; i < steps.size(); ++i) {
-    RC_ASSERT(steps[i - 1].origin_time.seconds <= steps[i].origin_time.seconds);
+    RC_ASSERT(steps[i - 1].origin.time.seconds <= steps[i].origin.time.seconds);
   }
 
   // Verify secondary sort by destination_time descending for equal origin times
   // (non-flex only)
   for (size_t i = first_non_flex + 1; i < steps.size(); ++i) {
-    if (steps[i - 1].origin_time.seconds == steps[i].origin_time.seconds) {
+    if (steps[i - 1].origin.time.seconds == steps[i].origin.time.seconds) {
       RC_ASSERT(
-          steps[i - 1].destination_time.seconds >=
-          steps[i].destination_time.seconds
+          steps[i - 1].destination.time.seconds >=
+          steps[i].destination.time.seconds
       );
     }
   }
@@ -668,10 +455,8 @@ RC_GTEST_PROP(
 TEST(StepMergeTest, PairwiseMergedStepsTiedFlexSteps) {
   // ab: flex with duration 20, plus a non-flex step (duration 10 < 20)
   std::vector<Step> ab = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{0}, TimeSinceServiceStart{20},
-       TripId{1}, TripId{1}, true},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110},
-       TripId{2}, TripId{2}, false},
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 20, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110}, TripId{2}),
   };
   // bc: flex with duration 15, plus a non-flex step (duration 5 < 15)
   // Chosen so that all three merge candidates produce origin=100, dest=125:
@@ -681,10 +466,8 @@ TEST(StepMergeTest, PairwiseMergedStepsTiedFlexSteps) {
   // The non_flex pair is valid but gets consumed first, then the two tied
   // flex steps used to cause an infinite loop.
   std::vector<Step> bc = {
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{0}, TimeSinceServiceStart{15},
-       TripId{3}, TripId{3}, true},
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{120}, TimeSinceServiceStart{125},
-       TripId{4}, TripId{4}, false},
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 15, TripId{3}),
+      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{120}, TimeSinceServiceStart{125}, TripId{4}),
   };
 
   ASSERT_TRUE(CheckSortedAndMinimal(ab));
@@ -700,24 +483,20 @@ TEST(StepMergeTest, PairwiseMergedStepsTiedFlexSteps) {
   EXPECT_TRUE(result[0].is_flex);
   EXPECT_EQ(result[0].FlexDurationSeconds(), 35);
   EXPECT_FALSE(result[1].is_flex);
-  EXPECT_EQ(result[1].origin_time.seconds, 100);
-  EXPECT_EQ(result[1].destination_time.seconds, 125);
+  EXPECT_EQ(result[1].origin.time.seconds, 100);
+  EXPECT_EQ(result[1].destination.time.seconds, 125);
 }
 
 TEST(StepMergeTest, PairwiseMergedStepsProvenance) {
   // ab: flex (duration 20) + non-flex at (100, 110)
   std::vector<Step> ab = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{0},
-       TimeSinceServiceStart{20}, TripId{1}, TripId{1}, true},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{110}, TripId{2}, TripId{2}, false},
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 20, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110}, TripId{2}),
   };
   // bc: flex (duration 15) + non-flex at (120, 125)
   std::vector<Step> bc = {
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{0},
-       TimeSinceServiceStart{15}, TripId{3}, TripId{3}, true},
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{120},
-       TimeSinceServiceStart{125}, TripId{4}, TripId{4}, false},
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 15, TripId{3}),
+      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{120}, TimeSinceServiceStart{125}, TripId{4}),
   };
 
   ASSERT_TRUE(CheckSortedAndMinimal(ab));
@@ -742,18 +521,13 @@ TEST(StepMergeTest, PairwiseMergedStepsProvenance) {
 TEST(StepMergeTest, PairwiseMergedStepsProvenanceNonFlex) {
   // Pure non-flex case: three ab steps, two bc steps.
   std::vector<Step> ab = {
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
-       TimeSinceServiceStart{150}, TripId{1}, TripId{1}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
-       TimeSinceServiceStart{250}, TripId{2}, TripId{2}, false},
-      {StopId{1}, StopId{2}, TimeSinceServiceStart{300},
-       TimeSinceServiceStart{350}, TripId{3}, TripId{3}, false},
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{150}, TripId{1}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{200}, TimeSinceServiceStart{250}, TripId{2}),
+      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{300}, TimeSinceServiceStart{350}, TripId{3}),
   };
   std::vector<Step> bc = {
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{160},
-       TimeSinceServiceStart{200}, TripId{4}, TripId{4}, false},
-      {StopId{2}, StopId{3}, TimeSinceServiceStart{260},
-       TimeSinceServiceStart{300}, TripId{5}, TripId{5}, false},
+      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{160}, TimeSinceServiceStart{200}, TripId{4}),
+      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{260}, TimeSinceServiceStart{300}, TripId{5}),
   };
 
   ASSERT_TRUE(CheckSortedAndMinimal(ab));
@@ -835,15 +609,11 @@ RC_GTEST_PROP(
       if (step_12_flex && step_23_flex) {
         RC_ASSERT(
             merged_steps[0] == (Step{
-                                   step_12.origin_stop,
-                                   step_23.destination_stop,
-                                   TimeSinceServiceStart{0},
-                                   TimeSinceServiceStart{
+                                   StepEndpoint{step_12.origin.stop, true, StepPartitionId::NONE, TimeSinceServiceStart{0}, step_12.origin.trip},
+                                   StepEndpoint{step_23.destination.stop, true, StepPartitionId::NONE, TimeSinceServiceStart{
                                        step_12.FlexDurationSeconds() +
                                        step_23.FlexDurationSeconds()
-                                   },
-                                   step_12.origin_trip,
-                                   step_23.destination_trip,
+                                   }, step_23.destination.trip},
                                    true
                                })
         );
@@ -853,24 +623,24 @@ RC_GTEST_PROP(
       // If this is an invalid connection, don't need to check that it is
       // dominated.
       if (!step_12_flex && !step_23_flex &&
-          step_12.destination_time.seconds > step_23.origin_time.seconds) {
+          step_12.destination.time.seconds > step_23.origin.time.seconds) {
         continue;
       }
 
       // Compute the origin and destination times for the pair.
-      int origin_time_seconds = step_12_flex ? step_23.origin_time.seconds -
+      int origin_time_seconds = step_12_flex ? step_23.origin.time.seconds -
                                                    step_12.FlexDurationSeconds()
-                                             : step_12.origin_time.seconds;
+                                             : step_12.origin.time.seconds;
       int destination_time_seconds =
           step_23_flex
-              ? step_12.destination_time.seconds + step_23.FlexDurationSeconds()
-              : step_23.destination_time.seconds;
+              ? step_12.destination.time.seconds + step_23.FlexDurationSeconds()
+              : step_23.destination.time.seconds;
 
       // There should be a merged step that dominates this connection
       bool found_dominating_step = false;
       for (const auto& merged_step : merged_steps) {
-        if (merged_step.origin_time.seconds >= origin_time_seconds &&
-            merged_step.destination_time.seconds <= destination_time_seconds) {
+        if (merged_step.origin.time.seconds >= origin_time_seconds &&
+            merged_step.destination.time.seconds <= destination_time_seconds) {
           found_dominating_step = true;
           break;
         }
@@ -899,18 +669,18 @@ RC_GTEST_PROP(
     const Step* source_step_23 = nullptr;
 
     for (const auto& step_12 : steps_12) {
-      if (step_12.origin_stop == merged_step.origin_stop &&
-          step_12.origin_time == merged_step.origin_time &&
-          step_12.origin_trip == merged_step.origin_trip) {
+      if (step_12.origin.stop == merged_step.origin.stop &&
+          step_12.origin.time == merged_step.origin.time &&
+          step_12.origin.trip == merged_step.origin.trip) {
         source_step_12 = &step_12;
         break;
       }
     }
 
     for (const auto& step_23 : steps_23) {
-      if (step_23.destination_stop == merged_step.destination_stop &&
-          step_23.destination_time == merged_step.destination_time &&
-          step_23.destination_trip == merged_step.destination_trip) {
+      if (step_23.destination.stop == merged_step.destination.stop &&
+          step_23.destination.time == merged_step.destination.time &&
+          step_23.destination.trip == merged_step.destination.trip) {
         source_step_23 = &step_23;
         break;
       }
@@ -920,14 +690,14 @@ RC_GTEST_PROP(
       RC_FAIL("both source steps nullptr");
     } else if (source_step_12 == nullptr) {
       RC_ASSERT(
-          merged_step.origin_time.seconds + steps_12[0].FlexDurationSeconds() ==
-          source_step_23->origin_time.seconds
+          merged_step.origin.time.seconds + steps_12[0].FlexDurationSeconds() ==
+          source_step_23->origin.time.seconds
       );
     } else if (source_step_23 == nullptr) {
       RC_ASSERT(
-          source_step_12->destination_time.seconds +
+          source_step_12->destination.time.seconds +
               steps_23[0].FlexDurationSeconds() ==
-          merged_step.destination_time.seconds
+          merged_step.destination.time.seconds
       );
     } else {
       // Check that connection is valid
@@ -936,14 +706,129 @@ RC_GTEST_PROP(
       // different logic
       if (!source_step_12->is_flex && !source_step_23->is_flex) {
         RC_ASSERT(
-            source_step_12->destination_time.seconds <=
-            source_step_23->origin_time.seconds
+            source_step_12->destination.time.seconds <=
+            source_step_23->origin.time.seconds
         );
       }
       // For flex steps, the connection is always valid since they can be taken
       // at any time
     }
   }
+}
+
+TEST(StepMergeTest, MergedStepOriginDestinationFlex) {
+  // Verify origin.is_flex comes from first step, destination.is_flex from second.
+  Step ab = Step::PrimitiveFlex(StopId{1}, StopId{2}, 20, TripId{1});
+  Step bc{
+      StepEndpoint{StopId{2}, false, StepPartitionId{5}, TimeSinceServiceStart{100}, TripId{2}},
+      StepEndpoint{StopId{3}, false, StepPartitionId{7}, TimeSinceServiceStart{120}, TripId{2}},
+      false};
+
+  Step merged = MergedStep(ab, bc);
+  EXPECT_TRUE(merged.origin.is_flex);
+  EXPECT_FALSE(merged.destination.is_flex);
+  EXPECT_EQ(merged.origin.stop, StopId{1});
+  EXPECT_EQ(merged.destination.stop, StopId{3});
+}
+
+TEST(StepMergeTest, MergedStepPartitionFlexFlex) {
+  Step ab{
+      StepEndpoint{StopId{1}, true, StepPartitionId{10}, TimeSinceServiceStart{0}, TripId{1}},
+      StepEndpoint{StopId{2}, true, StepPartitionId{20}, TimeSinceServiceStart{30}, TripId{1}},
+      true};
+  Step bc{
+      StepEndpoint{StopId{2}, true, StepPartitionId{30}, TimeSinceServiceStart{0}, TripId{2}},
+      StepEndpoint{StopId{3}, true, StepPartitionId{40}, TimeSinceServiceStart{25}, TripId{2}},
+      true};
+
+  Step merged = MergedStep(ab, bc);
+  EXPECT_EQ(merged.origin.partition, StepPartitionId{10});
+  EXPECT_EQ(merged.destination.partition, StepPartitionId{40});
+}
+
+TEST(StepMergeTest, MergedStepPartitionFlexScheduled) {
+  Step ab{
+      StepEndpoint{StopId{1}, true, StepPartitionId{10}, TimeSinceServiceStart{0}, TripId{1}},
+      StepEndpoint{StopId{2}, true, StepPartitionId{20}, TimeSinceServiceStart{30}, TripId{1}},
+      true};
+  Step bc{
+      StepEndpoint{StopId{2}, false, StepPartitionId{30}, TimeSinceServiceStart{100}, TripId{2}},
+      StepEndpoint{StopId{3}, false, StepPartitionId{40}, TimeSinceServiceStart{150}, TripId{2}},
+      false};
+
+  Step merged = MergedStep(ab, bc);
+  EXPECT_EQ(merged.origin.partition, StepPartitionId{30});
+  EXPECT_EQ(merged.destination.partition, StepPartitionId{40});
+}
+
+TEST(StepMergeTest, MergedStepPartitionScheduledFlex) {
+  Step ab{
+      StepEndpoint{StopId{1}, false, StepPartitionId{10}, TimeSinceServiceStart{100}, TripId{1}},
+      StepEndpoint{StopId{2}, false, StepPartitionId{20}, TimeSinceServiceStart{150}, TripId{1}},
+      false};
+  Step bc{
+      StepEndpoint{StopId{2}, true, StepPartitionId{30}, TimeSinceServiceStart{0}, TripId{2}},
+      StepEndpoint{StopId{3}, true, StepPartitionId{40}, TimeSinceServiceStart{25}, TripId{2}},
+      true};
+
+  Step merged = MergedStep(ab, bc);
+  EXPECT_EQ(merged.origin.partition, StepPartitionId{10});
+  EXPECT_EQ(merged.destination.partition, StepPartitionId{20});
+}
+
+TEST(StepMergeTest, MergedStepPartitionScheduledScheduled) {
+  Step ab{
+      StepEndpoint{StopId{1}, false, StepPartitionId{10}, TimeSinceServiceStart{100}, TripId{1}},
+      StepEndpoint{StopId{2}, false, StepPartitionId{20}, TimeSinceServiceStart{150}, TripId{1}},
+      false};
+  Step bc{
+      StepEndpoint{StopId{2}, false, StepPartitionId{30}, TimeSinceServiceStart{150}, TripId{2}},
+      StepEndpoint{StopId{3}, false, StepPartitionId{40}, TimeSinceServiceStart{200}, TripId{2}},
+      false};
+
+  Step merged = MergedStep(ab, bc);
+  EXPECT_EQ(merged.origin.partition, StepPartitionId{10});
+  EXPECT_EQ(merged.destination.partition, StepPartitionId{40});
+}
+
+TEST(StepMergeTest, ConsecutiveMergedStepsEqualsReduce) {
+  rc::check([](void) {
+    int path_length = *rc::gen::inRange(1, 6);
+
+    std::vector<Step> path;
+    // Start at time 0 so that all-flex paths agree with MergedStep's
+    // normalization (MergedStep sets origin=0 for flex+flex merges).
+    int current_time = 0;
+
+    for (int i = 0; i < path_length; i++) {
+      bool is_flex = *rc::gen::inRange(0, 2) == 1;
+      int duration = *rc::gen::inRange(1, 600);
+      StepPartitionId origin_partition = StepPartitionId{*rc::gen::inRange(0, 10)};
+      StepPartitionId dest_partition = StepPartitionId{*rc::gen::inRange(0, 10)};
+      TripId origin_trip{*rc::gen::inRange(0, 100)};
+      TripId dest_trip{*rc::gen::inRange(0, 100)};
+
+      int origin_time = current_time;
+      int dest_time = origin_time + duration;
+
+      path.push_back(Step{
+          StepEndpoint{StopId{i}, is_flex, origin_partition, TimeSinceServiceStart{origin_time}, origin_trip},
+          StepEndpoint{StopId{i + 1}, is_flex, dest_partition, TimeSinceServiceStart{dest_time}, dest_trip},
+          is_flex
+      });
+
+      current_time = dest_time;
+    }
+
+    Step consecutive_result = ConsecutiveMergedSteps(path);
+
+    Step fold_result = path[0];
+    for (size_t i = 1; i < path.size(); i++) {
+      fold_result = MergedStep(fold_result, path[i]);
+    }
+
+    RC_ASSERT(consecutive_result == fold_result);
+  });
 }
 
 }  // namespace vats5

@@ -84,21 +84,21 @@ using GtfsPathsMap =
 
 GtfsStep ToGtfsStep(const Step& step, const DataGtfsMapping& mapping) {
   GtfsStep gs;
-  auto origin_it = mapping.stop_id_to_gtfs_stop_id.find(step.origin_stop);
+  auto origin_it = mapping.stop_id_to_gtfs_stop_id.find(step.origin.stop);
   if (origin_it != mapping.stop_id_to_gtfs_stop_id.end()) {
     gs.origin_stop = origin_it->second;
   } else {
-    gs.origin_stop = GtfsStopId{"?" + std::to_string(step.origin_stop.v)};
+    gs.origin_stop = GtfsStopId{"?" + std::to_string(step.origin.stop.v)};
   }
-  auto dest_it = mapping.stop_id_to_gtfs_stop_id.find(step.destination_stop);
+  auto dest_it = mapping.stop_id_to_gtfs_stop_id.find(step.destination.stop);
   if (dest_it != mapping.stop_id_to_gtfs_stop_id.end()) {
     gs.destination_stop = dest_it->second;
   } else {
     gs.destination_stop =
-        GtfsStopId{"?" + std::to_string(step.destination_stop.v)};
+        GtfsStopId{"?" + std::to_string(step.destination.stop.v)};
   }
-  gs.origin_time = step.origin_time;
-  gs.destination_time = step.destination_time;
+  gs.origin_time = step.origin.time;
+  gs.destination_time = step.destination.time;
   gs.is_flex = step.is_flex;
   return gs;
 }
@@ -124,7 +124,7 @@ GtfsPathsMap ToGtfsPathsMap(
     for (const auto& paths : path_groups) {
       if (paths.empty()) continue;
       auto dest_gtfs_it = mapping.stop_id_to_gtfs_stop_id.find(
-          paths[0].merged_step.destination_stop
+          paths[0].merged_step.destination.stop
       );
       if (dest_gtfs_it == mapping.stop_id_to_gtfs_stop_id.end()) continue;
       std::string dest_gtfs = dest_gtfs_it->second.v;

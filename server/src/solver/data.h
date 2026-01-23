@@ -87,45 +87,78 @@ inline void from_json(const nlohmann::json& j, TimeSinceServiceStart& t) {
   t.seconds = j.get<int>();
 }
 
+struct StepPartitionId {
+  int v;
+  bool operator==(const StepPartitionId&) const = default;
+  auto operator<=>(const StepPartitionId&) const = default;
+  static const StepPartitionId NONE;
+};
+inline const StepPartitionId StepPartitionId::NONE{-1};
+inline void to_json(nlohmann::json& j, const StepPartitionId& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, StepPartitionId& id) {
+  id.v = j.get<int>();
+}
+
+struct StepEndpoint {
+  StopId stop;
+  bool is_flex;
+  StepPartitionId partition;
+  TimeSinceServiceStart time;
+  TripId trip;
+
+  bool operator==(const StepEndpoint&) const = default;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StepEndpoint, stop, is_flex, partition, time, trip)
+
 struct Step {
-  StopId origin_stop;
-  StopId destination_stop;
-
-  TimeSinceServiceStart origin_time;
-  TimeSinceServiceStart destination_time;
-
-  TripId origin_trip;
-  TripId destination_trip;
+  StepEndpoint origin;
+  StepEndpoint destination;
 
   bool is_flex;
 
   int FlexDurationSeconds() const {
     assert(is_flex);
-    return destination_time.seconds - origin_time.seconds;
+    return destination.time.seconds - origin.time.seconds;
   }
 
   int DurationSeconds() const {
-    return destination_time.seconds - origin_time.seconds;
+    return destination.time.seconds - origin.time.seconds;
+  }
+
+  static Step PrimitiveScheduled(
+      StopId origin_stop, StopId destination_stop,
+      TimeSinceServiceStart origin_time, TimeSinceServiceStart destination_time,
+      TripId trip, StepPartitionId partition = StepPartitionId::NONE
+  ) {
+    return Step{
+        StepEndpoint{origin_stop, false, partition, origin_time, trip},
+        StepEndpoint{destination_stop, false, partition, destination_time, trip},
+        false
+    };
+  }
+
+  static Step PrimitiveFlex(
+      StopId origin_stop, StopId destination_stop,
+      int duration_seconds, TripId trip,
+      StepPartitionId partition = StepPartitionId::NONE
+  ) {
+    return Step{
+        StepEndpoint{origin_stop, true, partition, TimeSinceServiceStart{0}, trip},
+        StepEndpoint{destination_stop, true, partition, TimeSinceServiceStart{duration_seconds}, trip},
+        true
+    };
   }
 
   bool operator==(const Step& other) const {
-    return origin_stop == other.origin_stop &&
-           destination_stop == other.destination_stop &&
-           origin_time == other.origin_time &&
-           destination_time == other.destination_time &&
-           origin_trip == other.origin_trip &&
-           destination_trip == other.destination_trip &&
+    return origin == other.origin &&
+           destination == other.destination &&
            is_flex == other.is_flex;
   }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     Step,
-    origin_stop,
-    destination_stop,
-    origin_time,
-    destination_time,
-    origin_trip,
-    destination_trip,
+    origin,
+    destination,
     is_flex
 )
 
@@ -155,11 +188,11 @@ inline std::ostream& operator<<(std::ostream& os, const TripId& value) {
 }
 
 inline std::ostream& operator<<(std::ostream& os, const Step& value) {
-  return os << "Step{stop: " << value.origin_stop.v << " -> "
-            << value.destination_stop.v << ", trip: " << value.origin_trip.v
-            << " -> " << value.destination_trip.v
-            << ", time: " << value.origin_time.seconds << " -> "
-            << value.destination_time.seconds << (value.is_flex ? ", flex" : "")
+  return os << "Step{stop: " << value.origin.stop.v << " -> "
+            << value.destination.stop.v << ", trip: " << value.origin.trip.v
+            << " -> " << value.destination.trip.v
+            << ", time: " << value.origin.time.seconds << " -> "
+            << value.destination.time.seconds << (value.is_flex ? ", flex" : "")
             << "}";
 }
 
@@ -196,19 +229,22 @@ struct hash<vats5::TimeSinceServiceStart> {
 };
 
 template <>
+struct hash<vats5::StepEndpoint> {
+  size_t operator()(const vats5::StepEndpoint& ep) const {
+    size_t h1 = hash<vats5::StopId>()(ep.stop);
+    size_t h2 = hash<vats5::TimeSinceServiceStart>()(ep.time);
+    size_t h3 = hash<vats5::TripId>()(ep.trip);
+    return h1 ^ (h2 << 1) ^ (h3 << 2);
+  }
+};
+
+template <>
 struct hash<vats5::Step> {
   size_t operator()(const vats5::Step& step) const {
-    size_t h1 = hash<vats5::StopId>()(step.origin_stop);
-    size_t h2 = hash<vats5::StopId>()(step.destination_stop);
-    size_t h3 = hash<vats5::TimeSinceServiceStart>()(step.origin_time);
-    size_t h4 = hash<vats5::TimeSinceServiceStart>()(step.destination_time);
-    size_t h5 = hash<vats5::TripId>()(step.origin_trip);
-    size_t h6 = hash<vats5::TripId>()(step.destination_trip);
-    size_t h7 = hash<bool>()(step.is_flex);
-
-    // Combine hashes using a simple hash combiner
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5) ^
-           (h7 << 6);
+    size_t h1 = hash<vats5::StepEndpoint>()(step.origin);
+    size_t h2 = hash<vats5::StepEndpoint>()(step.destination);
+    size_t h3 = hash<bool>()(step.is_flex);
+    return h1 ^ (h2 << 3) ^ (h3 << 6);
   }
 };
 }  // namespace std
