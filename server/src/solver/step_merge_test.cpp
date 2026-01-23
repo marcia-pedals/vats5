@@ -601,6 +601,49 @@ RC_GTEST_PROP(
   }
 }
 
+// Regression test: PairwiseMergedSteps used to infinite-loop when the ab-flex
+// and bc-flex merged steps had identical origin/destination times (a tie in
+// SmallerStep) and the non-flex pair was invalid. The 3-way merge would fall
+// through to the non-flex branch which couldn't advance, looping forever.
+TEST(StepMergeTest, PairwiseMergedStepsTiedFlexSteps) {
+  // ab: flex with duration 20, plus a non-flex step (duration 10 < 20)
+  std::vector<Step> ab = {
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{0}, TimeSinceServiceStart{20},
+       TripId{1}, TripId{1}, true},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110},
+       TripId{2}, TripId{2}, false},
+  };
+  // bc: flex with duration 15, plus a non-flex step (duration 5 < 15)
+  // Chosen so that all three merge candidates produce origin=100, dest=125:
+  //   ab_flex merged with bc_non_flex: origin = 120-20 = 100, dest = 125
+  //   bc_flex merged with ab_non_flex: origin = 100, dest = 110+15 = 125
+  //   non_flex pair merged:            origin = 100, dest = 125
+  // The non_flex pair is valid but gets consumed first, then the two tied
+  // flex steps used to cause an infinite loop.
+  std::vector<Step> bc = {
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{0}, TimeSinceServiceStart{15},
+       TripId{3}, TripId{3}, true},
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{120}, TimeSinceServiceStart{125},
+       TripId{4}, TripId{4}, false},
+  };
+
+  ASSERT_TRUE(CheckSortedAndMinimal(ab));
+  ASSERT_TRUE(CheckSortedAndMinimal(bc));
+
+  // This used to hang. Now it should terminate and produce a valid result.
+  std::vector<Step> result = PairwiseMergedSteps(ab, bc);
+  EXPECT_TRUE(CheckSortedAndMinimal(result));
+  // Should have: flex+flex (duration 35), plus one non-flex step at (100, 125).
+  // The three tied merged steps (all origin=100, dest=125) collapse to one
+  // via MakeMinimalCover.
+  ASSERT_EQ(result.size(), 2u);
+  EXPECT_TRUE(result[0].is_flex);
+  EXPECT_EQ(result[0].FlexDurationSeconds(), 35);
+  EXPECT_FALSE(result[1].is_flex);
+  EXPECT_EQ(result[1].origin_time.seconds, 100);
+  EXPECT_EQ(result[1].destination_time.seconds, 125);
+}
+
 RC_GTEST_PROP(
     StepMergeTest,
     MergeStepsProperty,

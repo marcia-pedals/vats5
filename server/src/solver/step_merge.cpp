@@ -24,6 +24,10 @@ static bool SmallerStep(const Step& a, const Step& b) {
   return a.destination_time.seconds > b.destination_time.seconds;
 }
 
+static bool SmallerOrEqualStep(const Step& a, const Step& b) {
+  return !SmallerStep(b, a);
+}
+
 void SortSteps(std::vector<Step>& steps) {
   std::sort(steps.begin(), steps.end(), SmallerStep);
 }
@@ -237,15 +241,14 @@ std::vector<Step> PairwiseMergedSteps(
 
   while (StepGood(ab_flex_step) || StepGood(bc_flex_step) ||
          StepGood(non_flex_step)) {
-    if (SmallerStep(ab_flex_step, bc_flex_step) &&
-        SmallerStep(ab_flex_step, non_flex_step)) {
-      // ab_flex_step is smallest
+    if (SmallerOrEqualStep(ab_flex_step, bc_flex_step) &&
+        SmallerOrEqualStep(ab_flex_step, non_flex_step)) {
+      // ab_flex_step is smallest (or tied)
       result.emplace_back(ab_flex_step);
       ab_flex_bc_i += 1;
       ab_flex_step = GetABFlexStep();
-    } else if (SmallerStep(bc_flex_step, ab_flex_step) &&
-               SmallerStep(bc_flex_step, non_flex_step)) {
-      // bc_flex_step is smallest
+    } else if (SmallerOrEqualStep(bc_flex_step, non_flex_step)) {
+      // bc_flex_step is smallest (or tied with non_flex)
       result.emplace_back(bc_flex_step);
       bc_flex_ab_i += 1;
       bc_flex_step = GetBCFlexStep();
