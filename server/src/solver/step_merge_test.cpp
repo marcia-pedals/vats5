@@ -496,6 +496,54 @@ TEST(StepMergeTest, MakeMinimalCoverEmptyAndSingle) {
   EXPECT_EQ(single_step.size(), 1);
 }
 
+TEST(StepMergeTest, MakeMinimalCoverParallel) {
+  // Same data as MakeMinimalCoverTest but with a parallel vector of labels.
+  std::vector<Step> steps = {
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
+       TimeSinceServiceStart{300}, TripId{1}, TripId{1}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{120},
+       TimeSinceServiceStart{350}, TripId{2}, TripId{2}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
+       TimeSinceServiceStart{250}, TripId{3}, TripId{3}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{180},
+       TimeSinceServiceStart{280}, TripId{4}, TripId{4}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
+       TimeSinceServiceStart{240}, TripId{5}, TripId{5}, false},
+  };
+  std::vector<int> labels = {10, 20, 30, 40, 50};
+
+  MakeMinimalCover(steps, &labels);
+
+  // Only the last step survives (arrives earliest at 240, dominates all others)
+  ASSERT_EQ(steps.size(), 1);
+  ASSERT_EQ(labels.size(), 1);
+  EXPECT_EQ(steps[0].origin_time.seconds, 200);
+  EXPECT_EQ(labels[0], 50);
+}
+
+TEST(StepMergeTest, MakeMinimalCoverParallelMultipleSurvivors) {
+  // Three non-dominated steps: each departs later and arrives later.
+  std::vector<Step> steps = {
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
+       TimeSinceServiceStart{200}, TripId{1}, TripId{1}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{150},
+       TimeSinceServiceStart{280}, TripId{2}, TripId{2}, false},  // dominated
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
+       TimeSinceServiceStart{250}, TripId{3}, TripId{3}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{300},
+       TimeSinceServiceStart{350}, TripId{4}, TripId{4}, false},
+  };
+  std::vector<std::string> labels = {"first", "dominated", "middle", "last"};
+
+  MakeMinimalCover(steps, &labels);
+
+  ASSERT_EQ(steps.size(), 3);
+  ASSERT_EQ(labels.size(), 3);
+  EXPECT_EQ(labels[0], "first");
+  EXPECT_EQ(labels[1], "middle");
+  EXPECT_EQ(labels[2], "last");
+}
+
 RC_GTEST_PROP(
     StepMergeTest,
     MakeMinimalCoverProperties,
@@ -510,10 +558,22 @@ RC_GTEST_PROP(
   SortSteps(steps);
   RC_LOG() << "Sorted steps: " << rc::toString(steps) << "\n";
 
+  // Build a parallel index vector to track which original steps survive.
+  std::vector<size_t> indices(steps.size());
+  for (size_t i = 0; i < steps.size(); i++) indices[i] = i;
+
   // Make a copy for the minimal cover
   std::vector<Step> minimal_cover = steps;
-  MakeMinimalCover(minimal_cover);
+  MakeMinimalCover(minimal_cover, &indices);
   RC_LOG() << "Minimal cover: " << rc::toString(minimal_cover) << "\n";
+
+  // Property 0: parallel vector has same size as steps
+  RC_ASSERT(indices.size() == minimal_cover.size());
+
+  // Property 0b: each surviving step matches the original at that index
+  for (size_t i = 0; i < minimal_cover.size(); i++) {
+    RC_ASSERT(minimal_cover[i] == steps[indices[i]]);
+  }
 
   // Property 1: minimal cover is a subset of original steps
   std::unordered_set<Step> original_steps_set(steps.begin(), steps.end());
@@ -644,6 +704,80 @@ TEST(StepMergeTest, PairwiseMergedStepsTiedFlexSteps) {
   EXPECT_EQ(result[1].destination_time.seconds, 125);
 }
 
+TEST(StepMergeTest, PairwiseMergedStepsProvenance) {
+  // ab: flex (duration 20) + non-flex at (100, 110)
+  std::vector<Step> ab = {
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{0},
+       TimeSinceServiceStart{20}, TripId{1}, TripId{1}, true},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
+       TimeSinceServiceStart{110}, TripId{2}, TripId{2}, false},
+  };
+  // bc: flex (duration 15) + non-flex at (120, 125)
+  std::vector<Step> bc = {
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{0},
+       TimeSinceServiceStart{15}, TripId{3}, TripId{3}, true},
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{120},
+       TimeSinceServiceStart{125}, TripId{4}, TripId{4}, false},
+  };
+
+  ASSERT_TRUE(CheckSortedAndMinimal(ab));
+  ASSERT_TRUE(CheckSortedAndMinimal(bc));
+
+  std::vector<StepProvenance> provenance;
+  std::vector<Step> result = PairwiseMergedSteps(ab, bc, &provenance);
+
+  ASSERT_EQ(result.size(), provenance.size());
+
+  // Verify each result step matches what MergedStep(ab[prov.ab_index],
+  // bc[prov.bc_index]) would produce.
+  for (size_t i = 0; i < result.size(); i++) {
+    Step expected = MergedStep(ab[provenance[i].ab_index],
+                               bc[provenance[i].bc_index]);
+    EXPECT_EQ(result[i], expected)
+        << "Mismatch at result[" << i << "]: provenance says ab["
+        << provenance[i].ab_index << "] + bc[" << provenance[i].bc_index << "]";
+  }
+}
+
+TEST(StepMergeTest, PairwiseMergedStepsProvenanceNonFlex) {
+  // Pure non-flex case: three ab steps, two bc steps.
+  std::vector<Step> ab = {
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{100},
+       TimeSinceServiceStart{150}, TripId{1}, TripId{1}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{200},
+       TimeSinceServiceStart{250}, TripId{2}, TripId{2}, false},
+      {StopId{1}, StopId{2}, TimeSinceServiceStart{300},
+       TimeSinceServiceStart{350}, TripId{3}, TripId{3}, false},
+  };
+  std::vector<Step> bc = {
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{160},
+       TimeSinceServiceStart{200}, TripId{4}, TripId{4}, false},
+      {StopId{2}, StopId{3}, TimeSinceServiceStart{260},
+       TimeSinceServiceStart{300}, TripId{5}, TripId{5}, false},
+  };
+
+  ASSERT_TRUE(CheckSortedAndMinimal(ab));
+  ASSERT_TRUE(CheckSortedAndMinimal(bc));
+
+  std::vector<StepProvenance> provenance;
+  std::vector<Step> result = PairwiseMergedSteps(ab, bc, &provenance);
+
+  ASSERT_EQ(result.size(), provenance.size());
+  for (size_t i = 0; i < result.size(); i++) {
+    Step expected = MergedStep(ab[provenance[i].ab_index],
+                               bc[provenance[i].bc_index]);
+    EXPECT_EQ(result[i], expected);
+  }
+
+  // We expect two merged steps: ab[0]+bc[0] and ab[1]+bc[1].
+  // ab[2] + bc[1] is dominated by ab[1] + bc[1] (departs later, arrives same).
+  ASSERT_EQ(result.size(), 2);
+  EXPECT_EQ(provenance[0].ab_index, 0);
+  EXPECT_EQ(provenance[0].bc_index, 0);
+  EXPECT_EQ(provenance[1].ab_index, 1);
+  EXPECT_EQ(provenance[1].bc_index, 1);
+}
+
 RC_GTEST_PROP(
     StepMergeTest,
     MergeStepsProperty,
@@ -667,9 +801,24 @@ RC_GTEST_PROP(
   RC_LOG() << "Minimal steps 1->2: " << rc::toString(steps_12) << "\n";
   RC_LOG() << "Minimal steps 2->3: " << rc::toString(steps_23) << "\n";
 
-  // Merge the steps
-  std::vector<Step> merged_steps = PairwiseMergedSteps(steps_12, steps_23);
+  // Merge the steps, requesting provenance
+  std::vector<StepProvenance> provenance;
+  std::vector<Step> merged_steps =
+      PairwiseMergedSteps(steps_12, steps_23, &provenance);
   RC_LOG() << "Merged steps: " << rc::toString(merged_steps) << "\n";
+
+  // Property 0: provenance has same size as merged result
+  RC_ASSERT(provenance.size() == merged_steps.size());
+
+  // Property 0b: each provenance entry points to valid indices and the
+  // result step equals MergedStep(ab[i], bc[j])
+  for (size_t i = 0; i < merged_steps.size(); i++) {
+    RC_ASSERT(provenance[i].ab_index < steps_12.size());
+    RC_ASSERT(provenance[i].bc_index < steps_23.size());
+    Step expected = MergedStep(steps_12[provenance[i].ab_index],
+                               steps_23[provenance[i].bc_index]);
+    RC_ASSERT(merged_steps[i] == expected);
+  }
 
   // Property 1: the result satisfies CheckSortedAndMinimal
   RC_ASSERT(CheckSortedAndMinimal(merged_steps));

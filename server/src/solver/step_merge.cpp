@@ -32,54 +32,6 @@ void SortSteps(std::vector<Step>& steps) {
   std::sort(steps.begin(), steps.end(), SmallerStep);
 }
 
-void MakeMinimalCover(std::vector<Step>& steps) {
-  if (steps.size() <= 1) {
-    return;
-  }
-
-  const StopId deletion_marker = StopId{std::numeric_limits<int>::min()};
-
-  // Forward sweep through all the flex steps to delete all but the first
-  // (shortest) one and to record the duration of the first (shortest) one.
-  int flex_step_duration = std::numeric_limits<int>::max();
-  for (int i = 0; i < steps.size() && steps[i].is_flex; ++i) {
-    if (i == 0) {
-      flex_step_duration = steps[i].FlexDurationSeconds();
-    } else {
-      steps[i].origin_stop = deletion_marker;
-    }
-  }
-
-  // Backwards sweep through the non-flex steps: a step is dominated if there's
-  // a later-departing step that arrives earlier OR if the flex step is
-  // equal-or-shorter.
-  int earliest_destination_time = std::numeric_limits<int>::max();
-  for (int i = static_cast<int>(steps.size()) - 1; i >= 0 && !steps[i].is_flex;
-       i--) {
-    if (steps[i].destination_time.seconds >= earliest_destination_time ||
-        steps[i].destination_time.seconds - steps[i].origin_time.seconds >=
-            flex_step_duration) {
-      // This step is dominated.
-      steps[i].origin_stop = deletion_marker;
-    } else {
-      // This step is not dominated, update earliest destination time
-      earliest_destination_time = steps[i].destination_time.seconds;
-    }
-  }
-
-  // Remove marked steps in-place using two-pointer technique
-  size_t write_pos = 0;
-  for (size_t read_pos = 0; read_pos < steps.size(); read_pos++) {
-    if (steps[read_pos].origin_stop != deletion_marker) {
-      if (write_pos != read_pos) {
-        steps[write_pos] = std::move(steps[read_pos]);
-      }
-      write_pos++;
-    }
-  }
-
-  steps.resize(write_pos);
-}
 
 bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
   if (steps.empty()) {
@@ -146,7 +98,8 @@ Step MergedStep(Step ab, Step bc) {
 }
 
 std::vector<Step> PairwiseMergedSteps(
-    const std::vector<Step>& ab, const std::vector<Step>& bc
+    const std::vector<Step>& ab, const std::vector<Step>& bc,
+    std::vector<StepProvenance>* provenance
 ) {
   std::vector<Step> result;
   if (ab.empty() || bc.empty()) {
@@ -165,10 +118,18 @@ std::vector<Step> PairwiseMergedSteps(
   alloc_ub += std::min(ab.size(), bc.size());
   result.reserve(alloc_ub);
 
+  if (provenance) {
+    provenance->clear();
+    provenance->reserve(alloc_ub);
+  }
+
   // If both have flex steps, make a combined flex step and put it first in the
   // result.
   if (ab[0].is_flex && bc[0].is_flex) {
     result.emplace_back(MergedStep(ab[0], bc[0]));
+    if (provenance) {
+      provenance->push_back({0, 0});
+    }
   }
 
   size_t ab_start = ab[0].is_flex ? 1 : 0;
@@ -245,16 +206,25 @@ std::vector<Step> PairwiseMergedSteps(
         SmallerOrEqualStep(ab_flex_step, non_flex_step)) {
       // ab_flex_step is smallest (or tied)
       result.emplace_back(ab_flex_step);
+      if (provenance) {
+        provenance->push_back({0, ab_flex_bc_i});
+      }
       ab_flex_bc_i += 1;
       ab_flex_step = GetABFlexStep();
     } else if (SmallerOrEqualStep(bc_flex_step, non_flex_step)) {
       // bc_flex_step is smallest (or tied with non_flex)
       result.emplace_back(bc_flex_step);
+      if (provenance) {
+        provenance->push_back({bc_flex_ab_i, 0});
+      }
       bc_flex_ab_i += 1;
       bc_flex_step = GetBCFlexStep();
     } else {
       // non_flex_step is smallest
       result.emplace_back(non_flex_step);
+      if (provenance) {
+        provenance->push_back({non_flex_ab_i, non_flex_bc_i});
+      }
       non_flex_ab_i += 1;
       MakeNonFlexValidMinimal();
       non_flex_step = GetNonFlexStep();
@@ -265,7 +235,7 @@ std::vector<Step> PairwiseMergedSteps(
   // TODO: I think it might be possible to suppress these during the 3-way merge
   // so that we don't have to allocate space and then do an extra sweep to
   // delete them.
-  MakeMinimalCover(result);
+  MakeMinimalCover(result, provenance);
   return result;
 }
 
