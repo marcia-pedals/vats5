@@ -6,24 +6,26 @@
 
 namespace vats5 {
 
-struct NaiveSolveResult {
-  int value;
-  struct OptimalPermutation {
-    std::vector<StopId> stops;
-    TimeSinceServiceStart origin_time;
-    TimeSinceServiceStart destination_time;
-  };
-  std::vector<OptimalPermutation> optimal_permutations;
+struct SolutionSpaceElement {
+  std::vector<StopId> generating_permutation;
+  std::vector<StopId> actual_path;
+  Step merged_step;
 };
 
-// Find the optimal tour using the naive brute force of trying every
-// permutation.
+// Enumerate the whole solution space by finding all tours for all generating permutations.
 //
 // Only counts tours that start at or after 00:00:00 because branching can
 // eliminate earlier tours. (This happens because completion only considers
 // scheduled steps that happen at or after 00:00:00, and branching can turn a
 // flex step plus an early scheduled step into a scheduled step that starts
 // before 00:00:00).
-NaiveSolveResult NaiveSolve(const ProblemState& state);
+std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& state);
+
+// Find the optimal tour by brute force enumerating the solution space.
+//
+// Only counts tours that start at or after 00:00:00. See above.
+//
+// Returns std::numeric_limits<int>::max() for infeasible problems.
+int BruteForceSolveOptimalDuration(const ProblemState& state);
 
 }  // namespace vats5

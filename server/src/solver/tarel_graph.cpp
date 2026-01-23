@@ -714,6 +714,38 @@ void PrintTarelTourResults(
   }
 }
 
+std::optional<TspTourResult> ComputeTarelLowerBound(
+    const ProblemState& state,
+    const std::function<StepPartitionId(Step)>& partition) {
+
+  // Check that every `state.required_stops` appears as both an origin and
+  // destination in `state.completed`.
+  //
+  // This is necessary for correctness because `MakeTarelEdges` only produces
+  // states for stops that appear as origins and destinations, and if it misses
+  // any stops, then the TSP will simply not visit those stops.
+  std::unordered_set<StopId> origins;
+  std::unordered_set<StopId> destinations;
+  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+    origins.insert(origin_stop);
+    for (const auto& path_group : path_groups) {
+      if (!path_group.empty()) {
+        destinations.insert(path_group[0].merged_step.destination_stop);
+      }
+    }
+  }
+  for (StopId stop : state.required_stops) {
+    if (!origins.contains(stop) || !destinations.contains(stop)) {
+      return std::nullopt;
+    }
+  }
+
+  auto edges = MakeTarelEdges(state.completed, partition);
+  auto merged_edges = MergeEquivalentTarelStates(edges);
+  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
+  return SolveTspAndExtractTour(merged_edges, graph, state.boundary);
+}
+
 void WriteTarelSummary(
   const ProblemState& state,
   const std::string& dir,

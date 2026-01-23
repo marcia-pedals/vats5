@@ -71,6 +71,33 @@ void showValue(const ProblemState& state, std::ostream& os) {
     os << "\n";
   }
   os << "  ]\n";
+
+  std::vector<Step> merged_steps = state.completed.AllMergedSteps();
+  std::unordered_set<StopId> completed_origins;
+  std::unordered_set<StopId> completed_destinations;
+  for (const Step& step : merged_steps) {
+    completed_origins.insert(step.origin_stop);
+    completed_destinations.insert(step.destination_stop);
+  }
+
+  std::vector<StopId> origin_ids(completed_origins.begin(), completed_origins.end());
+  std::sort(origin_ids.begin(), origin_ids.end(), [](StopId a, StopId b) { return a.v < b.v; });
+  std::vector<StopId> dest_ids(completed_destinations.begin(), completed_destinations.end());
+  std::sort(dest_ids.begin(), dest_ids.end(), [](StopId a, StopId b) { return a.v < b.v; });
+
+  os << "  completed_origins=[";
+  for (size_t i = 0; i < origin_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(origin_ids[i]);
+  }
+  os << "]\n";
+  os << "  completed_destinations=[";
+  for (size_t i = 0; i < dest_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(dest_ids[i]);
+  }
+  os << "]\n";
+
   os << "}";
 }
 
@@ -141,6 +168,32 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
     });
     });
   });
+}
+
+void showValue(const NamedBranchEdge& e, std::ostream& os) {
+  os << "BranchEdge{" << e.a_name << " -> " << e.b_name << "}";
+}
+
+rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
+  std::vector<StopId> stops(state.required_stops.begin(), state.required_stops.end());
+  ProblemBoundary boundary = state.boundary;
+  std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  int n = static_cast<int>(stops.size());
+  return rc::gen::suchThat(
+    rc::gen::apply([stops, stop_names, n](int ai, int b_offset) -> NamedBranchEdge {
+      int bi = (ai + 1 + b_offset) % n;
+      return NamedBranchEdge{
+        BranchEdge{stops[ai], stops[bi]},
+        stop_names.at(stops[ai]),
+        stop_names.at(stops[bi]),
+      };
+    }, rc::gen::inRange(0, n), rc::gen::inRange(0, n - 1)),
+    [boundary](const NamedBranchEdge& e) {
+      return e.edge.a != boundary.end &&
+             e.edge.b != boundary.start &&
+             !(e.edge.a == boundary.start && e.edge.b == boundary.end);
+    }
+  );
 }
 
 }  // namespace vats5

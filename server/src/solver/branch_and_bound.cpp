@@ -52,6 +52,7 @@ ProblemState ApplyConstraints(
       required_stops.erase(require.b);
       assert(boundary.start != require.b);
       assert(boundary.end != require.a);
+      assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {
         boundary.start = ab;
       }

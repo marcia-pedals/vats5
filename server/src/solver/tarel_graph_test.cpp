@@ -4,16 +4,48 @@
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
 
+#include <algorithm>
+#include <limits>
+#include <optional>
 #include <unordered_map>
 
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Classify.h"
 #include "solver/data.h"
+#include "solver/steps_adjacency_list.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
 
 namespace vats5 {
 namespace {
+
+// A problem with two stops a, b, and no steps between them is infeasible and
+// the relaxation should have no solution.
+TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
+  std::vector<Step> steps;
+  std::unordered_set<StopId> stops;
+  std::unordered_map<StopId, std::string> stop_names;
+
+  stops.insert(StopId{0});
+  stops.insert(StopId{1});
+  stop_names[StopId{0}] = "a";
+  stop_names[StopId{1}] = "b";
+
+  ProblemBoundary boundary{
+    .start=StopId{2},
+    .end=StopId{3},
+  };
+  AddBoundary(steps, stops, stop_names, boundary);
+
+  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names);
+
+  auto partition_same = [](const Step& s) -> StepPartitionId {
+    return StepPartitionId{0};
+  };
+  std::optional<TspTourResult> result = ComputeTarelLowerBound(state, partition_same);
+
+  EXPECT_FALSE(result.has_value());
+}
 
 RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   ProblemState state = *GenProblemState();
@@ -29,19 +61,14 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   for (int i = 0; i < steps.size(); ++i) {
     partition[steps[i]] = StepPartitionId{partition_vec[i]};
   }
-  auto edges = MakeTarelEdges(state.completed, [&](const Step& s) -> StepPartitionId {
+  auto result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
     return partition.at(s);
   });
-  auto merged_edges = MergeEquivalentTarelStates(edges);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  auto result = SolveTspAndExtractTour(merged_edges, graph, state.boundary);
   RC_ASSERT(result.has_value());
 
   int lower_bound = result->optimal_value;
-  int actual_value = NaiveSolve(state).value;
-
+  int actual_value = BruteForceSolveOptimalDuration(state);
   RC_CLASSIFY(lower_bound == actual_value);
-
   RC_ASSERT(lower_bound <= actual_value);
 }
 
@@ -50,16 +77,13 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
 RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   ProblemState state = *GenProblemState(rc::gen::just(CycleIsFlex::kNo));
   std::unordered_map<Step, StepPartitionId> partition;
-  auto edges = MakeTarelEdges(state.completed, [&](const Step& s) -> StepPartitionId {
+  auto result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
     const auto [it, _] = partition.try_emplace(s, partition.size());
     return it->second;
   });
-  auto merged_edges = MergeEquivalentTarelStates(edges);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  auto result = SolveTspAndExtractTour(merged_edges, graph, state.boundary);
   RC_ASSERT(result.has_value());
   int lower_bound = result->optimal_value;
-  int actual_value = NaiveSolve(state).value;
+  int actual_value = BruteForceSolveOptimalDuration(state);
   RC_ASSERT(lower_bound == actual_value);
 }
 

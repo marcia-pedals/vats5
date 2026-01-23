@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
@@ -17,6 +18,21 @@ struct ConstraintForbidEdge {
 };
 
 using ProblemConstraint = std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
+
+struct BranchEdge {
+  StopId a;
+  StopId b;
+
+  bool operator==(const BranchEdge& other) const = default;
+
+  ConstraintRequireEdge Require() const {
+    return ConstraintRequireEdge{a, b};
+  }
+
+  ConstraintForbidEdge Forbid() const {
+    return ConstraintForbidEdge{a, b};
+  }
+};
 
 // The minimal amount of information needed to reconstruct the entire state of a
 // search node from the initial problem.
@@ -58,3 +74,12 @@ ProblemState ApplyConstraints(
 int BranchAndBoundSolve();
 
 }  // namespace vats5
+
+template <>
+struct std::hash<vats5::BranchEdge> {
+  std::size_t operator()(const vats5::BranchEdge& e) const noexcept {
+    std::size_t h1 = std::hash<int>{}(e.a.v);
+    std::size_t h2 = std::hash<int>{}(e.b.v);
+    return h1 ^ (h2 << 1);
+  }
+};
