@@ -116,10 +116,7 @@ struct ArrivalTimesScheduled {
   std::vector<TimeSinceServiceStart> times;
 };
 
-std::vector<TarelEdge> MakeTarelEdges(
-    const StepPathsAdjacencyList& adj,
-    const std::function<StepPartitionId(Step)>& partition
-) {
+std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
   // steps_from[x] is all steps from x.
   // Within each group, the steps are sorted and minimal.
   std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>> steps_from;
@@ -148,8 +145,7 @@ std::vector<TarelEdge> MakeTarelEdges(
       for (const Path& path : path_group) {
         const Step& step = path.merged_step;
         assert(step.origin.stop == origin_stop);
-        StepPartitionId pid = partition(step);
-        TarelState destination_state{step.destination.stop, pid};
+        TarelState destination_state{step.destination.stop, step.destination.partition};
 
         // Preserves sorted-and-minimal property because: The paths within
         // `path_group` are sorted and minimal, they all have the same
@@ -709,10 +705,7 @@ void PrintTarelTourResults(
   }
 }
 
-std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state,
-    const std::function<StepPartitionId(Step)>& partition) {
-
+std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state) {
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `state.completed`.
   //
@@ -735,7 +728,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  auto edges = MakeTarelEdges(state.completed, partition);
+  auto edges = MakeTarelEdges(state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
   return SolveTspAndExtractTour(merged_edges, graph, state.boundary);

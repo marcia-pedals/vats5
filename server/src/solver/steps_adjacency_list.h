@@ -9,19 +9,24 @@
 namespace vats5 {
 
 // A step in the adjacency list with only the necessary data.
-// origin_stop and destination_stop are stored in the parent structures,
-// and is_flex is inferred from context (flex_step vs steps array).
+// origin_stop and destination_stop are stored in the parent structures.
+// Whether the step is in the flex_step slot or the fixed steps array is
+// determined by Step::is_flex, but the per-endpoint is_flex flags are stored here.
 struct AdjacencyListStep {
   TimeSinceServiceStart origin_time;
   TimeSinceServiceStart destination_time;
   TripId origin_trip;
   TripId destination_trip;
+  StepPartitionId origin_partition;
+  StepPartitionId destination_partition;
+  bool origin_is_flex;
+  bool destination_is_flex;
 
   // Convert to a full Step given the context.
   Step ToStep(StopId origin_stop, StopId destination_stop, bool is_flex) const {
     return Step{
-        StepEndpoint{origin_stop, is_flex, StepPartitionId::NONE, origin_time, origin_trip},
-        StepEndpoint{destination_stop, is_flex, StepPartitionId::NONE, destination_time, destination_trip},
+        StepEndpoint{origin_stop, origin_is_flex, origin_partition, origin_time, origin_trip},
+        StepEndpoint{destination_stop, destination_is_flex, destination_partition, destination_time, destination_trip},
         is_flex
     };
   }
@@ -32,7 +37,11 @@ struct AdjacencyListStep {
         step.origin.time,
         step.destination.time,
         step.origin.trip,
-        step.destination.trip
+        step.destination.trip,
+        step.origin.partition,
+        step.destination.partition,
+        step.origin.is_flex,
+        step.destination.is_flex
     };
   }
 
@@ -44,7 +53,11 @@ struct AdjacencyListStep {
     return origin_time == other.origin_time &&
            destination_time == other.destination_time &&
            origin_trip == other.origin_trip &&
-           destination_trip == other.destination_trip;
+           destination_trip == other.destination_trip &&
+           origin_partition == other.origin_partition &&
+           destination_partition == other.destination_partition &&
+           origin_is_flex == other.origin_is_flex &&
+           destination_is_flex == other.destination_is_flex;
   }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
@@ -52,7 +65,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     origin_time,
     destination_time,
     origin_trip,
-    destination_trip
+    destination_trip,
+    origin_partition,
+    destination_partition,
+    origin_is_flex,
+    destination_is_flex
 )
 
 // A group of steps from one origin to one destination, sorted by origin time.

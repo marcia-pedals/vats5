@@ -13,6 +13,7 @@
 #include "rapidcheck/Classify.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/steps_shortest_path.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
 
@@ -39,33 +40,32 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
 
   ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names);
 
-  auto partition_same = [](const Step& s) -> StepPartitionId {
-    return StepPartitionId{0};
-  };
-  std::optional<TspTourResult> result = ComputeTarelLowerBound(state, partition_same);
+  std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
 
   EXPECT_FALSE(result.has_value());
 }
 
 RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
-  ProblemState state = *GenProblemState();
+  int num_partitions = *rc::gen::inRange(1, 20);
 
-  // TODO: Maybe partition based on minimal steps to make it closer to how
-  // partitioning works in the real solver.
-  std::vector<Step> steps = state.completed.AllMergedSteps();
-  int num_partitions = *rc::gen::inRange(1, static_cast<int>(steps.size()));
+  // The partitions each step is in, by index. We generate more than
+  // GenProblemState will ever generate steps so that we have enough, without
+  // having to depend on the number of steps that it has generated.
+  //
   // TODO: The printed value is gonna be incomprehensible on failure. Maybe
   // combine with the ProblemState printout somehow.
-  std::vector<int> partition_vec = *rc::gen::container<std::vector<int>>(steps.size(), rc::gen::inRange(0, num_partitions - 1));
-  std::unordered_map<Step, StepPartitionId> partition;
-  for (int i = 0; i < steps.size(); ++i) {
-    partition[steps[i]] = StepPartitionId{partition_vec[i]};
-  }
+  std::vector<int> partition_vec = *rc::gen::container<std::vector<int>>(200, rc::gen::inRange(0, num_partitions - 1));
+
+  ProblemState state = *GenProblemState(std::nullopt, [&](std::vector<Step>& steps) {
+    for (int i = 0; i < steps.size(); ++i) {
+      steps[i].origin.partition = StepPartitionId{partition_vec[i]};
+      steps[i].destination.partition = StepPartitionId{partition_vec[i]};
+    }
+  });
+
   std::optional<TspTourResult> result;
   try {
-    result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
-      return partition.at(s);
-    });
+    result = ComputeTarelLowerBound(state);
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }
@@ -80,14 +80,15 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
 // If there are no flex steps and if each step is in a different partition, then
 // the lower bound should reach the optimal value.
 RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
-  ProblemState state = *GenProblemState(rc::gen::just(CycleIsFlex::kNo));
-  std::unordered_map<Step, StepPartitionId> partition;
+  ProblemState state = *GenProblemState(rc::gen::just(CycleIsFlex::kNo), [](std::vector<Step>& steps) {
+    for (int i = 0; i < steps.size(); ++i) {
+      steps[i].origin.partition = StepPartitionId{i};
+      steps[i].destination.partition = StepPartitionId{i};
+    }
+  });
   std::optional<TspTourResult> result;
   try {
-    result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
-      const auto [it, _] = partition.try_emplace(s, partition.size());
-      return it->second;
-    });
+    result = ComputeTarelLowerBound(state);
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }

@@ -100,17 +100,8 @@ std::optional<TspTourResult> DoSolve(const DataGtfsMapping& mapping, const Probl
     return it->second;
   };
 
-  std::vector<TarelEdge> raw_tarel_edges = MakeTarelEdges(
-    state.completed,
-    std::function<StepPartitionId(Step)>([&](const Step& s) -> StepPartitionId {
-      if (s.is_flex) {
-        return GetId("flex");
-      }
-      auto it = step_to_last_scheduled_route_desc.find(s);
-      assert(it != step_to_last_scheduled_route_desc.end());
-      return GetId(it->second);
-    })
-  );
+  // TODO: If still using this, set partitions.
+  std::vector<TarelEdge> raw_tarel_edges = MakeTarelEdges(state.completed);
 
   std::vector<TarelEdge> tarel_edges = MergeEquivalentTarelStates(raw_tarel_edges);
 

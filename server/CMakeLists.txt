@@ -161,7 +161,7 @@ add_test(NAME step_merge_test COMMAND step_merge_test)
 
 # Add steps_adjacency_list test executable
 add_executable(steps_adjacency_list_test src/solver/steps_adjacency_list_test.cpp)
-target_link_libraries(steps_adjacency_list_test PUBLIC gunit steps_adjacency_list)
+target_link_libraries(steps_adjacency_list_test PUBLIC gunit steps_adjacency_list rapidcheck rapidcheck_gtest)
 add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
 
 # Add relaxed_adjacency_list test executable

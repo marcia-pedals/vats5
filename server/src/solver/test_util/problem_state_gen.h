@@ -15,7 +15,9 @@ void showValue(const ProblemState& state, std::ostream& os);
 enum class CycleIsFlex { kNo, kYes };
 
 rc::Gen<ProblemState> GenProblemState(
-    rc::Gen<CycleIsFlex> cycle_is_flex_gen = rc::gen::element(CycleIsFlex::kNo, CycleIsFlex::kYes));
+  std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen = std::nullopt,
+  std::function<void(std::vector<Step>&)> update_steps = nullptr
+);
 
 struct NamedBranchEdge {
   BranchEdge edge;

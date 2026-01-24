@@ -48,15 +48,11 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
   RC_LOG() << "state_forbid: " << rc::toString(state_forbid) << "\n\n";
   RC_LOG() << "state_require: " << rc::toString(state_require) << "\n\n";
 
-  auto partition_same = [](const Step& s) -> StepPartitionId {
-    return StepPartitionId{0};
-  };
-
   std::optional<TspTourResult> result_orig, result_forbid, result_require;
   try {
-    result_orig = ComputeTarelLowerBound(state_orig, partition_same);
-    result_forbid = ComputeTarelLowerBound(state_forbid, partition_same);
-    result_require = ComputeTarelLowerBound(state_require, partition_same);
+    result_orig = ComputeTarelLowerBound(state_orig);
+    result_forbid = ComputeTarelLowerBound(state_forbid);
+    result_require = ComputeTarelLowerBound(state_require);
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }

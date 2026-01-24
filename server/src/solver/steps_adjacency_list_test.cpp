@@ -1,8 +1,55 @@
 #include "solver/steps_adjacency_list.h"
 
+#include <algorithm>
+#include <unordered_map>
 #include <gtest/gtest.h>
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+
+#include "solver/step_merge.h"
 
 namespace vats5 {
+
+static rc::Gen<Step> GenStep() {
+  return rc::gen::apply(
+      [](int origin_stop, int dest_stop, int origin_time, int duration,
+         int origin_trip, int dest_trip, int origin_partition,
+         int dest_partition, bool origin_is_flex, bool dest_is_flex,
+         bool is_flex) {
+        TimeSinceServiceStart ot = is_flex ? TimeSinceServiceStart{0}
+                                           : TimeSinceServiceStart{origin_time};
+        TimeSinceServiceStart dt = is_flex ? TimeSinceServiceStart{duration}
+                                           : TimeSinceServiceStart{origin_time + duration};
+        return Step{
+            StepEndpoint{StopId{origin_stop}, origin_is_flex, StepPartitionId{origin_partition}, ot, TripId{origin_trip}},
+            StepEndpoint{StopId{dest_stop}, dest_is_flex, StepPartitionId{dest_partition}, dt, TripId{dest_trip}},
+            is_flex
+        };
+      },
+      rc::gen::inRange(0, 6),
+      rc::gen::inRange(0, 6),
+      rc::gen::inRange(0, 3600),
+      rc::gen::inRange(1, 3600),
+      rc::gen::inRange(0, 10),
+      rc::gen::inRange(0, 10),
+      rc::gen::inRange(-1, 5),
+      rc::gen::inRange(-1, 5),
+      rc::gen::arbitrary<bool>(),
+      rc::gen::arbitrary<bool>(),
+      rc::gen::arbitrary<bool>()
+  );
+}
+
+static bool StepLess(const Step& a, const Step& b) {
+  auto key = [](const Step& s) {
+    return std::tie(s.origin.stop.v, s.destination.stop.v, s.is_flex,
+                    s.origin.time.seconds, s.destination.time.seconds,
+                    s.origin.trip.v, s.destination.trip.v,
+                    s.origin.partition.v, s.destination.partition.v,
+                    s.origin.is_flex, s.destination.is_flex);
+  };
+  return key(a) < key(b);
+}
 
 TEST(StepsAdjacencyListTest, MakeAdjacencyListBasic) {
   std::vector<Step> steps = {
@@ -65,6 +112,33 @@ TEST(StepsAdjacencyListTest, RemapStopIdsBasic) {
   ASSERT_EQ(steps_to_100.size(), 1);
   EXPECT_EQ(steps_to_100[0].origin_time.seconds, 300);
   EXPECT_EQ(steps_to_100[0].destination_time.seconds, 400);
+}
+
+RC_GTEST_PROP(StepsAdjacencyListTest, MakeAdjacencyListAndAllStepsAreInverses, ()) {
+  auto steps = *rc::gen::container<std::vector<Step>>(GenStep());
+
+  // Compute expected: group by (origin, dest), sort, and apply MakeMinimalCover.
+  std::unordered_map<int, std::unordered_map<int, std::vector<Step>>> grouped;
+  for (const Step& step : steps) {
+    grouped[step.origin.stop.v][step.destination.stop.v].push_back(step);
+  }
+  std::vector<Step> expected;
+  for (auto& [origin, dest_map] : grouped) {
+    for (auto& [dest, group] : dest_map) {
+      SortSteps(group);
+      MakeMinimalCover(group);
+      for (const Step& s : group) {
+        expected.push_back(s);
+      }
+    }
+  }
+
+  auto actual = MakeAdjacencyList(steps).AllSteps();
+
+  std::sort(expected.begin(), expected.end(), StepLess);
+  std::sort(actual.begin(), actual.end(), StepLess);
+
+  RC_ASSERT(expected == actual);
 }
 
 }  // namespace vats5

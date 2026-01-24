@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "rapidcheck/gen/Select.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
@@ -101,11 +102,16 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "}";
 }
 
-rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
-  return rc::gen::mapcat(std::move(cycle_is_flex_gen), [](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
+rc::Gen<ProblemState> GenProblemState(
+  std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen,
+  std::function<void(std::vector<Step>&)> update_steps
+) {
+  rc::Gen<CycleIsFlex> cycle_is_flex_gen_defaulted = cycle_is_flex_gen.value_or(rc::gen::element(CycleIsFlex::kNo, CycleIsFlex::kYes));
+
+  return rc::gen::mapcat(std::move(cycle_is_flex_gen_defaulted), [update_steps](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
     rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
 
-    return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex](int num_actual_stops) -> rc::Gen<ProblemState> {
+    return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex, update_steps](int num_actual_stops) -> rc::Gen<ProblemState> {
     auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration) -> Step {
       int destination = (origin + 1 + dest_offset) % num_actual_stops;
       return Step::PrimitiveScheduled(StopId{origin}, StopId{destination}, TimeSinceServiceStart{origin_time}, TimeSinceServiceStart{origin_time + duration}, TripId::NOOP);
@@ -115,7 +121,7 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
       return rc::gen::container<std::vector<Step>>(num_steps, step_gen);
     });
 
-    return rc::gen::map(std::move(steps_gen), [num_actual_stops, cycle_is_flex](std::vector<Step> steps) -> ProblemState {
+    return rc::gen::map(std::move(steps_gen), [num_actual_stops, cycle_is_flex, update_steps](std::vector<Step> steps) -> ProblemState {
       // Set up all the stops.
       std::unordered_set<StopId> stops;
       std::unordered_map<StopId, std::string> stop_names;
@@ -142,6 +148,10 @@ rc::Gen<ProblemState> GenProblemState(rc::Gen<CycleIsFlex> cycle_is_flex_gen) {
           ? Step::PrimitiveFlex(StopId{i}, StopId{(i + 1) % num_actual_stops}, 1200, trip_id)
           : Step::PrimitiveScheduled(StopId{i}, StopId{(i + 1) % num_actual_stops}, TimeSinceServiceStart{1200 * i}, TimeSinceServiceStart{1200 * (i + 1)}, trip_id)
         );
+      }
+
+      if (update_steps != nullptr) {
+        update_steps(steps);
       }
 
       // Add the boundary.
