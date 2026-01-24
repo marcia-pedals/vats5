@@ -91,6 +91,12 @@ int BruteForceSolveOptimalDuration(const ProblemState& state) {
   if (it == space.end()) {
     return std::numeric_limits<int>::max();
   }
+  std::cout << "brute force best ";
+  for (const StopId sid : it->actual_path) {
+    std::cout << state.StopName(sid) << " ";
+  }
+  std::cout << it->merged_step.origin.time.ToString() << " " << it->merged_step.destination.time.ToString() << "\n";
+
   return it->merged_step.DurationSeconds();
 }
 

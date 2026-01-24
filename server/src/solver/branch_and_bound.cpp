@@ -1,4 +1,9 @@
 #include "solver/branch_and_bound.h"
+#include <algorithm>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -104,8 +109,140 @@ ProblemState ApplyConstraints(
   );
 }
 
-int BranchAndBoundSolve() {
-  return 0;
+int BranchAndBoundSolve(
+  const ProblemState& initial_state,
+  int max_iter
+) {
+  std::vector<SearchEdge> search_edges;
+  std::vector<SearchNode> q;
+  q.push_back(SearchNode{
+    .parent_lb = 0,
+    .edge_index = -1,
+    .state = std::make_unique<ProblemState>(initial_state),
+  });
+
+  auto PushQ = [&search_edges, &q](const ProblemState& state, int new_lb, SearchEdge new_edge) {
+    int new_edge_index = search_edges.size();
+    search_edges.push_back(new_edge);
+    // TODO: Figure out if passing ApplyConstraints to std::make_unique does the smart thing or not.
+    std::unique_ptr<ProblemState> new_state = std::make_unique<ProblemState>(ApplyConstraints(state, new_edge.constraints));
+    q.push_back(std::move(SearchNode{new_lb, new_edge_index, std::move(new_state)}));
+    std::push_heap(q.begin(), q.end());
+  };
+
+  int iter_num = 0;
+  int best_ub = std::numeric_limits<int>::max();
+
+  std::cout << "Start bnb\n";
+
+  while (!q.empty()) {
+    if (max_iter > 0 && iter_num >= max_iter) {
+      throw std::runtime_error("Exceeded max_iter");
+    }
+    iter_num += 1;
+
+    std::pop_heap(q.begin(), q.end());
+    SearchNode cur_node = std::move(q.back());
+    ProblemState& state = *cur_node.state;
+    q.pop_back();
+
+    std::cout << "Taking " << cur_node.parent_lb;
+    if (cur_node.edge_index != -1) {
+      for (auto c : search_edges[cur_node.edge_index].constraints) {
+        if (std::holds_alternative<ConstraintForbidEdge>(c)) {
+          auto f = std::get<ConstraintForbidEdge>(c);
+          std::cout << " forbid " << state.StopName(f.a) << " -> " << state.StopName(f.b);
+        } else {
+          auto r = std::get<ConstraintRequireEdge>(c);
+          std::cout << " require " << state.StopName(r.a) << " -> " << state.StopName(r.b);
+        }
+      }
+    }
+    std::cout << "\n";
+
+    if (cur_node.parent_lb >= best_ub) {
+      std::cout << "best lb exceeds ub " << best_ub << "\n";
+      return best_ub;
+    }
+
+    // Compute lower bound.
+    std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(state);
+    if (!lb_result_opt.has_value()) {
+      // Infeasible node!
+      std::cout << "Pruned: infeasible\n";
+      continue;
+    }
+    TspTourResult& lb_result = lb_result_opt.value();
+    if (lb_result.optimal_value >= best_ub) {
+      // Pruned node!
+      std::cout << "Pruned: exceeds ub\n";
+      continue;
+    }
+
+    // Make an upper bound by actually following the LB path.
+    std::vector<Step> feasible_steps;
+    feasible_steps.push_back(Step::PrimitiveFlex(state.boundary.start, state.boundary.start, 0, TripId::NOOP));
+    for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
+      TarelEdge& edge = lb_result.tour_edges[i];
+      std::vector<Step> next_steps;
+      for (const Path& p : state.completed.PathsBetween(edge.origin.stop, edge.destination.stop)) {
+        next_steps.push_back(p.merged_step);
+      }
+      feasible_steps = PairwiseMergedSteps(feasible_steps, next_steps);
+    }
+    // TODO: Reference thing about 00:00:00.
+    std::erase_if(feasible_steps, [](const Step& step) {
+      return step.origin.time < TimeSinceServiceStart{0};
+    });
+    auto best_feasible_step_it = std::min_element(feasible_steps.begin(), feasible_steps.end(), [](const Step& a, const Step& b) {
+      return a.DurationSeconds() < b.DurationSeconds();
+    });
+    if (best_feasible_step_it != feasible_steps.end() && best_feasible_step_it->DurationSeconds() < best_ub) {
+      best_ub = best_feasible_step_it->DurationSeconds();
+      std::cout << "Found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+      for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
+        TarelEdge& edge = lb_result.tour_edges[i];
+        std::cout << "  " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+      }
+    }
+
+    std::vector<Step> primitive_steps;
+    for (const TarelEdge& e : lb_result.tour_edges) {
+      const auto& paths = state.completed.PathsBetween(e.origin.stop, e.destination.stop);
+      assert(paths.size() > 0);
+      Path best = paths[0];
+      for (const Path& p : paths) {
+        if (p.DurationSeconds() < best.DurationSeconds()) {
+          best = p;
+        }
+      }
+      for (const Step& s : best.steps) {
+        primitive_steps.push_back(s);
+      }
+    }
+
+    if (primitive_steps.size() <= 2) {
+      // TODO: Figure out what to do here.
+      std::cout << "Pruned: too few primitive steps\n";
+      continue;
+    }
+
+    // Select branch edge by hashing edges on LB path.
+    size_t edge_hash = 0;
+    for (const Step& s : primitive_steps) {
+      edge_hash ^= std::hash<int>{}(s.origin.stop.v) * 31 + std::hash<int>{}(s.destination.stop.v);
+    }
+    // TODO: Make it possible to select START -> * and * -> END steps.
+    Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
+
+    // Make and push search nodes for branches.
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Forbid()}, cur_node.edge_index});
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Require()}, cur_node.edge_index});
+  }
+
+  std::cout << "queue exhausted " << best_ub << "\n";
+  return best_ub;
 }
 
 }  // namespace vats5

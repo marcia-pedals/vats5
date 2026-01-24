@@ -90,4 +90,9 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
   RC_ASSERT(!result_require.has_value() || result_require->optimal_value >= result_orig->optimal_value);
 }
 
+RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
+  ProblemState state = *GenProblemState();
+  RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, 4096));
+}
+
 }  // namespace vats5

@@ -225,9 +225,10 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
       concorde_ub = *ub + n * kInterVertexOffset;
     }
 
-    // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel
+    // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel.
+    // Use a constant seed for deterministic execution for property tests.
     std::ostringstream cmd;
-    cmd << "cd " << temp_dir << " && concorde";
+    cmd << "cd " << temp_dir << " && concorde -s 43";
     if (concorde_ub.has_value()) {
       cmd << " -u " << *concorde_ub;
     }

@@ -40,19 +40,18 @@ struct SearchEdge {
   // Additional constraints added to the parent, in order.
   std::vector<ProblemConstraint> constraints;
 
-  // This edge's parent's edge. (so nullptr for children of the root node).
-  // Owned by the search.
-  SearchEdge* parent_edge;
+  // This edge's parent's edge, as index of the search's `search_edges`. (-1 for
+  // children of the root node).
+  int parent_edge_index;
 };
 
 struct SearchNode {
   // The lb computed on the parent problem. Used for priority queue.
   int parent_lb;
 
-  // The edge deriving this node from its parent.
-  // nullptr for the root node.
-  // Owned by the search.
-  SearchEdge* edge;
+  // The edge deriving this node from its parent, as index of the search's `search_edges`.
+  // -1 for the root node.
+  int edge_index;
 
   // State computed from the initial problem and the edges.
   //
@@ -62,6 +61,13 @@ struct SearchNode {
   // Not stored for finished nodes because it's big and we don't want to keep it
   // around after we're done with it.
   std::unique_ptr<ProblemState> state;
+
+  bool operator<(const SearchNode& other) const {
+    if (parent_lb == other.parent_lb) {
+      return edge_index > other.edge_index;
+    }
+    return parent_lb > other.parent_lb;
+  }
 };
 
 ProblemState ApplyConstraints(
@@ -69,9 +75,7 @@ ProblemState ApplyConstraints(
   const std::vector<ProblemConstraint>& constraints
 );
 
-// Stub function for branch and bound solver.
-// Returns 0 for now.
-int BranchAndBoundSolve();
+int BranchAndBoundSolve(const ProblemState& initial_state, int max_iter = -1);
 
 }  // namespace vats5
 
