@@ -92,6 +92,17 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
 
 RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
   ProblemState state = *GenProblemState();
+  // Pass max_iter to catch infinite loops.
+  //
+  // I think that in principle it could take the search up to
+  //   2^(choose(#stops, 2))
+  // steps because there are that many edges and the search could branch on
+  // every edge.
+  //
+  // `state` can have up to 8 stops, so that's 2^28 steps, but in practice the
+  // search seems much better than that, so I've set max_iter to 4096. Can
+  // increase if we notice flakiness from problem instances that take more
+  // steps.
   RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, 4096));
 }
 
