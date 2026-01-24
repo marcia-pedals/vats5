@@ -13,7 +13,6 @@
 #include "rapidcheck/Classify.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
-#include "solver/steps_shortest_path.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
 
