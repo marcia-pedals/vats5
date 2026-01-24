@@ -1,13 +1,25 @@
 #pragma once
 
+#include <exception>
 #include <optional>
 #include <ostream>
+#include <string>
 #include <vector>
 
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 
 namespace vats5 {
+
+// Thrown when a tour does not follow the structure required of tours according
+// to a reduction.
+class InvalidTourStructure : public std::exception {
+public:
+  explicit InvalidTourStructure(std::string message) : message_(std::move(message)) {}
+  const char* what() const noexcept override { return message_.c_str(); }
+private:
+  std::string message_;
+};
 
 // Result of solving TSP with Concorde.
 struct ConcordeSolution {

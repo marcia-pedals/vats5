@@ -563,10 +563,13 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
     cur_state = next_state;
   }
-  for (const std::string& error : tour_errors) {
-    std::cout << error << "\n";
+  if (!tour_errors.empty()) {
+    std::string msg = "SolveTspAndExtractTour: tour errors:\n";
+    for (const std::string& error : tour_errors) {
+      msg += error + "\n";
+    }
+    throw InvalidTourStructure(msg);
   }
-  assert(tour_errors.size() == 0);
 
   return result;
 }

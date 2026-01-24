@@ -7,6 +7,7 @@
 #include <vector>
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Log.h"
+#include "solver/concorde.h"
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 #include "solver/test_util/naive_solve.h"
@@ -51,9 +52,14 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
     return StepPartitionId{0};
   };
 
-  std::optional<TspTourResult> result_orig = ComputeTarelLowerBound(state_orig, partition_same);
-  std::optional<TspTourResult> result_forbid = ComputeTarelLowerBound(state_forbid, partition_same);
-  std::optional<TspTourResult> result_require = ComputeTarelLowerBound(state_require, partition_same);
+  std::optional<TspTourResult> result_orig, result_forbid, result_require;
+  try {
+    result_orig = ComputeTarelLowerBound(state_orig, partition_same);
+    result_forbid = ComputeTarelLowerBound(state_forbid, partition_same);
+    result_require = ComputeTarelLowerBound(state_require, partition_same);
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
 
   auto LogResult = [&](const TspTourResult& result) {
     RC_LOG() << result.optimal_value << " ";

@@ -14,18 +14,8 @@
 namespace vats5 {
 namespace {
 
-constexpr int kForbiddenEdgeWeight = 16000;
-constexpr int kInterVertexOffset = 4000;
-
-// Exception thrown when Concorde returns a tour that doesn't have proper in/out pairing.
-// This indicates insufficient kInterVertexOffset or a bug, not a transient error.
-class InvalidTourStructure : public std::exception {
-public:
-    explicit InvalidTourStructure(std::string message) : message_(std::move(message)) {}
-    const char* what() const noexcept override { return message_.c_str(); }
-private:
-    std::string message_;
-};
+constexpr int kForbiddenEdgeWeight = 20000;
+constexpr int kInterVertexOffset = 11000;
 
 // Helper class for computing edge weights in the doubled graph.
 // Uses vertex doubling to convert asymmetric TSP to symmetric TSP.
@@ -66,10 +56,18 @@ public:
         // Different original vertices
         if (!a_is_in && b_is_in) {
             // out(a_orig) <-> in(b_orig): asymmetric weight w(a_orig, b_orig)
-            return GetAsymmetricWeight(a_orig, b_orig) + kInterVertexOffset;
+            int w = GetAsymmetricWeight(a_orig, b_orig);
+            if (w >= kForbiddenEdgeWeight) {
+              return kForbiddenEdgeWeight;
+            }
+            return w + kInterVertexOffset;
         } else if (a_is_in && !b_is_in) {
             // in(a_orig) <-> out(b_orig): asymmetric weight w(b_orig, a_orig)
-            return GetAsymmetricWeight(b_orig, a_orig) + kInterVertexOffset;
+            int w = GetAsymmetricWeight(b_orig, a_orig);
+            if (w >= kForbiddenEdgeWeight) {
+              return kForbiddenEdgeWeight;
+            }
+            return w + kInterVertexOffset;
         } else {
             // Both in or both out: forbidden
             return kForbiddenEdgeWeight;
@@ -267,7 +265,13 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
     // Read the doubled tour
     std::vector<int> doubled_tour = ReadDoubledTour(solution_path);
 
-    // Check if tour uses any forbidden edges before structural validation
+    // If the optimal tour uses a forbidden edge, then say that the problem is infeasible.
+    //
+    // TODO: Think harder about this. The tour could "cheat" and pay
+    // kForbiddenEdgeCost somewhere to get a much cheaper tour somewhere else,
+    // and thus we'd incorrectly say that the problem is infeasible when
+    // actually there is a feasible solution. Seems unlikely to matter in
+    // practice, because kForbiddenEdgeCost is so big.
     if (DoubledTourUsesForbiddenEdge(doubled_tour, weights)) {
         // Cleanup temp directory before returning
         std::remove(problem_path.c_str());

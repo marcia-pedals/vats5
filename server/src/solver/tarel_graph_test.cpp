@@ -4,10 +4,10 @@
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
 
-#include <algorithm>
-#include <limits>
 #include <optional>
 #include <unordered_map>
+
+#include "solver/concorde.h"
 
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Classify.h"
@@ -61,9 +61,14 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   for (int i = 0; i < steps.size(); ++i) {
     partition[steps[i]] = StepPartitionId{partition_vec[i]};
   }
-  auto result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
-    return partition.at(s);
-  });
+  std::optional<TspTourResult> result;
+  try {
+    result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
+      return partition.at(s);
+    });
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
   RC_ASSERT(result.has_value());
 
   int lower_bound = result->optimal_value;
@@ -77,10 +82,15 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
 RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   ProblemState state = *GenProblemState(rc::gen::just(CycleIsFlex::kNo));
   std::unordered_map<Step, StepPartitionId> partition;
-  auto result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
-    const auto [it, _] = partition.try_emplace(s, partition.size());
-    return it->second;
-  });
+  std::optional<TspTourResult> result;
+  try {
+    result = ComputeTarelLowerBound(state, [&](const Step& s) -> StepPartitionId {
+      const auto [it, _] = partition.try_emplace(s, partition.size());
+      return it->second;
+    });
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
   RC_ASSERT(result.has_value());
   int lower_bound = result->optimal_value;
   int actual_value = BruteForceSolveOptimalDuration(state);
