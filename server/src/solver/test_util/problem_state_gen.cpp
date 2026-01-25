@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "rapidcheck/gen/Create.h"
 #include "rapidcheck/gen/Select.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -104,24 +105,29 @@ void showValue(const ProblemState& state, std::ostream& os) {
 
 rc::Gen<ProblemState> GenProblemState(
   std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen,
-  std::function<void(std::vector<Step>&)> update_steps
+  std::optional<rc::Gen<StepPartitionId>> step_partition_gen
 ) {
   rc::Gen<CycleIsFlex> cycle_is_flex_gen_defaulted = cycle_is_flex_gen.value_or(rc::gen::element(CycleIsFlex::kNo, CycleIsFlex::kYes));
+  rc::Gen<StepPartitionId> step_partition_gen_defaulted = step_partition_gen.value_or(rc::gen::just(StepPartitionId::NONE));
 
-  return rc::gen::mapcat(std::move(cycle_is_flex_gen_defaulted), [update_steps](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
+  return rc::gen::mapcat(std::move(cycle_is_flex_gen_defaulted), [step_partition_gen_defaulted](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
     rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
 
-    return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex, update_steps](int num_actual_stops) -> rc::Gen<ProblemState> {
-    auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration) -> Step {
+    return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex, step_partition_gen_defaulted](int num_actual_stops) -> rc::Gen<ProblemState> {
+    auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration, StepPartitionId step_partition) -> Step {
       int destination = (origin + 1 + dest_offset) % num_actual_stops;
       return Step::PrimitiveScheduled(StopId{origin}, StopId{destination}, TimeSinceServiceStart{origin_time}, TimeSinceServiceStart{origin_time + duration}, TripId::NOOP);
-    }, rc::gen::inRange(0, num_actual_stops), rc::gen::inRange(0, num_actual_stops - 1), rc::gen::inRange(0, 3600), rc::gen::inRange(0, 600));
+    }, rc::gen::inRange(0, num_actual_stops), rc::gen::inRange(0, num_actual_stops - 1), rc::gen::inRange(0, 3600), rc::gen::inRange(0, 600), step_partition_gen_defaulted);
 
     rc::Gen<std::vector<Step>> steps_gen = rc::gen::mapcat(rc::gen::inRange(0, 100), [step_gen](int num_steps) -> rc::Gen<std::vector<Step>> {
       return rc::gen::container<std::vector<Step>>(num_steps, step_gen);
     });
 
-    return rc::gen::map(std::move(steps_gen), [num_actual_stops, cycle_is_flex, update_steps](std::vector<Step> steps) -> ProblemState {
+    rc::Gen<std::vector<StepPartitionId>> cycle_steps_partition_gen = rc::gen::container<std::vector<StepPartitionId>>(num_actual_stops, step_partition_gen_defaulted);
+
+    return rc::gen::map(rc::gen::tuple(std::move(steps_gen), std::move(cycle_steps_partition_gen)), [num_actual_stops, cycle_is_flex, step_partition_gen_defaulted](auto arg) -> ProblemState {
+      auto [steps, cycle_step_partitions] = arg;
+
       // Set up all the stops.
       std::unordered_set<StopId> stops;
       std::unordered_map<StopId, std::string> stop_names;
@@ -145,13 +151,9 @@ rc::Gen<ProblemState> GenProblemState(
         TripId trip_id = next_trip_id;
         next_trip_id.v += 1;
         steps.push_back(flex
-          ? Step::PrimitiveFlex(StopId{i}, StopId{(i + 1) % num_actual_stops}, 1200, trip_id)
-          : Step::PrimitiveScheduled(StopId{i}, StopId{(i + 1) % num_actual_stops}, TimeSinceServiceStart{1200 * i}, TimeSinceServiceStart{1200 * (i + 1)}, trip_id)
+          ? Step::PrimitiveFlex(StopId{i}, StopId{(i + 1) % num_actual_stops}, 1200, trip_id, cycle_step_partitions[i])
+          : Step::PrimitiveScheduled(StopId{i}, StopId{(i + 1) % num_actual_stops}, TimeSinceServiceStart{1200 * i}, TimeSinceServiceStart{1200 * (i + 1)}, trip_id, cycle_step_partitions[i])
         );
-      }
-
-      if (update_steps != nullptr) {
-        update_steps(steps);
       }
 
       // Add the boundary.

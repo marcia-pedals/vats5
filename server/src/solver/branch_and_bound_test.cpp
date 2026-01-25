@@ -4,6 +4,7 @@
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
 #include <sys/stat.h>
+#include <optional>
 #include <vector>
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Log.h"
@@ -16,7 +17,8 @@
 namespace vats5 {
 
 RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
-  ProblemState state_orig = *GenProblemState();
+  int num_partitions = *rc::gen::inRange(1, 20);
+  ProblemState state_orig = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
   NamedBranchEdge named_edge = *GenBranchEdge(state_orig);
 
   ProblemState state_forbid = ApplyConstraints(state_orig, {named_edge.edge.Forbid()});
@@ -40,7 +42,8 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
 }
 
 RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
-  ProblemState state_orig = *GenProblemState();
+  int num_partitions = *rc::gen::inRange(1, 20);
+  ProblemState state_orig = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
   NamedBranchEdge named_edge = *GenBranchEdge(state_orig);
 
   ProblemState state_forbid = ApplyConstraints(state_orig, {named_edge.edge.Forbid()});
@@ -91,19 +94,25 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonIncreasing, ()) {
 }
 
 RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
-  ProblemState state = *GenProblemState();
-  // Pass max_iter to catch infinite loops.
-  //
-  // I think that in principle it could take the search up to
-  //   2^(choose(#stops, 2))
-  // steps because there are that many edges and the search could branch on
-  // every edge.
-  //
-  // `state` can have up to 8 stops, so that's 2^28 steps, but in practice the
-  // search seems much better than that, so I've set max_iter to 4096. Can
-  // increase if we notice flakiness from problem instances that take more
-  // steps.
-  RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, 4096));
+  int num_partitions = *rc::gen::inRange(1, 20);
+  ProblemState state = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
+
+  try {
+    // Pass max_iter to catch infinite loops.
+    //
+    // I think that in principle it could take the search up to
+    //   2^(choose(#stops, 2))
+    // steps because there are that many edges and the search could branch on
+    // every edge.
+    //
+    // `state` can have up to 8 stops, so that's 2^28 steps, but in practice the
+    // search seems much better than that, so I've set max_iter to 4096. Can
+    // increase if we notice flakiness from problem instances that take more
+    // steps.
+    RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, &RC_LOG(), 4096));
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
 }
 
 }  // namespace vats5

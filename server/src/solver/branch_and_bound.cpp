@@ -1,4 +1,5 @@
 #include "solver/branch_and_bound.h"
+#include <sys/stat.h>
 #include <algorithm>
 #include <iostream>
 #include <limits>
@@ -111,6 +112,7 @@ ProblemState ApplyConstraints(
 
 int BranchAndBoundSolve(
   const ProblemState& initial_state,
+  std::ostream* search_log,
   int max_iter
 ) {
   std::vector<SearchEdge> search_edges;
@@ -133,8 +135,6 @@ int BranchAndBoundSolve(
   int iter_num = 0;
   int best_ub = std::numeric_limits<int>::max();
 
-  std::cout << "Start bnb\n";
-
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
       throw std::runtime_error("Exceeded max_iter");
@@ -146,22 +146,26 @@ int BranchAndBoundSolve(
     ProblemState& state = *cur_node.state;
     q.pop_back();
 
-    std::cout << "Taking " << cur_node.parent_lb;
-    if (cur_node.edge_index != -1) {
-      for (auto c : search_edges[cur_node.edge_index].constraints) {
-        if (std::holds_alternative<ConstraintForbidEdge>(c)) {
-          auto f = std::get<ConstraintForbidEdge>(c);
-          std::cout << " forbid " << state.StopName(f.a) << " -> " << state.StopName(f.b);
-        } else {
-          auto r = std::get<ConstraintRequireEdge>(c);
-          std::cout << " require " << state.StopName(r.a) << " -> " << state.StopName(r.b);
+    if (search_log != nullptr) {
+      *search_log << "Take " << cur_node.parent_lb;
+      if (cur_node.edge_index != -1) {
+        for (auto c : search_edges[cur_node.edge_index].constraints) {
+          if (std::holds_alternative<ConstraintForbidEdge>(c)) {
+            auto f = std::get<ConstraintForbidEdge>(c);
+            *search_log << " [forbid " << state.StopName(f.a) << " -> " << state.StopName(f.b) << "]";
+          } else {
+            auto r = std::get<ConstraintRequireEdge>(c);
+            *search_log << " [require " << state.StopName(r.a) << " -> " << state.StopName(r.b) << "]";
+          }
         }
       }
+      *search_log << "\n";
     }
-    std::cout << "\n";
 
     if (cur_node.parent_lb >= best_ub) {
-      std::cout << "best lb exceeds ub " << best_ub << "\n";
+      if (search_log != nullptr) {
+        *search_log << "Search terminated: LB >= UB\n";
+      }
       return best_ub;
     }
 
@@ -169,13 +173,17 @@ int BranchAndBoundSolve(
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(state);
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
-      std::cout << "Pruned: infeasible\n";
+      if (search_log != nullptr) {
+        *search_log << "  infeasible\n";
+      }
       continue;
     }
     TspTourResult& lb_result = lb_result_opt.value();
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
-      std::cout << "Pruned: exceeds ub\n";
+      if (search_log != nullptr) {
+        *search_log << "  pruned: LB (" << lb_result.optimal_value << ") >= UB (" << best_ub << ")\n";
+      }
       continue;
     }
 
@@ -199,10 +207,12 @@ int BranchAndBoundSolve(
     });
     if (best_feasible_step_it != feasible_steps.end() && best_feasible_step_it->DurationSeconds() < best_ub) {
       best_ub = best_feasible_step_it->DurationSeconds();
-      std::cout << "Found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
-      for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
-        TarelEdge& edge = lb_result.tour_edges[i];
-        std::cout << "  " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+      if (search_log != nullptr) {
+        *search_log << "Found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+        for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
+          TarelEdge& edge = lb_result.tour_edges[i];
+          *search_log << "  " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+        }
       }
     }
 
@@ -223,7 +233,9 @@ int BranchAndBoundSolve(
 
     if (primitive_steps.size() <= 2) {
       // TODO: Figure out what to do here.
-      std::cout << "Pruned: too few primitive steps\n";
+      if (search_log != nullptr) {
+        *search_log << "  pruned: 2 or fewer primitive steps\n";
+      }
       continue;
     }
 
@@ -233,7 +245,8 @@ int BranchAndBoundSolve(
       edge_hash ^= std::hash<int>{}(s.origin.stop.v) * 31 + std::hash<int>{}(s.destination.stop.v);
     }
     // TODO: Make it possible to select START -> * and * -> END steps.
-    Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
     BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
 
     // Make and push search nodes for branches.
@@ -241,7 +254,6 @@ int BranchAndBoundSolve(
     PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Require()}, cur_node.edge_index});
   }
 
-  std::cout << "queue exhausted " << best_ub << "\n";
   return best_ub;
 }
 

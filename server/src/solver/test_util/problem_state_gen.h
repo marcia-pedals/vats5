@@ -16,7 +16,7 @@ enum class CycleIsFlex { kNo, kYes };
 
 rc::Gen<ProblemState> GenProblemState(
   std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen = std::nullopt,
-  std::function<void(std::vector<Step>&)> update_steps = nullptr
+  std::optional<rc::Gen<StepPartitionId>> step_partition_gen = std::nullopt
 );
 
 struct NamedBranchEdge {
