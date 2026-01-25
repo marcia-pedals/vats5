@@ -10,8 +10,6 @@
 
 namespace vats5 {
 
-void showValue(const ProblemState& state, std::ostream& os);
-
 enum class CycleIsFlex { kNo, kYes };
 
 rc::Gen<ProblemState> GenProblemState(

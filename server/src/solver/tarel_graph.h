@@ -44,6 +44,8 @@ struct ProblemState {
   }
 };
 
+void showValue(const ProblemState& state, std::ostream& os);
+
 ProblemState MakeProblemState(
   StepsAdjacencyList minimal,
   ProblemBoundary boundary,

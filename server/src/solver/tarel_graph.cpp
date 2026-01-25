@@ -20,6 +20,94 @@
 
 namespace vats5 {
 
+void showValue(const ProblemState& state, std::ostream& os) {
+  std::vector<Step> steps = state.minimal.AllSteps();
+  StopId start = state.boundary.start;
+  StopId end = state.boundary.end;
+
+  auto sort_key = [&](const Step& s) {
+    bool adj_start = (s.origin.stop == start || s.destination.stop == start);
+    bool adj_end = (s.origin.stop == end || s.destination.stop == end);
+    int group;
+    if (adj_start) group = 2;
+    else if (adj_end) group = 3;
+    else if (!s.is_flex) group = 0;
+    else group = 1;
+    return std::tuple(group, s.origin.stop.v, s.destination.stop.v);
+  };
+  std::sort(steps.begin(), steps.end(), [&](const Step& a, const Step& b) {
+    return sort_key(a) < sort_key(b);
+  });
+
+  std::vector<StopId> all_stop_ids;
+  for (const auto& [id, name] : state.stop_names) {
+    all_stop_ids.push_back(id);
+  }
+  std::sort(all_stop_ids.begin(), all_stop_ids.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+
+  std::vector<StopId> required_stop_ids(state.required_stops.begin(), state.required_stops.end());
+  std::sort(required_stop_ids.begin(), required_stop_ids.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+
+  os << "ProblemState{\n";
+  os << "  stop_names=[";
+  for (size_t i = 0; i < all_stop_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(all_stop_ids[i]);
+  }
+  os << "]\n";
+  os << "  required_stops=[";
+  for (size_t i = 0; i < required_stop_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(required_stop_ids[i]);
+  }
+  os << "]\n";
+  os << "  steps=[\n";
+  for (const auto& step : steps) {
+    os << "    " << state.stop_names.at(step.origin.stop)
+       << " -> " << state.stop_names.at(step.destination.stop);
+    if (step.is_flex) {
+      os << " (flex " << TimeSinceServiceStart{step.FlexDurationSeconds()}.ToString() << ")";
+    } else {
+      os << " [" << step.origin.time.ToString() << " -> " << step.destination.time.ToString() << "]";
+    }
+    os << "\n";
+  }
+  os << "  ]\n";
+
+  std::vector<Step> merged_steps = state.completed.AllMergedSteps();
+  std::unordered_set<StopId> completed_origins;
+  std::unordered_set<StopId> completed_destinations;
+  for (const Step& step : merged_steps) {
+    completed_origins.insert(step.origin.stop);
+    completed_destinations.insert(step.destination.stop);
+  }
+
+  std::vector<StopId> origin_ids(completed_origins.begin(), completed_origins.end());
+  std::sort(origin_ids.begin(), origin_ids.end(), [](StopId a, StopId b) { return a.v < b.v; });
+  std::vector<StopId> dest_ids(completed_destinations.begin(), completed_destinations.end());
+  std::sort(dest_ids.begin(), dest_ids.end(), [](StopId a, StopId b) { return a.v < b.v; });
+
+  os << "  completed_origins=[";
+  for (size_t i = 0; i < origin_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(origin_ids[i]);
+  }
+  os << "]\n";
+  os << "  completed_destinations=[";
+  for (size_t i = 0; i < dest_ids.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << state.stop_names.at(dest_ids[i]);
+  }
+  os << "]\n";
+
+  os << "}";
+}
+
+
 ProblemState MakeProblemState(
   StepsAdjacencyList minimal,
   ProblemBoundary boundary,

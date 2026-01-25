@@ -160,6 +160,9 @@ int BranchAndBoundSolve(
         }
       }
       *search_log << "\n";
+      // TODO: Detailed log level so that we can print these out sometimes.
+      // showValue(state, *search_log);
+      // *search_log << "\n";
     }
 
     if (cur_node.parent_lb >= best_ub) {
@@ -186,6 +189,9 @@ int BranchAndBoundSolve(
       }
       continue;
     }
+    if (search_log != nullptr) {
+      *search_log << "  lb: " << lb_result.optimal_value << "\n";
+    }
 
     // Make an upper bound by actually following the LB path.
     std::vector<Step> feasible_steps;
@@ -208,10 +214,10 @@ int BranchAndBoundSolve(
     if (best_feasible_step_it != feasible_steps.end() && best_feasible_step_it->DurationSeconds() < best_ub) {
       best_ub = best_feasible_step_it->DurationSeconds();
       if (search_log != nullptr) {
-        *search_log << "Found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+        *search_log << "  found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
         for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
           TarelEdge& edge = lb_result.tour_edges[i];
-          *search_log << "  " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+          *search_log << "    " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
         }
       }
     }
@@ -245,6 +251,10 @@ int BranchAndBoundSolve(
       edge_hash ^= std::hash<int>{}(s.origin.stop.v) * 31 + std::hash<int>{}(s.destination.stop.v);
     }
     // TODO: Make it possible to select START -> * and * -> END steps.
+    // Ok so the problem is that the path is allowed to "start at the start" for zero cost even if e.g. the start is actually like "START->(a->b)" which should incur the "(a->b)" cost.
+    // I think that having an ACTUAL_START which is not allowed to be merged would probably fix this. But this would incur an extra vertex cost? Is this the only way to "branch on requiring a certain start"?
+    // Alternatively we could track "start cost".
+    // Everything in parallel with END of course.
     // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
     Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
     BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
