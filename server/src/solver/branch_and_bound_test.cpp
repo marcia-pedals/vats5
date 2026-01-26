@@ -109,7 +109,7 @@ RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
     // search seems much better than that, so I've set max_iter to 4096. Can
     // increase if we notice flakiness from problem instances that take more
     // steps.
-    RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, &RC_LOG(), 4096));
+    RC_ASSERT(BruteForceSolveOptimalDuration(state) == BranchAndBoundSolve(state, &RC_LOG(), std::nullopt, 4096));
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }

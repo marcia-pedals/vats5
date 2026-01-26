@@ -185,6 +185,18 @@ ProblemState InitializeProblemState(
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, stops, stop_names, boundary);
 
+  std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
+  for (Step& step : steps) {
+    if (!step.is_flex) {
+      auto [it, _] = route_desc_to_step_partition.try_emplace(
+        steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination.trip),
+        StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
+      );
+      step.origin.partition = it->second;
+      step.destination.partition = it->second;
+    }
+  }
+
   return MakeProblemState(
     MakeAdjacencyList(steps),
     boundary,
@@ -793,7 +805,7 @@ void PrintTarelTourResults(
   }
 }
 
-std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state) {
+std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, std::ostream* tsp_log) {
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `state.completed`.
   //
@@ -819,7 +831,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state) {
   auto edges = MakeTarelEdges(state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  return SolveTspAndExtractTour(merged_edges, graph, state.boundary);
+  return SolveTspAndExtractTour(merged_edges, graph, state.boundary, std::nullopt, tsp_log);
 }
 
 void WriteTarelSummary(

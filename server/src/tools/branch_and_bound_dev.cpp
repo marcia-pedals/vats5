@@ -57,9 +57,9 @@ int main() {
     std::cout << "Initializing solution state...\n";
     ProblemState initial_state = InitializeProblemState(steps_from_gtfs, bart_stops);
 
-    // std::string run_dir = GetTimestampDir();
-    // std::filesystem::create_directory(run_dir);
-    // std::cout << "Output directory: " << run_dir << std::endl;
+    std::string run_dir = GetTimestampDir();
+    std::filesystem::create_directory(run_dir);
+    std::cout << "Output directory: " << run_dir << std::endl;
 
     BranchAndBoundSolve(initial_state, &std::cout);
 

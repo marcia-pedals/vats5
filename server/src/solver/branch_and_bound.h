@@ -75,7 +75,12 @@ ProblemState ApplyConstraints(
   const std::vector<ProblemConstraint>& constraints
 );
 
-int BranchAndBoundSolve(const ProblemState& initial_state, std::ostream* search_log, int max_iter = -1);
+int BranchAndBoundSolve(
+  const ProblemState& initial_state,
+  std::ostream* search_log,
+  std::optional<std::string> run_dir = std::nullopt,
+  int max_iter = -1
+);
 
 }  // namespace vats5
 

@@ -1,6 +1,7 @@
 #include "solver/branch_and_bound.h"
 #include <sys/stat.h>
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -113,6 +114,7 @@ ProblemState ApplyConstraints(
 int BranchAndBoundSolve(
   const ProblemState& initial_state,
   std::ostream* search_log,
+  std::optional<std::string> run_dir,
   int max_iter
 ) {
   std::vector<SearchEdge> search_edges;
@@ -147,7 +149,7 @@ int BranchAndBoundSolve(
     q.pop_back();
 
     if (search_log != nullptr) {
-      *search_log << "Take " << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
+      *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take " << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
       if (cur_node.edge_index != -1) {
         for (auto c : search_edges[cur_node.edge_index].constraints) {
           if (std::holds_alternative<ConstraintForbidEdge>(c)) {
@@ -173,7 +175,15 @@ int BranchAndBoundSolve(
     }
 
     // Compute lower bound.
-    std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(state);
+    std::optional<std::ofstream> tsp_log_file;
+    if (run_dir.has_value()) {
+      std::string iter_dir = run_dir.value() + "/iter" + std::to_string(iter_num);
+      mkdir(iter_dir.c_str(), 0755);
+      tsp_log_file.emplace(iter_dir + "/tsp_log");
+    }
+    std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
+      state, tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
+    );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
       if (search_log != nullptr) {
@@ -253,7 +263,7 @@ int BranchAndBoundSolve(
     // Select branch edge by hashing edges on LB path.
     size_t edge_hash = 0;
     for (const Step& s : primitive_steps) {
-      edge_hash ^= std::hash<int>{}(s.origin.stop.v) * 31 + std::hash<int>{}(s.destination.stop.v);
+      edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
     }
     // TODO: Make it possible to select START -> * and * -> END steps.
     // Ok so the problem is that the path is allowed to "start at the start" for zero cost even if e.g. the start is actually like "START->(a->b)" which should incur the "(a->b)" cost.
@@ -266,6 +276,12 @@ int BranchAndBoundSolve(
     BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};
 
     // Make and push search nodes for branches.
+
+    // TODO: Does using `branch_edge_rv` work afetr we have Required
+    // `branch_edge_fw` which removes its endpoints from the required stops??
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Require()}, cur_node.edge_index});
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+
     PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
     PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
     PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});

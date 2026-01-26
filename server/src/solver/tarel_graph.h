@@ -207,7 +207,7 @@ void PrintTarelTourResults(
   const std::unordered_map<StepPartitionId, std::string>& state_descriptions
 );
 
-std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state);
+std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, std::ostream* tsp_log = nullptr);
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);
 
