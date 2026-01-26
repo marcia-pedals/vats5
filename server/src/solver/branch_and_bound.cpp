@@ -255,8 +255,8 @@ int BranchAndBoundSolve(
     // I think that having an ACTUAL_START which is not allowed to be merged would probably fix this. But this would incur an extra vertex cost? Is this the only way to "branch on requiring a certain start"?
     // Alternatively we could track "start cost".
     // Everything in parallel with END of course.
-    // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
-    Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
+    Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
     BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
 
     // Make and push search nodes for branches.
