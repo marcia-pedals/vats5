@@ -147,7 +147,7 @@ int BranchAndBoundSolve(
     q.pop_back();
 
     if (search_log != nullptr) {
-      *search_log << "Take " << cur_node.parent_lb;
+      *search_log << "Take " << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
       if (cur_node.edge_index != -1) {
         for (auto c : search_edges[cur_node.edge_index].constraints) {
           if (std::holds_alternative<ConstraintForbidEdge>(c)) {
@@ -185,12 +185,12 @@ int BranchAndBoundSolve(
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
       if (search_log != nullptr) {
-        *search_log << "  pruned: LB (" << lb_result.optimal_value << ") >= UB (" << best_ub << ")\n";
+        *search_log << "  pruned: LB (" << TimeSinceServiceStart{lb_result.optimal_value}.ToString() << ") >= UB (" << TimeSinceServiceStart{best_ub}.ToString() << ")\n";
       }
       continue;
     }
     if (search_log != nullptr) {
-      *search_log << "  lb: " << lb_result.optimal_value << "\n";
+      *search_log << "  lb: " << TimeSinceServiceStart{lb_result.optimal_value}.ToString() << "\n";
     }
 
     // Make an upper bound by actually following the LB path.
@@ -214,11 +214,16 @@ int BranchAndBoundSolve(
     if (best_feasible_step_it != feasible_steps.end() && best_feasible_step_it->DurationSeconds() < best_ub) {
       best_ub = best_feasible_step_it->DurationSeconds();
       if (search_log != nullptr) {
-        *search_log << "  found new ub " << best_ub << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
-        for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
+        *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString() << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+        *search_log << "  ";
+        for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
+          if (i > 0) {
+            *search_log << " -> ";
+          }
           TarelEdge& edge = lb_result.tour_edges[i];
-          *search_log << "    " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << "\n";
+          *search_log << state.StopName(edge.destination.stop);
         }
+        *search_log << "\n";
       }
     }
 

@@ -120,7 +120,7 @@ target_link_libraries(plain_viz PUBLIC visualization)
 
 # Add branch_and_bound_dev tool
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
-target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph)
+target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
