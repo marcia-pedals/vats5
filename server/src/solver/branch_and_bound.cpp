@@ -257,11 +257,13 @@ int BranchAndBoundSolve(
     // Everything in parallel with END of course.
     Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
     // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
-    BranchEdge branch_edge{branch_step.origin.stop, branch_step.destination.stop};
+    BranchEdge branch_edge_fw{branch_step.origin.stop, branch_step.destination.stop};
+    BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};
 
     // Make and push search nodes for branches.
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Forbid()}, cur_node.edge_index});
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Require()}, cur_node.edge_index});
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});
   }
 
   return best_ub;
