@@ -318,6 +318,18 @@ int BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
+      // Prune nodes that can no longer beat the new UB.
+      size_t old_size = q.size();
+      std::erase_if(q, [best_ub](const SearchNode& node) {
+        return node.parent_lb >= best_ub;
+      });
+      size_t pruned_count = old_size - q.size();
+      if (pruned_count > 0) {
+        std::make_heap(q.begin(), q.end());
+        if (search_log != nullptr) {
+          *search_log << "  pruned " << pruned_count << " nodes from queue\n";
+        }
+      }
     }
 
     std::vector<Step> primitive_steps;

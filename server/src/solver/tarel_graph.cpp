@@ -160,8 +160,27 @@ ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
 ) {
+  // Assign partitions to original steps BEFORE ReduceToMinimalSystemPaths,
+  // so that ConsecutiveMergedSteps can propagate them correctly.
+  std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
+  std::unordered_map<StepPartitionId, std::string> step_partition_to_route_desc;
+  std::vector<Step> steps_with_partitions = steps_from_gtfs.steps;
+  for (Step& step : steps_with_partitions) {
+    if (!step.is_flex) {
+      auto [it, inserted] = route_desc_to_step_partition.try_emplace(
+        steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination.trip),
+        StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
+      );
+      if (inserted) {
+        step_partition_to_route_desc[it->second] = it->first;
+      }
+      step.origin.partition = it->second;
+      step.destination.partition = it->second;
+    }
+  }
+
   // Compute minimal adj list.
-  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_from_gtfs.steps), system_stops);
+  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_with_partitions), system_stops);
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
   // Compact minimal adj list and remap stop names.
@@ -186,22 +205,6 @@ ProblemState InitializeProblemState(
 
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, stops, stop_names, boundary);
-
-  std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
-  std::unordered_map<StepPartitionId, std::string> step_partition_to_route_desc;
-  for (Step& step : steps) {
-    if (!step.is_flex) {
-      auto [it, inserted] = route_desc_to_step_partition.try_emplace(
-        steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination.trip),
-        StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
-      );
-      if (inserted) {
-        step_partition_to_route_desc[it->second] = it->first;
-      }
-      step.origin.partition = it->second;
-      step.destination.partition = it->second;
-    }
-  }
 
   return MakeProblemState(
     MakeAdjacencyList(steps),
