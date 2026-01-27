@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -262,7 +263,9 @@ int BranchAndBoundSolve(
       tsp_log_file.emplace(iter_dir + "/tsp_log");
     }
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
-      state, tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
+      state,
+      best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub) : std::nullopt,
+      tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
@@ -273,7 +276,7 @@ int BranchAndBoundSolve(
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
-    MyDetailedPrintout(state, lb_result.tour_edges);
+    // MyDetailedPrintout(state, lb_result.tour_edges);
 
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!

@@ -815,7 +815,7 @@ void PrintTarelTourResults(
   }
 }
 
-std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, std::ostream* tsp_log) {
+std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log) {
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `state.completed`.
   //
@@ -841,7 +841,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
   auto edges = MakeTarelEdges(state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  return SolveTspAndExtractTour(merged_edges, graph, state.boundary, std::nullopt, tsp_log);
+  return SolveTspAndExtractTour(merged_edges, graph, state.boundary, ub, tsp_log);
 }
 
 void WriteTarelSummary(
