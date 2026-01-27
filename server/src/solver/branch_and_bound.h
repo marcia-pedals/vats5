@@ -2,6 +2,8 @@
 
 #include <functional>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 
@@ -69,6 +71,18 @@ struct SearchNode {
     return parent_lb > other.parent_lb;
   }
 };
+
+void PrintPartitions(
+  const ProblemState& state,
+  const std::unordered_map<StepPartitionId, std::unordered_set<StopId>>& partitions
+);
+
+void PrintStopPartitions(const ProblemState& state, StopId s);
+
+void MyDetailedPrintout(
+  const ProblemState& state,
+  const std::vector<TarelEdge>& tour
+);
 
 ProblemState ApplyConstraints(
   const ProblemState& state,

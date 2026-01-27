@@ -1,8 +1,10 @@
 #pragma once
 
+#include <crow/multipart.h>
 #include <functional>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -53,8 +55,18 @@ struct ProblemState {
   // Names of step partitions for display purposes.
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
 
-  std::string StopName(StopId stop) const {
+  const std::string& StopName(StopId stop) const {
     return stop_names.at(stop);
+  }
+
+  std::string PartitionName(StepPartitionId partition) const {
+    auto it = step_partition_names.find(partition);
+    if (it == step_partition_names.end()) {
+      std::ostringstream ss;
+      ss << "unnamed(" << partition.v << ")";
+      return ss.str();
+    }
+    return it->second;
   }
 };
 

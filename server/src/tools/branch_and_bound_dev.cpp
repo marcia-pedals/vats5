@@ -1,3 +1,4 @@
+#include <crow/http_parser_merged.h>
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -57,11 +58,16 @@ int main() {
     std::cout << "Initializing solution state...\n";
     ProblemState initial_state = InitializeProblemState(steps_from_gtfs, bart_stops);
 
-    std::string run_dir = GetTimestampDir();
-    std::filesystem::create_directory(run_dir);
-    std::cout << "Output directory: " << run_dir << std::endl;
+    auto berryessa_it = std::find_if(initial_state.stop_names.begin(), initial_state.stop_names.end(), [](const auto& pair) {
+      return pair.second == "Berryessa / North San Jose";
+    });
+    PrintStopPartitions(initial_state, berryessa_it->first);
 
-    BranchAndBoundSolve(initial_state, &std::cout);
+    // std::string run_dir = GetTimestampDir();
+    // std::filesystem::create_directory(run_dir);
+    // std::cout << "Output directory: " << run_dir << std::endl;
+
+    // BranchAndBoundSolve(initial_state, &std::cout);
 
     return 0;
 }
