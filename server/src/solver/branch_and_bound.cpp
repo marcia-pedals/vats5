@@ -16,6 +16,23 @@
 
 namespace vats5 {
 
+void MyDetailedPrintout(
+  const ProblemState& state,
+  const std::vector<TarelEdge>& tour
+) {
+ std::vector<StopId> tour_stops;
+ for (const TarelEdge& edge : tour) {
+   tour_stops.push_back(edge.origin.stop);
+ }
+ if (tour.size() > 0) {
+   tour_stops.push_back(tour.back().destination.stop);
+ }
+
+ for (StopId s : tour_stops) {
+   std::cout << state.StopName(s) << "\n";
+ }
+}
+
 
 ProblemState ApplyConstraints(
   const ProblemState& state,
@@ -107,7 +124,7 @@ ProblemState ApplyConstraints(
 
   // Build the new problem state from the stuff we've been mutating.
   return MakeProblemState(
-    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names)
+    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names
   );
 }
 
@@ -192,6 +209,9 @@ int BranchAndBoundSolve(
       continue;
     }
     TspTourResult& lb_result = lb_result_opt.value();
+
+    MyDetailedPrintout(state, lb_result.tour_edges);
+
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
       if (search_log != nullptr) {

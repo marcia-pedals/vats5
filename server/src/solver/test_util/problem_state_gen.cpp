@@ -76,7 +76,7 @@ rc::Gen<ProblemState> GenProblemState(
       };
       AddBoundary(steps, stops, stop_names, boundary);
 
-      return MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names);
+      return MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {});
     });
     });
   });

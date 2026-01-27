@@ -19,6 +19,17 @@ struct ProblemBoundary {
   StopId end;
 };
 
+}  // namespace vats5
+
+template <>
+struct std::hash<vats5::StepPartitionId> {
+  std::size_t operator()(const vats5::StepPartitionId& v) const {
+    return std::hash<int>{}(v.v);
+  }
+};
+
+namespace vats5 {
+
 struct ProblemState {
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least
@@ -39,6 +50,9 @@ struct ProblemState {
   // Names of all the stops for display purposes.
   std::unordered_map<StopId, std::string> stop_names;
 
+  // Names of step partitions for display purposes.
+  std::unordered_map<StepPartitionId, std::string> step_partition_names;
+
   std::string StopName(StopId stop) const {
     return stop_names.at(stop);
   }
@@ -50,7 +64,8 @@ ProblemState MakeProblemState(
   StepsAdjacencyList minimal,
   ProblemBoundary boundary,
   std::unordered_set<StopId> stops,
-  std::unordered_map<StopId, std::string> stop_names
+  std::unordered_map<StopId, std::string> stop_names,
+  std::unordered_map<StepPartitionId, std::string> step_partition_names
 );
 
 struct TarelState {
@@ -70,13 +85,6 @@ inline std::ostream& operator<<(std::ostream& os, const TarelState& value) {
 }
 
 }  // namespace vats5
-
-template <>
-struct std::hash<vats5::StepPartitionId> {
-  std::size_t operator()(const vats5::StepPartitionId& v) const {
-    return std::hash<int>{}(v.v);
-  }
-};
 
 template <>
 struct std::hash<vats5::TarelState> {

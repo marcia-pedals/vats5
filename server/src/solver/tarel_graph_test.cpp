@@ -38,7 +38,7 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_names, boundary);
 
-  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names);
+  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {});
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
 

@@ -112,7 +112,8 @@ ProblemState MakeProblemState(
   StepsAdjacencyList minimal,
   ProblemBoundary boundary,
   std::unordered_set<StopId> stops,
-  std::unordered_map<StopId, std::string> stop_names
+  std::unordered_map<StopId, std::string> stop_names,
+  std::unordered_map<StepPartitionId, std::string> step_partition_names
 ) {
   StepPathsAdjacencyList completed = ReduceToMinimalSystemPaths(minimal, stops, true);
   // Add END->START edge to complete the cycle for TSP formulation.
@@ -122,7 +123,8 @@ ProblemState MakeProblemState(
     std::move(completed),
     boundary,
     std::move(stops),
-    std::move(stop_names)
+    std::move(stop_names),
+    std::move(step_partition_names),
   };
 }
 
@@ -186,12 +188,16 @@ ProblemState InitializeProblemState(
   AddBoundary(steps, stops, stop_names, boundary);
 
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
+  std::unordered_map<StepPartitionId, std::string> step_partition_to_route_desc;
   for (Step& step : steps) {
     if (!step.is_flex) {
-      auto [it, _] = route_desc_to_step_partition.try_emplace(
+      auto [it, inserted] = route_desc_to_step_partition.try_emplace(
         steps_from_gtfs.mapping.trip_id_to_route_desc.at(step.destination.trip),
         StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
       );
+      if (inserted) {
+        step_partition_to_route_desc[it->second] = it->first;
+      }
       step.origin.partition = it->second;
       step.destination.partition = it->second;
     }
@@ -201,7 +207,8 @@ ProblemState InitializeProblemState(
     MakeAdjacencyList(steps),
     boundary,
     stops,
-    stop_names
+    stop_names,
+    step_partition_to_route_desc
   );
 }
 
