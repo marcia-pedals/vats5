@@ -276,7 +276,7 @@ int BranchAndBoundSolve(
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
-    // MyDetailedPrintout(state, lb_result.tour_edges);
+    MyDetailedPrintout(state, lb_result.tour_edges);
 
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!

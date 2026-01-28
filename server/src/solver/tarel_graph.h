@@ -150,15 +150,6 @@ struct TarelEdge {
   int weight;
   std::vector<TarelState> original_origins;
   std::vector<TarelState> original_destinations;
-
-  // All steps to `destination` that achieve the minimum `weight`.
-  std::vector<Step> steps;
-
-  // All arrival times that achieve the minimum `weight`.
-  std::vector<TimeSinceServiceStart> arrival_times;
-
-  // All steps from origin to destination.
-  std::vector<Step> all_steps;
 };
 
 Step ZeroEdge(StopId a, StopId b);

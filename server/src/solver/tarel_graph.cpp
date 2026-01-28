@@ -295,20 +295,12 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
   for (const auto& [origin, arrival_times_to_origin] : arrival_times_to) {
     for (const auto& [dest, steps] : steps_from[origin.stop]) {
       int weight = std::numeric_limits<int>::max();
-      std::vector<Step> weight_steps;
-      std::vector<TimeSinceServiceStart> weight_arrival_times;
       if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
         // If the arrival is flex, we have to assume we can arrive any time, so
         // the weight is simply the duration of the shortest step out.
         for (const Step& step : steps) {
           if (step.DurationSeconds() < weight) {
             weight = step.DurationSeconds();
-            weight_steps.clear();
-            weight_arrival_times.clear();
-          }
-          if (step.DurationSeconds() == weight) {
-            weight_steps.push_back(step);
-            weight_arrival_times.push_back(TimeSinceServiceStart{0});
           }
         }
       } else {
@@ -317,10 +309,6 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
         if (steps.size() > 0 && steps[0].is_flex) {
           if (steps[0].FlexDurationSeconds() < weight) {
             weight = steps[0].FlexDurationSeconds();
-            weight_steps.clear();
-            weight_arrival_times.clear();
-            weight_steps.push_back(steps[0]);
-            weight_arrival_times.push_back(TimeSinceServiceStart{0});
           }
           step_idx = 1;
         }
@@ -334,33 +322,17 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
           int duration = steps[step_idx].destination.time.seconds - arrival_time.seconds;
           if (duration < weight) {
             weight = duration;
-            weight_steps.clear();
-            weight_arrival_times.clear();
-          }
-          if (duration == weight) {
-            weight_steps.push_back(steps[step_idx]);
-            weight_arrival_times.push_back(arrival_time);
           }
         }
       }
 
       if (weight < std::numeric_limits<int>::max()) {
-        std::vector<TimeSinceServiceStart> ats;
-        if (std::holds_alternative<ArrivalTimesScheduled>(arrival_times_to_origin)) {
-          ats = std::get<ArrivalTimesScheduled>(arrival_times_to_origin).times;
-        }
-
         edges.push_back(TarelEdge{
           .origin=origin,
           .destination=dest,
           .weight=weight,
           .original_origins={origin},
           .original_destinations={dest},
-          // .steps=steps,
-          // .arrival_times=ats,
-          .steps=std::move(weight_steps),
-          .arrival_times=std::move(weight_arrival_times),
-          .all_steps=steps,
         });
       }
     }
@@ -447,9 +419,6 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     int weight;
     std::vector<TarelState> original_origins;
     std::vector<TarelState> original_destinations;
-    std::vector<Step> steps;
-    std::vector<TimeSinceServiceStart> arrival_times;
-    std::vector<Step> all_steps;
   };
   std::map<std::pair<TarelState, TarelState>, MergedEdgeData> merged_edges;
   for (const TarelEdge& edge : edges) {
@@ -459,7 +428,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     auto& data = it->second;
     if (!inserted) {
       // TODO: Think harder about whether taking the min merged edge weight makes sense.
-      // TODO: Consider whether we have to clear `original_origins`, `original_destinations`, and `steps`.
+      // TODO: Consider whether we have to clear `original_origins` and `original_destinations`.
       if (edge.weight < data.weight) {
         data.weight = edge.weight;
       }
@@ -469,15 +438,6 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     }
     for (const TarelState& orig : edge.original_destinations) {
       data.original_destinations.push_back(orig);
-    }
-    for (const Step& s : edge.steps) {
-      data.steps.push_back(s);
-    }
-    for (const TimeSinceServiceStart& t : edge.arrival_times) {
-      data.arrival_times.push_back(t);
-    }
-    for (const Step& s : edge.all_steps) {
-      data.all_steps.push_back(s);
     }
   }
 
@@ -490,15 +450,6 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
     std::ranges::sort(sorted_destinations, [](const TarelState& a, const TarelState& b) { return a < b; });
     sorted_origins.erase(std::unique(sorted_origins.begin(), sorted_origins.end()), sorted_origins.end());
     sorted_destinations.erase(std::unique(sorted_destinations.begin(), sorted_destinations.end()), sorted_destinations.end());
-    auto sorted_steps = data.steps;
-    SortSteps(sorted_steps);
-    auto sorted_arrival_times = data.arrival_times;
-    std::ranges::sort(sorted_arrival_times);
-    sorted_arrival_times.erase(std::unique(sorted_arrival_times.begin(), sorted_arrival_times.end()), sorted_arrival_times.end());
-
-    auto sorted_all_steps = data.all_steps;
-    SortSteps(sorted_all_steps);
-    MakeMinimalCover(sorted_all_steps);
 
     result.push_back(TarelEdge{
       .origin = new_origin,
@@ -506,9 +457,6 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
       .weight = data.weight,
       .original_origins = std::move(sorted_origins),
       .original_destinations = std::move(sorted_destinations),
-      .steps = std::move(sorted_steps),
-      .arrival_times = std::move(sorted_arrival_times),
-      .all_steps = std::move(sorted_all_steps),
     });
   }
 
