@@ -7,13 +7,13 @@
 #include <optional>
 #include <unordered_map>
 
-#include "rapidcheck/gen/Build.h"
 #include "solver/concorde.h"
 
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Classify.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/test_util/cached_test_data.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
 
@@ -45,6 +45,65 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   EXPECT_FALSE(result.has_value());
 }
 
+TEST(TarelGraphTest, TarelEdges_BART) {
+  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
+  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+      test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
+  );
+  ProblemState state = InitializeProblemState(test_data.steps_from_gtfs, bart_stops);
+  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+
+  StopId warm_springs = state.StopIdFromName("Warm Springs South Fremont BART");
+  StopId berryessa = state.StopIdFromName("Berryessa / North San Jose");
+
+  struct ExpectedEdge {
+    std::string arrival;
+    std::string departure;
+    int weight_seconds;
+    auto operator<=>(const ExpectedEdge&) const = default;
+  };
+
+  std::vector<ExpectedEdge> actual_edges;
+  for (const TarelEdge& e : edges) {
+    if (e.origin.stop == warm_springs && e.destination.stop == berryessa) {
+      actual_edges.push_back(ExpectedEdge{
+        state.PartitionName(e.origin.partition),
+        state.PartitionName(e.destination.partition),
+        e.weight,
+      });
+    }
+  }
+  std::ranges::sort(actual_edges);
+
+  std::vector<ExpectedEdge> expected_edges{
+    // Stay on line.
+    {"Green-N North", "Green-N North", 12 * 60},
+
+    // Get off and transfer line in same direction.
+    {"Green-N North", "Orange-S South", 19 * 60},
+
+    // Switch direction from Green.
+    {"Green-S South", "Green-N North", 21 * 60},
+    {"Green-S South", "Orange-S South", 28 * 60},
+
+    // Switch direction from Orange.
+    {"Orange-N North", "Green-N North", 29 * 60},
+    {"Orange-N North", "Orange-S South", 16 * 60},
+
+    // Get off and transfer line in same direction.
+    {"Orange-S South", "Green-N North", 25 * 60},
+
+    // Stay on line.
+    {"Orange-S South", "Orange-S South", 12 * 60},
+
+    // Arrive flex and ride to dest immediately.
+    {"unnamed(-1)", "Green-N North", 12 * 60},
+    {"unnamed(-1)", "Orange-S South", 12 * 60},
+  };
+
+  EXPECT_EQ(actual_edges, expected_edges);
+}
+
 RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
   ProblemState state = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
@@ -62,8 +121,6 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   RC_CLASSIFY(lower_bound == actual_value);
   RC_ASSERT(lower_bound <= actual_value);
 }
-
-// TODO: Figure out GenProblemState API allowing us to express this property.
 
 // If there are no flex steps and if each step is in a different partition, then
 // the lower bound should reach the optimal value.

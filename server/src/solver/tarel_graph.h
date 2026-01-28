@@ -59,6 +59,14 @@ struct ProblemState {
     return stop_names.at(stop);
   }
 
+  StopId StopIdFromName(const std::string& stop_name) {
+    auto it = std::find_if(stop_names.begin(), stop_names.end(), [&stop_name](const auto& pair) {
+      return pair.second == stop_name;
+    });
+    assert(it != stop_names.end());
+    return it->first;
+  }
+
   std::string PartitionName(StepPartitionId partition) const {
     auto it = step_partition_names.find(partition);
     if (it == step_partition_names.end()) {

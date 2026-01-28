@@ -160,8 +160,7 @@ ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
   const std::unordered_set<StopId> system_stops
 ) {
-  // Assign partitions to original steps BEFORE ReduceToMinimalSystemPaths,
-  // so that ConsecutiveMergedSteps can propagate them correctly.
+  // Assign partitions to steps based on their trips.
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
   std::unordered_map<StepPartitionId, std::string> step_partition_to_route_desc;
   std::vector<Step> steps_with_partitions = steps_from_gtfs.steps;
