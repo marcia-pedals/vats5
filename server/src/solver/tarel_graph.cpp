@@ -9,7 +9,6 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <variant>
 
 #include "solver/concorde.h"
 #include "solver/data.h"
@@ -219,82 +218,55 @@ bool TarelState::operator<(const TarelState& other) const {
   return partition.v < other.partition.v;
 }
 
-struct ArrivalTimesFlex {};
+TarelEdgeIntermediateData ComputeTarelIntermediateData(const std::vector<Step>& steps) {
+  TarelEdgeIntermediateData data;
 
-struct ArrivalTimesScheduled {
-  std::vector<TimeSinceServiceStart> times;
-};
+  for (const Step& step : steps) {
+    TarelState destination_state{step.destination.stop, step.destination.partition};
 
-std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
-  // steps_from[x] is all steps from x.
-  // Within each group, the steps are sorted and minimal.
-  std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>> steps_from;
+    // Preserves sorted-and-minimal property because: The paths within
+    // `path_group` are sorted and minimal, they all have the same
+    // `step.destination.stop`, no other path groups fom this origin have
+    // the same destination stop, and order-preserving partitions preserve
+    // sortedness and minimality.
+    data.steps_from[step.origin.stop][destination_state].push_back(step);
 
-  // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
-  // Note that I've been careful to put `ArrivalTimesScheduled` as the first
-  // alternative so that when you []-access a value that doesn't exist yet, it
-  // starts as an empty `ArrivalTimesScheduled`.
-  // After we have constructed this, times in each value are sorted ascending
-  // and unique.
-  std::unordered_map<TarelState, std::variant<ArrivalTimesScheduled, ArrivalTimesFlex>> arrival_times_to;
-
-  for (const auto& [origin_stop, path_groups] : adj.adjacent) {
-    for (const auto& path_group : path_groups) {
-      {
-        std::vector<Step> steps;
-        for (const Path& p : path_group) {
-          steps.push_back(p.merged_step);
-        }
-        if (!CheckSortedAndMinimal(steps)) {
-          std::cout << "Not sorted and minimal: " << origin_stop << " -> " << steps[0].destination.stop << "\n";
-          assert(false);
-        }
-      }
-
-      for (const Path& path : path_group) {
-        const Step& step = path.merged_step;
-        assert(step.origin.stop == origin_stop);
-        TarelState destination_state{step.destination.stop, step.destination.partition};
-
-        // Preserves sorted-and-minimal property because: The paths within
-        // `path_group` are sorted and minimal, they all have the same
-        // `step.destination.stop`, no other path groups fom this origin have
-        // the same destination stop, and order-preserving partitions preserve
-        // sortedness and minimality.
-        steps_from[step.origin.stop][destination_state].push_back(step);
-
-        auto& arrival_times = arrival_times_to[destination_state];
-        if (step.is_flex || std::holds_alternative<ArrivalTimesFlex>(arrival_times)) {
-          arrival_times = ArrivalTimesFlex();
-        } else {
-          std::get<ArrivalTimesScheduled>(arrival_times).times.push_back(step.destination.time);
-        }
-      }
+    auto& arrival_times = data.arrival_times_to[destination_state];
+    if (step.is_flex) {
+      arrival_times.has_flex = true;
+    } else {
+      arrival_times.times.push_back(step.destination.time);
     }
   }
 
-  for (const auto& [origin, groups_from] : steps_from) {
+  for (const auto& [origin, groups_from] : data.steps_from) {
     for (const auto& [dest, group_from] : groups_from) {
       if (!CheckSortedAndMinimal(group_from)) {
         std::cout << "Not sorted and minimal: " << origin << " -> " << dest << "\n";
+        assert(false);
       }
     }
   }
 
-  for (auto& [_, times_to] : arrival_times_to) {
-    if (std::holds_alternative<ArrivalTimesScheduled>(times_to)) {
-      std::vector<TimeSinceServiceStart>& times = std::get<ArrivalTimesScheduled>(times_to).times;
-      std::ranges::sort(times);
-      auto [first, last] = std::ranges::unique(times);
-      times.erase(first, last);
-    }
+  for (auto& [_, arrival_times] : data.arrival_times_to) {
+    std::ranges::sort(arrival_times.times);
+    auto [first, last] = std::ranges::unique(arrival_times.times);
+    arrival_times.times.erase(first, last);
   }
 
+  return data;
+}
+
+std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(const TarelEdgeIntermediateData& data) {
   std::vector<TarelEdge> edges;
-  for (const auto& [origin, arrival_times_to_origin] : arrival_times_to) {
-    for (const auto& [dest, steps] : steps_from[origin.stop]) {
+  for (const auto& [origin, arrival_times_to_origin] : data.arrival_times_to) {
+    auto it = data.steps_from.find(origin.stop);
+    if (it == data.steps_from.end()) {
+      continue;
+    }
+    for (const auto& [dest, steps] : it->second) {
       int weight = std::numeric_limits<int>::max();
-      if (std::holds_alternative<ArrivalTimesFlex>(arrival_times_to_origin)) {
+      if (arrival_times_to_origin.has_flex) {
         // If the arrival is flex, we have to assume we can arrive any time, so
         // the weight is simply the duration of the shortest step out.
         for (const Step& step : steps) {
@@ -311,7 +283,7 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
           }
           step_idx = 1;
         }
-        for (const TimeSinceServiceStart arrival_time : std::get<ArrivalTimesScheduled>(arrival_times_to_origin).times) {
+        for (const TimeSinceServiceStart arrival_time : arrival_times_to_origin.times) {
           while (step_idx < steps.size() && steps[step_idx].origin.time < arrival_time) {
             step_idx += 1;
           }
@@ -338,6 +310,11 @@ std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
   }
 
   return edges;
+}
+
+std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
+  TarelEdgeIntermediateData data = ComputeTarelIntermediateData(adj.AllMergedSteps());
+  return BuildTarelEdgesFromIntermediateData(data);
 }
 
 struct EdgeSignature {

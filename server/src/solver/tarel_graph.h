@@ -135,6 +135,24 @@ struct std::hash<std::pair<vats5::StopId, T>> {
 
 namespace vats5 {
 
+// Arrival times to a TarelState.
+struct ArrivalTimes {
+  std::vector<TimeSinceServiceStart> times;
+  bool has_flex = false;
+};
+
+// Intermediate data computed by ComputeTarelIntermediateData, used to build
+// tarel edges.
+struct TarelEdgeIntermediateData {
+  // steps_from[x] is all steps from stop x.
+  // Within each group, the steps are sorted and minimal.
+  std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>> steps_from;
+
+  // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
+  // After construction, times in each value are sorted ascending and unique.
+  std::unordered_map<TarelState, ArrivalTimes> arrival_times_to;
+};
+
 // An edge from `origin.stop` to `destination.stop` in the "tarel graph".
 //
 // "What's a tarel graph?", you might ask. It stands for Transfer-Aware
@@ -159,6 +177,16 @@ struct TarelEdge {
   std::vector<TarelState> original_origins;
   std::vector<TarelState> original_destinations;
 };
+
+// Computes intermediate data (steps_from and arrival_times_to) from steps.
+//
+// Precondition: When filtered order-preservingly to any (origin, destination),
+// steps satisfy `CheckSortedAndMinimal`.
+TarelEdgeIntermediateData ComputeTarelIntermediateData(const std::vector<Step>& steps);
+
+// Builds tarel edges from intermediate data computed by
+// ComputeTarelIntermediateData.
+std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(const TarelEdgeIntermediateData& data);
 
 Step ZeroEdge(StopId a, StopId b);
 Path ZeroPath(StopId a, StopId b);
