@@ -2,12 +2,16 @@
 #include <crow/http_parser_merged.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -193,29 +197,98 @@ ProblemState ApplyConstraints(
   );
 }
 
-std::vector<ProblemState> MakeStates(const ProblemState& base, std::vector<Step> steps) {
-  std::vector<ProblemState> states;
+std::vector<std::pair<ProblemState, int>> MakeStates(const ProblemState& base, std::vector<Step> steps) {
+  std::vector<std::pair<ProblemState, int>> states;
 
   if (steps.size() == 0) {
     return states;
   }
 
+  // First pass: generate all states and their path strings
+  struct WorkItem {
+    ProblemState state;
+    std::string path_str;
+  };
+  std::vector<WorkItem> work_items;
+
   ProblemState cur_state = base;
   StopId cur_end = steps[0].origin.stop;
+  std::vector<std::string> path_names;
+  path_names.push_back(base.StopName(cur_end));
+
   for (const Step& step : steps) {
     BranchEdge edge{cur_end, step.destination.stop};
+    std::string dest_name = base.StopName(step.destination.stop);
 
+    // Create forbid state
     ProblemState forbid = ApplyConstraints(cur_state, {edge.Forbid()});
-    states.push_back(forbid);
 
+    // Build path string for forbid: A->B->C-!D
+    std::string forbid_path = path_names[0];
+    for (size_t i = 1; i < path_names.size(); ++i) {
+      forbid_path += "->" + path_names[i];
+    }
+    forbid_path += "-!" + dest_name;
+
+    work_items.push_back({std::move(forbid), std::move(forbid_path)});
+
+    // Create require state and update tracking
     ProblemState require = ApplyConstraints(cur_state, {edge.Require()});
+    path_names.push_back(dest_name);
 
     // TODO: Assumes the stop id that ApplyConstraints makes when requiring.
     cur_end = StopId{cur_state.minimal.NumStops()};
     cur_state = require;
   }
 
-  states.push_back(cur_state);
+  // Add final required state
+  std::string final_path = path_names[0];
+  for (size_t i = 1; i < path_names.size(); ++i) {
+    final_path += "->" + path_names[i];
+  }
+  work_items.push_back({std::move(cur_state), std::move(final_path)});
+
+  // Prepare results vector
+  std::vector<int> results(work_items.size());
+
+  // Parallel LB computation
+  std::atomic<size_t> next_work_index{0};
+  std::mutex cout_mutex;
+
+  auto worker = [&]() {
+    while (true) {
+      size_t idx = next_work_index.fetch_add(1);
+      if (idx >= work_items.size()) {
+        break;
+      }
+
+      std::optional<TspTourResult> lb_result = ComputeTarelLowerBound(work_items[idx].state);
+      int lb = lb_result.has_value() ? lb_result->optimal_value : std::numeric_limits<int>::max();
+      results[idx] = lb;
+
+      {
+        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::cout << work_items[idx].path_str << ": " << TimeSinceServiceStart{lb}.ToString() << "\n";
+      }
+    }
+  };
+
+  unsigned int num_threads = std::thread::hardware_concurrency();
+  if (num_threads == 0) num_threads = 1;
+
+  std::vector<std::thread> threads;
+  for (unsigned int i = 0; i < num_threads; ++i) {
+    threads.emplace_back(worker);
+  }
+
+  for (auto& t : threads) {
+    t.join();
+  }
+
+  // Build final result
+  for (size_t i = 0; i < work_items.size(); ++i) {
+    states.push_back({std::move(work_items[i].state), results[i]});
+  }
 
   return states;
 }
@@ -394,8 +467,10 @@ int BranchAndBoundSolve(
     primitive_steps.erase(primitive_steps.begin());
     primitive_steps.erase(primitive_steps.end() - 1);
 
-    for (const ProblemState& ps : MakeStates(state, primitive_steps)) {
-      PushQBasic(ps, lb_result.optimal_value);
+    for (const auto& [ps, lb] : MakeStates(state, primitive_steps)) {
+      if (lb < best_ub) {
+        PushQBasic(ps, lb);
+      }
     }
 
     // Super smart branch selection technique.
