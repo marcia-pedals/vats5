@@ -186,6 +186,11 @@ ProblemState ApplyConstraints(
         s.origin.stop = ab;
         steps.push_back(s);
       }
+
+      // TODO: hmmmm
+      std::erase_if(steps, [&](const Step& s) {
+        return s.origin.stop == require.a && s.destination.stop == require.b;
+      });
     } else {
       assert(false);
     }
@@ -220,8 +225,11 @@ std::vector<std::pair<ProblemState, int>> MakeStates(const ProblemState& base, s
     BranchEdge edge{cur_end, step.destination.stop};
     std::string dest_name = base.StopName(step.destination.stop);
 
+    // Sus but important.
+    BranchEdge extra_forbid{step.origin.stop, step.destination.stop};
+
     // Create forbid state
-    ProblemState forbid = ApplyConstraints(cur_state, {edge.Forbid()});
+    ProblemState forbid = ApplyConstraints(cur_state, {edge.Forbid(), extra_forbid.Forbid()});
 
     // Build path string for forbid: A->B->C-!D
     std::string forbid_path = path_names[0];

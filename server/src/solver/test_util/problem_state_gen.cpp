@@ -24,7 +24,7 @@ rc::Gen<ProblemState> GenProblemState(
   rc::Gen<StepPartitionId> step_partition_gen_defaulted = step_partition_gen.value_or(rc::gen::just(StepPartitionId::NONE));
 
   return rc::gen::mapcat(std::move(cycle_is_flex_gen_defaulted), [step_partition_gen_defaulted](CycleIsFlex cycle_is_flex) -> rc::Gen<ProblemState> {
-    rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
+    rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 8);
 
     return rc::gen::mapcat(num_actual_stops_gen, [cycle_is_flex, step_partition_gen_defaulted](int num_actual_stops) -> rc::Gen<ProblemState> {
     auto step_gen = rc::gen::apply([num_actual_stops](int origin, int dest_offset, int origin_time, int duration, StepPartitionId step_partition) -> Step {

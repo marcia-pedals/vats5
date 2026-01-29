@@ -89,6 +89,11 @@ add_library(branch_and_bound STATIC src/solver/branch_and_bound.cpp)
 target_link_libraries(branch_and_bound PUBLIC tarel_graph)
 target_include_directories(branch_and_bound PUBLIC src)
 
+# Create branch_and_bound2 library target
+add_library(branch_and_bound2 STATIC src/solver/branch_and_bound2.cpp)
+target_link_libraries(branch_and_bound2 PUBLIC tarel_graph step_merge)
+target_include_directories(branch_and_bound2 PUBLIC src)
+
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
@@ -195,6 +200,12 @@ add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
 target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME branch_and_bound_test COMMAND branch_and_bound_test)
 set_tests_properties(branch_and_bound_test PROPERTIES LABELS "slow")
+
+# Add branch_and_bound2 test executable
+add_executable(branch_and_bound2_test src/solver/branch_and_bound2_test.cpp)
+target_link_libraries(branch_and_bound2_test PUBLIC gunit branch_and_bound2 problem_state_gen naive_solve rapidcheck_gtest)
+add_test(NAME branch_and_bound2_test COMMAND branch_and_bound2_test)
+set_tests_properties(branch_and_bound2_test PROPERTIES LABELS "slow")
 
 # Add tarel_graph test executable
 add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
