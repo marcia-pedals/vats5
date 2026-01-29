@@ -1,4 +1,5 @@
 #include "solver/branch_and_bound.h"
+#include <crow/http_parser_merged.h>
 #include <sys/stat.h>
 #include <algorithm>
 #include <fstream>
@@ -192,6 +193,33 @@ ProblemState ApplyConstraints(
   );
 }
 
+std::vector<ProblemState> MakeStates(const ProblemState& base, std::vector<Step> steps) {
+  std::vector<ProblemState> states;
+
+  if (steps.size() == 0) {
+    return states;
+  }
+
+  ProblemState cur_state = base;
+  StopId cur_end = steps[0].origin.stop;
+  for (const Step& step : steps) {
+    BranchEdge edge{cur_end, step.destination.stop};
+
+    ProblemState forbid = ApplyConstraints(cur_state, {edge.Forbid()});
+    states.push_back(forbid);
+
+    ProblemState require = ApplyConstraints(cur_state, {edge.Require()});
+
+    // TODO: Assumes the stop id that ApplyConstraints makes when requiring.
+    cur_end = StopId{cur_state.minimal.NumStops()};
+    cur_state = require;
+  }
+
+  states.push_back(cur_state);
+
+  return states;
+}
+
 int BranchAndBoundSolve(
   const ProblemState& initial_state,
   std::ostream* search_log,
@@ -212,6 +240,11 @@ int BranchAndBoundSolve(
     // TODO: Figure out if passing ApplyConstraints to std::make_unique does the smart thing or not.
     std::unique_ptr<ProblemState> new_state = std::make_unique<ProblemState>(ApplyConstraints(state, new_edge.constraints));
     q.push_back(std::move(SearchNode{new_lb, new_edge_index, std::move(new_state)}));
+    std::push_heap(q.begin(), q.end());
+  };
+
+  auto PushQBasic = [&q](const ProblemState& new_state, int new_lb) {
+    q.push_back(SearchNode{new_lb, -1, std::make_unique<ProblemState>(new_state)});
     std::push_heap(q.begin(), q.end());
   };
 
@@ -276,7 +309,7 @@ int BranchAndBoundSolve(
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
-    MyDetailedPrintout(state, lb_result.tour_edges);
+    // MyDetailedPrintout(state, lb_result.tour_edges);
 
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
@@ -358,31 +391,85 @@ int BranchAndBoundSolve(
       continue;
     }
 
-    // Select branch edge by hashing edges on LB path.
-    size_t edge_hash = 0;
-    for (const Step& s : primitive_steps) {
-      edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
+    primitive_steps.erase(primitive_steps.begin());
+    primitive_steps.erase(primitive_steps.end() - 1);
+
+    for (const ProblemState& ps : MakeStates(state, primitive_steps)) {
+      PushQBasic(ps, lb_result.optimal_value);
     }
+
+    // Super smart branch selection technique.
+    // If there is a "require" then try to extend it along the tour.
+    // If we can't and there is a "forbid" then try to forbid the opposite along the tour.
+    // Otherwise, select a random edge.
+    //
     // TODO: Make it possible to select START -> * and * -> END steps.
     // Ok so the problem is that the path is allowed to "start at the start" for zero cost even if e.g. the start is actually like "START->(a->b)" which should incur the "(a->b)" cost.
     // I think that having an ACTUAL_START which is not allowed to be merged would probably fix this. But this would incur an extra vertex cost? Is this the only way to "branch on requiring a certain start"?
     // Alternatively we could track "start cost".
     // Everything in parallel with END of course.
-    Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
-    // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
-    BranchEdge branch_edge_fw{branch_step.origin.stop, branch_step.destination.stop};
-    BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};
 
-    // Make and push search nodes for branches.
+    // std::optional<BranchEdge> branch_edge;
 
-    // TODO: Does using `branch_edge_rv` work afetr we have Required
-    // `branch_edge_fw` which removes its endpoints from the required stops??
-    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Require()}, cur_node.edge_index});
-    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+    // if (!branch_edge.has_value()) {
+    //   for (int i = 1; i < primitive_steps.size() - 1; ++i) {
+    //     const Step& step = primitive_steps[i];
+    //     if (!initial_state.required_stops.contains(step.origin.stop)) {
+    //       std::cout << "Extending required: " << state.StopName(step.origin.stop) << " -> " << state.StopName(step.destination.stop) << "\n";
+    //       branch_edge = BranchEdge{step.origin.stop, step.destination.stop};
+    //       break;
+    //     }
+    //   }
+    // }
 
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+    // if (!branch_edge.has_value()) {
+    //   std::unordered_set<BranchEdge> forbids;
+    //   int cur_edge_index = cur_node.edge_index;
+    //   while (cur_edge_index != -1) {
+    //     SearchEdge& search_edge = search_edges[cur_edge_index];
+    //     for (const ProblemConstraint& constraint : search_edge.constraints) {
+    //       if (std::holds_alternative<ConstraintForbidEdge>(constraint)) {
+    //         auto f = std::get<ConstraintForbidEdge>(constraint);
+    //         forbids.insert({f.a, f.b});
+    //       }
+    //     }
+    //     cur_edge_index = search_edge.parent_edge_index;
+    //   }
+
+    //   for (int i = 1; i < primitive_steps.size() - 1; ++i) {
+    //     const Step& step = primitive_steps[i];
+    //     BranchEdge rev_forbid{step.destination.stop, step.origin.stop};
+    //     if (forbids.contains(rev_forbid)) {
+    //       std::cout << "Found reversed forbid: " << state.StopName(step.origin.stop) << " -> " << state.StopName(step.destination.stop) << "\n";
+    //       branch_edge = BranchEdge{step.origin.stop, step.destination.stop};
+    //       break;
+    //     }
+    //   }
+    // }
+
+    // if (!branch_edge.has_value()) {
+    //   // Select branch edge by hashing edges on LB path.
+    //   size_t edge_hash = 0;
+    //   for (const Step& s : primitive_steps) {
+    //     edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
+    //   }
+    //   Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    //   branch_edge = BranchEdge{branch_step.origin.stop, branch_step.destination.stop};
+    // }
+
+    // assert(branch_edge.has_value());
+
+    // // Make and push search nodes for branches.
+
+    // // TODO: Does using `branch_edge_rv` work afetr we have Required
+    // // `branch_edge_fw` which removes its endpoints from the required stops??
+    // // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Require()}, cur_node.edge_index});
+    // // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge->Require()}, cur_node.edge_index});
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge->Forbid()}, cur_node.edge_index});
+    // // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
+    // // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});
   }
 
   return best_ub;
