@@ -919,4 +919,122 @@ TEST(StepMergeTest, ConsecutiveMergedStepsEqualsReduce) {
   });
 }
 
+TEST(StepMergeTest, NormalizeConsecutiveStepsMixed) {
+  // Path: flex, flex, scheduled, flex
+  std::vector<Step> steps = {
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 30, TripId{1}),  // origin=0, dest=30
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 50, TripId{2}),  // origin=0, dest=50
+      Step{
+          StepEndpoint{StopId{3}, false, StepPartitionId{1}, TimeSinceServiceStart{100}, TripId{3}},
+          StepEndpoint{StopId{4}, false, StepPartitionId{2}, TimeSinceServiceStart{150}, TripId{3}},
+          false
+      },
+      Step::PrimitiveFlex(StopId{4}, StopId{5}, 20, TripId{4}),  // origin=0, dest=20
+  };
+
+  NormalizeConsecutiveSteps(steps);
+
+  // Leading flex steps should be timed to arrive at scheduled origin (100).
+  // Start time = 100 - 30 - 50 = 20
+  EXPECT_EQ(steps[0].origin.time.seconds, 20);
+  EXPECT_EQ(steps[0].destination.time.seconds, 50);
+
+  EXPECT_EQ(steps[1].origin.time.seconds, 50);
+  EXPECT_EQ(steps[1].destination.time.seconds, 100);
+
+  // Scheduled step unchanged.
+  EXPECT_EQ(steps[2].origin.time.seconds, 100);
+  EXPECT_EQ(steps[2].destination.time.seconds, 150);
+
+  // Trailing flex step starts at scheduled destination.
+  EXPECT_EQ(steps[3].origin.time.seconds, 150);
+  EXPECT_EQ(steps[3].destination.time.seconds, 170);
+}
+
+TEST(StepMergeTest, NormalizeConsecutiveStepsAllFlex) {
+  std::vector<Step> steps = {
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 30, TripId{1}),
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 50, TripId{2}),
+  };
+
+  NormalizeConsecutiveSteps(steps);
+
+  // All flex: starts at 0.
+  EXPECT_EQ(steps[0].origin.time.seconds, 0);
+  EXPECT_EQ(steps[0].destination.time.seconds, 30);
+
+  EXPECT_EQ(steps[1].origin.time.seconds, 30);
+  EXPECT_EQ(steps[1].destination.time.seconds, 80);
+}
+
+TEST(StepMergeTest, NormalizeConsecutiveStepsNoFlex) {
+  std::vector<Step> steps = {
+      Step{
+          StepEndpoint{StopId{1}, false, StepPartitionId{1}, TimeSinceServiceStart{100}, TripId{1}},
+          StepEndpoint{StopId{2}, false, StepPartitionId{2}, TimeSinceServiceStart{150}, TripId{1}},
+          false
+      },
+      Step{
+          StepEndpoint{StopId{2}, false, StepPartitionId{3}, TimeSinceServiceStart{160}, TripId{2}},
+          StepEndpoint{StopId{3}, false, StepPartitionId{4}, TimeSinceServiceStart{200}, TripId{2}},
+          false
+      },
+  };
+
+  NormalizeConsecutiveSteps(steps);
+
+  // No flex steps: unchanged.
+  EXPECT_EQ(steps[0].origin.time.seconds, 100);
+  EXPECT_EQ(steps[0].destination.time.seconds, 150);
+  EXPECT_EQ(steps[1].origin.time.seconds, 160);
+  EXPECT_EQ(steps[1].destination.time.seconds, 200);
+}
+
+RC_GTEST_PROP(
+    StepMergeTest,
+    NormalizeConsecutiveStepsMatchesMerged,
+    ()
+) {
+  int path_length = *rc::gen::inRange(1, 6);
+
+  std::vector<Step> path;
+  int current_time = *rc::gen::inRange(0, 1000);
+
+  for (int i = 0; i < path_length; i++) {
+    bool is_flex = *rc::gen::inRange(0, 2) == 1;
+    int duration = *rc::gen::inRange(1, 600);
+    StepPartitionId origin_partition = StepPartitionId{*rc::gen::inRange(0, 10)};
+    StepPartitionId dest_partition = StepPartitionId{*rc::gen::inRange(0, 10)};
+    TripId trip{*rc::gen::inRange(0, 100)};
+
+    int wait_time = *rc::gen::inRange(0, 100);
+    current_time += wait_time;
+
+    if (is_flex) {
+      // Use denormalized flex representation (origin=0, dest=duration).
+      path.push_back(Step{
+          StepEndpoint{StopId{i}, true, origin_partition, TimeSinceServiceStart{0}, trip},
+          StepEndpoint{StopId{i + 1}, true, dest_partition, TimeSinceServiceStart{duration}, trip},
+          true
+      });
+    } else {
+      path.push_back(Step{
+          StepEndpoint{StopId{i}, false, origin_partition, TimeSinceServiceStart{current_time}, trip},
+          StepEndpoint{StopId{i + 1}, false, dest_partition, TimeSinceServiceStart{current_time + duration}, trip},
+          false
+      });
+    }
+    current_time += duration;
+  }
+
+  // Get expected origin/destination from ConsecutiveMergedSteps.
+  Step merged = ConsecutiveMergedSteps(path);
+
+  // Normalize and check that endpoints match.
+  NormalizeConsecutiveSteps(path);
+
+  RC_ASSERT(path.front().origin.time.seconds == merged.origin.time.seconds);
+  RC_ASSERT(path.back().destination.time.seconds == merged.destination.time.seconds);
+}
+
 }  // namespace vats5
