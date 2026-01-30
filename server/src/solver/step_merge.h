@@ -26,10 +26,58 @@ struct StepProvenance {
 // - The steps are sorted by destination time ascending.
 bool CheckSortedAndMinimal(const std::vector<Step>& steps);
 
-// Sorts steps in-place: flex steps first (ordered by duration ascending),
-// then non-flex steps by origin_time ascending, then by destination_time
-// descending.
-void SortSteps(std::vector<Step>& steps);
+// Comparison function for sorting steps: flex steps first (ordered by duration
+// ascending), then non-flex steps by origin_time ascending, then by
+// destination_time descending.
+inline bool SmallerStep(const Step& a, const Step& b) {
+  // Flex steps come first
+  if (a.is_flex != b.is_flex) {
+    return a.is_flex > b.is_flex;  // flex first
+  }
+
+  // Among flex steps, sort by duration ascending
+  if (a.is_flex && b.is_flex) {
+    return a.FlexDurationSeconds() < b.FlexDurationSeconds();
+  }
+
+  // Among non-flex steps, sort by origin time then destination time
+  if (a.origin.time.seconds != b.origin.time.seconds) {
+    return a.origin.time.seconds < b.origin.time.seconds;
+  }
+  return a.destination.time.seconds > b.destination.time.seconds;
+}
+
+// Sorts steps in-place using stable sort: flex steps first (ordered by duration
+// ascending), then non-flex steps by origin_time ascending, then by
+// destination_time descending.
+//
+// If parallel is non-null, it is permuted in the same way as steps,
+// preserving correspondence between steps and associated data.
+template<typename T = int>
+void SortSteps(std::vector<Step>& steps, std::vector<T>* parallel = nullptr) {
+  if (parallel) {
+    // Build index array and sort it
+    std::vector<size_t> indices(steps.size());
+    for (size_t i = 0; i < steps.size(); ++i) {
+      indices[i] = i;
+    }
+    std::stable_sort(indices.begin(), indices.end(), [&steps](size_t a, size_t b) {
+      return SmallerStep(steps[a], steps[b]);
+    });
+
+    // Apply permutation to both vectors
+    std::vector<Step> sorted_steps(steps.size());
+    std::vector<T> sorted_parallel(parallel->size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      sorted_steps[i] = std::move(steps[indices[i]]);
+      sorted_parallel[i] = std::move((*parallel)[indices[i]]);
+    }
+    steps = std::move(sorted_steps);
+    *parallel = std::move(sorted_parallel);
+  } else {
+    std::stable_sort(steps.begin(), steps.end(), SmallerStep);
+  }
+}
 
 // Updates steps in-place to be a minimal cover.
 // A minimal cover (1) is a subset of the original steps, (2) satisfies
@@ -47,13 +95,20 @@ void MakeMinimalCover(std::vector<Step>& steps, std::vector<T>* parallel = nullp
 
   const StopId deletion_marker = StopId{std::numeric_limits<int>::min()};
 
-  // Forward sweep through all the flex steps to delete all but the first
-  // (shortest) one and to record the duration of the first (shortest) one.
+  // Forward sweep through all the flex steps to find the shortest duration
+  // and keep only the last one with that duration.
   int flex_step_duration = std::numeric_limits<int>::max();
+  size_t last_shortest_flex = 0;
   for (size_t i = 0; i < steps.size() && steps[i].is_flex; ++i) {
-    if (i == 0) {
-      flex_step_duration = steps[i].FlexDurationSeconds();
-    } else {
+    int duration = steps[i].FlexDurationSeconds();
+    if (duration <= flex_step_duration) {
+      flex_step_duration = duration;
+      last_shortest_flex = i;
+    }
+  }
+  // Mark all flex steps except the last shortest one for deletion.
+  for (size_t i = 0; i < steps.size() && steps[i].is_flex; ++i) {
+    if (i != last_shortest_flex) {
       steps[i].origin.stop = deletion_marker;
     }
   }

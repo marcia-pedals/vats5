@@ -5,6 +5,8 @@
 #include <rapidcheck/gtest.h>
 
 #include <algorithm>
+#include <map>
+#include <tuple>
 #include <unordered_set>
 
 #include "gtfs/gtfs.h"
@@ -402,6 +404,64 @@ RC_GTEST_PROP(
       }
     }
     RC_ASSERT(dominated_or_kept);
+  }
+}
+
+RC_GTEST_PROP(
+    StepMergeTest,
+    MakeMinimalCoverPreservesLatestEquivalentStep,
+    (std::vector<StepFromTo<1, 2>> phantom_steps)
+) {
+  // Randomly duplicate each step 1-3 times to create ties.
+  std::vector<Step> steps;
+  for (const auto& s : phantom_steps) {
+    int copies = *rc::gen::inRange(1, 4);
+    for (int c = 0; c < copies; ++c) {
+      steps.push_back(s);
+    }
+  }
+
+  DistinctTripIds d;
+  d.Assign(steps);
+
+  // Sort as precondition (stable sort preserves order of duplicates)
+  SortSteps(steps);
+
+  // Build a parallel index vector to track which original steps survive.
+  std::vector<size_t> indices(steps.size());
+  for (size_t i = 0; i < steps.size(); i++) indices[i] = i;
+
+  std::vector<Step> minimal_cover = steps;
+  MakeMinimalCover(minimal_cover, &indices);
+
+  // Group steps by equivalence key: (is_flex, duration or origin_time, dest_time)
+  // For flex: key is (true, duration, 0)
+  // For non-flex: key is (false, origin_time, dest_time)
+  using Key = std::tuple<bool, int, int>;
+  auto get_key = [](const Step& s) -> Key {
+    if (s.is_flex) {
+      return {true, s.FlexDurationSeconds(), 0};
+    }
+    return {false, s.origin.time.seconds, s.destination.time.seconds};
+  };
+
+  // Find the last index for each equivalence class.
+  std::map<Key, size_t> last_index_for_key;
+  for (size_t i = 0; i < steps.size(); ++i) {
+    last_index_for_key[get_key(steps[i])] = i;  // overwrites, keeping last
+  }
+
+  // Build set of surviving indices.
+  std::unordered_set<size_t> survivors(indices.begin(), indices.end());
+
+  // For each equivalence class, if any step survives, it must be the last one.
+  for (const auto& [key, last_idx] : last_index_for_key) {
+    // Check if any index from this equivalence class survived.
+    for (size_t i = 0; i < steps.size(); ++i) {
+      if (get_key(steps[i]) == key && survivors.count(i)) {
+        RC_ASSERT(i == last_idx);
+      }
+    }
   }
 }
 
