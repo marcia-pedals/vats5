@@ -231,50 +231,46 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
   const Step& first = path.front();
   const Step& last = path.back();
 
-  // Calculate origin time with flex adjustment
-  TimeSinceServiceStart origin_time = first.origin.time;
-  bool is_flex = first.is_flex;
-
-  if (is_flex && path.size() > 1) {
-    // If the path starts with flex and transitions to a fixed trip,
-    // we can delay departure. Find where flex ends.
-    TimeSinceServiceStart flex_arrival = first.destination.time;
-    for (size_t i = 1; i < path.size(); ++i) {
-      if (!path[i].is_flex) {
-        // Found transition from flex to fixed
-        // We can wait: (fixed_departure - flex_arrival) extra time
-        origin_time.seconds +=
-            path[i].origin.time.seconds - flex_arrival.seconds;
-        is_flex = false;  // Path becomes non-flex when we connect to fixed
-        break;
-      }
-      flex_arrival = path[i].destination.time;
-    }
-  }
-
-  // Scan left-to-right for first non-flex step's origin partition, falling back
-  // to the first step's origin partition if they are all flex.
+  // Scan left-to-right for first non-flex step's origin partition and time.
+  // If leading steps are flex, origin time = first_non_flex_origin - sum of
+  // leading flex durations. If all steps are flex, origin time = 0.
   StepPartitionId origin_partition = path[0].origin.partition;
-  for (const Step& s : path) {
-    if (!s.is_flex) {
-      origin_partition = s.origin.partition;
+  int leading_flex_duration = 0;
+  int first_non_flex_origin = 0;
+  bool is_flex = true;
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (path[i].is_flex) {
+      leading_flex_duration += path[i].FlexDurationSeconds();
+    } else {
+      first_non_flex_origin = path[i].origin.time.seconds;
+      origin_partition = path[i].origin.partition;
+      is_flex = false;
       break;
     }
   }
+  TimeSinceServiceStart origin_time{is_flex ? 0 : first_non_flex_origin - leading_flex_duration};
 
-  // Scan right-to-left for last non-flex step's destination partition, falling
-  // back to the last step's destination partition if they are all flex.
+  // Scan right-to-left for last non-flex step's destination partition and time.
+  // If trailing steps are flex, destination time = last_non_flex_dest + sum of
+  // trailing flex durations. If all steps are flex, destination time = sum of
+  // all flex durations.
   StepPartitionId destination_partition = path.back().destination.partition;
+  int trailing_flex_duration = 0;
+  int last_non_flex_dest = 0;  // 0 if all steps are flex
   for (int i = path.size() - 1; i >= 0; --i) {
-    if (!path[i].is_flex) {
+    if (path[i].is_flex) {
+      trailing_flex_duration += path[i].FlexDurationSeconds();
+    } else {
+      last_non_flex_dest = path[i].destination.time.seconds;
       destination_partition = path[i].destination.partition;
       break;
     }
   }
+  TimeSinceServiceStart destination_time{last_non_flex_dest + trailing_flex_duration};
 
   return Step{
       StepEndpoint{first.origin.stop, first.origin.is_flex, origin_partition, origin_time, first.origin.trip},
-      StepEndpoint{last.destination.stop, last.destination.is_flex, destination_partition, last.destination.time, last.destination.trip},
+      StepEndpoint{last.destination.stop, last.destination.is_flex, destination_partition, destination_time, last.destination.trip},
       is_flex
   };
 }

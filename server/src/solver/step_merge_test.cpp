@@ -851,6 +851,34 @@ TEST(StepMergeTest, MergedStepPartitionScheduledScheduled) {
   EXPECT_EQ(merged.destination.partition, StepPartitionId{40});
 }
 
+TEST(StepMergeTest, ConsecutiveMergedStepsTrailingFlex) {
+  // Bug: When steps at the end are flex, last.destination.time is used directly
+  // instead of computing previous_dest_time + flex_duration.
+  // Flex steps have normalized times (origin=0, dest=duration), so using
+  // last.destination.time directly gives the wrong result.
+
+  // Non-flex step followed by flex step
+  std::vector<Step> path = {
+      Step{
+          StepEndpoint{StopId{1}, false, StepPartitionId{1}, TimeSinceServiceStart{100}, TripId{1}},
+          StepEndpoint{StopId{2}, false, StepPartitionId{2}, TimeSinceServiceStart{200}, TripId{1}},
+          false
+      },
+      Step::PrimitiveFlex(StopId{2}, StopId{3}, 50, TripId{2}),  // origin=0, dest=50
+  };
+
+  Step result = ConsecutiveMergedSteps(path);
+
+  // Expected via MergedStep fold: origin=100, dest=200+50=250
+  Step fold_result = MergedStep(path[0], path[1]);
+
+  EXPECT_EQ(fold_result.origin.time.seconds, 100);
+  EXPECT_EQ(fold_result.destination.time.seconds, 250);
+
+  EXPECT_EQ(result.origin.time.seconds, 100);
+  EXPECT_EQ(result.destination.time.seconds, 250);  // Bug: currently returns 50
+}
+
 TEST(StepMergeTest, ConsecutiveMergedStepsEqualsReduce) {
   rc::check([](void) {
     int path_length = *rc::gen::inRange(1, 6);
