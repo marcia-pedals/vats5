@@ -6,30 +6,8 @@
 
 namespace vats5 {
 
-static bool SmallerStep(const Step& a, const Step& b) {
-  // Flex steps come first
-  if (a.is_flex != b.is_flex) {
-    return a.is_flex > b.is_flex;  // flex first
-  }
-
-  // Among flex steps, sort by duration ascending
-  if (a.is_flex && b.is_flex) {
-    return a.FlexDurationSeconds() < b.FlexDurationSeconds();
-  }
-
-  // Among non-flex steps, sort by origin time then destination time
-  if (a.origin.time.seconds != b.origin.time.seconds) {
-    return a.origin.time.seconds < b.origin.time.seconds;
-  }
-  return a.destination.time.seconds > b.destination.time.seconds;
-}
-
 static bool SmallerOrEqualStep(const Step& a, const Step& b) {
   return !SmallerStep(b, a);
-}
-
-void SortSteps(std::vector<Step>& steps) {
-  std::sort(steps.begin(), steps.end(), SmallerStep);
 }
 
 
