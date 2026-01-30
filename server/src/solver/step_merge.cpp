@@ -275,6 +275,44 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
   };
 }
 
+void NormalizeConsecutiveSteps(std::vector<Step>& steps) {
+  if (steps.empty()) {
+    return;
+  }
+
+  // Find first non-flex step and sum leading flex durations.
+  size_t first_non_flex = steps.size();
+  int leading_flex_duration = 0;
+  for (size_t i = 0; i < steps.size(); ++i) {
+    if (steps[i].is_flex) {
+      leading_flex_duration += steps[i].FlexDurationSeconds();
+    } else {
+      first_non_flex = i;
+      break;
+    }
+  }
+
+  // Calculate start time: arrive at first scheduled step, or start at 0 if all flex.
+  int current_time = (first_non_flex < steps.size())
+      ? steps[first_non_flex].origin.time.seconds - leading_flex_duration
+      : 0;
+
+  // Normalize each flex step to have sequential times.
+  for (size_t i = 0; i < steps.size(); ++i) {
+    if (steps[i].is_flex) {
+      int duration = steps[i].FlexDurationSeconds();
+      steps[i].origin.time.seconds = current_time;
+      steps[i].destination.time.seconds = current_time + duration;
+    }
+    current_time = steps[i].destination.time.seconds;
+  }
+
+  for (size_t i = 0; i < steps.size() - 1; ++i) {
+    assert(steps[i].destination.stop == steps[i + 1].origin.stop);
+    assert(steps[i].destination.time <= steps[i + 1].destination.time);
+  }
+}
+
 std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates) {
   if (candidates.size() == 0) {
     return std::nullopt;

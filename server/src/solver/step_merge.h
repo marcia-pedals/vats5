@@ -171,6 +171,12 @@ Step MergedStep(Step ab, Step bc);
 // transition to fixed trips.
 Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 
+// Normalize flex steps' origin and destination times so they fit sequentially
+// into the path. After normalization, each step's origin equals the previous
+// step's destination, and leading flex steps are timed to arrive at the first
+// scheduled step's origin (or start at 0 if all steps are flex).
+void NormalizeConsecutiveSteps(std::vector<Step>& steps);
+
 // Return the best (earliest arriving at destination) step from `candidates` following `cur`, if any exist.
 // Preconditions:
 // - cur.destination.stop == c.origin.stop for all candidates
