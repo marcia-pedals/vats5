@@ -5,6 +5,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -23,6 +24,17 @@ inline void to_json(nlohmann::json& j, const StopId& id) { j = id.v; }
 inline void from_json(const nlohmann::json& j, StopId& id) {
   id.v = j.get<int>();
 }
+
+struct PlainEdge {
+  StopId a;
+  StopId b;
+};
+
+struct PlainWeightedEdge {
+  StopId a;
+  StopId b;
+  int weight;
+};
 
 struct TripId {
   int v;
@@ -125,6 +137,14 @@ struct Step {
     return destination.time.seconds - origin.time.seconds;
   }
 
+  PlainEdge Plain() const {
+    return PlainEdge{origin.stop, destination.stop};
+  }
+
+  PlainWeightedEdge PlainWeighted() const {
+    return PlainWeightedEdge{origin.stop, destination.stop, DurationSeconds()};
+  }
+
   static Step PrimitiveScheduled(
       StopId origin_stop, StopId destination_stop,
       TimeSinceServiceStart origin_time, TimeSinceServiceStart destination_time,
@@ -168,6 +188,20 @@ struct Path {
 
   int DurationSeconds() const {
     return merged_step.DurationSeconds();
+  }
+
+  int IntermediateStopCount() const {
+    if (steps.size() <= 1) {
+      return 0;
+    }
+    return steps.size() - 1;
+  }
+
+  template <typename Visitor>
+  void VisitIntermediateStops(Visitor visitor) const {
+    for (size_t i = 0; i + 1 < steps.size(); ++i) {
+      visitor(steps[i].destination.stop);
+    }
   }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)

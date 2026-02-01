@@ -54,6 +54,11 @@ add_library(data STATIC src/solver/data.cpp)
 target_link_libraries(data PUBLIC gtfs)
 target_include_directories(data PUBLIC src)
 
+# Create graph_util library target
+add_library(graph_util STATIC src/solver/graph_util.cpp)
+target_link_libraries(graph_util PUBLIC data)
+target_include_directories(graph_util PUBLIC src)
+
 # Create step_merge library target
 add_library(step_merge STATIC src/solver/step_merge.cpp)
 target_link_libraries(step_merge PUBLIC data)
@@ -201,3 +206,8 @@ add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+
+# Add graph_util test executable
+add_executable(graph_util_test src/solver/graph_util_test.cpp)
+target_link_libraries(graph_util_test PUBLIC gunit graph_util steps_shortest_path)
+add_test(NAME graph_util_test COMMAND graph_util_test)
