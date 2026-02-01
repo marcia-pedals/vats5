@@ -449,37 +449,65 @@ int BranchAndBoundSolve(
       }
     }
 
-    std::vector<Step> primitive_steps;
-    for (const TarelEdge& e : lb_result.tour_edges) {
-      const auto& paths = state.completed.PathsBetween(e.origin.stop, e.destination.stop);
-      assert(paths.size() > 0);
-      Path best = paths[0];
-      for (const Path& p : paths) {
-        if (p.DurationSeconds() < best.DurationSeconds()) {
-          best = p;
-        }
-      }
-      for (const Step& s : best.steps) {
-        primitive_steps.push_back(s);
+    std::unordered_map<BranchEdge, int> edge_min_duration;
+    for (const Step& step : state.minimal.AllSteps()) {
+      BranchEdge edge{step.origin.stop, step.destination.stop};
+      auto it = edge_min_duration.find(edge);
+      int duration = step.DurationSeconds();
+      if (it == edge_min_duration.end() || duration < it->second) {
+        edge_min_duration[edge] = duration;
       }
     }
-
-    if (primitive_steps.size() <= 2) {
-      // TODO: Figure out what to do here.
-      if (search_log != nullptr) {
-        *search_log << "  pruned: 2 or fewer primitive steps\n";
-      }
-      continue;
+    std::vector<std::pair<BranchEdge, int>> all_edges;
+    all_edges.reserve(edge_min_duration.size());
+    for (const auto& [edge, duration] : edge_min_duration) {
+      all_edges.emplace_back(edge, duration);
     }
+    std::ranges::sort(all_edges, [](const auto& a, const auto& b) {
+      return a.second > b.second;  // descending by duration
+    });
 
-    primitive_steps.erase(primitive_steps.begin());
-    primitive_steps.erase(primitive_steps.end() - 1);
 
-    for (const auto& [ps, lb] : MakeStates(state, primitive_steps)) {
-      if (lb < best_ub) {
-        PushQBasic(ps, lb);
-      }
-    }
+    assert(all_edges.size() > 0);
+    BranchEdge branch_edge = all_edges[0].first;
+    std::cout
+      << "Branching on: " << state.StopName(branch_edge.a) << " -> " << state.StopName(branch_edge.b) << ": "
+      << TimeSinceServiceStart{all_edges[0].second}.ToString() << "\n";
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Require()}, cur_node.edge_index});
+    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge.Forbid()}, cur_node.edge_index});
+
+
+    // std::vector<Step> primitive_steps;
+    // for (const TarelEdge& e : lb_result.tour_edges) {
+    //   const auto& paths = state.completed.PathsBetween(e.origin.stop, e.destination.stop);
+    //   assert(paths.size() > 0);
+    //   Path best = paths[0];
+    //   for (const Path& p : paths) {
+    //     if (p.DurationSeconds() < best.DurationSeconds()) {
+    //       best = p;
+    //     }
+    //   }
+    //   for (const Step& s : best.steps) {
+    //     primitive_steps.push_back(s);
+    //   }
+    // }
+
+    // if (primitive_steps.size() <= 2) {
+    //   // TODO: Figure out what to do here.
+    //   if (search_log != nullptr) {
+    //     *search_log << "  pruned: 2 or fewer primitive steps\n";
+    //   }
+    //   continue;
+    // }
+
+    // primitive_steps.erase(primitive_steps.begin());
+    // primitive_steps.erase(primitive_steps.end() - 1);
+
+    // for (const auto& [ps, lb] : MakeStates(state, primitive_steps)) {
+    //   if (lb < best_ub) {
+    //     PushQBasic(ps, lb);
+    //   }
+    // }
 
     // Super smart branch selection technique.
     // If there is a "require" then try to extend it along the tour.

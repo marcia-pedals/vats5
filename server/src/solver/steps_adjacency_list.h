@@ -303,4 +303,14 @@ struct CompactStopIdsResult {
 
 CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original);
 
+// Split all paths at the given stop.
+// - Paths that don't pass through split_stop are unchanged.
+// - Paths that pass through split_stop are split into two paths:
+//   one from origin to split_stop, and one from split_stop to destination.
+// Note: If a path's origin or destination IS split_stop, it is not split.
+StepPathsAdjacencyList SplitPathsAtStop(
+    const StepPathsAdjacencyList& paths,
+    StopId split_stop
+);
+
 }  // namespace vats5

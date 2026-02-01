@@ -125,7 +125,19 @@ target_link_libraries(plain_viz PUBLIC visualization)
 
 # Add branch_and_bound_dev tool
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
-target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
+target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound branch_and_bound2)
+
+# Add subpath_print tool
+add_executable(subpath_print src/tools/subpath_print.cpp)
+target_link_libraries(subpath_print PUBLIC branch_and_bound2)
+
+# Add approach3 tool
+add_executable(approach3 src/tools/approach3.cpp)
+target_link_libraries(approach3 PUBLIC tarel_graph branch_and_bound)
+
+# Add approach4 tool
+add_executable(approach4 src/tools/approach4.cpp)
+target_link_libraries(approach4 PUBLIC tarel_graph branch_and_bound)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)

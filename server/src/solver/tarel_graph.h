@@ -20,6 +20,13 @@ struct ProblemBoundary {
   StopId start;
   StopId end;
 };
+inline void to_json(nlohmann::json& j, const ProblemBoundary& b) {
+  j = nlohmann::json{{"start", b.start}, {"end", b.end}};
+}
+inline void from_json(const nlohmann::json& j, ProblemBoundary& b) {
+  j.at("start").get_to(b.start);
+  j.at("end").get_to(b.end);
+}
 
 }  // namespace vats5
 
@@ -78,6 +85,55 @@ struct ProblemState {
   }
 };
 
+// Note: `completed` is not serialized as it can be recomputed from `minimal`
+// and `required_stops` using MakeProblemState or ReduceToMinimalSystemPaths.
+inline void to_json(nlohmann::json& j, const ProblemState& state) {
+  // Convert required_stops to vector
+  std::vector<StopId> required_stops_vec(state.required_stops.begin(), state.required_stops.end());
+
+  // Convert stop_names to array of pairs
+  std::vector<std::pair<int, std::string>> stop_names_pairs;
+  for (const auto& [k, v] : state.stop_names) {
+    stop_names_pairs.emplace_back(k.v, v);
+  }
+
+  // Convert step_partition_names to array of pairs
+  std::vector<std::pair<int, std::string>> partition_names_pairs;
+  for (const auto& [k, v] : state.step_partition_names) {
+    partition_names_pairs.emplace_back(k.v, v);
+  }
+
+  j = nlohmann::json{
+    {"minimal", state.minimal},
+    {"boundary", state.boundary},
+    {"required_stops", required_stops_vec},
+    {"stop_names", stop_names_pairs},
+    {"step_partition_names", partition_names_pairs}
+  };
+}
+
+inline void from_json(const nlohmann::json& j, ProblemState& state) {
+  j.at("minimal").get_to(state.minimal);
+  j.at("boundary").get_to(state.boundary);
+  // Note: `completed` is left empty; recompute if needed.
+
+  // Convert required_stops from vector
+  auto required_stops_vec = j.at("required_stops").get<std::vector<StopId>>();
+  state.required_stops = std::unordered_set<StopId>(required_stops_vec.begin(), required_stops_vec.end());
+
+  // Convert stop_names from array of pairs
+  auto stop_names_pairs = j.at("stop_names").get<std::vector<std::pair<int, std::string>>>();
+  for (const auto& [k, v] : stop_names_pairs) {
+    state.stop_names[StopId{k}] = v;
+  }
+
+  // Convert step_partition_names from array of pairs
+  auto partition_names_pairs = j.at("step_partition_names").get<std::vector<std::pair<int, std::string>>>();
+  for (const auto& [k, v] : partition_names_pairs) {
+    state.step_partition_names[StepPartitionId{k}] = v;
+  }
+}
+
 void showValue(const ProblemState& state, std::ostream& os);
 
 ProblemState MakeProblemState(
@@ -95,6 +151,7 @@ struct TarelState {
   bool operator==(const TarelState&) const = default;
   bool operator<(const TarelState& other) const;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TarelState, stop, partition)
 
 inline std::ostream& operator<<(std::ostream& os, const StepPartitionId& value) {
   return os << "Partition{" << value.v << "}";
@@ -177,6 +234,7 @@ struct TarelEdge {
   std::vector<TarelState> original_origins;
   std::vector<TarelState> original_destinations;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TarelEdge, origin, destination, weight, original_origins, original_destinations)
 
 // Computes intermediate data (steps_from and arrival_times_to) from steps.
 //
@@ -209,6 +267,7 @@ struct TspTourResult {
   std::vector<TarelEdge> tour_edges;
   int optimal_value;
 };
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TspTourResult, original_stop_tour, cumulative_weights, tour_edges, optimal_value)
 
 // Adds the `boundary` START and END to `stops` and `stop_names`, and adds
 // START->* and *->END zero-duration flex steps to `steps`.
@@ -221,7 +280,8 @@ void AddBoundary(
 
 ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
-  const std::unordered_set<StopId> system_stops
+  const std::unordered_set<StopId> system_stops,
+  bool optimize_edges = false
 );
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(
