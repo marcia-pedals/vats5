@@ -556,7 +556,7 @@ std::vector<std::pair<ProblemState, int>> MakeStates2(
       int lb = lb_result.has_value() ? lb_result->optimal_value : std::numeric_limits<int>::max();
       lbs[idx] = lb;
 
-      {
+      if (lb_result.has_value()) {
         std::lock_guard<std::mutex> lock(cout_mutex);
         std::cout << work_items[idx].description << ": " << TimeSinceServiceStart{lb}.ToString() << "\n";
       }
@@ -687,28 +687,28 @@ int BranchAndBoundSolve2(
       }
     }
 
-    // // Get primitive steps from the LB tour.
-    // std::vector<Step> primitive_steps;
-    // for (const TarelEdge& e : lb_result.tour_edges) {
-    //   const auto& paths = state.completed.PathsBetween(e.origin.stop, e.destination.stop);
-    //   assert(paths.size() > 0);
-    //   Path best = paths[0];
-    //   for (const Path& p : paths) {
-    //     if (p.DurationSeconds() < best.DurationSeconds()) {
-    //       best = p;
-    //     }
-    //   }
-    //   for (const Step& s : best.steps) {
-    //     primitive_steps.push_back(s);
-    //   }
-    // }
+    // Get primitive steps from the LB tour.
+    std::vector<Step> primitive_steps;
+    for (const TarelEdge& e : lb_result.tour_edges) {
+      const auto& paths = state.completed.PathsBetween(e.origin.stop, e.destination.stop);
+      assert(paths.size() > 0);
+      Path best = paths[0];
+      for (const Path& p : paths) {
+        if (p.DurationSeconds() < best.DurationSeconds()) {
+          best = p;
+        }
+      }
+      for (const Step& s : best.steps) {
+        primitive_steps.push_back(s);
+      }
+    }
 
-    // if (primitive_steps.size() <= 2) {
-    //   if (search_log != nullptr) {
-    //     *search_log << "  pruned: 2 or fewer primitive steps\n";
-    //   }
-    //   continue;
-    // }
+    if (primitive_steps.size() <= 2) {
+      if (search_log != nullptr) {
+        *search_log << "  pruned: 2 or fewer primitive steps\n";
+      }
+      continue;
+    }
 
     // // Remove a random number of steps from start and end.
     // // At least 1 from each end (so START and END are never included).
@@ -725,17 +725,17 @@ int BranchAndBoundSolve2(
     //   primitive_steps.erase(primitive_steps.begin(), primitive_steps.begin() + remove_start);
     // }
 
-    Path worst_jump = FindWorstJump(state, lb_result.tour_edges);
-    std::vector<Step> primitive_steps = worst_jump.steps;
-    assert(primitive_steps.size() > 0);
-    assert(primitive_steps.front().origin.stop != state.boundary.start);
-    assert(primitive_steps.back().destination.stop != state.boundary.end);
+    // Path worst_jump = FindWorstJump(state, lb_result.tour_edges);
+    // std::vector<Step> primitive_steps = worst_jump.steps;
+    // assert(primitive_steps.size() > 0);
+    // assert(primitive_steps.front().origin.stop != state.boundary.start);
+    // assert(primitive_steps.back().destination.stop != state.boundary.end);
 
     // Build the required_path from the primitive steps (the sequence of stops).
+    // Intentionally exclude the first and last cuz they are START and END.
     std::vector<StopId> required_path;
-    required_path.push_back(primitive_steps[0].origin.stop);
-    for (const Step& step : primitive_steps) {
-      required_path.push_back(step.destination.stop);
+    for (int i = 0; i < primitive_steps.size() - 1; ++i) {
+      required_path.push_back(primitive_steps[i].destination.stop);
     }
 
     if (search_log != nullptr) {

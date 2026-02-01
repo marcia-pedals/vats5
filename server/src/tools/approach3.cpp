@@ -213,8 +213,8 @@ std::unordered_set<BranchEdge> EdgesNotOnAllPaths(std::span<const Path> paths) {
 }
 
 int main() {
-    const std::string gtfs_path = "../data/RG_20260108_all";
-    // const std::string gtfs_path = "../data/RG_20250718_BA";
+    // const std::string gtfs_path = "../data/RG_20260108_all";
+    const std::string gtfs_path = "../data/RG_20250718_BA";
 
     std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
     GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
@@ -286,35 +286,35 @@ int main() {
 
     std::cout << "Edge count: " << all_edges.size() << "\n";
 
-    size_t baseline_extreme_count = extreme_stops.size();
-    BranchEdge found_edge;
-    bool found = false;
-    int i = 0;
-    for (const auto& [edge, duration] : all_edges) {
-      BranchEdge edge_rv{edge.b, edge.a};
-      ProblemState state = ApplyConstraints(initial_state, {edge.Forbid(), edge_rv.Forbid()});
-      std::vector<StopId> extreme_forbid = ComputeExtremeStops(state);
-      if (extreme_forbid.size() < baseline_extreme_count) {
-        found_edge = edge;
-        found = true;
-        std::cout << "Found at index " << i << ": " << initial_state.StopName(edge.a)
-          << " <-> " << initial_state.StopName(edge.b)
-          << " (duration " << duration << ", extreme count " << extreme_forbid.size() << ")\n";
-        break;
-      }
+    // size_t baseline_extreme_count = extreme_stops.size();
+    // BranchEdge found_edge;
+    // bool found = false;
+    // int i = 0;
+    // for (const auto& [edge, duration] : all_edges) {
+    //   BranchEdge edge_rv{edge.b, edge.a};
+    //   ProblemState state = ApplyConstraints(initial_state, {edge.Forbid(), edge_rv.Forbid()});
+    //   std::vector<StopId> extreme_forbid = ComputeExtremeStops(state);
+    //   if (extreme_forbid.size() < baseline_extreme_count) {
+    //     found_edge = edge;
+    //     found = true;
+    //     std::cout << "Found at index " << i << ": " << initial_state.StopName(edge.a)
+    //       << " <-> " << initial_state.StopName(edge.b)
+    //       << " (duration " << duration << ", extreme count " << extreme_forbid.size() << ")\n";
+    //     break;
+    //   }
 
-      if (i % 10 == 0) {
-        std::cout << i << " / " << all_edges.size() << "\n";
-      }
-      i += 1;
-    }
+    //   if (i % 10 == 0) {
+    //     std::cout << i << " / " << all_edges.size() << "\n";
+    //   }
+    //   i += 1;
+    // }
 
-    if (found) {
-      std::cout << "First edge that decreases extreme count: "
-        << initial_state.StopName(found_edge.a) << " <-> " << initial_state.StopName(found_edge.b) << "\n";
-    } else {
-      std::cout << "No edge found that decreases extreme count\n";
-    }
+    // if (found) {
+    //   std::cout << "First edge that decreases extreme count: "
+    //     << initial_state.StopName(found_edge.a) << " <-> " << initial_state.StopName(found_edge.b) << "\n";
+    // } else {
+    //   std::cout << "No edge found that decreases extreme count\n";
+    // }
 
     // BranchEdge bedge = rescue_ordered[0];
     // BranchEdge bedge_rev{bedge.b, bedge.a};
