@@ -55,6 +55,8 @@ struct ProblemState {
   // Names of step partitions for display purposes.
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
 
+  std::unordered_map<StopId, StopId> original_destinations;
+
   const std::string& StopName(StopId stop) const {
     return stop_names.at(stop);
   }
@@ -88,7 +90,8 @@ ProblemState MakeProblemState(
   ProblemBoundary boundary,
   std::unordered_set<StopId> stops,
   std::unordered_map<StopId, std::string> stop_names,
-  std::unordered_map<StepPartitionId, std::string> step_partition_names
+  std::unordered_map<StepPartitionId, std::string> step_partition_names,
+  std::unordered_map<StopId, StopId> original_destinations
 );
 
 struct TarelState {

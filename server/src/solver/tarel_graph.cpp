@@ -21,7 +21,7 @@
 namespace vats5 {
 
 ProblemState ProblemState::WithRequiredStops(const std::unordered_set<StopId>& stops) const {
-  return MakeProblemState(minimal, boundary, stops, stop_names, step_partition_names);
+  return MakeProblemState(minimal, boundary, stops, stop_names, step_partition_names, original_destinations);
 }
 
 void showValue(const ProblemState& state, std::ostream& os) {
@@ -117,7 +117,8 @@ ProblemState MakeProblemState(
   ProblemBoundary boundary,
   std::unordered_set<StopId> stops,
   std::unordered_map<StopId, std::string> stop_names,
-  std::unordered_map<StepPartitionId, std::string> step_partition_names
+  std::unordered_map<StepPartitionId, std::string> step_partition_names,
+  std::unordered_map<StopId, StopId> original_destinations
 ) {
   StepPathsAdjacencyList completed = ReduceToMinimalSystemPaths(minimal, stops, true);
   // Add END->START edge to complete the cycle for TSP formulation.
@@ -129,6 +130,7 @@ ProblemState MakeProblemState(
     std::move(stops),
     std::move(stop_names),
     std::move(step_partition_names),
+    std::move(original_destinations),
   };
 }
 
@@ -214,7 +216,8 @@ ProblemState InitializeProblemState(
     boundary,
     stops,
     stop_names,
-    step_partition_to_route_desc
+    step_partition_to_route_desc,
+    {}
   );
 }
 

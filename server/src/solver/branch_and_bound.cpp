@@ -107,6 +107,7 @@ ProblemState ApplyConstraints(
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
   std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  std::unordered_map<StopId, StopId> original_destinations = state.original_destinations;
   StopId next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.
@@ -148,6 +149,8 @@ ProblemState ApplyConstraints(
         boundary.end = ab;
       }
 
+      original_destinations[ab] = require.b;
+
       // Collect some steps that we'll need for constructing the steps to and from "ab".
       // Steps from a to b.
       std::vector<Step> a_to_b;
@@ -181,6 +184,24 @@ ProblemState ApplyConstraints(
         s.origin.stop = ab;
         steps.push_back(s);
       }
+
+      // TODO TODO: Figure out if this is ok.
+      std::erase_if(steps, [&](const Step& s) -> bool {
+        if (s.destination.stop != require.b) {
+          return false;
+        }
+        StopId erase_from = require.a;
+        while (true) {
+          if (s.origin.stop == erase_from) {
+            return true;
+          }
+          auto it = original_destinations.find(erase_from);
+          if (it == original_destinations.end()) {
+            return false;
+          }
+          erase_from = it->second;
+        }
+      });
     } else {
       assert(false);
     }
@@ -188,7 +209,7 @@ ProblemState ApplyConstraints(
 
   // Build the new problem state from the stuff we've been mutating.
   return MakeProblemState(
-    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names
+    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names, original_destinations
   );
 }
 
@@ -361,6 +382,15 @@ int BranchAndBoundSolve(
       for (const Step& s : best.steps) {
         primitive_steps.push_back(s);
       }
+    }
+
+    if (primitive_steps.size() > 0) {
+      *search_log << "  primitive: ";
+      *search_log << state.StopName(primitive_steps[0].origin.stop);
+      for (const Step& step : primitive_steps) {
+        *search_log << "->" << state.StopName(step.destination.stop);
+      }
+      *search_log << "\n";
     }
 
     if (primitive_steps.size() <= 2) {
