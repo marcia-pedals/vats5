@@ -320,26 +320,11 @@ int BranchAndBoundSolve(
     }
 
     // Make an upper bound by actually following the LB path.
-    std::vector<Step> feasible_steps;
-    feasible_steps.push_back(Step::PrimitiveFlex(state.boundary.start, state.boundary.start, 0, TripId::NOOP));
-    for (int i = 0; i < lb_result.tour_edges.size(); ++i) {
-      TarelEdge& edge = lb_result.tour_edges[i];
-      std::vector<Step> next_steps;
-      for (const Path& p : state.completed.PathsBetween(edge.origin.stop, edge.destination.stop)) {
-        next_steps.push_back(p.merged_step);
-      }
-      feasible_steps = PairwiseMergedSteps(feasible_steps, next_steps);
-    }
-    // TODO: Reference thing about 00:00:00.
-    std::erase_if(feasible_steps, [](const Step& step) {
-      return step.origin.time < TimeSinceServiceStart{0};
-    });
-    auto best_feasible_step_it = std::min_element(feasible_steps.begin(), feasible_steps.end(), [](const Step& a, const Step& b) {
-      return a.DurationSeconds() < b.DurationSeconds();
-    });
-    if (best_feasible_step_it != feasible_steps.end()) {
+    std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(lb_result, state);
+    if (feasible_paths.size() > 0) {
+      const Path& feasible_path = feasible_paths[0];
       if (search_log != nullptr) {
-        *search_log << "  ub path (" << TimeSinceServiceStart{best_feasible_step_it->DurationSeconds()}.ToString() << "): ";
+        *search_log << "  ub path (" << TimeSinceServiceStart{feasible_path.DurationSeconds()}.ToString() << "): ";
         for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
           if (i > 0) {
             *search_log << " -> ";
@@ -349,10 +334,13 @@ int BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
-      if (best_feasible_step_it->DurationSeconds() < best_ub) {
-        best_ub = best_feasible_step_it->DurationSeconds();
+      if (feasible_path.DurationSeconds() < best_ub) {
+        best_ub = feasible_path.DurationSeconds();
         if (search_log != nullptr) {
-          *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString() << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+          *search_log
+            << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString()
+            << " " << feasible_path.merged_step.origin.time.ToString()
+            << " " << feasible_path.merged_step.destination.time.ToString() << "\n";
         }
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();

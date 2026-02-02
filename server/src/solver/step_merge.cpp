@@ -93,6 +93,16 @@ std::vector<Step> PairwiseMergedSteps(
     return result;
   }
 
+  {
+    StopId expected_b = ab[0].destination.stop;
+    for (const Step& step : ab) {
+      assert(step.destination.stop == expected_b);
+    }
+    for (const Step& step : bc) {
+      assert(step.origin.stop == expected_b);
+    }
+  }
+
   // Reserve a (pretty tight I think) upper bound on the amount of space we're
   // gonna allocate.
   size_t alloc_ub = 0;
@@ -322,6 +332,8 @@ std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& 
   int first_sched_step = 0;
 
   if (candidates[0].is_flex) {
+    assert(candidates[0].origin.stop == cur.destination.stop);
+
     best = candidates[0];
     first_sched_step = 1;
 
@@ -332,6 +344,8 @@ std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& 
   }
 
   for (int i = first_sched_step; i < candidates.size(); ++i) {
+    assert(candidates[i].origin.stop == cur.destination.stop);
+
     const Step& candidate = candidates[i];
     if (candidate.origin.time < cur.destination.time) {
       continue;

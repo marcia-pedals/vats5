@@ -616,51 +616,52 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
   const TspTourResult& tour_result,
   const ProblemState& state
 ) {
-  // Compute min duration feasible path.
-  std::vector<Step> feasible_paths = {ZeroEdge(state.boundary.start, state.boundary.start)};
+  std::vector<Step> feasible_steps = {ZeroEdge(state.boundary.start, state.boundary.start)};
+  auto ExtendFeasibleSteps = [&](StopId a, StopId b) {
+    feasible_steps = PairwiseMergedSteps(feasible_steps, state.completed.MergedStepsBetween(a, b));
+  };
   for (const auto& edge : tour_result.tour_edges) {
-    feasible_paths = PairwiseMergedSteps(
-      feasible_paths,
-      // edge.all_steps // TODO: Nope nope this is just an experiment, must change it back to MergedStepsBetween for actual UB. Or have a flag to switch between.
-      state.completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
-    );
+    ExtendFeasibleSteps(edge.origin.stop, edge.destination.stop);
   }
 
-  if (feasible_paths.empty()) {
+  // TODO: Reference thing about 00:00:00.
+  std::erase_if(feasible_steps, [](const Step& step) {
+    return step.origin.time < TimeSinceServiceStart{0};
+  });
+
+  auto min_step_it = std::min_element(feasible_steps.begin(), feasible_steps.end(), [](const Step& a, const Step& b) {
+    return a.DurationSeconds() < b.DurationSeconds();
+  });
+  if (min_step_it == feasible_steps.end()) {
     return {};
   }
-  const Step* min_duration_step = &feasible_paths[0];
-  for (const Step& step : feasible_paths) {
-    if (step.DurationSeconds() < min_duration_step->DurationSeconds()) {
-      min_duration_step = &step;
-    }
-  }
+  int min_duration = min_step_it->DurationSeconds();
 
   std::vector<Path> result;
-  for (const Step& merged_step : feasible_paths) {
-    if (merged_step.DurationSeconds() > min_duration_step->DurationSeconds()) {
+  for (const Step& merged_step : feasible_steps) {
+    if (merged_step.DurationSeconds() > min_duration) {
       continue;
     }
 
-    Path path;
-    path.merged_step = merged_step;
+    Path path{.merged_step=merged_step, .steps={}};
 
     // Build up the individual steps along the tour.
     Step cur_step = ZeroEdge(state.boundary.start, state.boundary.start);
     cur_step.origin.time = merged_step.origin.time;
     cur_step.destination.time = merged_step.origin.time;
-
-    for (const auto& edge : tour_result.tour_edges) {
-      std::optional<Step> next_step = SelectBestNextStep(
-        cur_step,
-        // TODO: AAAA unfortunate allocation.
-        state.completed.MergedStepsBetween(edge.origin.stop, edge.destination.stop)
-      );
+    auto ExtendPath = [&](StopId a, StopId b) -> bool {
+      std::optional<Step> next_step = SelectBestNextStep(cur_step, state.completed.MergedStepsBetween(a, b));
       if (!next_step.has_value()) {
-        break;
+        return false;
       }
       path.steps.push_back(*next_step);
       cur_step = *next_step;
+      return true;
+    };
+    for (const auto& edge : tour_result.tour_edges) {
+      if (!ExtendPath(edge.origin.stop, edge.destination.stop)) {
+        break;
+      }
     }
 
     result.push_back(path);
