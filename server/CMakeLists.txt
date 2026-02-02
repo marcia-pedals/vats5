@@ -96,7 +96,7 @@ target_include_directories(branch_and_bound PUBLIC src)
 
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
-target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
+target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
 target_include_directories(tarel_graph PUBLIC src)
 
 # Create visualization library target

@@ -12,12 +12,17 @@
 
 #include "solver/concorde.h"
 #include "solver/data.h"
+#include "solver/graph_util.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 
 namespace vats5 {
+
+ProblemState ProblemState::WithRequiredStops(const std::unordered_set<StopId>& stops) const {
+  return MakeProblemState(minimal, boundary, stops, stop_names, step_partition_names);
+}
 
 void showValue(const ProblemState& state, std::ostream& os) {
   std::vector<Step> steps = state.minimal.AllSteps();
@@ -762,10 +767,14 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
     }
   }
 
-  auto edges = MakeTarelEdges(state.completed);
+  auto extreme_stops = ComputeExtremeStops(state.completed, state.required_stops);
+  std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
+  ProblemState extreme_state = state.WithRequiredStops(extreme_stops);
+
+  auto edges = MakeTarelEdges(extreme_state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  return SolveTspAndExtractTour(merged_edges, graph, state.boundary, ub, tsp_log);
+  auto graph = MakeTspGraphEdges(merged_edges, extreme_state.boundary);
+  return SolveTspAndExtractTour(merged_edges, graph, extreme_state.boundary, ub, tsp_log);
 }
 
 void WriteTarelSummary(

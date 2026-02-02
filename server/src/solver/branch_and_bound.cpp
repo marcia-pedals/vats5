@@ -242,7 +242,11 @@ int BranchAndBoundSolve(
           }
         }
       }
-      *search_log << "\n";
+      *search_log << " {cur " << cur_node.edge_index;
+      if (cur_node.edge_index != -1) {
+        *search_log << "; parent " << search_edges[cur_node.edge_index].parent_edge_index;
+      }
+      *search_log << "}\n";
       // TODO: Detailed log level so that we can print these out sometimes.
       // showValue(state, *search_log);
       // *search_log << "\n";
@@ -276,7 +280,8 @@ int BranchAndBoundSolve(
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
-    MyDetailedPrintout(state, lb_result.tour_edges);
+
+    // MyDetailedPrintout(state, lb_result.tour_edges);
 
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
@@ -287,6 +292,10 @@ int BranchAndBoundSolve(
     }
     if (search_log != nullptr) {
       *search_log << "  lb: " << TimeSinceServiceStart{lb_result.optimal_value}.ToString() << "\n";
+      *search_log << "  lb edges:\n";
+      for (const TarelEdge& edge : lb_result.tour_edges) {
+        *search_log << "    " << state.StopName(edge.origin.stop) << " -> " << state.StopName(edge.destination.stop) << " w=" << TimeSinceServiceStart{edge.weight}.ToString() << "\n";
+      }
     }
 
     // Make an upper bound by actually following the LB path.
@@ -307,11 +316,9 @@ int BranchAndBoundSolve(
     auto best_feasible_step_it = std::min_element(feasible_steps.begin(), feasible_steps.end(), [](const Step& a, const Step& b) {
       return a.DurationSeconds() < b.DurationSeconds();
     });
-    if (best_feasible_step_it != feasible_steps.end() && best_feasible_step_it->DurationSeconds() < best_ub) {
-      best_ub = best_feasible_step_it->DurationSeconds();
+    if (best_feasible_step_it != feasible_steps.end()) {
       if (search_log != nullptr) {
-        *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString() << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
-        *search_log << "  ";
+        *search_log << "  ub path (" << TimeSinceServiceStart{best_feasible_step_it->DurationSeconds()}.ToString() << "): ";
         for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
           if (i > 0) {
             *search_log << " -> ";
@@ -321,16 +328,22 @@ int BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
-      // Prune nodes that can no longer beat the new UB.
-      size_t old_size = q.size();
-      std::erase_if(q, [best_ub](const SearchNode& node) {
-        return node.parent_lb >= best_ub;
-      });
-      size_t pruned_count = old_size - q.size();
-      if (pruned_count > 0) {
-        std::make_heap(q.begin(), q.end());
+      if (best_feasible_step_it->DurationSeconds() < best_ub) {
+        best_ub = best_feasible_step_it->DurationSeconds();
         if (search_log != nullptr) {
-          *search_log << "  pruned " << pruned_count << " nodes from queue\n";
+          *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString() << " " << best_feasible_step_it->origin.time.ToString() << " " << best_feasible_step_it->destination.time.ToString() << "\n";
+        }
+        // Prune nodes that can no longer beat the new UB.
+        size_t old_size = q.size();
+        std::erase_if(q, [best_ub](const SearchNode& node) {
+          return node.parent_lb >= best_ub;
+        });
+        size_t pruned_count = old_size - q.size();
+        if (pruned_count > 0) {
+          std::make_heap(q.begin(), q.end());
+          if (search_log != nullptr) {
+            *search_log << "  pruned " << pruned_count << " nodes from queue\n";
+          }
         }
       }
     }
@@ -359,16 +372,17 @@ int BranchAndBoundSolve(
     }
 
     // Select branch edge by hashing edges on LB path.
-    size_t edge_hash = 0;
-    for (const Step& s : primitive_steps) {
-      edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
-    }
+    // size_t edge_hash = 0;
+    // for (const Step& s : primitive_steps) {
+    //   edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
+    // }
     // TODO: Make it possible to select START -> * and * -> END steps.
     // Ok so the problem is that the path is allowed to "start at the start" for zero cost even if e.g. the start is actually like "START->(a->b)" which should incur the "(a->b)" cost.
     // I think that having an ACTUAL_START which is not allowed to be merged would probably fix this. But this would incur an extra vertex cost? Is this the only way to "branch on requiring a certain start"?
     // Alternatively we could track "start cost".
     // Everything in parallel with END of course.
-    Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
+    Step& branch_step = primitive_steps[1];
     // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
     BranchEdge branch_edge_fw{branch_step.origin.stop, branch_step.destination.stop};
     BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};
@@ -380,9 +394,12 @@ int BranchAndBoundSolve(
     // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Require()}, cur_node.edge_index});
     // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require(), branch_edge_rv.Forbid()}, cur_node.edge_index});
 
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
-    PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Require()}, cur_node.edge_index});
+    // PushQ(state, lb_result.optimal_value, SearchEdge{{branch_edge_fw.Forbid(), branch_edge_rv.Forbid()}, cur_node.edge_index});
+
+    PushQ(state, std::max(cur_node.parent_lb, lb_result.optimal_value), SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index});
+    PushQ(state, std::max(cur_node.parent_lb, lb_result.optimal_value), SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index});
   }
 
   return best_ub;

@@ -38,7 +38,8 @@ std::string GetTimestampDir() {
 }
 
 int main() {
-    const std::string gtfs_path = "../data/RG_20260108_all";
+    // const std::string gtfs_path = "../data/RG_20260108_all";
+    const std::string gtfs_path = "../data/RG_20250718_BA";
 
     std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
     GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);

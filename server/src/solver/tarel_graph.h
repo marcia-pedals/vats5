@@ -39,8 +39,8 @@ struct ProblemState {
   StepsAdjacencyList minimal;
 
   // The completion of `minimal`, i.e. every possible route between elements of
-  // `stops` is a path. Also includes a zero-duration END->START edge to
-  // complete the cycle for TSP formulation.
+  // `required_stops` is a path. Also includes a zero-duration END->START edge
+  // to complete the cycle for TSP formulation.
   StepPathsAdjacencyList completed;
 
   // Which stops in `minimal`/`completed` are the START and END.
@@ -76,6 +76,9 @@ struct ProblemState {
     }
     return it->second;
   }
+
+  // Return a copy of this state with the required stops replaced by `stops`.
+  ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
 };
 
 void showValue(const ProblemState& state, std::ostream& os);
