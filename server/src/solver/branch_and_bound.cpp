@@ -121,7 +121,7 @@ ProblemState ApplyConstraints(
     } else if (std::holds_alternative<ConstraintRequireEdge>(constraint)) {
       const ConstraintRequireEdge& require = std::get<ConstraintRequireEdge>(constraint);
       // Require is a bit more complicated. At a high level, we add a new stop
-      // "a->b" to the graph representing the act of going to a and then
+      // "ab" to the graph representing the act of going to a and then
       // proceeding to b along the required edge. We make "ab" a required stop
       // and drop the requirements to visit the original "a" and "b". But we
       // still keep them around so that they can be used as intermediate stops
@@ -139,8 +139,6 @@ ProblemState ApplyConstraints(
       required_stops.insert(ab);
       required_stops.erase(require.a);
       required_stops.erase(require.b);
-      assert(boundary.start != require.b);
-      assert(boundary.end != require.a);
       assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {
         boundary.start = ab;
@@ -156,8 +154,8 @@ ProblemState ApplyConstraints(
       std::vector<Step> a_to_b;
       // Steps from * to a, grouped by *.
       std::unordered_map<StopId, std::vector<Step>> star_to_a;
-      // Steps from b to *, not grouped by anything.
-      std::vector<Step> b_to_star;
+      // Steps from b to *, grouped by *.
+      std::unordered_map<StopId, std::vector<Step>> b_to_star;
       for (const Step& s : steps) {
         if (s.origin.stop == require.a && s.destination.stop == require.b) {
           a_to_b.push_back(s);
@@ -166,26 +164,58 @@ ProblemState ApplyConstraints(
           star_to_a[s.origin.stop].push_back(s);
         }
         if (s.origin.stop == require.b) {
-          b_to_star.push_back(s);
+          b_to_star[s.destination.stop].push_back(s);
         }
       }
 
-      // The steps to "ab" are the steps "x->a" merged with the steps "a->b".
-      for (const auto& [x, x_to_a] : star_to_a) {
-        std::vector<Step> x_to_ab = PairwiseMergedSteps(x_to_a, a_to_b);
-        for (Step s : x_to_ab) {
-          s.destination.stop = ab;
-          steps.push_back(s);
+      // There are 2 things that "ab" could represent:
+      // 1. You are at "a" and you're gonna leave via "b".
+      // 2. You are at "b" and you've arrived via "a".
+      //
+      // The choice is arbitrary except for: If "a" is `boundary.start`, then
+      // (2) does not work because we make "ab" into the new `boundary.start`,
+      // and we allow you to start at `boundary.start` without incurring any
+      // cost, so (2) would allow you to arrive at "b" via "a" without incurring
+      // any cost. Similarly, if "b" is `boundary.end`, then (1) does not work.
+      //
+      // Therefore, we arbitrarily choose to do (1) when "a" is `boundary.start`
+      // and (2) otherwise.
+      if (boundary.start == ab) {
+        // The steps to "ab" are the steps "x->a".
+        for (const auto& [x, x_to_a] : star_to_a) {
+          for (Step s : x_to_a) {
+            s.destination.stop = ab;
+            steps.push_back(s);
+          }
+        }
+        // The steps from "ab" are the steps "a->b" merged with the steps "b->x".
+        for (const auto& [x, b_to_x] : b_to_star) {
+          std::vector<Step> ab_to_x = PairwiseMergedSteps(a_to_b, b_to_x);
+          for (Step s : ab_to_x) {
+            s.origin.stop = ab;
+            steps.push_back(s);
+          }
+        }
+      } else {
+        // The steps to "ab" are the steps "x->a" merged with the steps "a->b".
+        for (const auto& [x, x_to_a] : star_to_a) {
+          std::vector<Step> x_to_ab = PairwiseMergedSteps(x_to_a, a_to_b);
+          for (Step s : x_to_ab) {
+            s.destination.stop = ab;
+            steps.push_back(s);
+          }
+        }
+        // The steps from "ab" are the steps "b->x".
+        for (const auto& [x, b_to_x] : b_to_star) {
+          for (Step s : b_to_x) {
+            s.origin.stop = ab;
+            steps.push_back(s);
+          }
         }
       }
 
-      // The steps from "ab" are the steps "b->x".
-      for (Step s : b_to_star) {
-        s.origin.stop = ab;
-        steps.push_back(s);
-      }
-
-      // TODO TODO: Figure out if this is ok.
+      // TODO TODO: Figure out if this is ok. And explain why it's ok and why
+      // it's important.
       std::erase_if(steps, [&](const Step& s) -> bool {
         if (s.destination.stop != require.b) {
           return false;
@@ -400,7 +430,7 @@ int BranchAndBoundSolve(
     // Alternatively we could track "start cost".
     // Everything in parallel with END of course.
     // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
-    Step& branch_step = primitive_steps[1];
+    Step& branch_step = primitive_steps[0];
     // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
     BranchEdge branch_edge_fw{branch_step.origin.stop, branch_step.destination.stop};
     BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};

@@ -78,7 +78,7 @@ void showValue(const ProblemState& state, std::ostream& os) {
     } else {
       os << " [" << step.origin.time.ToString() << " -> " << step.destination.time.ToString() << "]";
     }
-    os << "\n";
+    os << " p=" << step.destination.partition.v << "\n";
   }
   os << "  ]\n";
 
@@ -758,9 +758,9 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
   std::unordered_set<StopId> origins;
   std::unordered_set<StopId> destinations;
   for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
-    origins.insert(origin_stop);
     for (const auto& path_group : path_groups) {
       if (!path_group.empty()) {
+        origins.insert(path_group[0].merged_step.origin.stop);
         destinations.insert(path_group[0].merged_step.destination.stop);
       }
     }
@@ -772,7 +772,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
   }
 
   auto extreme_stops = ComputeExtremeStops(state.completed, state.required_stops);
-  std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
+  // std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
   ProblemState extreme_state = state.WithRequiredStops(extreme_stops);
 
   auto edges = MakeTarelEdges(extreme_state.completed);
