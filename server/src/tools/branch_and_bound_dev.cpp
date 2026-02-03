@@ -1,29 +1,16 @@
 #include <crow/http_parser_merged.h>
-#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <functional>
-#include <future>
 #include <iomanip>
 #include <iostream>
-#include <limits>
-#include <memory>
 #include <optional>
-#include <queue>
-#include <random>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
-#include <utility>
 
 #include "solver/branch_and_bound.h"
 #include "solver/data.h"
-#include "solver/step_merge.h"
-#include "solver/steps_adjacency_list.h"
-#include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 
 using namespace vats5;
@@ -38,8 +25,8 @@ std::string GetTimestampDir() {
 }
 
 int main() {
-    const std::string gtfs_path = "../data/RG_20260108_all";
-    // const std::string gtfs_path = "../data/RG_20250718_BA";
+    // const std::string gtfs_path = "../data/RG_20260108_all";
+    const std::string gtfs_path = "../data/RG_20250718_BA";
 
     std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
     GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
@@ -57,16 +44,13 @@ int main() {
         GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
     std::cout << "Initializing solution state...\n";
-    ProblemState initial_state = InitializeProblemState(steps_from_gtfs, bart_stops);
-
-    StopId berryessa = initial_state.StopIdFromName("Berryessa / North San Jose");
-    PrintStopPartitions(initial_state, berryessa);
+    ProblemState state = InitializeProblemState(steps_from_gtfs, bart_stops);
 
     std::string run_dir = GetTimestampDir();
     std::filesystem::create_directory(run_dir);
     std::cout << "Output directory: " << run_dir << std::endl;
 
-    BranchAndBoundSolve(initial_state, &std::cout, run_dir);
+    BranchAndBoundSolve(state, &std::cout, run_dir);
 
     return 0;
 }

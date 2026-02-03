@@ -185,7 +185,27 @@ ProblemState InitializeProblemState(
   }
 
   // Compute minimal adj list.
-  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_with_partitions), system_stops);
+  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(
+    MakeAdjacencyList(steps_with_partitions),
+    system_stops
+  );
+
+  // This simplification of the problem is very very good when there are few extreme stops.
+  // But we need to do some stuff to make there be few extreme stops because in
+  // the hard problems almost all the stops start out extreme until we eliminate
+  // some paths. So I have commented this out for now.
+  //
+  // std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(
+  //   ReduceToMinimalSystemPaths(MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()), system_stops, true),
+  //   system_stops,
+  //   StopId{-1}
+  // );
+  // std::cout << "Initialize problem state extreme stops: " << extreme_stops.size() << "\n";
+  // minimal_paths_sparse = ReduceToMinimalSystemPaths(
+  //   MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()),
+  //   extreme_stops
+  // );
+
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
   // Compact minimal adj list and remap stop names.
