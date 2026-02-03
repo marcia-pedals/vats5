@@ -24,7 +24,7 @@ TEST(GraphUtilTest, ComputeExtremeStops_BART) {
   StepPathsAdjacencyList complete = ReduceToMinimalSystemPaths(MakeAdjacencyList(minimal.AllMergedSteps()), bart_stops, true);
 
   // Compute extreme stops
-  std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(complete, bart_stops);
+  std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(complete, bart_stops, StopId{-1});
 
   // Convert to names for easier assertion
   std::vector<std::string> extreme_stop_names;
@@ -33,7 +33,9 @@ TEST(GraphUtilTest, ComputeExtremeStops_BART) {
         steps_from_gtfs.mapping.stop_id_to_stop_name.at(stop_id));
   }
 
-  // The 6 endpoints of the BART system plus OAK (Oakland Airport connector)
+  // The endpoints of the BART system plus OAK (Oakland Airport connector) and
+  // SFO. SFO is on a spur but there are direct trains to Millbrae that don't
+  // require getting off at SFO, so SFO is not an "inner" stop.
   EXPECT_THAT(
       extreme_stop_names,
       UnorderedElementsAre(
@@ -42,7 +44,8 @@ TEST(GraphUtilTest, ComputeExtremeStops_BART) {
           "Berryessa / North San Jose",
           "Antioch",
           "Dublin / Pleasanton BART",
-          "OAK"));
+          "OAK",
+          "SFO"));
 }
 
 }  // namespace vats5

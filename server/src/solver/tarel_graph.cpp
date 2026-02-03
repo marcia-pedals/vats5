@@ -771,14 +771,19 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
     }
   }
 
-  auto extreme_stops = ComputeExtremeStops(state.completed, state.required_stops);
-  // std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
-  ProblemState extreme_state = state.WithRequiredStops(extreme_stops);
-
-  auto edges = MakeTarelEdges(extreme_state.completed);
+  // Reduce the number of required stops by removing "inner" stops.
+  // A stop X is "inner" if it lies on ALL paths between some pair of required
+  // stops A and B (in both directions). Such stops will necessarily be visited
+  // in any tour, so we don't need to explicitly require them.
+  auto extreme_stops = ComputeExtremeStops(
+    state.completed, state.required_stops, state.boundary.start
+  );
+  std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
+  ProblemState reduced_state = state.WithRequiredStops(extreme_stops);
+  auto edges = MakeTarelEdges(reduced_state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
-  auto graph = MakeTspGraphEdges(merged_edges, extreme_state.boundary);
-  return SolveTspAndExtractTour(merged_edges, graph, extreme_state.boundary, ub, tsp_log);
+  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
+  return SolveTspAndExtractTour(merged_edges, graph, state.boundary, ub, tsp_log);
 }
 
 void WriteTarelSummary(

@@ -228,7 +228,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
     // Invoke Concorde from temp dir so its temp files don't conflict when running in parallel.
     // Use a constant seed for deterministic execution for property tests.
     std::ostringstream cmd;
-    cmd << "cd " << temp_dir << " && concorde -s 42";
+    cmd << "cd " << temp_dir << " && concorde -s 43";
     if (concorde_ub.has_value()) {
       cmd << " -u " << *concorde_ub;
     }

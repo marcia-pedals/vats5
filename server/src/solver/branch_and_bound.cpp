@@ -424,14 +424,9 @@ int BranchAndBoundSolve(
     // for (const Step& s : primitive_steps) {
     //   edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 + std::hash<int>{}(s.origin.stop.v);
     // }
-    // TODO: Make it possible to select START -> * and * -> END steps.
-    // Ok so the problem is that the path is allowed to "start at the start" for zero cost even if e.g. the start is actually like "START->(a->b)" which should incur the "(a->b)" cost.
-    // I think that having an ACTUAL_START which is not allowed to be merged would probably fix this. But this would incur an extra vertex cost? Is this the only way to "branch on requiring a certain start"?
-    // Alternatively we could track "start cost".
-    // Everything in parallel with END of course.
-    // Step& branch_step = primitive_steps[(edge_hash % (primitive_steps.size() - 2)) + 1];
-    Step& branch_step = primitive_steps[0];
     // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
+    // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
+    Step& branch_step = primitive_steps[0];
     BranchEdge branch_edge_fw{branch_step.origin.stop, branch_step.destination.stop};
     BranchEdge branch_edge_rv{branch_step.destination.stop, branch_step.origin.stop};
 
