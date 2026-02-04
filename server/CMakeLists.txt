@@ -127,6 +127,14 @@ target_link_libraries(plain_viz PUBLIC visualization)
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
 target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
+# Add save_problem_state tool
+add_executable(save_problem_state src/tools/save_problem_state.cpp)
+target_link_libraries(save_problem_state PUBLIC tarel_graph)
+
+# Add load_problem_state tool
+add_executable(load_problem_state src/tools/load_problem_state.cpp)
+target_link_libraries(load_problem_state PUBLIC tarel_graph)
+
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
 target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)

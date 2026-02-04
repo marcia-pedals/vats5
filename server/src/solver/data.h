@@ -28,6 +28,7 @@ inline void from_json(const nlohmann::json& j, StopId& id) {
 struct PlainEdge {
   StopId a;
   StopId b;
+  bool operator==(const PlainEdge&) const = default;
 };
 
 struct PlainWeightedEdge {
@@ -245,6 +246,15 @@ template <>
 struct hash<vats5::StopId> {
   size_t operator()(const vats5::StopId& stop_id) const {
     return hash<int>()(stop_id.v);
+  }
+};
+
+template <>
+struct hash<vats5::PlainEdge> {
+  size_t operator()(const vats5::PlainEdge& edge) const {
+    size_t h1 = hash<vats5::StopId>()(edge.a);
+    size_t h2 = hash<vats5::StopId>()(edge.b);
+    return h1 ^ (h2 << 1);
   }
 };
 
