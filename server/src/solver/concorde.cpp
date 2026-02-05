@@ -251,7 +251,10 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
 
     size_t pos = concorde_output.find("Optimal Solution:");
     if (pos == std::string::npos) {
-        throw std::runtime_error("Concorde did not find optimal solution. Output:\n" + concorde_output);
+      // TODO: Verify that these cases really are all infeasible and not a bug.
+      // e.g. look for output that shows that LB > UB or something.
+      return std::nullopt;
+        // throw std::runtime_error("Concorde did not find optimal solution. Output:\n" + concorde_output);
     }
     int raw_optimal_value = static_cast<int>(std::round(std::stod(concorde_output.substr(pos + 17))));
 

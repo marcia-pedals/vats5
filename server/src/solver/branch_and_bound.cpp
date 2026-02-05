@@ -107,6 +107,7 @@ ProblemState ApplyConstraints(
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
   std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  std::unordered_map<StopId, StopId> original_origins = state.original_origins;
   std::unordered_map<StopId, StopId> original_destinations = state.original_destinations;
   StopId next_stop_id{state.minimal.NumStops()};
 
@@ -147,6 +148,7 @@ ProblemState ApplyConstraints(
         boundary.end = ab;
       }
 
+      original_origins[ab] = require.a;
       original_destinations[ab] = require.b;
 
       // Collect some steps that we'll need for constructing the steps to and from "ab".
@@ -239,8 +241,56 @@ ProblemState ApplyConstraints(
 
   // Build the new problem state from the stuff we've been mutating.
   return MakeProblemState(
-    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names, original_destinations
+    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names, original_origins, original_destinations
   );
+}
+
+// Expand a collapsed stop to its original stops.
+// If the stop has entries in original_origins and original_destinations, it represents
+// a collapsed edge a->b, so we recursively expand to get [expand(a), expand(b)].
+// Otherwise, the stop is a leaf and we just return [stop].
+void ExpandStop(
+  StopId stop,
+  const std::unordered_map<StopId, StopId>& original_origins,
+  const std::unordered_map<StopId, StopId>& original_destinations,
+  std::vector<StopId>& result
+) {
+  auto origin_it = original_origins.find(stop);
+  if (origin_it == original_origins.end()) {
+    // Leaf stop - just add it
+    result.push_back(stop);
+  } else {
+    // Collapsed stop - expand both sides
+    ExpandStop(origin_it->second, original_origins, original_destinations, result);
+    auto dest_it = original_destinations.find(stop);
+    assert(dest_it != original_destinations.end());
+    ExpandStop(dest_it->second, original_origins, original_destinations, result);
+  }
+}
+
+std::vector<StopId> ComputeOriginalStops(
+  const std::optional<Path>& path,
+  const std::unordered_map<StopId, StopId>& original_origins,
+  const std::unordered_map<StopId, StopId>& original_destinations
+) {
+  std::vector<StopId> result;
+  if (!path.has_value() || path->steps.empty()) {
+    return result;
+  }
+
+  // Get the sequence of stops from the path
+  std::vector<StopId> path_stops;
+  path_stops.push_back(path->steps[0].origin.stop);
+  for (const Step& step : path->steps) {
+    path_stops.push_back(step.destination.stop);
+  }
+
+  // Expand each stop
+  for (StopId stop : path_stops) {
+    ExpandStop(stop, original_origins, original_destinations, result);
+  }
+
+  return result;
 }
 
 BranchAndBoundResult BranchAndBoundSolve(
@@ -269,6 +319,8 @@ BranchAndBoundResult BranchAndBoundSolve(
   int iter_num = 0;
   int best_ub = std::numeric_limits<int>::max();
   std::optional<Path> best_path;
+  std::unordered_map<StopId, StopId> best_original_origins;
+  std::unordered_map<StopId, StopId> best_original_destinations;
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -308,7 +360,11 @@ BranchAndBoundResult BranchAndBoundSolve(
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
       }
-      return BranchAndBoundResult{best_ub, best_path};
+      return BranchAndBoundResult{
+        best_ub,
+        best_path,
+        ComputeOriginalStops(best_path, best_original_origins, best_original_destinations)
+      };
     }
 
     // Compute lower bound.
@@ -368,6 +424,8 @@ BranchAndBoundResult BranchAndBoundSolve(
       if (feasible_path.DurationSeconds() < best_ub) {
         best_ub = feasible_path.DurationSeconds();
         best_path = feasible_path;
+        best_original_origins = state.original_origins;
+        best_original_destinations = state.original_destinations;
         if (search_log != nullptr) {
           *search_log
             << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString()
@@ -447,7 +505,11 @@ BranchAndBoundResult BranchAndBoundSolve(
     PushQ(state, std::max(cur_node.parent_lb, lb_result.optimal_value), SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index});
   }
 
-  return BranchAndBoundResult{best_ub, best_path};
+  return BranchAndBoundResult{
+    best_ub,
+    best_path,
+    ComputeOriginalStops(best_path, best_original_origins, best_original_destinations)
+  };
 }
 
 }  // namespace vats5

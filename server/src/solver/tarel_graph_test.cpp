@@ -38,7 +38,7 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_names, boundary);
 
-  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {}, {});
+  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {}, {}, {});
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
 
@@ -133,7 +133,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
     steps[i].origin.partition.v = i;
     steps[i].destination.partition.v = i;
   }
-  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_destinations);
+  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_origins, state.original_destinations);
 
   std::optional<TspTourResult> result;
   try {

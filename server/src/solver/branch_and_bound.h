@@ -92,6 +92,7 @@ ProblemState ApplyConstraints(
 struct BranchAndBoundResult {
   int best_ub;
   std::optional<Path> path;
+  std::vector<StopId> original_stops;
 };
 
 BranchAndBoundResult BranchAndBoundSolve(

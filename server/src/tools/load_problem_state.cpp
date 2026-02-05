@@ -42,14 +42,16 @@ PlainEdge FindFarthestPair(const ProblemState& state) {
   int farthest_pair_distance = -1;
   for (StopId a : state.required_stops) {
     for (StopId b : state.required_stops) {
-      const Path* shortest_path = FindShortestPath(state.completed.PathsBetween(a, b));
-      if (!shortest_path) {
-        continue;
-      }
-      int distance = RequiredStopsDistance(*shortest_path, state.required_stops);
-      if (distance > farthest_pair_distance) {
-        farthest_pair = PlainEdge{.a=a, .b=b};
-        farthest_pair_distance = distance;
+      // const Path* shortest_path = FindShortestPath(state.completed.PathsBetween(a, b));
+      // if (!shortest_path) {
+      //   continue;
+      // }
+      for (const Path& path : state.completed.PathsBetween(a, b)) {
+        int distance = RequiredStopsDistance(path, state.required_stops);
+        if (distance > farthest_pair_distance) {
+          farthest_pair = PlainEdge{.a=a, .b=b};
+          farthest_pair_distance = distance;
+        }
       }
     }
   }
@@ -60,34 +62,54 @@ PlainEdge FindFarthestPair(const ProblemState& state) {
 }
 
 
-void FindFarthestFromSet(const ProblemState& state, const std::unordered_set<StopId> stops) {
-  StopId farthest_from_set;
+struct FarthestFromSetResult {
+  StopId stop;
+  int distance;
+};
+
+FarthestFromSetResult FindFarthestFromSet(const ProblemState& state, const std::unordered_set<StopId>& stops) {
+  StopId farthest_from_set{-1};
   int farthest_from_set_distance = -1;
 
   for (StopId a : state.required_stops) {
-    int closest_in_set_distance = std::numeric_limits<int>::max();
-    for (StopId b : stops) {
-      const Path* shortest_path = FindShortestPath(state.completed.PathsBetween(a, b));
-      if (!shortest_path) {
-        continue;
-      }
-      int distance = RequiredStopsDistance(*shortest_path, state.required_stops);
-      if (distance < closest_in_set_distance) {
-        closest_in_set_distance = distance;
-      }
-    }
-    if (closest_in_set_distance == std::numeric_limits<int>::max()) {
-      // TODO: Think about this.
+    if (stops.contains(a) || a == state.boundary.start || a == state.boundary.end) {
       continue;
     }
 
-    if (closest_in_set_distance > farthest_from_set_distance) {
+    // Find the shortest-duration path from a to any stop in the set
+    const Path* shortest_path = nullptr;
+    for (StopId b : stops) {
+      if (b == state.boundary.start || b == state.boundary.end) {
+        continue;
+      }
+      auto paths = state.completed.PathsBetween(a, b);
+      for (const Path& path : paths) {
+        if (!shortest_path || path.DurationSeconds() < shortest_path->DurationSeconds()) {
+          shortest_path = &path;
+        }
+      }
+    }
+
+    if (!shortest_path) {
+      continue;
+    }
+
+    int distance = RequiredStopsDistance(*shortest_path, state.required_stops);
+
+    std::cout << "  " << state.StopName(a) << ": distance=" << distance << " path=";
+    std::cout << state.StopName(shortest_path->steps[0].origin.stop);
+    for (const Step& step : shortest_path->steps) {
+      std::cout << " -> " << state.StopName(step.destination.stop);
+    }
+    std::cout << "\n";
+
+    if (distance > farthest_from_set_distance) {
       farthest_from_set = a;
-      farthest_from_set_distance = closest_in_set_distance;
+      farthest_from_set_distance = distance;
     }
   }
 
-  std::cout << state.StopName(farthest_from_set) << ": " << farthest_from_set_distance << "\n";
+  return FarthestFromSetResult{farthest_from_set, farthest_from_set_distance};
 }
 
 struct Solution {
@@ -190,16 +212,18 @@ std::vector<Path> SolveWith(
   stops.insert(state.boundary.end);
   ProblemState reduced = ReduceToMinimalRequiredStops(state, stops);
 
-  std::vector<Solution> solutions = FindBestPermutation(reduced);
-  // BranchAndBoundResult bnb_solution = BranchAndBoundSolve(reduced, &std::cout);
-  // std::vector<StopId> bnb_perm;
-  // bnb_solution.path->VisitIntermediateStops([&](StopId x) {
-  //   bnb_perm.push_back(x);
-  // });
-  // std::vector<Solution> solutions = {Solution{
-  //   .duration_seconds=bnb_solution.best_ub,
-  //   .perm=bnb_perm,
-  // }};
+  // std::vector<Solution> solutions = FindBestPermutation(reduced);
+
+  // BUG: The bnb is collapsing the end or something.
+  // std::stringstream sstream;
+  BranchAndBoundResult bnb_result = BranchAndBoundSolve(reduced, &std::cout);
+  Solution bnb_solution{
+    .duration_seconds=bnb_result.best_ub,
+    .perm=bnb_result.original_stops,
+  };
+  bnb_solution.perm.erase(bnb_solution.perm.begin());
+  bnb_solution.perm.erase(bnb_solution.perm.end() - 1);
+  std::vector<Solution> solutions = {bnb_solution};
 
   std::vector<Path> all_paths;
   for (const Solution& solution : solutions) {
@@ -325,34 +349,37 @@ int main(int argc, char* argv[]) {
     PlainEdge farthest_pair = FindFarthestPair(state);
     std::unordered_set<StopId> stops = {farthest_pair.a, farthest_pair.b};
 
-    // std::unordered_set<StopId> stops = {
-    //   state.StopIdFromName("Millbrae BART"),
-    //   state.StopIdFromName("Richmond BART/Amtrak"),
-    //   state.StopIdFromName("Antioch"),
-    //   state.StopIdFromName("Dublin / Pleasanton BART"),
-    //   state.StopIdFromName("OAK"),
-    //   state.StopIdFromName("Berryessa / North San Jose"),
-    // };
-    std::vector<GreedyAddResult> results;
-    do {
-      results = GreedyAddStop(state, stops);
-      std::cout << "Equally-best options (" << results.size() << "):\n";
-      for (const GreedyAddResult& r : results) {
-        std::cout
-          << "  " << state.StopName(r.best_stop)
-          << ": " << r.best_stop_hit_count
-          << " [" << TimeSinceServiceStart{r.solution.DurationSeconds()}.ToString() << "]\n";
+    while (true) {
+      std::vector<Path> paths = SolveWith(state, stops);
+      const Path& solution = paths[0];
+
+      // Compute set of stops visited by the solution path
+      std::unordered_set<StopId> visited_stops;
+      visited_stops.insert(solution.steps[0].origin.stop);
+      for (const Step& step : solution.steps) {
+        visited_stops.insert(step.destination.stop);
       }
-      const GreedyAddResult& chosen = results[0];
-      std::cout << "Choosing: " << state.StopName(chosen.best_stop) << "\n";
-      std::cout << "  Path: ";
-      std::cout << state.StopName(chosen.solution.steps[0].origin.stop);
-      for (const Step& step : chosen.solution.steps) {
+      solution.VisitIntermediateStops([&](StopId s) {
+        visited_stops.insert(s);
+      });
+
+      std::cout << "Visited " << visited_stops.size() << " / " << state.required_stops.size() << " stops\n";
+      std::cout << "  Path: " << state.StopName(solution.steps[0].origin.stop);
+      for (const Step& step : solution.steps) {
         std::cout << " -> " << state.StopName(step.destination.stop);
       }
-      std::cout << "\n";
-      stops.insert(chosen.best_stop);
-    } while (results[0].best_stop_hit_count < state.required_stops.size());
+      std::cout << " [" << TimeSinceServiceStart{solution.DurationSeconds()}.ToString() << "]\n";
+
+      if (visited_stops.size() >= state.required_stops.size()) {
+        break;
+      }
+
+      // Find farthest stop from visited set
+      FarthestFromSetResult farthest = FindFarthestFromSet(state, visited_stops);
+      std::cout << "  Farthest from set: " << state.StopName(farthest.stop)
+                << " (distance " << farthest.distance << ")\n";
+      stops.insert(farthest.stop);
+    }
 
     return 0;
 }

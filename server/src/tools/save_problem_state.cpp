@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
       gtfs_day,
       GetStepsOptions{
         .max_walking_distance_meters=1000.0,
-        .walking_speed_ms=1.0,
+        .walking_speed_ms=10.0,
       }
     );
 
@@ -48,6 +48,7 @@ int main(int argc, char* argv[]) {
       extreme_stops,
       state.stop_names,
       state.step_partition_names,
+      state.original_origins,
       state.original_destinations
     );
 
