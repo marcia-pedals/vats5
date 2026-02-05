@@ -39,7 +39,7 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_names, boundary);
 
-  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {}, {}, {});
+  ProblemState state = MakeProblemState(MakeAdjacencyList(steps), boundary, stops, stop_names, {}, {});
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
 
@@ -134,7 +134,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
     steps[i].origin.partition.v = i;
     steps[i].destination.partition.v = i;
   }
-  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_origins, state.original_destinations);
+  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_edges);
 
   std::optional<TspTourResult> result;
   try {
@@ -165,8 +165,7 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
   RC_ASSERT(original.required_stops == deserialized.required_stops);
   RC_ASSERT(original.stop_names == deserialized.stop_names);
   RC_ASSERT(original.step_partition_names == deserialized.step_partition_names);
-  RC_ASSERT(original.original_origins == deserialized.original_origins);
-  RC_ASSERT(original.original_destinations == deserialized.original_destinations);
+  RC_ASSERT(original.original_edges == deserialized.original_edges);
 
   // Check minimal steps match
   std::vector<Step> original_steps = original.minimal.AllSteps();

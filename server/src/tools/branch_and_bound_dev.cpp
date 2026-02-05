@@ -243,8 +243,7 @@ int main() {
       extreme_stops,
       state.stop_names,
       state.step_partition_names,
-      state.original_origins,
-      state.original_destinations
+      state.original_edges
     );
     // state = state.WithRequiredStops(extreme_stops);
 
