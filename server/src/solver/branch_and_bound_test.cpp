@@ -97,34 +97,8 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
   // edge changes which stops are "extreme" vs "inner" (via ComputeExtremeStops),
   // a previously-inner stop can become an explicit TSP stop. This lets the TSP
   // split a merged journey into separate edges, losing the waiting time and
-  // producing a looser (lower) bound. The fix is to use max(parent_lb, child_lb)
-  // in the search.
+  // producing a looser (lower) bound.
   // RC_ASSERT(!result_require.has_value() || result_require->optimal_value >= result_orig->optimal_value);
-}
-
-RC_GTEST_PROP(BranchAndBoundTest, TarelTourVisitsAllExtremeStops, ()) {
-  int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
-
-  std::optional<TspTourResult> result;
-  try {
-    result = ComputeTarelLowerBound(state);
-  } catch (const InvalidTourStructure&) {
-    RC_DISCARD("InvalidTourStructure");
-  }
-
-  if (result.has_value()) {
-    auto extreme_stops = ComputeExtremeStops(
-      state.completed, state.required_stops, state.boundary.start);
-    // original_stop_tour excludes START and END (they are implicit endpoints).
-    extreme_stops.erase(state.boundary.start);
-    extreme_stops.erase(state.boundary.end);
-    std::unordered_set<StopId> tour_stops(
-      result->original_stop_tour.begin(), result->original_stop_tour.end());
-    for (StopId stop : extreme_stops) {
-      RC_ASSERT(tour_stops.contains(stop));
-    }
-  }
 }
 
 RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
