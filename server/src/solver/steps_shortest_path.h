@@ -70,7 +70,8 @@ std::vector<Step> FindShortestPathsAtTime(
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex = nullptr,
-    HeuristicCache* heuristic_cache = nullptr
+    HeuristicCache* heuristic_cache = nullptr,
+    const std::vector<StopId>& block_paths_through = {}
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin
@@ -88,7 +89,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
     TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600},
     const RelaxedDistances* relaxed_distances = nullptr,
-    bool keep_through_other_destination = false
+    bool keep_through_other_destination = false,
+    const std::vector<StopId>& block_paths_through = {}
 );
 
 // Return an adjacency list ("reduced list") with these properties:

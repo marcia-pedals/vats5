@@ -134,6 +134,21 @@ ProblemState MakeProblemState(
   };
 }
 
+ProblemState ReduceToMinimalRequiredStops(
+  const ProblemState& state,
+  const std::unordered_set<StopId>& stops
+) {
+  return MakeProblemState(
+      MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, stops).AllMergedSteps()),
+      state.boundary,
+      stops,
+      state.stop_names,
+      state.step_partition_names,
+      state.original_destinations
+    );
+}
+
+
 Step ZeroEdge(StopId a, StopId b) {
   return Step::PrimitiveFlex(a, b, 0, TripId{-2});
 }
@@ -737,15 +752,15 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 }
 
 std::vector<Path> ComputeMinDurationFeasiblePaths(
-  const TspTourResult& tour_result,
+  const std::vector<StopId>& stops,
   const ProblemState& state
 ) {
   std::vector<Step> feasible_steps = {ZeroEdge(state.boundary.start, state.boundary.start)};
   auto ExtendFeasibleSteps = [&](StopId a, StopId b) {
     feasible_steps = PairwiseMergedSteps(feasible_steps, state.completed.MergedStepsBetween(a, b));
   };
-  for (const auto& edge : tour_result.tour_edges) {
-    ExtendFeasibleSteps(edge.origin.stop, edge.destination.stop);
+  for (size_t i = 0; i + 1 < stops.size(); ++i) {
+    ExtendFeasibleSteps(stops[i], stops[i + 1]);
   }
 
   // TODO: Reference thing about 00:00:00.
@@ -782,8 +797,8 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
       cur_step = *next_step;
       return true;
     };
-    for (const auto& edge : tour_result.tour_edges) {
-      if (!ExtendPath(edge.origin.stop, edge.destination.stop)) {
+    for (size_t i = 0; i + 1 < stops.size(); ++i) {
+      if (!ExtendPath(stops[i], stops[i + 1])) {
         break;
       }
     }

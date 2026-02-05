@@ -95,7 +95,8 @@ ProblemState EliminateEdges(const ProblemState& base_state, int threshold) {
                 std::vector<ProblemConstraint> forbid = {branch_edge.Forbid()};
                 current_state = ApplyConstraints(current_state, forbid);
                 auto extreme_stops = ComputeExtremeStops(
-                    current_state.completed, current_state.required_stops,
+                    current_state.minimal, current_state.completed,
+                    current_state.required_stops,
                     current_state.boundary.start);
                 extreme_count = extreme_stops.size();
             }
@@ -234,7 +235,7 @@ int main() {
     // EliminateIntermediateStops(state, 5 * 3600 + 24 * 60);
 
     auto extreme_stops = ComputeExtremeStops(
-      state.completed, state.required_stops, state.boundary.start
+      state.minimal, state.completed, state.required_stops, state.boundary.start
     );
     std::cout << "Final extreme stop count: " << extreme_stops.size() << "\n";
     state = MakeProblemState(

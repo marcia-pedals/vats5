@@ -91,6 +91,20 @@ struct ProblemState {
   ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
 };
 
+ProblemState MakeProblemState(
+  StepsAdjacencyList minimal,
+  ProblemBoundary boundary,
+  std::unordered_set<StopId> stops,
+  std::unordered_map<StopId, std::string> stop_names,
+  std::unordered_map<StepPartitionId, std::string> step_partition_names,
+  std::unordered_map<StopId, StopId> original_destinations
+);
+
+ProblemState ReduceToMinimalRequiredStops(
+  const ProblemState& state,
+  const std::unordered_set<StopId>& stops
+);
+
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
   std::vector<int> required_stops_vec;
   for (StopId stop : s.required_stops) {
@@ -110,7 +124,6 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   }
   j = nlohmann::json{
     {"minimal", s.minimal},
-    {"completed", s.completed},
     {"boundary", s.boundary},
     {"required_stops", required_stops_vec},
     {"stop_names", stop_names_vec},
@@ -120,33 +133,35 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
 }
 
 inline void from_json(const nlohmann::json& j, ProblemState& s) {
-  s.minimal = j.at("minimal").get<StepsAdjacencyList>();
-  s.completed = j.at("completed").get<StepPathsAdjacencyList>();
-  s.boundary = j.at("boundary").get<ProblemBoundary>();
+  auto minimal = j.at("minimal").get<StepsAdjacencyList>();
+  auto boundary = j.at("boundary").get<ProblemBoundary>();
+  std::unordered_set<StopId> required_stops;
   for (int v : j.at("required_stops").get<std::vector<int>>()) {
-    s.required_stops.insert(StopId{v});
+    required_stops.insert(StopId{v});
   }
+  std::unordered_map<StopId, std::string> stop_names;
   for (const auto& [k, v] : j.at("stop_names").get<std::vector<std::pair<int, std::string>>>()) {
-    s.stop_names[StopId{k}] = v;
+    stop_names[StopId{k}] = v;
   }
+  std::unordered_map<StepPartitionId, std::string> step_partition_names;
   for (const auto& [k, v] : j.at("step_partition_names").get<std::vector<std::pair<int, std::string>>>()) {
-    s.step_partition_names[StepPartitionId{k}] = v;
+    step_partition_names[StepPartitionId{k}] = v;
   }
+  std::unordered_map<StopId, StopId> original_destinations;
   for (const auto& [k, v] : j.at("original_destinations").get<std::vector<std::pair<int, int>>>()) {
-    s.original_destinations[StopId{k}] = StopId{v};
+    original_destinations[StopId{k}] = StopId{v};
   }
+  s = MakeProblemState(
+    std::move(minimal),
+    boundary,
+    std::move(required_stops),
+    std::move(stop_names),
+    std::move(step_partition_names),
+    std::move(original_destinations)
+  );
 }
 
 void showValue(const ProblemState& state, std::ostream& os);
-
-ProblemState MakeProblemState(
-  StepsAdjacencyList minimal,
-  ProblemBoundary boundary,
-  std::unordered_set<StopId> stops,
-  std::unordered_map<StopId, std::string> stop_names,
-  std::unordered_map<StepPartitionId, std::string> step_partition_names,
-  std::unordered_map<StopId, StopId> original_destinations
-);
 
 struct TarelState {
   StopId stop;
@@ -268,6 +283,19 @@ struct TspTourResult {
   std::vector<TimeSinceServiceStart> cumulative_weights;
   std::vector<TarelEdge> tour_edges;
   int optimal_value;
+
+  // Returns [first origin, first dest, second dest, ..., last dest]
+  std::vector<StopId> ToStopSequence() const {
+    std::vector<StopId> result;
+    if (tour_edges.empty()) {
+      return result;
+    }
+    result.push_back(tour_edges[0].origin.stop);
+    for (const auto& edge : tour_edges) {
+      result.push_back(edge.destination.stop);
+    }
+    return result;
+  }
 };
 
 // Adds the `boundary` START and END to `stops` and `stop_names`, and adds
@@ -303,7 +331,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 );
 
 std::vector<Path> ComputeMinDurationFeasiblePaths(
-  const TspTourResult& tour_result,
+  const std::vector<StopId>& stops,
   const ProblemState& state
 );
 

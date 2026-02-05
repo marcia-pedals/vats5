@@ -39,7 +39,7 @@ int main(int argc, char* argv[]) {
     ProblemState state = InitializeProblemState(steps_from_gtfs, bart_stops, /*optimize_edges=*/true);
 
     auto extreme_stops = ComputeExtremeStops(
-      state.completed, state.required_stops, state.boundary.start
+      state.minimal, state.completed, state.required_stops, state.boundary.start
     );
     std::cout << "Final extreme stop count: " << extreme_stops.size() << "\n";
     state = MakeProblemState(

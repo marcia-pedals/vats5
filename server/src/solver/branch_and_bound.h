@@ -89,7 +89,12 @@ ProblemState ApplyConstraints(
   const std::vector<ProblemConstraint>& constraints
 );
 
-int BranchAndBoundSolve(
+struct BranchAndBoundResult {
+  int best_ub;
+  std::optional<Path> path;
+};
+
+BranchAndBoundResult BranchAndBoundSolve(
   const ProblemState& initial_state,
   std::ostream* search_log,
   std::optional<std::string> run_dir = std::nullopt,

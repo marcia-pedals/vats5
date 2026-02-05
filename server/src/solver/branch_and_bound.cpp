@@ -243,7 +243,7 @@ ProblemState ApplyConstraints(
   );
 }
 
-int BranchAndBoundSolve(
+BranchAndBoundResult BranchAndBoundSolve(
   const ProblemState& initial_state,
   std::ostream* search_log,
   std::optional<std::string> run_dir,
@@ -268,6 +268,7 @@ int BranchAndBoundSolve(
 
   int iter_num = 0;
   int best_ub = std::numeric_limits<int>::max();
+  std::optional<Path> best_path;
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -307,7 +308,7 @@ int BranchAndBoundSolve(
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
       }
-      return best_ub;
+      return BranchAndBoundResult{best_ub, best_path};
     }
 
     // Compute lower bound.
@@ -350,7 +351,7 @@ int BranchAndBoundSolve(
     }
 
     // Make an upper bound by actually following the LB path.
-    std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(lb_result, state);
+    std::vector<Path> feasible_paths = ComputeMinDurationFeasiblePaths(lb_result.ToStopSequence(), state);
     if (feasible_paths.size() > 0) {
       const Path& feasible_path = feasible_paths[0];
       if (search_log != nullptr) {
@@ -366,6 +367,7 @@ int BranchAndBoundSolve(
       }
       if (feasible_path.DurationSeconds() < best_ub) {
         best_ub = feasible_path.DurationSeconds();
+        best_path = feasible_path;
         if (search_log != nullptr) {
           *search_log
             << "  found new ub " << TimeSinceServiceStart{best_ub}.ToString()
@@ -445,7 +447,7 @@ int BranchAndBoundSolve(
     PushQ(state, std::max(cur_node.parent_lb, lb_result.optimal_value), SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index});
   }
 
-  return best_ub;
+  return BranchAndBoundResult{best_ub, best_path};
 }
 
 }  // namespace vats5

@@ -133,7 +133,7 @@ target_link_libraries(save_problem_state PUBLIC tarel_graph)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
-target_link_libraries(load_problem_state PUBLIC tarel_graph)
+target_link_libraries(load_problem_state PUBLIC tarel_graph branch_and_bound)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)

@@ -24,7 +24,7 @@ TEST(GraphUtilTest, ComputeExtremeStops_BART) {
   StepPathsAdjacencyList complete = ReduceToMinimalSystemPaths(MakeAdjacencyList(minimal.AllMergedSteps()), bart_stops, true);
 
   // Compute extreme stops
-  std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(complete, bart_stops, StopId{-1});
+  std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(MakeAdjacencyList(complete.AllMergedSteps()), complete, bart_stops, StopId{-1});
 
   // Convert to names for easier assertion
   std::vector<std::string> extreme_stop_names;

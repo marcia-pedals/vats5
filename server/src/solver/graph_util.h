@@ -3,6 +3,8 @@
 #include "solver/steps_adjacency_list.h"
 namespace vats5 {
 
+struct ProblemState;
+
 // Return the "extreme stops" of `stops` in `g`.
 //
 // A stop is "extreme" if it is not "inner". Stop V is "inner" if there are
@@ -12,9 +14,11 @@ namespace vats5 {
 // Paths that go through `block_paths_through` are not considered. (Paths
 // starting or ending at it are considered though.)
 std::unordered_set<StopId> ComputeExtremeStops(
+  const StepsAdjacencyList& g_steps,
   const StepPathsAdjacencyList& g,
   const std::unordered_set<StopId>& stops,
-  StopId block_paths_through
+  StopId block_paths_through,
+  const ProblemState* state = nullptr
 );
 
 }  // namespace vats5

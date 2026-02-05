@@ -164,7 +164,8 @@ std::vector<Step> FindShortestPathsAtTime(
     StopId origin_stop,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex,
-    HeuristicCache* heuristic_cache
+    HeuristicCache* heuristic_cache,
+    const std::vector<StopId>& block_paths_through
 ) {
   if (smallest_next_departure_gap_from_flex != nullptr) {
     *smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
@@ -251,6 +252,17 @@ frontier.push_back(FrontierEntry{
     const int16_t next_destinations_visited =
         current_entry.destinations_visited +
         (destinations.contains(current_stop) ? 1 : 0);
+
+    bool blocked = false;
+    for (StopId block_stop : block_paths_through) {
+      if (block_stop != origin_stop && block_stop == current_stop) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) {
+      continue;
+    }
 
     std::span<const StepGroup> step_groups =
         adjacency_list.GetGroups(current_stop);
@@ -370,7 +382,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     TimeSinceServiceStart origin_time_lb,
     TimeSinceServiceStart origin_time_ub,
     const RelaxedDistances* relaxed_distances,
-    bool keep_through_other_destination
+    bool keep_through_other_destination,
+    const std::vector<StopId>& block_paths_through
 ) {
   HeuristicCache heuristic_cache(relaxed_distances);
 
@@ -416,7 +429,8 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
         origin,
         destinations_to_query,
         &smallest_next_departure_gap_from_flex,
-        &heuristic_cache
+        &heuristic_cache,
+        block_paths_through
     );
 
     // Push all results and update current origin times.
