@@ -107,6 +107,7 @@ ProblemState ApplyConstraints(
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
   std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  std::unordered_map<StopId, StopId> original_origins = state.original_origins;
   std::unordered_map<StopId, StopId> original_destinations = state.original_destinations;
   StopId next_stop_id{state.minimal.NumStops()};
 
@@ -239,7 +240,7 @@ ProblemState ApplyConstraints(
 
   // Build the new problem state from the stuff we've been mutating.
   return MakeProblemState(
-    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names, original_destinations
+    MakeAdjacencyList(steps), std::move(boundary), std::move(required_stops), std::move(stop_names), state.step_partition_names, original_origins, original_destinations
   );
 }
 
