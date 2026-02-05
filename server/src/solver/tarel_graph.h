@@ -320,14 +320,6 @@ std::vector<Path> ComputeMinDurationFeasiblePaths(
   const ProblemState& state
 );
 
-void PrintTarelTourResults(
-  std::ostream& out,
-  const TspTourResult& tour_result,
-  const ProblemState& state,
-  const Path& feasible_path,
-  const std::unordered_map<StepPartitionId, std::string>& state_descriptions
-);
-
 std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, std::optional<int> ub = std::nullopt, std::ostream* tsp_log = nullptr);
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);
