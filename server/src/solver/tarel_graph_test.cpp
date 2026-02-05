@@ -147,5 +147,76 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   RC_ASSERT(lower_bound == actual_value);
 }
 
+// Test that MergeEquivalentTarelStates handles destination-only states correctly.
+// A destination-only state is one that appears only as an edge destination, never
+// as an origin. Without proper handling, these states wouldn't get a canonical
+// mapping and the function would produce invalid output.
+TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
+  // Create edges where state B only appears as a destination (never as an origin).
+  // A -> B should still produce valid output after merging.
+  TarelState stateA0{StopId{0}, StepPartitionId{0}};
+  TarelState stateA1{StopId{0}, StepPartitionId{1}};
+  TarelState stateB0{StopId{1}, StepPartitionId{0}};  // destination-only
+  TarelState stateB1{StopId{1}, StepPartitionId{1}};  // destination-only
+
+  std::vector<TarelEdge> edges = {
+    {.origin=stateA0, .destination=stateB0, .weight=100,
+     .original_origins={stateA0}, .original_destinations={stateB0}},
+    {.origin=stateA1, .destination=stateB1, .weight=200,
+     .original_origins={stateA1}, .original_destinations={stateB1}},
+  };
+
+  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+
+  // Verify that all destination states in the output are valid (have contiguous
+  // partition IDs starting from 0).
+  std::unordered_map<StopId, std::unordered_set<int>> partitions_by_stop;
+  for (const TarelEdge& e : merged) {
+    partitions_by_stop[e.origin.stop].insert(e.origin.partition.v);
+    partitions_by_stop[e.destination.stop].insert(e.destination.partition.v);
+  }
+
+  // Each stop's partitions should be contiguous starting from 0.
+  for (const auto& [stop, partitions] : partitions_by_stop) {
+    int max_partition = *std::max_element(partitions.begin(), partitions.end());
+    EXPECT_EQ(partitions.size(), max_partition + 1)
+        << "Stop " << stop.v << " has non-contiguous partitions";
+    for (int i = 0; i <= max_partition; ++i) {
+      EXPECT_TRUE(partitions.contains(i))
+          << "Stop " << stop.v << " missing partition " << i;
+    }
+  }
+
+  // The destination-only stop B should still appear in the output.
+  EXPECT_TRUE(partitions_by_stop.contains(StopId{1}));
+}
+
+// Property test: after merging, all states should have contiguous partition IDs
+// starting from 0, and destination-only states should be handled correctly.
+RC_GTEST_PROP(TarelGraphTest, MergeEquivalentTarelStates_AllDestinationsValid, ()) {
+  int num_partitions = *rc::gen::inRange(1, 20);
+  ProblemState state = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
+
+  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+
+  // Collect all partition IDs by stop.
+  std::unordered_map<StopId, std::unordered_set<int>> partitions_by_stop;
+  for (const TarelEdge& e : merged) {
+    partitions_by_stop[e.origin.stop].insert(e.origin.partition.v);
+    partitions_by_stop[e.destination.stop].insert(e.destination.partition.v);
+  }
+
+  // Each stop's partitions should be contiguous starting from 0.
+  for (const auto& [stop, partitions] : partitions_by_stop) {
+    if (partitions.empty()) continue;
+    int max_partition = *std::max_element(partitions.begin(), partitions.end());
+    RC_ASSERT(partitions.size() == max_partition + 1);
+    for (int i = 0; i <= max_partition; ++i) {
+      RC_ASSERT(partitions.contains(i));
+    }
+  }
+}
+
 }  // namespace
 }  // namespace vats5
