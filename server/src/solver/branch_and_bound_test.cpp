@@ -10,6 +10,7 @@
 #include "rapidcheck/Log.h"
 #include "solver/concorde.h"
 #include "solver/data.h"
+#include "solver/graph_util.h"
 #include "solver/tarel_graph.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
@@ -91,9 +92,12 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
 
   RC_ASSERT(!result_forbid.has_value() || result_forbid->optimal_value >= result_orig->optimal_value);
 
-  // TODO: This assertion fails sometimes and I am not sure if it is because of
-  // a bug or because non-decreasing is not really a property that holds for our
-  // lower bound on the require branch.
+  // Non-decreasing does not hold for the require branch. The tarel relaxation
+  // captures waiting times in merged edges between stops, but when requiring an
+  // edge changes which stops are "extreme" vs "inner" (via ComputeExtremeStops),
+  // a previously-inner stop can become an explicit TSP stop. This lets the TSP
+  // split a merged journey into separate edges, losing the waiting time and
+  // producing a looser (lower) bound.
   // RC_ASSERT(!result_require.has_value() || result_require->optimal_value >= result_orig->optimal_value);
 }
 

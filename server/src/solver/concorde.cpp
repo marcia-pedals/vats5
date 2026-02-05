@@ -206,8 +206,8 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(const RelaxedAdjacencyL
     DoubledGraphWeights weights(relaxed);
     int n = weights.NumStops();
 
-    // Create temp directory
-    std::string temp_dir = "/tmp/vats5_tsp_XXXXXX";
+    // Create temp directory in cwd so it works in Claude sandbox (which restricts /tmp).
+    std::string temp_dir = "vats5_tsp_XXXXXX";
     if (mkdtemp(temp_dir.data()) == nullptr) {
         throw std::runtime_error("Failed to create temp directory");
     }

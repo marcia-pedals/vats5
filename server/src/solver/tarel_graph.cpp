@@ -467,6 +467,9 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
   std::unordered_map<TarelState, EdgeSignature> signatures;
   for (const TarelEdge& edge : edges) {
     signatures[edge.origin].outgoing.push_back({edge.destination, edge.weight});
+    // Ensure destination-only states (those without outgoing edges) get an entry
+    // so they participate in merging.
+    signatures[edge.destination];
   }
   for (auto& [_, signature] : signatures) {
     std::ranges::sort(signature.outgoing, [](const auto& a, const auto& b) {
@@ -481,8 +484,8 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(const std::vector<TarelEdge>& 
   std::unordered_map<TarelState, TarelState> canonical_state;
 
   std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
-  for (const auto& [origin, _] : signatures) {
-    states_by_stop[origin.stop].push_back(origin);
+  for (const auto& [state, _] : signatures) {
+    states_by_stop[state.stop].push_back(state);
   }
 
   for (const auto& [stop, states] : states_by_stop) {
