@@ -6,6 +6,8 @@
 #include <set>
 #include <sstream>
 
+#include <CLI/CLI.hpp>
+
 #include "tools/reduction_output.h"
 
 using namespace vats5;
@@ -259,36 +261,26 @@ std::optional<LoadedReductionOutput> LoadReductionOutput(const std::string& path
 }
 
 int main(int argc, char* argv[]) {
+  CLI::App app{"Compare two reduction output files"};
+
+  std::string file_a;
+  std::string file_b;
   bool match_equivalent_paths = false;
-  std::vector<std::string> positional_args;
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--match-equivalent-paths") {
-      match_equivalent_paths = true;
-    } else if (arg[0] == '-') {
-      std::cerr << "Unknown option: " << arg << std::endl;
-      return 1;
-    } else {
-      positional_args.push_back(arg);
-    }
-  }
+  app.add_option("file_a", file_a, "First JSON file to compare")
+      ->required()
+      ->check(CLI::ExistingFile);
+  app.add_option("file_b", file_b, "Second JSON file to compare")
+      ->required()
+      ->check(CLI::ExistingFile);
+  app.add_flag("--match-equivalent-paths", match_equivalent_paths,
+               "Treat paths with same start/end times as matching, even if "
+               "intermediate stops differ");
 
-  if (positional_args.size() != 2) {
-    std::cerr
-        << "Usage: " << argv[0]
-        << " [--match-equivalent-paths] <file_a.json> <file_b.json>\n"
-        << "\nOptions:\n"
-        << "  --match-equivalent-paths  Treat paths with same start/end times\n"
-        << "                            as matching, even if intermediate\n"
-        << "                            stops differ\n";
-    return 1;
-  }
+  CLI11_PARSE(app, argc, argv);
 
-  auto future_a =
-      std::async(std::launch::async, LoadReductionOutput, positional_args[0]);
-  auto future_b =
-      std::async(std::launch::async, LoadReductionOutput, positional_args[1]);
+  auto future_a = std::async(std::launch::async, LoadReductionOutput, file_a);
+  auto future_b = std::async(std::launch::async, LoadReductionOutput, file_b);
 
   auto loaded_a = future_a.get();
   if (!loaded_a) return 1;

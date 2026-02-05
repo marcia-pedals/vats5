@@ -1,6 +1,9 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <string>
+
+#include <CLI/CLI.hpp>
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
@@ -10,22 +13,16 @@
 using namespace vats5;
 
 int main(int argc, char* argv[]) {
-  const std::string gtfs_path = "../data/RG_20260108_all";
+  CLI::App app{"Benchmark ReduceToMinimalSystemPaths"};
 
+  std::string gtfs_path = "../data/RG_20260108_all";
   std::string output_path;
-  for (int i = 1; i < argc; i++) {
-    std::string arg = argv[i];
-    if (arg == "--output") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: --output requires an argument" << std::endl;
-        return 1;
-      }
-      output_path = argv[++i];
-    } else {
-      std::cerr << "Error: unrecognized argument: " << arg << std::endl;
-      return 1;
-    }
-  }
+
+  app.add_option("--gtfs-path", gtfs_path, "Path to GTFS data directory")
+      ->default_val("../data/RG_20260108_all");
+  app.add_option("--output,-o", output_path, "Output file path for results");
+
+  CLI11_PARSE(app, argc, argv);
 
   std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
   GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);

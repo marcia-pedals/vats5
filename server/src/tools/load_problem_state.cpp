@@ -1,6 +1,8 @@
 #include <fstream>
 #include <iostream>
+#include <string>
 
+#include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 
 #include "solver/tarel_graph.h"
@@ -8,12 +10,13 @@
 using namespace vats5;
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: load_problem_state <input_path.json>\n";
-        return 1;
-    }
+    CLI::App app{"Load and display problem state from JSON"};
 
-    std::string input_path = argv[1];
+    std::string input_path;
+    app.add_option("input_path", input_path, "Input JSON file path")
+        ->required();
+
+    CLI11_PARSE(app, argc, argv);
     std::cout << "Loading problem state from: " << input_path << "\n";
 
     std::ifstream in(input_path);

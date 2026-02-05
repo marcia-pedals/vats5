@@ -1,9 +1,9 @@
 #include <fstream>
 #include <iostream>
-#include <unordered_set>
 #include <string>
-#include <cstring>
+#include <unordered_set>
 
+#include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 
 #include "solver/data.h"
@@ -14,44 +14,35 @@
 
 using namespace vats5;
 
-void print_usage(const char* program_name) {
-    std::cerr << "Usage: " << program_name << " <gtfs_path> <output_path.json> [options]\n";
-    std::cerr << "\nOptions:\n";
-    std::cerr << "  --max-walking-distance=<meters>  Maximum walking distance (default: 500.0)\n";
-    std::cerr << "  --walking-speed=<m/s>            Walking speed in m/s (default: 1.0)\n";
-}
-
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        print_usage(argv[0]);
-        return 1;
-    }
+    CLI::App app{"Initialize problem state from GTFS data"};
 
-    const std::string gtfs_path = argv[1];
-    const std::string output_path = argv[2];
+    std::string gtfs_path;
+    std::string output_path;
+    double max_walking_distance = 500.0;
+    double walking_speed = 1.0;
 
-    // Default options
+    app.add_option("gtfs_path", gtfs_path, "Path to GTFS data directory")
+        ->required();
+    app.add_option("output_path", output_path, "Output JSON file path")
+        ->required();
+    app.add_option("--max-walking-distance", max_walking_distance,
+                   "Maximum walking distance in meters")
+        ->default_val(500.0);
+    app.add_option("--walking-speed", walking_speed,
+                   "Walking speed in m/s")
+        ->default_val(1.0);
+
+    CLI11_PARSE(app, argc, argv);
+
     GetStepsOptions options{
-        .max_walking_distance_meters = 500.0,
-        .walking_speed_ms = 1.0,
+        .max_walking_distance_meters = max_walking_distance,
+        .walking_speed_ms = walking_speed,
     };
 
-    // Parse optional named arguments
-    for (int i = 3; i < argc; ++i) {
-        if (strncmp(argv[i], "--max-walking-distance=", 23) == 0) {
-            options.max_walking_distance_meters = std::stod(argv[i] + 23);
-        } else if (strncmp(argv[i], "--walking-speed=", 16) == 0) {
-            options.walking_speed_ms = std::stod(argv[i] + 16);
-        } else {
-            std::cerr << "Unknown option: " << argv[i] << "\n";
-            print_usage(argv[0]);
-            return 1;
-        }
-    }
-
     std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
-    std::cout << "Options: max_walking_distance=" << options.max_walking_distance_meters
-              << "m, walking_speed=" << options.walking_speed_ms << "m/s\n";
+    std::cout << "Options: max_walking_distance=" << max_walking_distance
+              << "m, walking_speed=" << walking_speed << "m/s\n";
     GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
 
     gtfs_day = GtfsNormalizeStops(gtfs_day);

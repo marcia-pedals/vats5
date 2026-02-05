@@ -36,6 +36,13 @@ FetchContent_Declare(
 set(RC_ENABLE_GTEST ON CACHE BOOL "Enable RapidCheck GTest integration")
 FetchContent_MakeAvailable(rapidcheck)
 
+FetchContent_Declare(
+  cli11
+  GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+  GIT_TAG        v2.4.2
+)
+FetchContent_MakeAvailable(cli11)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
@@ -114,15 +121,15 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
 # Add GTFS filter tool
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
-target_link_libraries(gtfs_filter_tool PUBLIC gtfs date)
+target_link_libraries(gtfs_filter_tool PUBLIC gtfs date CLI11::CLI11)
 
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
-target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path)
+target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path CLI11::CLI11)
 
 # Add reduction diff tool
 add_executable(reduction_diff src/tools/reduction_diff.cpp)
-target_link_libraries(reduction_diff PUBLIC steps_shortest_path)
+target_link_libraries(reduction_diff PUBLIC steps_shortest_path CLI11::CLI11)
 
 # Add plain_viz tool (minimal paths only, no iteration)
 add_executable(plain_viz src/tools/plain_viz.cpp)
@@ -134,11 +141,11 @@ target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
-target_link_libraries(initialize_problem_state PUBLIC tarel_graph)
+target_link_libraries(initialize_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
-target_link_libraries(load_problem_state PUBLIC tarel_graph)
+target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
