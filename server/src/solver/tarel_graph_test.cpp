@@ -21,6 +21,44 @@
 namespace vats5 {
 namespace {
 
+// Validates that merged edges have contiguous partition IDs starting from 0 for
+// each stop, and that all expected stops are present. Returns error messages
+// (empty if validation passes).
+std::vector<std::string> ValidateMergedEdgePartitions(
+    const std::vector<TarelEdge>& merged,
+    const std::unordered_set<StopId>& expected_stops) {
+  std::vector<std::string> errors;
+
+  std::unordered_map<StopId, std::unordered_set<int>> partitions_by_stop;
+  for (const TarelEdge& e : merged) {
+    partitions_by_stop[e.origin.stop].insert(e.origin.partition.v);
+    partitions_by_stop[e.destination.stop].insert(e.destination.partition.v);
+  }
+
+  // Each stop's partitions should be contiguous starting from 0.
+  for (const auto& [stop, partitions] : partitions_by_stop) {
+    if (partitions.empty()) continue;
+    int max_partition = *std::max_element(partitions.begin(), partitions.end());
+    if (partitions.size() != max_partition + 1) {
+      errors.push_back("Stop " + std::to_string(stop.v) + " has non-contiguous partitions");
+    }
+    for (int i = 0; i <= max_partition; ++i) {
+      if (!partitions.contains(i)) {
+        errors.push_back("Stop " + std::to_string(stop.v) + " missing partition " + std::to_string(i));
+      }
+    }
+  }
+
+  // All expected stops should be present.
+  for (StopId stop : expected_stops) {
+    if (!partitions_by_stop.contains(stop)) {
+      errors.push_back("Expected stop " + std::to_string(stop.v) + " not found in merged edges");
+    }
+  }
+
+  return errors;
+}
+
 // A problem with two stops a, b, and no steps between them is infeasible and
 // the relaxation should have no solution.
 TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
@@ -210,6 +248,47 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
     RC_ASSERT(original_completed[i].destination.time == deserialized_completed[i].destination.time);
     RC_ASSERT(original_completed[i].is_flex == deserialized_completed[i].is_flex);
   }
+}
+
+// Test that MergeEquivalentTarelStates handles destination-only states correctly.
+// A destination-only state is one that appears only as an edge destination, never
+// as an origin.
+TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
+  // Create edges where state B only appears as a destination (never as an origin).
+  // A -> B should still produce valid output after merging.
+  TarelState stateA0{StopId{0}, StepPartitionId{0}};
+  TarelState stateA1{StopId{0}, StepPartitionId{1}};
+  TarelState stateB0{StopId{1}, StepPartitionId{0}};  // destination-only
+  TarelState stateB1{StopId{1}, StepPartitionId{1}};  // destination-only
+
+  std::vector<TarelEdge> edges = {
+    {.origin=stateA0, .destination=stateB0, .weight=100,
+     .original_origins={stateA0}, .original_destinations={stateB0}},
+    {.origin=stateA1, .destination=stateB1, .weight=200,
+     .original_origins={stateA1}, .original_destinations={stateB1}},
+  };
+
+  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+
+  // Verify that all states have valid partition IDs and expected stops are present.
+  std::vector<std::string> errors = ValidateMergedEdgePartitions(
+      merged, {StopId{0}, StopId{1}});
+  EXPECT_TRUE(errors.empty()) << "Validation errors: " << (errors.empty() ? "" : errors[0]);
+}
+
+// Property test: after merging, all states should have contiguous partition IDs
+// starting from 0.
+RC_GTEST_PROP(TarelGraphTest, MergeEquivalentTarelStates_AllDestinationsValid, ()) {
+  int num_partitions = *rc::gen::inRange(1, 20);
+  ProblemState state = *GenProblemState(std::nullopt, rc::gen::construct<StepPartitionId>(rc::gen::inRange(0, num_partitions - 1)));
+
+  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+
+  // Verify that all states have valid partition IDs and expected stops are present.
+  std::vector<std::string> errors = ValidateMergedEdgePartitions(
+      merged, state.required_stops);
+  RC_ASSERT(errors.empty());
 }
 
 }  // namespace
