@@ -89,6 +89,11 @@ add_library(steps_shortest_path STATIC src/solver/steps_shortest_path.cpp)
 target_link_libraries(steps_shortest_path PUBLIC relaxed_shortest_path)
 target_include_directories(steps_shortest_path PUBLIC src)
 
+# Create debug_printing library target
+add_library(debug_printing STATIC src/solver/debug_printing.cpp)
+target_link_libraries(debug_printing PUBLIC tarel_graph)
+target_include_directories(debug_printing PUBLIC src)
+
 # Create branch_and_bound library target
 add_library(branch_and_bound STATIC src/solver/branch_and_bound.cpp)
 target_link_libraries(branch_and_bound PUBLIC tarel_graph)
