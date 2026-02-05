@@ -31,6 +31,7 @@
             cmake
             crow
             gcc
+            gh
             llvm
             ninja
             nlohmann_json
