@@ -21,6 +21,14 @@ struct ProblemBoundary {
   StopId end;
 };
 
+inline void to_json(nlohmann::json& j, const ProblemBoundary& b) {
+  j = nlohmann::json{{"start", b.start}, {"end", b.end}};
+}
+inline void from_json(const nlohmann::json& j, ProblemBoundary& b) {
+  b.start = j.at("start").get<StopId>();
+  b.end = j.at("end").get<StopId>();
+}
+
 }  // namespace vats5
 
 template <>
@@ -82,6 +90,52 @@ struct ProblemState {
   // Return a copy of this state with the required stops replaced by `stops`.
   ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
 };
+
+inline void to_json(nlohmann::json& j, const ProblemState& s) {
+  std::vector<int> required_stops_vec;
+  for (StopId stop : s.required_stops) {
+    required_stops_vec.push_back(stop.v);
+  }
+  std::vector<std::pair<int, std::string>> stop_names_vec;
+  for (const auto& [k, v] : s.stop_names) {
+    stop_names_vec.emplace_back(k.v, v);
+  }
+  std::vector<std::pair<int, std::string>> step_partition_names_vec;
+  for (const auto& [k, v] : s.step_partition_names) {
+    step_partition_names_vec.emplace_back(k.v, v);
+  }
+  std::vector<std::pair<int, int>> original_destinations_vec;
+  for (const auto& [k, v] : s.original_destinations) {
+    original_destinations_vec.emplace_back(k.v, v.v);
+  }
+  j = nlohmann::json{
+    {"minimal", s.minimal},
+    {"completed", s.completed},
+    {"boundary", s.boundary},
+    {"required_stops", required_stops_vec},
+    {"stop_names", stop_names_vec},
+    {"step_partition_names", step_partition_names_vec},
+    {"original_destinations", original_destinations_vec},
+  };
+}
+
+inline void from_json(const nlohmann::json& j, ProblemState& s) {
+  s.minimal = j.at("minimal").get<StepsAdjacencyList>();
+  s.completed = j.at("completed").get<StepPathsAdjacencyList>();
+  s.boundary = j.at("boundary").get<ProblemBoundary>();
+  for (int v : j.at("required_stops").get<std::vector<int>>()) {
+    s.required_stops.insert(StopId{v});
+  }
+  for (const auto& [k, v] : j.at("stop_names").get<std::vector<std::pair<int, std::string>>>()) {
+    s.stop_names[StopId{k}] = v;
+  }
+  for (const auto& [k, v] : j.at("step_partition_names").get<std::vector<std::pair<int, std::string>>>()) {
+    s.step_partition_names[StepPartitionId{k}] = v;
+  }
+  for (const auto& [k, v] : j.at("original_destinations").get<std::vector<std::pair<int, int>>>()) {
+    s.original_destinations[StopId{k}] = StopId{v};
+  }
+}
 
 void showValue(const ProblemState& state, std::ostream& os);
 
@@ -227,7 +281,8 @@ void AddBoundary(
 
 ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
-  const std::unordered_set<StopId> system_stops
+  const std::unordered_set<StopId> system_stops,
+  bool optimize_edges = false
 );
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(

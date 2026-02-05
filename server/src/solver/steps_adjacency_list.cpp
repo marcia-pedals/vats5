@@ -215,4 +215,56 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
   return CompactStopIdsResult{std::move(remapped), std::move(mapping)};
 }
 
+StepPathsAdjacencyList SplitPathsAtStop(
+    const StepPathsAdjacencyList& paths,
+    StopId split_stop
+) {
+  StepPathsAdjacencyList result;
+
+  for (const Path& path : paths.AllPaths()) {
+    StopId origin = path.merged_step.origin.stop;
+    StopId destination = path.merged_step.destination.stop;
+
+    // Find if split_stop appears as an intermediate stop in this path
+    int split_index = -1;
+    for (size_t i = 0; i < path.steps.size(); ++i) {
+      // Check if destination of step i is split_stop (and it's not the final destination)
+      if (path.steps[i].destination.stop == split_stop &&
+          path.steps[i].destination.stop != destination) {
+        split_index = static_cast<int>(i);
+        break;
+      }
+    }
+
+    if (split_index == -1) {
+      // Path doesn't pass through split_stop internally, keep it unchanged
+      result.adjacent[origin].push_back({path});
+    } else {
+      // Split into two paths
+      // First path: steps [0, split_index]
+      std::vector<Step> first_steps(
+          path.steps.begin(),
+          path.steps.begin() + split_index + 1
+      );
+      Path first_path;
+      first_path.steps = std::move(first_steps);
+      first_path.merged_step = ConsecutiveMergedSteps(first_path.steps);
+
+      // Second path: steps [split_index + 1, end)
+      std::vector<Step> second_steps(
+          path.steps.begin() + split_index + 1,
+          path.steps.end()
+      );
+      Path second_path;
+      second_path.steps = std::move(second_steps);
+      second_path.merged_step = ConsecutiveMergedSteps(second_path.steps);
+
+      result.adjacent[origin].push_back({first_path});
+      result.adjacent[split_stop].push_back({second_path});
+    }
+  }
+
+  return result;
+}
+
 }  // namespace vats5

@@ -162,9 +162,84 @@ void AddBoundary(
   stop_names[bounday.end] = "END";
 }
 
+struct XEdge {
+  StopId a;
+  StopId b;
+
+  bool operator==(const XEdge& other) const {
+    return a == other.a && b == other.b;
+  }
+};
+}  // namespace vats5
+
+template <>
+struct std::hash<vats5::XEdge> {
+  std::size_t operator()(const vats5::XEdge& e) const {
+    std::size_t h1 = std::hash<vats5::StopId>{}(e.a);
+    std::size_t h2 = std::hash<vats5::StopId>{}(e.b);
+    return h1 ^ (h2 << 1);
+  }
+};
+
+namespace vats5 {
+
+struct StopGoodness {
+  StopId stop;
+  int goodness;
+};
+
+struct GoodnessResult {
+  std::vector<StopGoodness> goodness;
+  int num_edges;
+};
+
+GoodnessResult ComputeStopGoodness(
+    const StepPathsAdjacencyList& minimal_paths_sparse
+) {
+  std::unordered_set<StopId> all_stops;
+  std::unordered_set<XEdge> all_edges;
+  std::unordered_map<StopId, std::unordered_set<StopId>> origins_thru;
+  std::unordered_map<StopId, std::unordered_set<StopId>> destinations_thru;
+  std::unordered_map<StopId, std::unordered_set<XEdge>> edges_thru;
+  for (const Path& path : minimal_paths_sparse.AllPaths()) {
+    std::vector<StopId> path_stops;
+    assert(path.steps.size() > 0);
+    path_stops.push_back(path.steps[0].origin.stop);
+    for (const Step& step : path.steps) {
+      path_stops.push_back(step.destination.stop);
+    }
+    for (StopId stop : path_stops) {
+      XEdge edge{path.merged_step.origin.stop, path.merged_step.destination.stop};
+      all_stops.insert(stop);
+      all_edges.insert(edge);
+      // Only count edges where stop is intermediate, not an endpoint
+      if (stop != edge.a && stop != edge.b) {
+        origins_thru[stop].insert(edge.a);
+        destinations_thru[stop].insert(edge.b);
+        edges_thru[stop].insert(edge);
+      }
+    }
+  }
+
+  std::cout << "Num stops: " << all_stops.size() << "\n";
+  std::cout << "Num edges: " << all_edges.size() << "\n";
+
+  std::vector<StopGoodness> goodness;
+  for (StopId stop : all_stops) {
+    int new_edges = static_cast<int>(origins_thru[stop].size()) + static_cast<int>(destinations_thru[stop].size());
+    goodness.push_back(StopGoodness{stop, static_cast<int>(edges_thru[stop].size()) - new_edges});
+  }
+  std::ranges::sort(goodness, [](const StopGoodness& a, const StopGoodness& b) {
+    return a.goodness > b.goodness;
+  });
+
+  return GoodnessResult{std::move(goodness), static_cast<int>(all_edges.size())};
+}
+
 ProblemState InitializeProblemState(
   const StepsFromGtfs& steps_from_gtfs,
-  const std::unordered_set<StopId> system_stops
+  const std::unordered_set<StopId> system_stops,
+  bool optimize_edges
 ) {
   // Assign partitions to steps based on their trips.
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
@@ -185,18 +260,67 @@ ProblemState InitializeProblemState(
   }
 
   // Compute minimal adj list.
-  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(MakeAdjacencyList(steps_with_partitions), system_stops);
+  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(
+    MakeAdjacencyList(steps_with_partitions),
+    system_stops
+  );
+
+  if (optimize_edges) {
+    int prev_num_edges = std::numeric_limits<int>::max();
+    int iteration = 0;
+    while (true) {
+      GoodnessResult result = ComputeStopGoodness(minimal_paths_sparse);
+
+      std::cout << "Iteration " << iteration << ": " << result.num_edges << " edges\n";
+      if (result.num_edges >= prev_num_edges) {
+        std::cout << "Edges stopped decreasing, stopping.\n";
+        break;
+      }
+
+      if (result.goodness.empty() || result.goodness[0].goodness <= 0) {
+        std::cout << "No positive goodness stops, stopping.\n";
+        break;
+      }
+
+      std::cout << "Top goodness: " << steps_from_gtfs.mapping.stop_id_to_stop_name.at(result.goodness[0].stop)
+                << ": " << result.goodness[0].goodness << "\n";
+
+      StopId split_stop = result.goodness[0].stop;
+      minimal_paths_sparse = SplitPathsAtStop(minimal_paths_sparse, split_stop);
+      prev_num_edges = result.num_edges;
+      iteration++;
+    }
+  }
+
+  // This simplification of the problem is very very good when there are few extreme stops.
+  // But we need to do some stuff to make there be few extreme stops because in
+  // the hard problems almost all the stops start out extreme until we eliminate
+  // some paths. So I have commented this out for now.
+  //
+  // std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(
+  //   ReduceToMinimalSystemPaths(MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()), system_stops, true),
+  //   system_stops,
+  //   StopId{-1}
+  // );
+  // std::cout << "Initialize problem state extreme stops: " << extreme_stops.size() << "\n";
+  // minimal_paths_sparse = ReduceToMinimalSystemPaths(
+  //   MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()),
+  //   extreme_stops
+  // );
+
   StepsAdjacencyList minimal_steps_sparse = MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
   // Compact minimal adj list and remap stop names.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
 
-  std::unordered_set<StopId> stops;
+  std::unordered_set<StopId> required_stops;
   std::unordered_map<StopId, std::string> stop_names;
   for (int i = 0; i < minimal_compact.mapping.new_to_original.size(); ++i) {
     StopId stop = StopId{i};
-    stops.insert(stop);
     StopId original_stop = minimal_compact.mapping.new_to_original[i];
+    if (system_stops.contains(original_stop)) {
+      required_stops.insert(stop);
+    }
     auto it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
     assert (it != steps_from_gtfs.mapping.stop_id_to_stop_name.end());
     stop_names[stop] = it->second;
@@ -209,12 +333,12 @@ ProblemState InitializeProblemState(
   };
 
   std::vector<Step> steps = minimal_compact.list.AllSteps();
-  AddBoundary(steps, stops, stop_names, boundary);
+  AddBoundary(steps, required_stops, stop_names, boundary);
 
   return MakeProblemState(
     MakeAdjacencyList(steps),
     boundary,
-    stops,
+    required_stops,
     stop_names,
     step_partition_to_route_desc,
     {}
@@ -784,11 +908,12 @@ std::optional<TspTourResult> ComputeTarelLowerBound(const ProblemState& state, s
   // A stop X is "inner" if it lies on ALL paths between some pair of required
   // stops A and B (in both directions). Such stops will necessarily be visited
   // in any tour, so we don't need to explicitly require them.
-  auto extreme_stops = ComputeExtremeStops(
-    state.completed, state.required_stops, state.boundary.start
-  );
-  std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
-  ProblemState reduced_state = state.WithRequiredStops(extreme_stops);
+  // auto extreme_stops = ComputeExtremeStops(
+  //   state.completed, state.required_stops, state.boundary.start
+  // );
+  // std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
+  // ProblemState reduced_state = state.WithRequiredStops(extreme_stops);
+  ProblemState reduced_state = state;
   auto edges = MakeTarelEdges(reduced_state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
