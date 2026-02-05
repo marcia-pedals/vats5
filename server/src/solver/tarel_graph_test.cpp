@@ -1,6 +1,7 @@
 #include "solver/tarel_graph.h"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
 
@@ -171,7 +172,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
     steps[i].origin.partition.v = i;
     steps[i].destination.partition.v = i;
   }
-  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_destinations);
+  state = MakeProblemState(MakeAdjacencyList(steps), state.boundary, state.required_stops, state.stop_names, state.step_partition_names, state.original_edges);
 
   std::optional<TspTourResult> result;
   try {
@@ -183,6 +184,70 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   int lower_bound = result->optimal_value;
   int actual_value = BruteForceSolveOptimalDuration(state);
   RC_ASSERT(lower_bound == actual_value);
+}
+
+// Serialization round-trip: serialize to JSON and deserialize back should
+// produce an equivalent ProblemState.
+RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
+  ProblemState original = *GenProblemState();
+
+  // Serialize to JSON
+  nlohmann::json j = original;
+
+  // Deserialize back
+  ProblemState deserialized = j.get<ProblemState>();
+
+  // Check that the deserialized state matches the original
+  RC_ASSERT(original.boundary.start == deserialized.boundary.start);
+  RC_ASSERT(original.boundary.end == deserialized.boundary.end);
+  RC_ASSERT(original.required_stops == deserialized.required_stops);
+  RC_ASSERT(original.stop_names == deserialized.stop_names);
+  RC_ASSERT(original.step_partition_names == deserialized.step_partition_names);
+  RC_ASSERT(original.original_edges == deserialized.original_edges);
+
+  // Check minimal steps match
+  std::vector<Step> original_steps = original.minimal.AllSteps();
+  std::vector<Step> deserialized_steps = deserialized.minimal.AllSteps();
+  RC_ASSERT(original_steps.size() == deserialized_steps.size());
+
+  // Sort steps for comparison since adjacency list ordering may differ
+  auto step_sort_key = [](const Step& s) {
+    return std::tuple(
+      s.origin.stop.v, s.destination.stop.v,
+      s.origin.time.seconds, s.destination.time.seconds,
+      s.is_flex
+    );
+  };
+  std::sort(original_steps.begin(), original_steps.end(),
+    [&](const Step& a, const Step& b) { return step_sort_key(a) < step_sort_key(b); });
+  std::sort(deserialized_steps.begin(), deserialized_steps.end(),
+    [&](const Step& a, const Step& b) { return step_sort_key(a) < step_sort_key(b); });
+
+  for (size_t i = 0; i < original_steps.size(); ++i) {
+    RC_ASSERT(original_steps[i].origin.stop == deserialized_steps[i].origin.stop);
+    RC_ASSERT(original_steps[i].destination.stop == deserialized_steps[i].destination.stop);
+    RC_ASSERT(original_steps[i].origin.time == deserialized_steps[i].origin.time);
+    RC_ASSERT(original_steps[i].destination.time == deserialized_steps[i].destination.time);
+    RC_ASSERT(original_steps[i].is_flex == deserialized_steps[i].is_flex);
+  }
+
+  // Verify completed is recomputed correctly by comparing merged steps
+  std::vector<Step> original_completed = original.completed.AllMergedSteps();
+  std::vector<Step> deserialized_completed = deserialized.completed.AllMergedSteps();
+  RC_ASSERT(original_completed.size() == deserialized_completed.size());
+
+  std::sort(original_completed.begin(), original_completed.end(),
+    [&](const Step& a, const Step& b) { return step_sort_key(a) < step_sort_key(b); });
+  std::sort(deserialized_completed.begin(), deserialized_completed.end(),
+    [&](const Step& a, const Step& b) { return step_sort_key(a) < step_sort_key(b); });
+
+  for (size_t i = 0; i < original_completed.size(); ++i) {
+    RC_ASSERT(original_completed[i].origin.stop == deserialized_completed[i].origin.stop);
+    RC_ASSERT(original_completed[i].destination.stop == deserialized_completed[i].destination.stop);
+    RC_ASSERT(original_completed[i].origin.time == deserialized_completed[i].origin.time);
+    RC_ASSERT(original_completed[i].destination.time == deserialized_completed[i].destination.time);
+    RC_ASSERT(original_completed[i].is_flex == deserialized_completed[i].is_flex);
+  }
 }
 
 // Test that MergeEquivalentTarelStates handles destination-only states correctly.

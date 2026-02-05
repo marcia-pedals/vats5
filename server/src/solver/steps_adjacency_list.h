@@ -60,17 +60,24 @@ struct AdjacencyListStep {
            destination_is_flex == other.destination_is_flex;
   }
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    AdjacencyListStep,
-    origin_time,
-    destination_time,
-    origin_trip,
-    destination_trip,
-    origin_partition,
-    destination_partition,
-    origin_is_flex,
-    destination_is_flex
-)
+inline void to_json(nlohmann::json& j, const AdjacencyListStep& s) {
+  j = nlohmann::json::array({
+      s.origin_time.seconds, s.destination_time.seconds,
+      s.origin_trip.v, s.destination_trip.v,
+      s.origin_partition.v, s.destination_partition.v,
+      s.origin_is_flex, s.destination_is_flex,
+  });
+}
+inline void from_json(const nlohmann::json& j, AdjacencyListStep& s) {
+  s.origin_time.seconds = j[0];
+  s.destination_time.seconds = j[1];
+  s.origin_trip.v = j[2];
+  s.destination_trip.v = j[3];
+  s.origin_partition.v = j[4];
+  s.destination_partition.v = j[5];
+  s.origin_is_flex = j[6];
+  s.destination_is_flex = j[7];
+}
 
 // A group of steps from one origin to one destination, sorted by origin time.
 // The fixed-schedule steps and their departure times are stored in the parent
@@ -199,7 +206,6 @@ inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
       {"group_offsets", adj.group_offsets},
       {"groups", adj.groups},
       {"steps", adj.steps},
-      {"departure_times_div10", adj.departure_times_div10},
   };
 }
 
@@ -207,8 +213,11 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   adj.group_offsets = j.at("group_offsets").get<std::vector<int>>();
   adj.groups = j.at("groups").get<std::vector<StepGroup>>();
   adj.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
-  adj.departure_times_div10 =
-      j.at("departure_times_div10").get<std::vector<int16_t>>();
+  adj.departure_times_div10.reserve(adj.steps.size());
+  for (const auto& step : adj.steps) {
+    adj.departure_times_div10.push_back(
+        static_cast<int16_t>(step.origin_time.seconds / 10));
+  }
 }
 
 // Group steps into an adjacency list.

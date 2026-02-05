@@ -30,6 +30,13 @@ struct PlainEdge {
   StopId b;
   bool operator==(const PlainEdge&) const = default;
 };
+inline void to_json(nlohmann::json& j, const PlainEdge& e) {
+  j = nlohmann::json::array({e.a.v, e.b.v});
+}
+inline void from_json(const nlohmann::json& j, PlainEdge& e) {
+  e.a.v = j[0];
+  e.b.v = j[1];
+}
 
 struct PlainWeightedEdge {
   StopId a;
