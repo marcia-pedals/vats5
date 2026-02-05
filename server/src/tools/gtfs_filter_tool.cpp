@@ -5,6 +5,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <CLI/CLI.hpp>
+
 #include "gtfs/gtfs.h"
 #include "util/date.h"
 
@@ -51,41 +53,6 @@ void RemoveUnreferencedTripsRoutesAndDirections(GtfsDay& gtfs_day) {
   });
 }
 
-void printUsage(const char* program_name) {
-  std::cout
-      << "Usage: " << program_name
-      << " [--prefix <filter>] <input_dir> <date> <output_dir>\n"
-      << "\n"
-      << "GTFS Filter Tool - Filters GTFS data by date and optionally by trip "
-         "ID prefixes\n"
-      << "\n"
-      << "Arguments:\n"
-      << "  input_dir    Directory containing GTFS files (stops.txt, "
-         "trips.txt, etc.)\n"
-      << "  date         Date in YYYYMMDD format (e.g., 20250708)\n"
-      << "  output_dir   Directory where filtered GTFS files will be saved\n"
-      << "\n"
-      << "Options:\n"
-      << "  --prefix <filter>  Filter by trip ID prefix (comma-separated "
-         "list)\n"
-      << "                     Example: \"CT:,SR:\" (includes all Caltrain and "
-         "Santa Rosa trips)\n"
-      << "                     If not specified, all trips are included.\n"
-      << "  --help, -h         Show this help message\n"
-      << "\n"
-      << "Examples:\n"
-      << "  # Include all trips for the date\n"
-      << "  " << program_name << " ../data/RG 20250708 ./filtered_gtfs\n"
-      << "\n"
-      << "  # Filter all Caltrain trips (CT: prefix)\n"
-      << "  " << program_name
-      << " --prefix \"CT:\" ../data/RG 20250708 ./filtered_gtfs\n"
-      << "\n"
-      << "  # Filter all Caltrain and Santa Rosa trips\n"
-      << "  " << program_name
-      << " --prefix \"CT:,SR:\" ../data/RG 20250708 ./filtered_gtfs\n"
-      << std::endl;
-}
 
 std::vector<std::string> split(const std::string& str, char delimiter) {
   std::vector<std::string> tokens;
@@ -124,60 +91,27 @@ bool isValidDate(const std::string& date) {
 }
 
 int main(int argc, char* argv[]) {
-  // Handle help first
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
-      printUsage(argv[0]);
-      return 0;
-    }
-  }
+  CLI::App app{"Filter GTFS data by date and optionally by trip ID prefixes"};
 
-  // Parse options and positional arguments
+  std::string input_dir;
+  std::string date;
+  std::string output_dir;
   std::string trip_filter;
-  std::vector<std::string> positional_args;
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--prefix") {
-      if (i + 1 >= argc) {
-        std::cerr << "Error: --prefix requires an argument." << std::endl;
-        std::cerr << "Use --help for usage information." << std::endl;
-        return 1;
-      }
-      trip_filter = argv[++i];
-    } else if (arg.substr(0, 2) == "--") {
-      std::cerr << "Error: Unknown option '" << arg << "'" << std::endl;
-      std::cerr << "Use --help for usage information." << std::endl;
-      return 1;
-    } else {
-      positional_args.push_back(arg);
-    }
-  }
+  app.add_option("input_dir", input_dir,
+                 "Directory containing GTFS files (stops.txt, trips.txt, etc.)")
+      ->required()
+      ->check(CLI::ExistingDirectory);
+  app.add_option("date", date, "Date in YYYYMMDD format (e.g., 20250708)")
+      ->required();
+  app.add_option("output_dir", output_dir,
+                 "Directory where filtered GTFS files will be saved")
+      ->required();
+  app.add_option("--prefix", trip_filter,
+                 "Filter by trip ID prefix (comma-separated list, e.g., "
+                 "\"CT:,SR:\")");
 
-  // Check that we have exactly 3 positional arguments
-  if (positional_args.size() != 3) {
-    std::cerr << "Error: Expected 3 arguments, got " << positional_args.size()
-              << std::endl;
-    std::cerr << "Use --help for usage information." << std::endl;
-    return 1;
-  }
-
-  std::string input_dir = positional_args[0];
-  std::string date = positional_args[1];
-  std::string output_dir = positional_args[2];
-
-  // Validate arguments
-  if (!std::filesystem::exists(input_dir)) {
-    std::cerr << "Error: Input directory '" << input_dir << "' does not exist."
-              << std::endl;
-    return 1;
-  }
-
-  if (!std::filesystem::is_directory(input_dir)) {
-    std::cerr << "Error: Input path '" << input_dir << "' is not a directory."
-              << std::endl;
-    return 1;
-  }
+  CLI11_PARSE(app, argc, argv);
 
   if (!isValidDate(date)) {
     std::cerr << "Error: Invalid date format '" << date
