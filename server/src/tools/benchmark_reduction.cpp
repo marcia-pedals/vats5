@@ -1,9 +1,8 @@
+#include <CLI/CLI.hpp>
 #include <chrono>
 #include <fstream>
 #include <iostream>
 #include <string>
-
-#include <CLI/CLI.hpp>
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"

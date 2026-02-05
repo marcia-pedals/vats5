@@ -30,8 +30,7 @@ struct HeuristicCache {
       cache;
 
   HeuristicCache() = default;
-  explicit HeuristicCache(const RelaxedDistances* rd)
-      : relaxed_distances(rd) {}
+  explicit HeuristicCache(const RelaxedDistances* rd) : relaxed_distances(rd) {}
 
   // Get or compute heuristic distances for a destination set.
   // Returns pointer to cached vector, or nullptr if no heuristic.

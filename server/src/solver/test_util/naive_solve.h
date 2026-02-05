@@ -12,14 +12,17 @@ struct SolutionSpaceElement {
   Step merged_step;
 };
 
-// Enumerate the whole solution space by finding all tours for all generating permutations.
+// Enumerate the whole solution space by finding all tours for all generating
+// permutations.
 //
 // Only counts tours that start at or after 00:00:00 because branching can
 // eliminate earlier tours. (This happens because completion only considers
 // scheduled steps that happen at or after 00:00:00, and branching can turn a
 // flex step plus an early scheduled step into a scheduled step that starts
 // before 00:00:00).
-std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& state);
+std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
+    const ProblemState& state
+);
 
 // Find the optimal tour by brute force enumerating the solution space.
 //

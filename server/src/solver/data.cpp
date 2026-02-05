@@ -20,7 +20,8 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
     StopId stop_id{next_stop_id++};
     result.mapping.gtfs_stop_id_to_stop_id[gtfs_stop.stop_id] = stop_id;
     result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop.stop_id;
-    result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(stop_id
+    result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(
+        stop_id
     );
     result.mapping.stop_id_to_stop_name[stop_id] = gtfs_stop.stop_name;
   }
@@ -92,7 +93,8 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
           result.mapping.gtfs_trip_id_to_trip_id[current_stop_time.trip_id];
 
       Step step = Step::PrimitiveScheduled(
-          origin_stop_id, destination_stop_id,
+          origin_stop_id,
+          destination_stop_id,
           TimeSinceServiceStart{current_stop_time.departure_time.seconds},
           TimeSinceServiceStart{next_stop_time.arrival_time.seconds},
           trip_id
@@ -182,10 +184,13 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         result.mapping.trip_id_to_route_desc[walk_trip_id] = walk_desc;
 
         // Create walking step with flex time markers
-        int walk_duration = static_cast<int>(distance / options.walking_speed_ms);
+        int walk_duration =
+            static_cast<int>(distance / options.walking_speed_ms);
         Step walk_step = Step::PrimitiveFlex(
-            current_stop.stop_id, other_stop.stop_id,
-            walk_duration, walk_trip_id
+            current_stop.stop_id,
+            other_stop.stop_id,
+            walk_duration,
+            walk_trip_id
         );
 
         result.steps.push_back(walk_step);
@@ -195,7 +200,9 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
         FlexTrip reverse_flex_trip{
             other_stop.stop_id,
             current_stop.stop_id,
-            static_cast<int>(distance / options.walking_speed_ms)  // same duration
+            static_cast<int>(
+                distance / options.walking_speed_ms
+            )  // same duration
         };
 
         result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
@@ -207,8 +214,10 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
             reverse_walk_desc;
 
         Step reverse_walk_step = Step::PrimitiveFlex(
-            other_stop.stop_id, current_stop.stop_id,
-            walk_duration, reverse_walk_trip_id
+            other_stop.stop_id,
+            current_stop.stop_id,
+            walk_duration,
+            reverse_walk_trip_id
         );
 
         result.steps.push_back(reverse_walk_step);

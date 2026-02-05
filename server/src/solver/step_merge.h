@@ -53,7 +53,7 @@ inline bool SmallerStep(const Step& a, const Step& b) {
 //
 // If parallel is non-null, it is permuted in the same way as steps,
 // preserving correspondence between steps and associated data.
-template<typename T = int>
+template <typename T = int>
 void SortSteps(std::vector<Step>& steps, std::vector<T>* parallel = nullptr) {
   if (parallel) {
     // Build index array and sort it
@@ -61,9 +61,11 @@ void SortSteps(std::vector<Step>& steps, std::vector<T>* parallel = nullptr) {
     for (size_t i = 0; i < steps.size(); ++i) {
       indices[i] = i;
     }
-    std::stable_sort(indices.begin(), indices.end(), [&steps](size_t a, size_t b) {
-      return SmallerStep(steps[a], steps[b]);
-    });
+    std::stable_sort(
+        indices.begin(), indices.end(), [&steps](size_t a, size_t b) {
+          return SmallerStep(steps[a], steps[b]);
+        }
+    );
 
     // Apply permutation to both vectors
     std::vector<Step> sorted_steps(steps.size());
@@ -87,8 +89,10 @@ void SortSteps(std::vector<Step>& steps, std::vector<T>* parallel = nullptr) {
 //
 // If parallel is non-null, it is compacted in the same way as steps,
 // preserving correspondence between steps and associated data.
-template<typename T = int>
-void MakeMinimalCover(std::vector<Step>& steps, std::vector<T>* parallel = nullptr) {
+template <typename T = int>
+void MakeMinimalCover(
+    std::vector<Step>& steps, std::vector<T>* parallel = nullptr
+) {
   if (steps.size() <= 1) {
     return;
   }
@@ -158,7 +162,8 @@ void MakeMinimalCover(std::vector<Step>& steps, std::vector<T>* parallel = nullp
 // If provenance is non-null, it is filled with one entry per result step
 // indicating which indices in ab and bc were combined to produce it.
 std::vector<Step> PairwiseMergedSteps(
-    const std::vector<Step>& ab, const std::vector<Step>& bc,
+    const std::vector<Step>& ab,
+    const std::vector<Step>& bc,
     std::vector<StepProvenance>* provenance = nullptr
 );
 
@@ -177,10 +182,12 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 // scheduled step's origin (or start at 0 if all steps are flex).
 void NormalizeConsecutiveSteps(std::vector<Step>& steps);
 
-// Return the best (earliest arriving at destination) step from `candidates` following `cur`, if any exist.
-// Preconditions:
+// Return the best (earliest arriving at destination) step from `candidates`
+// following `cur`, if any exist. Preconditions:
 // - cur.destination.stop == c.origin.stop for all candidates
 // - candidates satisfies CheckSortedAndMinimal.
-std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates);
+std::optional<Step> SelectBestNextStep(
+    const Step cur, const std::vector<Step>& candidates
+);
 
 }  // namespace vats5

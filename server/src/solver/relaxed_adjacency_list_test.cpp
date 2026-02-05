@@ -2,9 +2,9 @@
 
 #include <gtest/gtest.h>
 
-#include "solver/test_util/cached_test_data.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/test_util/cached_test_data.h"
 
 namespace vats5 {
 
@@ -14,16 +14,39 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
   // Stop 1 -> Stop 3: duration 50 (fixed)
   // Stop 2 -> Stop 3: duration 30 (flex)
   std::vector<Step> steps = {
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),  // duration 100
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{300}, TimeSinceServiceStart{380}, TripId{2}),  // duration 80
-      Step::PrimitiveFlex(StopId{1}, StopId{2}, 120, TripId{3}),  // flex, duration 120
-      Step::PrimitiveScheduled(StopId{1}, StopId{3}, TimeSinceServiceStart{500}, TimeSinceServiceStart{550}, TripId{4}),  // duration 50
-      Step::PrimitiveFlex(StopId{2}, StopId{3}, 30, TripId{5}),  // flex, duration 30
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),  // duration 100
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{300},
+          TimeSinceServiceStart{380},
+          TripId{2}
+      ),  // duration 80
+      Step::PrimitiveFlex(
+          StopId{1}, StopId{2}, 120, TripId{3}
+      ),  // flex, duration 120
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{3},
+          TimeSinceServiceStart{500},
+          TimeSinceServiceStart{550},
+          TripId{4}
+      ),  // duration 50
+      Step::PrimitiveFlex(
+          StopId{2}, StopId{3}, 30, TripId{5}
+      ),  // flex, duration 30
   };
 
   StepsAdjacencyList steps_list = MakeAdjacencyList(steps);
   std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(steps_list);
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
   // Check structure
   EXPECT_EQ(relaxed.NumStops(), 4);  // Stops 0, 1, 2, 3
@@ -55,7 +78,9 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListBasic) {
   EXPECT_EQ(relaxed.GetWeight(StopId{2}, StopId{3}), 30);
   EXPECT_EQ(relaxed.GetWeight(StopId{0}, StopId{1}), std::nullopt);  // No edge
   EXPECT_EQ(relaxed.GetWeight(StopId{3}, StopId{1}), std::nullopt);  // No edge
-  EXPECT_EQ(relaxed.GetWeight(StopId{1}, StopId{1}), std::nullopt);  // Self-loop
+  EXPECT_EQ(
+      relaxed.GetWeight(StopId{1}, StopId{1}), std::nullopt
+  );  // Self-loop
 }
 
 TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromWeightedEdges) {
@@ -93,7 +118,8 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromBART) {
   const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
   std::vector<WeightedEdge> relaxed_edges =
       MakeRelaxedEdges(test_data.adjacency_list);
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
   // Find Berkeley and North Berkeley stops
   StopId berkeley =

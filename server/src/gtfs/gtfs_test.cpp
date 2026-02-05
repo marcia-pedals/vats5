@@ -270,9 +270,7 @@ GTEST("GtfsSave round-trip should preserve data") {
   // Sort both vectors for reliable comparison (file order might differ)
   auto sort_stops = [](std::vector<GtfsStop>& stops) {
     std::sort(
-        stops.begin(),
-        stops.end(),
-        [](const GtfsStop& a, const GtfsStop& b) {
+        stops.begin(), stops.end(), [](const GtfsStop& a, const GtfsStop& b) {
           return a.stop_id.v < b.stop_id.v;
         }
     );
@@ -280,9 +278,7 @@ GTEST("GtfsSave round-trip should preserve data") {
 
   auto sort_trips = [](std::vector<GtfsTrip>& trips) {
     std::sort(
-        trips.begin(),
-        trips.end(),
-        [](const GtfsTrip& a, const GtfsTrip& b) {
+        trips.begin(), trips.end(), [](const GtfsTrip& a, const GtfsTrip& b) {
           return a.trip_id.v < b.trip_id.v;
         }
     );

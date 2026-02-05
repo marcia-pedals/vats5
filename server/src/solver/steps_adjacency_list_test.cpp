@@ -1,10 +1,11 @@
 #include "solver/steps_adjacency_list.h"
 
-#include <algorithm>
-#include <unordered_map>
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
+
+#include <algorithm>
+#include <unordered_map>
 
 #include "solver/step_merge.h"
 
@@ -12,17 +13,37 @@ namespace vats5 {
 
 static rc::Gen<Step> GenStep() {
   return rc::gen::apply(
-      [](int origin_stop, int dest_stop, int origin_time, int duration,
-         int origin_trip, int dest_trip, int origin_partition,
-         int dest_partition, bool origin_is_flex, bool dest_is_flex,
+      [](int origin_stop,
+         int dest_stop,
+         int origin_time,
+         int duration,
+         int origin_trip,
+         int dest_trip,
+         int origin_partition,
+         int dest_partition,
+         bool origin_is_flex,
+         bool dest_is_flex,
          bool is_flex) {
         TimeSinceServiceStart ot = is_flex ? TimeSinceServiceStart{0}
                                            : TimeSinceServiceStart{origin_time};
-        TimeSinceServiceStart dt = is_flex ? TimeSinceServiceStart{duration}
-                                           : TimeSinceServiceStart{origin_time + duration};
+        TimeSinceServiceStart dt =
+            is_flex ? TimeSinceServiceStart{duration}
+                    : TimeSinceServiceStart{origin_time + duration};
         return Step{
-            StepEndpoint{StopId{origin_stop}, origin_is_flex, StepPartitionId{origin_partition}, ot, TripId{origin_trip}},
-            StepEndpoint{StopId{dest_stop}, dest_is_flex, StepPartitionId{dest_partition}, dt, TripId{dest_trip}},
+            StepEndpoint{
+                StopId{origin_stop},
+                origin_is_flex,
+                StepPartitionId{origin_partition},
+                ot,
+                TripId{origin_trip}
+            },
+            StepEndpoint{
+                StopId{dest_stop},
+                dest_is_flex,
+                StepPartitionId{dest_partition},
+                dt,
+                TripId{dest_trip}
+            },
             is_flex
         };
       },
@@ -42,19 +63,39 @@ static rc::Gen<Step> GenStep() {
 
 static bool StepLess(const Step& a, const Step& b) {
   auto key = [](const Step& s) {
-    return std::tie(s.origin.stop.v, s.destination.stop.v, s.is_flex,
-                    s.origin.time.seconds, s.destination.time.seconds,
-                    s.origin.trip.v, s.destination.trip.v,
-                    s.origin.partition.v, s.destination.partition.v,
-                    s.origin.is_flex, s.destination.is_flex);
+    return std::tie(
+        s.origin.stop.v,
+        s.destination.stop.v,
+        s.is_flex,
+        s.origin.time.seconds,
+        s.destination.time.seconds,
+        s.origin.trip.v,
+        s.destination.trip.v,
+        s.origin.partition.v,
+        s.destination.partition.v,
+        s.origin.is_flex,
+        s.destination.is_flex
+    );
   };
   return key(a) < key(b);
 }
 
 TEST(StepsAdjacencyListTest, MakeAdjacencyListBasic) {
   std::vector<Step> steps = {
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{150}, TimeSinceServiceStart{250}, TripId{2})
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{150},
+          TimeSinceServiceStart{250},
+          TripId{2}
+      )
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
@@ -72,8 +113,20 @@ TEST(StepsAdjacencyListTest, RemapStopIdsBasic) {
   // Create a sparse adjacency list: stops 10 -> 50, 10 -> 100
   // This will have NumStops() = 101 but only 3 stops actually used
   std::vector<Step> steps = {
-      Step::PrimitiveScheduled(StopId{10}, StopId{50}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),
-      Step::PrimitiveScheduled(StopId{10}, StopId{100}, TimeSinceServiceStart{300}, TimeSinceServiceStart{400}, TripId{2}),
+      Step::PrimitiveScheduled(
+          StopId{10},
+          StopId{50},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),
+      Step::PrimitiveScheduled(
+          StopId{10},
+          StopId{100},
+          TimeSinceServiceStart{300},
+          TimeSinceServiceStart{400},
+          TripId{2}
+      ),
   };
 
   StepsAdjacencyList original = MakeAdjacencyList(steps);
@@ -114,10 +167,13 @@ TEST(StepsAdjacencyListTest, RemapStopIdsBasic) {
   EXPECT_EQ(steps_to_100[0].destination_time.seconds, 400);
 }
 
-RC_GTEST_PROP(StepsAdjacencyListTest, MakeAdjacencyListAndAllStepsAreInverses, ()) {
+RC_GTEST_PROP(
+    StepsAdjacencyListTest, MakeAdjacencyListAndAllStepsAreInverses, ()
+) {
   auto steps = *rc::gen::container<std::vector<Step>>(GenStep());
 
-  // Compute expected: group by (origin, dest), sort, and apply MakeMinimalCover.
+  // Compute expected: group by (origin, dest), sort, and apply
+  // MakeMinimalCover.
   std::unordered_map<int, std::unordered_map<int, std::vector<Step>>> grouped;
   for (const Step& step : steps) {
     grouped[step.origin.stop.v][step.destination.stop.v].push_back(step);

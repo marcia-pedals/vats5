@@ -11,7 +11,9 @@
 
 namespace vats5 {
 
-std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& state) {
+std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
+    const ProblemState& state
+) {
   std::vector<SolutionSpaceElement> space;
 
   // Make the initial generating permutation, which is
@@ -32,7 +34,9 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
     std::vector<Step> accumulated_steps;
     std::vector<std::vector<StopId>> accumulated_actual_paths;
     for (size_t i = 0; i < gen_perm.size(); ++i) {
-      std::span<const Path> edge_paths = state.completed.PathsBetween(gen_perm[i], gen_perm[(i + 1) % gen_perm.size()]);
+      std::span<const Path> edge_paths = state.completed.PathsBetween(
+          gen_perm[i], gen_perm[(i + 1) % gen_perm.size()]
+      );
       std::vector<Step> edge_steps;
       edge_steps.reserve(edge_paths.size());
       for (const Path& p : edge_paths) {
@@ -51,16 +55,21 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
         }
       } else {
         std::vector<StepProvenance> new_provenance;
-        std::vector<Step> new_accumulated_steps = PairwiseMergedSteps(accumulated_steps, edge_steps, &new_provenance);
+        std::vector<Step> new_accumulated_steps =
+            PairwiseMergedSteps(accumulated_steps, edge_steps, &new_provenance);
         std::vector<std::vector<StopId>> new_accumulated_actual_paths;
         for (const StepProvenance& step_provenance : new_provenance) {
           assert(step_provenance.ab_index < accumulated_actual_paths.size());
           assert(step_provenance.bc_index < edge_paths.size());
-          new_accumulated_actual_paths.push_back(accumulated_actual_paths[step_provenance.ab_index]);
+          new_accumulated_actual_paths.push_back(
+              accumulated_actual_paths[step_provenance.ab_index]
+          );
           for (const Step& s : edge_paths[step_provenance.bc_index].steps) {
             new_accumulated_actual_paths.back().push_back(s.origin.stop);
           }
-          assert(new_accumulated_actual_paths.back()[0] == state.boundary.start);
+          assert(
+              new_accumulated_actual_paths.back()[0] == state.boundary.start
+          );
         }
         accumulated_steps = std::move(new_accumulated_steps);
         accumulated_actual_paths = std::move(new_accumulated_actual_paths);
@@ -72,11 +81,13 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
         // See function doc comment.
         continue;
       }
-      space.push_back(SolutionSpaceElement{
-        .generating_permutation=gen_perm,
-        .actual_path=accumulated_actual_paths[i],
-        .merged_step=accumulated_steps[i],
-      });
+      space.push_back(
+          SolutionSpaceElement{
+              .generating_permutation = gen_perm,
+              .actual_path = accumulated_actual_paths[i],
+              .merged_step = accumulated_steps[i],
+          }
+      );
     }
   } while (std::next_permutation(gen_perm.begin() + 1, gen_perm.end() - 1));
 
@@ -85,9 +96,14 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(const ProblemState& sta
 
 int BruteForceSolveOptimalDuration(const ProblemState& state) {
   std::vector<SolutionSpaceElement> space = EnumerateSolutionSpace(state);
-  auto it = std::min_element(space.begin(), space.end(), [](const SolutionSpaceElement& a, const SolutionSpaceElement& b) {
-    return a.merged_step.DurationSeconds() < b.merged_step.DurationSeconds();
-  });
+  auto it = std::min_element(
+      space.begin(),
+      space.end(),
+      [](const SolutionSpaceElement& a, const SolutionSpaceElement& b) {
+        return a.merged_step.DurationSeconds() <
+               b.merged_step.DurationSeconds();
+      }
+  );
   if (it == space.end()) {
     return std::numeric_limits<int>::max();
   }

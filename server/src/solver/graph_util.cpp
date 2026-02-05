@@ -1,4 +1,5 @@
 #include "solver/graph_util.h"
+
 #include <queue>
 #include <unordered_set>
 
@@ -12,11 +13,11 @@ using namespace vats5;
 // Paths that go through `block_paths_through` are not considered. (Paths
 // starting or ending at it are considered though.)
 bool HasPathAvoiding(
-  const StepPathsAdjacencyList& g,
-  StopId start,
-  StopId end,
-  StopId avoid,
-  StopId block_paths_through
+    const StepPathsAdjacencyList& g,
+    StopId start,
+    StopId end,
+    StopId avoid,
+    StopId block_paths_through
 ) {
   if (start == avoid || end == avoid) {
     return false;
@@ -78,9 +79,13 @@ bool HasPathAvoiding(
 }
 
 // Intersects `stops` in-place with the stops in `path`.
-void IntersectWithIntermediateStops(std::unordered_set<StopId>& stops, const Path& path) {
+void IntersectWithIntermediateStops(
+    std::unordered_set<StopId>& stops, const Path& path
+) {
   std::unordered_set<StopId> intersection;
-  intersection.reserve(std::min(static_cast<int>(stops.size()), path.IntermediateStopCount()));
+  intersection.reserve(
+      std::min(static_cast<int>(stops.size()), path.IntermediateStopCount())
+  );
   path.VisitIntermediateStops([&](auto x) {
     if (stops.contains(x)) {
       intersection.insert(x);
@@ -94,9 +99,9 @@ void IntersectWithIntermediateStops(std::unordered_set<StopId>& stops, const Pat
 namespace vats5 {
 
 std::unordered_set<StopId> ComputeExtremeStops(
-  const StepPathsAdjacencyList& g,
-  const std::unordered_set<StopId>& stops,
-  StopId block_paths_through
+    const StepPathsAdjacencyList& g,
+    const std::unordered_set<StopId>& stops,
+    StopId block_paths_through
 ) {
   std::vector<StopId> stops_vec(stops.begin(), stops.end());
 
@@ -117,7 +122,9 @@ std::unordered_set<StopId> ComputeExtremeStops(
       // intermediate stops across all minimal paths in both directions).
       std::unordered_set<StopId> candidate_inner_stops;
       candidate_inner_stops.reserve(paths_ab[0].IntermediateStopCount());
-      paths_ab[0].VisitIntermediateStops([&](auto x) { candidate_inner_stops.insert(x); });
+      paths_ab[0].VisitIntermediateStops([&](auto x) {
+        candidate_inner_stops.insert(x);
+      });
       for (const Path& path : paths_ab) {
         IntersectWithIntermediateStops(candidate_inner_stops, path);
       }
@@ -126,8 +133,8 @@ std::unordered_set<StopId> ComputeExtremeStops(
       }
 
       // Verify each candidate is truly on ALL paths (not just minimal paths).
-      // A candidate X is only an inner stop if there's no way to get from a to b
-      // (or b to a) without going through X.
+      // A candidate X is only an inner stop if there's no way to get from a to
+      // b (or b to a) without going through X.
       for (StopId candidate : candidate_inner_stops) {
         if (inner_stops.contains(candidate)) continue;
         if (!HasPathAvoiding(g, a, b, candidate, block_paths_through) &&

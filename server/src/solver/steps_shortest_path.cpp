@@ -103,7 +103,8 @@ std::vector<Step> BacktrackPath(
     if (path[i].is_flex) {
       int flex_duration = path[i].DurationSeconds();
       path[i].destination.time = path[i + 1].origin.time;
-      path[i].origin.time.seconds = path[i].destination.time.seconds - flex_duration;
+      path[i].origin.time.seconds =
+          path[i].destination.time.seconds - flex_duration;
     }
   }
 
@@ -112,7 +113,8 @@ std::vector<Step> BacktrackPath(
 
 // Sentinel Step representing an unvisited stop.
 const Step kUnvisitedStep = Step::PrimitiveScheduled(
-    StopId{-1}, StopId{-1},
+    StopId{-1},
+    StopId{-1},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
     TripId{-1}
@@ -121,8 +123,7 @@ const Step kUnvisitedStep = Step::PrimitiveScheduled(
 const std::vector<int>* HeuristicCache::GetOrCompute(
     const std::unordered_set<StopId>& destinations
 ) {
-  if (relaxed_distances == nullptr ||
-      relaxed_distances->distance_to.empty()) {
+  if (relaxed_distances == nullptr || relaxed_distances->distance_to.empty()) {
     return nullptr;
   }
 
@@ -137,16 +138,16 @@ const std::vector<int>* HeuristicCache::GetOrCompute(
 
   // Compute by taking min of distance_to_single_destination for each dest
   // Get num_stops from the first destination's vector
-  const int num_stops = static_cast<int>(
-      relaxed_distances->distance_to.begin()->second.size()
-  );
+  const int num_stops =
+      static_cast<int>(relaxed_distances->distance_to.begin()->second.size());
   std::vector<int> computed(num_stops, std::numeric_limits<int>::max());
 
   for (const StopId dest : destinations) {
     auto it = relaxed_distances->distance_to.find(dest);
     if (it != relaxed_distances->distance_to.end()) {
       const std::vector<int>& single_dists = it->second;
-      for (int i = 0; i < num_stops && i < static_cast<int>(single_dists.size());
+      for (int i = 0;
+           i < num_stops && i < static_cast<int>(single_dists.size());
            ++i) {
         computed[i] = std::min(computed[i], single_dists[i]);
       }
@@ -205,10 +206,15 @@ std::vector<Step> FindShortestPathsAtTime(
   const Step initial_step = Step::PrimitiveScheduled(
       origin_stop, origin_stop, origin_time, origin_time, TripId::NOOP
   );
-frontier.push_back(FrontierEntry{
-      origin_stop, origin_time, /*destinations_visited=*/0,
-      /*is_flex=*/true, GetHeuristic(origin_stop)
-  });
+  frontier.push_back(
+      FrontierEntry{
+          origin_stop,
+          origin_time,
+          /*destinations_visited=*/0,
+          /*is_flex=*/true,
+          GetHeuristic(origin_stop)
+      }
+  );
   best_arrival[origin_stop.v] = initial_step;
   best_destinations_visited[origin_stop.v] = 0;
 
@@ -237,7 +243,8 @@ frontier.push_back(FrontierEntry{
       // Check if we should recompute heuristic with fewer destinations
       if (heuristic_cache != nullptr &&
           ShouldRecomputeHeuristic(remaining_destinations.size())) {
-        heuristic_distances = heuristic_cache->GetOrCompute(remaining_destinations);
+        heuristic_distances =
+            heuristic_cache->GetOrCompute(remaining_destinations);
 
         // Recompute heuristic for all entries in the frontier and reheapify
         for (FrontierEntry& entry : frontier) {
@@ -278,20 +285,34 @@ frontier.push_back(FrontierEntry{
                    best_destinations_visited[next_stop.v]);
           if (is_better) {
             Step flex_step_at_now{
-                StepEndpoint{current_stop, true, StepPartitionId::NONE, current_time, flex_step.origin_trip},
-                StepEndpoint{next_stop, true, StepPartitionId::NONE, arrival_time, flex_step.destination_trip},
+                StepEndpoint{
+                    current_stop,
+                    true,
+                    StepPartitionId::NONE,
+                    current_time,
+                    flex_step.origin_trip
+                },
+                StepEndpoint{
+                    next_stop,
+                    true,
+                    StepPartitionId::NONE,
+                    arrival_time,
+                    flex_step.destination_trip
+                },
                 true  // is_flex
             };
 
             best_arrival[next_stop.v] = flex_step_at_now;
             best_destinations_visited[next_stop.v] = next_destinations_visited;
-            frontier.push_back(FrontierEntry{
-                next_stop,
-                arrival_time,
-                next_destinations_visited,
-                current_entry.is_flex,
-                GetHeuristic(next_stop)
-            });
+            frontier.push_back(
+                FrontierEntry{
+                    next_stop,
+                    arrival_time,
+                    next_destinations_visited,
+                    current_entry.is_flex,
+                    GetHeuristic(next_stop)
+                }
+            );
             std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
           }
         }
@@ -347,13 +368,15 @@ frontier.push_back(FrontierEntry{
           Step next_step = adj_step.ToStep(current_stop, next_stop, false);
           best_arrival[next_stop.v] = next_step;
           best_destinations_visited[next_stop.v] = next_destinations_visited;
-          frontier.push_back(FrontierEntry{
-              next_stop,
-              next_step.destination.time,
-              next_destinations_visited,
-              /*is_flex=*/false,
-              GetHeuristic(next_stop)
-          });
+          frontier.push_back(
+              FrontierEntry{
+                  next_stop,
+                  next_step.destination.time,
+                  next_destinations_visited,
+                  /*is_flex=*/false,
+                  GetHeuristic(next_stop)
+              }
+          );
           std::push_heap(frontier.begin(), frontier.end(), frontier_cmp);
         }
       }
@@ -573,7 +596,12 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
       TimeSinceServiceStart ub{(chunk_index + 1) * kChunkSeconds};
 
       per_item_results[i] = FindMinimalPathSet(
-          adjacency_list, origin, destinations, lb, ub, &relaxed_distances,
+          adjacency_list,
+          origin,
+          destinations,
+          lb,
+          ub,
+          &relaxed_distances,
           keep_through_other_destination
       );
 

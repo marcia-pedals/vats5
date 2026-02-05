@@ -86,34 +86,94 @@ TEST(DataTest, GetStepsFromGtfs) {
   // Construct expected steps with hardcoded times from gtfs_test.cpp
   std::vector<Step> expected_steps = {
       // San Jose Diridon (07:22:00) -> Sunnyvale (07:32:00)
-      Step::PrimitiveScheduled(san_jose_diridon_id, sunnyvale_id, TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          san_jose_diridon_id,
+          sunnyvale_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:22:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
+          mapped_trip_id
+      ),
 
       // Sunnyvale (07:32:00) -> Mountain View (07:36:00)
-      Step::PrimitiveScheduled(sunnyvale_id, mountain_view_id, TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          sunnyvale_id,
+          mountain_view_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:32:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
+          mapped_trip_id
+      ),
 
       // Mountain View (07:36:00) -> Palo Alto (07:43:00)
-      Step::PrimitiveScheduled(mountain_view_id, palo_alto_id, TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          mountain_view_id,
+          palo_alto_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:36:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
+          mapped_trip_id
+      ),
 
       // Palo Alto (07:43:00) -> Redwood City (07:49:00)
-      Step::PrimitiveScheduled(palo_alto_id, redwood_city_id, TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          palo_alto_id,
+          redwood_city_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:43:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
+          mapped_trip_id
+      ),
 
       // Redwood City (07:49:00) -> Hillsdale (07:56:00)
-      Step::PrimitiveScheduled(redwood_city_id, hillsdale_id, TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          redwood_city_id,
+          hillsdale_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:49:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
+          mapped_trip_id
+      ),
 
       // Hillsdale (07:56:00) -> San Mateo (07:59:00)
-      Step::PrimitiveScheduled(hillsdale_id, san_mateo_id, TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          hillsdale_id,
+          san_mateo_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:56:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
+          mapped_trip_id
+      ),
 
       // San Mateo (07:59:00) -> Millbrae (08:04:00)
-      Step::PrimitiveScheduled(san_mateo_id, millbrae_id, TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          san_mateo_id,
+          millbrae_id,
+          TimeSinceServiceStart{ParseGtfsTime("07:59:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
+          mapped_trip_id
+      ),
 
       // Millbrae (08:04:00) -> South SF (08:09:00)
-      Step::PrimitiveScheduled(millbrae_id, south_sf_id, TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          millbrae_id,
+          south_sf_id,
+          TimeSinceServiceStart{ParseGtfsTime("08:04:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
+          mapped_trip_id
+      ),
 
       // South SF (08:09:00) -> 22nd Street (08:16:00)
-      Step::PrimitiveScheduled(south_sf_id, sf_22nd_street_id, TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds}, mapped_trip_id),
+      Step::PrimitiveScheduled(
+          south_sf_id,
+          sf_22nd_street_id,
+          TimeSinceServiceStart{ParseGtfsTime("08:09:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
+          mapped_trip_id
+      ),
 
       // 22nd Street (08:16:00) -> 4th & King (08:22:00)
-      Step::PrimitiveScheduled(sf_22nd_street_id, sf_4th_king_id, TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds}, TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds}, mapped_trip_id)
+      Step::PrimitiveScheduled(
+          sf_22nd_street_id,
+          sf_4th_king_id,
+          TimeSinceServiceStart{ParseGtfsTime("08:16:00").seconds},
+          TimeSinceServiceStart{ParseGtfsTime("08:22:00").seconds},
+          mapped_trip_id
+      )
   };
 
   // Assert that the actual steps match the expected steps
@@ -133,8 +193,10 @@ TEST(DataTest, WalkingStepsGrid3x3) {
   const double LAT_SPACING_DEGREES =
       300.0 / 111000.0;  // ~300m in degrees for latitude
   const double LON_SPACING_DEGREES =
-      300.0 / (111000.0 * std::cos(BASE_LAT * M_PI / 180.0)
-              );  // ~300m in degrees for longitude at this latitude
+      300.0 /
+      (111000.0 * std::cos(
+                      BASE_LAT * M_PI / 180.0
+                  ));  // ~300m in degrees for longitude at this latitude
 
   // Create 3x3 stops
   int stop_id = 1;

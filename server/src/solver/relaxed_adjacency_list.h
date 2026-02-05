@@ -85,7 +85,8 @@ struct RelaxedDistances {
 // For each origin-destination pair, the weight is the duration in seconds
 // of the shortest step (minimum destination_time - origin_time across all
 // steps).
-std::vector<WeightedEdge> MakeRelaxedEdges(const StepsAdjacencyList& steps_list
+std::vector<WeightedEdge> MakeRelaxedEdges(
+    const StepsAdjacencyList& steps_list
 );
 
 // Create weighted edges from a step paths adjacency list.

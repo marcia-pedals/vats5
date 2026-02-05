@@ -12,9 +12,9 @@ namespace vats5 {
 // Paths that go through `block_paths_through` are not considered. (Paths
 // starting or ending at it are considered though.)
 std::unordered_set<StopId> ComputeExtremeStops(
-  const StepPathsAdjacencyList& g,
-  const std::unordered_set<StopId>& stops,
-  StopId block_paths_through
+    const StepPathsAdjacencyList& g,
+    const std::unordered_set<StopId>& stops,
+    StopId block_paths_through
 );
 
 }  // namespace vats5

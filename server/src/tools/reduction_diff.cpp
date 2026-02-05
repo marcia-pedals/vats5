@@ -1,3 +1,4 @@
+#include <CLI/CLI.hpp>
 #include <fstream>
 #include <future>
 #include <iostream>
@@ -5,8 +6,6 @@
 #include <optional>
 #include <set>
 #include <sstream>
-
-#include <CLI/CLI.hpp>
 
 #include "tools/reduction_output.h"
 
@@ -241,7 +240,8 @@ struct LoadedReductionOutput {
   GtfsStopNameMap stop_names;
 };
 
-std::optional<LoadedReductionOutput> LoadReductionOutput(const std::string& path
+std::optional<LoadedReductionOutput> LoadReductionOutput(
+    const std::string& path
 ) {
   std::cout << "Loading: " << path << std::endl;
   std::ifstream file(path);
@@ -273,9 +273,12 @@ int main(int argc, char* argv[]) {
   app.add_option("file_b", file_b, "Second JSON file to compare")
       ->required()
       ->check(CLI::ExistingFile);
-  app.add_flag("--match-equivalent-paths", match_equivalent_paths,
-               "Treat paths with same start/end times as matching, even if "
-               "intermediate stops differ");
+  app.add_flag(
+      "--match-equivalent-paths",
+      match_equivalent_paths,
+      "Treat paths with same start/end times as matching, even if "
+      "intermediate stops differ"
+  );
 
   CLI11_PARSE(app, argc, argv);
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+
 #include "solver/data.h"
 
 namespace vats5 {
@@ -9,7 +10,6 @@ namespace vats5 {
 static bool SmallerOrEqualStep(const Step& a, const Step& b) {
   return !SmallerStep(b, a);
 }
-
 
 bool CheckSortedAndMinimal(const std::vector<Step>& steps) {
   if (steps.empty()) {
@@ -65,27 +65,32 @@ Step MergedStep(Step ab, Step bc) {
   }
   return Step{
       StepEndpoint{
-        ab.origin.stop,
-        ab.origin.is_flex,
-        // Use the origin partition of the first non-flex step, falling back to ab if both are flex.
-        (ab.is_flex && !bc.is_flex) ? bc.origin.partition : ab.origin.partition,
-        origin_time,
-        ab.origin.trip
+          ab.origin.stop,
+          ab.origin.is_flex,
+          // Use the origin partition of the first non-flex step, falling back
+          // to ab if both are flex.
+          (ab.is_flex && !bc.is_flex) ? bc.origin.partition
+                                      : ab.origin.partition,
+          origin_time,
+          ab.origin.trip
       },
       StepEndpoint{
-        bc.destination.stop,
-        bc.destination.is_flex,
-        // Use the destination partition of the last non-flex step, falling back to bc if both are flex.
-        (bc.is_flex && !ab.is_flex) ? ab.destination.partition : bc.destination.partition,
-        destination_time,
-        bc.destination.trip
+          bc.destination.stop,
+          bc.destination.is_flex,
+          // Use the destination partition of the last non-flex step, falling
+          // back to bc if both are flex.
+          (bc.is_flex && !ab.is_flex) ? ab.destination.partition
+                                      : bc.destination.partition,
+          destination_time,
+          bc.destination.trip
       },
       ab.is_flex && bc.is_flex  // is_flex
   };
 }
 
 std::vector<Step> PairwiseMergedSteps(
-    const std::vector<Step>& ab, const std::vector<Step>& bc,
+    const std::vector<Step>& ab,
+    const std::vector<Step>& bc,
     std::vector<StepProvenance>* provenance
 ) {
   std::vector<Step> result;
@@ -165,7 +170,8 @@ std::vector<Step> PairwiseMergedSteps(
   MakeNonFlexValidMinimal();
 
   Step BAD_STEP = Step::PrimitiveScheduled(
-      StopId{0}, StopId{0},
+      StopId{0},
+      StopId{0},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
       TripId{0}
@@ -258,7 +264,9 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
       break;
     }
   }
-  TimeSinceServiceStart origin_time{is_flex ? 0 : first_non_flex_origin - leading_flex_duration};
+  TimeSinceServiceStart origin_time{
+      is_flex ? 0 : first_non_flex_origin - leading_flex_duration
+  };
 
   // Scan right-to-left for last non-flex step's destination partition and time.
   // If trailing steps are flex, destination time = last_non_flex_dest + sum of
@@ -276,11 +284,25 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
       break;
     }
   }
-  TimeSinceServiceStart destination_time{last_non_flex_dest + trailing_flex_duration};
+  TimeSinceServiceStart destination_time{
+      last_non_flex_dest + trailing_flex_duration
+  };
 
   return Step{
-      StepEndpoint{first.origin.stop, first.origin.is_flex, origin_partition, origin_time, first.origin.trip},
-      StepEndpoint{last.destination.stop, last.destination.is_flex, destination_partition, destination_time, last.destination.trip},
+      StepEndpoint{
+          first.origin.stop,
+          first.origin.is_flex,
+          origin_partition,
+          origin_time,
+          first.origin.trip
+      },
+      StepEndpoint{
+          last.destination.stop,
+          last.destination.is_flex,
+          destination_partition,
+          destination_time,
+          last.destination.trip
+      },
       is_flex
   };
 }
@@ -302,10 +324,12 @@ void NormalizeConsecutiveSteps(std::vector<Step>& steps) {
     }
   }
 
-  // Calculate start time: arrive at first scheduled step, or start at 0 if all flex.
-  int current_time = (first_non_flex < steps.size())
-      ? steps[first_non_flex].origin.time.seconds - leading_flex_duration
-      : 0;
+  // Calculate start time: arrive at first scheduled step, or start at 0 if all
+  // flex.
+  int current_time =
+      (first_non_flex < steps.size())
+          ? steps[first_non_flex].origin.time.seconds - leading_flex_duration
+          : 0;
 
   // Normalize each flex step to have sequential times.
   for (size_t i = 0; i < steps.size(); ++i) {
@@ -323,7 +347,9 @@ void NormalizeConsecutiveSteps(std::vector<Step>& steps) {
   }
 }
 
-std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& candidates) {
+std::optional<Step> SelectBestNextStep(
+    const Step cur, const std::vector<Step>& candidates
+) {
   if (candidates.size() == 0) {
     return std::nullopt;
   }
@@ -340,7 +366,8 @@ std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& 
     // Adjust this flex step to start when `cur` ends.
     int duration = best->FlexDurationSeconds();
     best->origin.time = cur.destination.time;
-    best->destination.time = TimeSinceServiceStart{cur.destination.time.seconds + duration};
+    best->destination.time =
+        TimeSinceServiceStart{cur.destination.time.seconds + duration};
   }
 
   for (int i = first_sched_step; i < candidates.size(); ++i) {
@@ -350,7 +377,8 @@ std::optional<Step> SelectBestNextStep(const Step cur, const std::vector<Step>& 
     if (candidate.origin.time < cur.destination.time) {
       continue;
     }
-    if (!best.has_value() || candidate.destination.time < best->destination.time) {
+    if (!best.has_value() ||
+        candidate.destination.time < best->destination.time) {
       best = candidate;
     }
     // Because the steps are sorted and minimal, we can break after checking the

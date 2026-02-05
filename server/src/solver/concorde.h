@@ -14,10 +14,12 @@ namespace vats5 {
 // Thrown when a tour does not follow the structure required of tours according
 // to a reduction.
 class InvalidTourStructure : public std::exception {
-public:
-  explicit InvalidTourStructure(std::string message) : message_(std::move(message)) {}
+ public:
+  explicit InvalidTourStructure(std::string message)
+      : message_(std::move(message)) {}
   const char* what() const noexcept override { return message_.c_str(); }
-private:
+
+ private:
   std::string message_;
 };
 
@@ -32,7 +34,12 @@ struct ConcordeSolution {
 // Solves TSP using Concorde and returns the tour.
 // The tour visits all stops in the relaxed adjacency list exactly once.
 // If tsp_log is non-null, Concorde's output is written to it.
-// Returns nullopt if the optimal tour uses a forbidden edge (no valid tour exists).
-std::optional<ConcordeSolution> SolveTspWithConcorde(const RelaxedAdjacencyList& relaxed, std::optional<int> ub = std::nullopt, std::ostream* tsp_log = nullptr);
+// Returns nullopt if the optimal tour uses a forbidden edge (no valid tour
+// exists).
+std::optional<ConcordeSolution> SolveTspWithConcorde(
+    const RelaxedAdjacencyList& relaxed,
+    std::optional<int> ub = std::nullopt,
+    std::ostream* tsp_log = nullptr
+);
 
 }  // namespace vats5

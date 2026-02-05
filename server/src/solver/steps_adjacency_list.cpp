@@ -216,8 +216,7 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
 }
 
 StepPathsAdjacencyList SplitPathsAtStop(
-    const StepPathsAdjacencyList& paths,
-    StopId split_stop
+    const StepPathsAdjacencyList& paths, StopId split_stop
 ) {
   StepPathsAdjacencyList result;
 
@@ -228,7 +227,8 @@ StepPathsAdjacencyList SplitPathsAtStop(
     // Find if split_stop appears as an intermediate stop in this path
     int split_index = -1;
     for (size_t i = 0; i < path.steps.size(); ++i) {
-      // Check if destination of step i is split_stop (and it's not the final destination)
+      // Check if destination of step i is split_stop (and it's not the final
+      // destination)
       if (path.steps[i].destination.stop == split_stop &&
           path.steps[i].destination.stop != destination) {
         split_index = static_cast<int>(i);
@@ -243,8 +243,7 @@ StepPathsAdjacencyList SplitPathsAtStop(
       // Split into two paths
       // First path: steps [0, split_index]
       std::vector<Step> first_steps(
-          path.steps.begin(),
-          path.steps.begin() + split_index + 1
+          path.steps.begin(), path.steps.begin() + split_index + 1
       );
       Path first_path;
       first_path.steps = std::move(first_steps);
@@ -252,8 +251,7 @@ StepPathsAdjacencyList SplitPathsAtStop(
 
       // Second path: steps [split_index + 1, end)
       std::vector<Step> second_steps(
-          path.steps.begin() + split_index + 1,
-          path.steps.end()
+          path.steps.begin() + split_index + 1, path.steps.end()
       );
       Path second_path;
       second_path.steps = std::move(second_steps);

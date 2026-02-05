@@ -97,13 +97,14 @@ TEST(ConcordeTest, Simple3NodeSymmetric) {
   EXPECT_EQ(solution->optimal_value, 30);
 }
 
-// Property test: verify that the sum of edge weights along the tour equals optimal_value.
+// Property test: verify that the sum of edge weights along the tour equals
+// optimal_value.
 RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue, ()) {
   // Generate a complete directed graph with 2-5 nodes.
   int num_stops = *rc::gen::inRange(2, 6);
 
-  // Generate edge weights for all pairs (complete graph ensures valid tour exists).
-  // Weight constraint: must be < 32767 (Concorde limit).
+  // Generate edge weights for all pairs (complete graph ensures valid tour
+  // exists). Weight constraint: must be < 32767 (Concorde limit).
   std::vector<WeightedEdge> edges;
   for (int from = 0; from < num_stops; ++from) {
     for (int to = 0; to < num_stops; ++to) {
@@ -162,7 +163,8 @@ TEST(ConcordeTest, NoValidTour) {
   EXPECT_FALSE(solution.has_value());
 }
 
-// Property test: a graph with edges only along a permutation has exactly one valid tour.
+// Property test: a graph with edges only along a permutation has exactly one
+// valid tour.
 RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
   // Generate a random permutation of 5-10 vertices.
   int num_stops = *rc::gen::inRange(5, 11);

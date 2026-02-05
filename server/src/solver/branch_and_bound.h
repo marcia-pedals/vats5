@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 
@@ -19,7 +20,8 @@ struct ConstraintForbidEdge {
   StopId b;
 };
 
-using ProblemConstraint = std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
+using ProblemConstraint =
+    std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
 
 struct BranchEdge {
   StopId a;
@@ -27,13 +29,9 @@ struct BranchEdge {
 
   bool operator==(const BranchEdge& other) const = default;
 
-  ConstraintRequireEdge Require() const {
-    return ConstraintRequireEdge{a, b};
-  }
+  ConstraintRequireEdge Require() const { return ConstraintRequireEdge{a, b}; }
 
-  ConstraintForbidEdge Forbid() const {
-    return ConstraintForbidEdge{a, b};
-  }
+  ConstraintForbidEdge Forbid() const { return ConstraintForbidEdge{a, b}; }
 };
 
 // The minimal amount of information needed to reconstruct the entire state of a
@@ -51,8 +49,8 @@ struct SearchNode {
   // The lb computed on the parent problem. Used for priority queue.
   int parent_lb;
 
-  // The edge deriving this node from its parent, as index of the search's `search_edges`.
-  // -1 for the root node.
+  // The edge deriving this node from its parent, as index of the search's
+  // `search_edges`. -1 for the root node.
   int edge_index;
 
   // State computed from the initial problem and the edges.
@@ -73,15 +71,14 @@ struct SearchNode {
 };
 
 ProblemState ApplyConstraints(
-  const ProblemState& state,
-  const std::vector<ProblemConstraint>& constraints
+    const ProblemState& state, const std::vector<ProblemConstraint>& constraints
 );
 
 int BranchAndBoundSolve(
-  const ProblemState& initial_state,
-  std::ostream* search_log,
-  std::optional<std::string> run_dir = std::nullopt,
-  int max_iter = -1
+    const ProblemState& initial_state,
+    std::ostream* search_log,
+    std::optional<std::string> run_dir = std::nullopt,
+    int max_iter = -1
 );
 
 }  // namespace vats5

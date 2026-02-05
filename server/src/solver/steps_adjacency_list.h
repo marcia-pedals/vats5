@@ -11,7 +11,8 @@ namespace vats5 {
 // A step in the adjacency list with only the necessary data.
 // origin_stop and destination_stop are stored in the parent structures.
 // Whether the step is in the flex_step slot or the fixed steps array is
-// determined by Step::is_flex, but the per-endpoint is_flex flags are stored here.
+// determined by Step::is_flex, but the per-endpoint is_flex flags are stored
+// here.
 struct AdjacencyListStep {
   TimeSinceServiceStart origin_time;
   TimeSinceServiceStart destination_time;
@@ -25,8 +26,20 @@ struct AdjacencyListStep {
   // Convert to a full Step given the context.
   Step ToStep(StopId origin_stop, StopId destination_stop, bool is_flex) const {
     return Step{
-        StepEndpoint{origin_stop, origin_is_flex, origin_partition, origin_time, origin_trip},
-        StepEndpoint{destination_stop, destination_is_flex, destination_partition, destination_time, destination_trip},
+        StepEndpoint{
+            origin_stop,
+            origin_is_flex,
+            origin_partition,
+            origin_time,
+            origin_trip
+        },
+        StepEndpoint{
+            destination_stop,
+            destination_is_flex,
+            destination_partition,
+            destination_time,
+            destination_trip
+        },
         is_flex
     };
   }
@@ -62,10 +75,14 @@ struct AdjacencyListStep {
 };
 inline void to_json(nlohmann::json& j, const AdjacencyListStep& s) {
   j = nlohmann::json::array({
-      s.origin_time.seconds, s.destination_time.seconds,
-      s.origin_trip.v, s.destination_trip.v,
-      s.origin_partition.v, s.destination_partition.v,
-      s.origin_is_flex, s.destination_is_flex,
+      s.origin_time.seconds,
+      s.destination_time.seconds,
+      s.origin_trip.v,
+      s.destination_trip.v,
+      s.origin_partition.v,
+      s.destination_partition.v,
+      s.origin_is_flex,
+      s.destination_is_flex,
   });
 }
 inline void from_json(const nlohmann::json& j, AdjacencyListStep& s) {
@@ -216,7 +233,8 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   adj.departure_times_div10.reserve(adj.steps.size());
   for (const auto& step : adj.steps) {
     adj.departure_times_div10.push_back(
-        static_cast<int16_t>(step.origin_time.seconds / 10));
+        static_cast<int16_t>(step.origin_time.seconds / 10)
+    );
   }
 }
 
@@ -229,7 +247,8 @@ struct StepPathsAdjacencyList {
   std::unordered_map<StopId, std::vector<std::vector<Path>>> adjacent;
 
   // Extract all merged steps from all paths.
-  // TODO: It is unfortunate that we have to materialize the steps into a new vector.
+  // TODO: It is unfortunate that we have to materialize the steps into a new
+  // vector.
   std::vector<Step> AllMergedSteps() const {
     std::vector<Step> all_steps;
     for (const auto& [origin_stop, path_groups] : adjacent) {
@@ -260,16 +279,22 @@ struct StepPathsAdjacencyList {
       return {};
     }
     const std::vector<std::vector<Path>>& path_groups = path_groups_it->second;
-    auto path_group_it = std::find_if(path_groups.begin(), path_groups.end(), [&](const auto& path_group) -> bool {
-      return path_group.size() > 0 && path_group[0].merged_step.destination.stop == b;
-    });
+    auto path_group_it = std::find_if(
+        path_groups.begin(),
+        path_groups.end(),
+        [&](const auto& path_group) -> bool {
+          return path_group.size() > 0 &&
+                 path_group[0].merged_step.destination.stop == b;
+        }
+    );
     if (path_group_it == path_groups.end()) {
       return {};
     }
     return std::span(*path_group_it);
   }
 
-  // TODO: It is unfortunate that we have to materialize the steps into a new vector.
+  // TODO: It is unfortunate that we have to materialize the steps into a new
+  // vector.
   std::vector<Step> MergedStepsBetween(StopId a, StopId b) const {
     auto ps = PathsBetween(a, b);
     std::vector<Step> result;
@@ -301,13 +326,13 @@ inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList& adj) {
 }
 
 struct StopIdMapping {
-    std::vector<StopId> new_to_original;
-    std::vector<StopId> original_to_new;
+  std::vector<StopId> new_to_original;
+  std::vector<StopId> original_to_new;
 };
 
 struct CompactStopIdsResult {
-    StepsAdjacencyList list;
-    StopIdMapping mapping;
+  StepsAdjacencyList list;
+  StopIdMapping mapping;
 };
 
 CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original);
@@ -318,8 +343,7 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original);
 //   one from origin to split_stop, and one from split_stop to destination.
 // Note: If a path's origin or destination IS split_stop, it is not split.
 StepPathsAdjacencyList SplitPathsAtStop(
-    const StepPathsAdjacencyList& paths,
-    StopId split_stop
+    const StepPathsAdjacencyList& paths, StopId split_stop
 );
 
 }  // namespace vats5

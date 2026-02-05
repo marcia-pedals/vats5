@@ -40,17 +40,23 @@ nlohmann::json MakeVisualization(
       for (const auto& path : path_group) {
         VisualizationPath viz_path;
         for (const auto& step : path.steps) {
-          viz_path.steps.push_back(VisualizationStep{
-              .origin_stop = step.origin.stop,
-              .destination_stop = step.destination.stop,
-              .origin_time = step.origin.time,
-              .destination_time = step.destination.time,
-              .trip_description =
-                  steps_from_gtfs.mapping.GetRouteDescFromTrip(step.origin.trip),
-              .system_step =
-                  IsBartTrip(steps_from_gtfs.mapping, step.origin.trip) &&
-                  IsBartTrip(steps_from_gtfs.mapping, step.destination.trip),
-          });
+          viz_path.steps.push_back(
+              VisualizationStep{
+                  .origin_stop = step.origin.stop,
+                  .destination_stop = step.destination.stop,
+                  .origin_time = step.origin.time,
+                  .destination_time = step.destination.time,
+                  .trip_description =
+                      steps_from_gtfs.mapping.GetRouteDescFromTrip(
+                          step.origin.trip
+                      ),
+                  .system_step =
+                      IsBartTrip(steps_from_gtfs.mapping, step.origin.trip) &&
+                      IsBartTrip(
+                          steps_from_gtfs.mapping, step.destination.trip
+                      ),
+              }
+          );
         }
         viz_paths.push_back(viz_path);
       }

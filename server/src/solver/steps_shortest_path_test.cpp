@@ -11,9 +11,9 @@
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
-#include "solver/test_util/cached_test_data.h"
 #include "solver/data.h"
 #include "solver/step_merge.h"
+#include "solver/test_util/cached_test_data.h"
 
 namespace vats5 {
 
@@ -249,10 +249,18 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
 
   std::vector<Step> steps = {
       // Regular scheduled trip from stop 1 to stop 2
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{200}, TripId{1}),  // Departs at 100, Arrives at 200
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),  // Departs at 100, Arrives at 200
       // Flex trip (walking) from stop 1 to stop 2 - should be first in group to
       // trigger bug
-      Step::PrimitiveFlex(StopId{1}, StopId{2}, 300, TripId{2})  // Duration of 300 seconds (5 minutes)
+      Step::PrimitiveFlex(
+          StopId{1}, StopId{2}, 300, TripId{2}
+      )  // Duration of 300 seconds (5 minutes)
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
@@ -1179,15 +1187,39 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   std::vector<Step> steps = {
       // Frequent trips from A (stop 1) to B (stop 2)
       // Trip 1: A->B departing at 100, arriving at 110
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{100}, TimeSinceServiceStart{110}, TripId{1}),
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{110},
+          TripId{1}
+      ),
       // Trip 2: A->B departing at 120, arriving at 130
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{120}, TimeSinceServiceStart{130}, TripId{2}),
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{120},
+          TimeSinceServiceStart{130},
+          TripId{2}
+      ),
       // Trip 3: A->B departing at 180, arriving at 190
-      Step::PrimitiveScheduled(StopId{1}, StopId{2}, TimeSinceServiceStart{180}, TimeSinceServiceStart{190}, TripId{3}),
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{180},
+          TimeSinceServiceStart{190},
+          TripId{3}
+      ),
 
       // Infrequent trips from B (stop 2) to C (stop 3)
       // Only one trip: B->C departing at 200, arriving at 210
-      Step::PrimitiveScheduled(StopId{2}, StopId{3}, TimeSinceServiceStart{200}, TimeSinceServiceStart{210}, TripId{4})
+      Step::PrimitiveScheduled(
+          StopId{2},
+          StopId{3},
+          TimeSinceServiceStart{200},
+          TimeSinceServiceStart{210},
+          TripId{4}
+      )
   };
 
   StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);

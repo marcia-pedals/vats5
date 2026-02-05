@@ -56,12 +56,14 @@ int main() {
     }
 
     // Sort by the numeric part
-    std::sort(files.begin(), files.end(), [&pattern](const auto& a, const auto& b) {
-      std::smatch ma, mb;
-      std::regex_match(a, ma, pattern);
-      std::regex_match(b, mb, pattern);
-      return std::stoi(ma[1].str()) < std::stoi(mb[1].str());
-    });
+    std::sort(
+        files.begin(), files.end(), [&pattern](const auto& a, const auto& b) {
+          std::smatch ma, mb;
+          std::regex_match(a, ma, pattern);
+          std::regex_match(b, mb, pattern);
+          return std::stoi(ma[1].str()) < std::stoi(mb[1].str());
+        }
+    );
 
     nlohmann::json j = files;
     crow::response res(200, j.dump());

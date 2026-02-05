@@ -94,8 +94,7 @@ struct TimeSinceServiceStart {
     int hours = abs_seconds / 3600;
     int minutes = (abs_seconds % 3600) / 60;
     int secs = abs_seconds % 60;
-    return prefix +
-           (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
+    return prefix + (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
            (minutes < 10 ? "0" : "") + std::to_string(minutes) + ":" +
            (secs < 10 ? "0" : "") + std::to_string(secs);
   }
@@ -128,7 +127,9 @@ struct StepEndpoint {
 
   bool operator==(const StepEndpoint&) const = default;
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StepEndpoint, stop, is_flex, partition, time, trip)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
+    StepEndpoint, stop, is_flex, partition, time, trip
+)
 
 struct Step {
   StepEndpoint origin;
@@ -145,58 +146,63 @@ struct Step {
     return destination.time.seconds - origin.time.seconds;
   }
 
-  PlainEdge Plain() const {
-    return PlainEdge{origin.stop, destination.stop};
-  }
+  PlainEdge Plain() const { return PlainEdge{origin.stop, destination.stop}; }
 
   PlainWeightedEdge PlainWeighted() const {
     return PlainWeightedEdge{origin.stop, destination.stop, DurationSeconds()};
   }
 
   static Step PrimitiveScheduled(
-      StopId origin_stop, StopId destination_stop,
-      TimeSinceServiceStart origin_time, TimeSinceServiceStart destination_time,
-      TripId trip, StepPartitionId partition = StepPartitionId::NONE
+      StopId origin_stop,
+      StopId destination_stop,
+      TimeSinceServiceStart origin_time,
+      TimeSinceServiceStart destination_time,
+      TripId trip,
+      StepPartitionId partition = StepPartitionId::NONE
   ) {
     return Step{
         StepEndpoint{origin_stop, false, partition, origin_time, trip},
-        StepEndpoint{destination_stop, false, partition, destination_time, trip},
+        StepEndpoint{
+            destination_stop, false, partition, destination_time, trip
+        },
         false
     };
   }
 
   static Step PrimitiveFlex(
-      StopId origin_stop, StopId destination_stop,
-      int duration_seconds, TripId trip,
+      StopId origin_stop,
+      StopId destination_stop,
+      int duration_seconds,
+      TripId trip,
       StepPartitionId partition = StepPartitionId::NONE
   ) {
     return Step{
-        StepEndpoint{origin_stop, true, partition, TimeSinceServiceStart{0}, trip},
-        StepEndpoint{destination_stop, true, partition, TimeSinceServiceStart{duration_seconds}, trip},
+        StepEndpoint{
+            origin_stop, true, partition, TimeSinceServiceStart{0}, trip
+        },
+        StepEndpoint{
+            destination_stop,
+            true,
+            partition,
+            TimeSinceServiceStart{duration_seconds},
+            trip
+        },
         true
     };
   }
 
   bool operator==(const Step& other) const {
-    return origin == other.origin &&
-           destination == other.destination &&
+    return origin == other.origin && destination == other.destination &&
            is_flex == other.is_flex;
   }
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    Step,
-    origin,
-    destination,
-    is_flex
-)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Step, origin, destination, is_flex)
 
 struct Path {
   Step merged_step;
   std::vector<Step> steps;
 
-  int DurationSeconds() const {
-    return merged_step.DurationSeconds();
-  }
+  int DurationSeconds() const { return merged_step.DurationSeconds(); }
 
   int IntermediateStopCount() const {
     if (steps.size() <= 1) {

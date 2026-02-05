@@ -171,7 +171,8 @@ static std::vector<GtfsStopTime> GtfsLoadStopTimes(
   return stop_times;
 }
 
-static std::vector<GtfsRoute> GtfsLoadRoutes(const std::string& routes_file_path
+static std::vector<GtfsRoute> GtfsLoadRoutes(
+    const std::string& routes_file_path
 ) {
   std::vector<GtfsRoute> routes;
 
@@ -567,8 +568,8 @@ GtfsDay GtfsNormalizeStops(const GtfsDay& gtfs_day) {
   }
 
   // Step 2: Create a function to find the ultimate parent of a stop
-  auto find_ultimate_parent = [&stop_lookup](const std::string& stop_id
-                              ) -> std::string {
+  auto find_ultimate_parent =
+      [&stop_lookup](const std::string& stop_id) -> std::string {
     std::string current_id = stop_id;
     std::unordered_set<std::string> visited;  // Prevent infinite loops
 

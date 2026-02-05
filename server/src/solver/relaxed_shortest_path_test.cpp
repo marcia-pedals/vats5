@@ -26,7 +26,8 @@ TEST(RelaxedShortestPathTest, FindShortestRelaxedPathsBasic) {
 
   StepsAdjacencyList steps_list = MakeAdjacencyList(steps);
   std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(steps_list);
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
   std::vector<int> distances = FindShortestRelaxedPaths(relaxed, StopId{1});
 

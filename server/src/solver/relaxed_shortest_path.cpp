@@ -49,15 +49,15 @@ RelaxedDistances ComputeRelaxedDistances(
     const std::unordered_set<StopId>& destinations
 ) {
   std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(adjacency_list);
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
   RelaxedAdjacencyList reversed = ReverseRelaxedAdjacencyList(relaxed);
 
   RelaxedDistances result;
 
   // Compute distances from each destination separately on the reversed graph
   for (const StopId dest : destinations) {
-    result.distance_to[dest] =
-        FindShortestRelaxedPaths(reversed, dest);
+    result.distance_to[dest] = FindShortestRelaxedPaths(reversed, dest);
   }
 
   return result;

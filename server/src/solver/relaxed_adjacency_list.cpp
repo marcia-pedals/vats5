@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <limits>
+
 #include "solver/data.h"
 
 namespace vats5 {
 
-std::vector<WeightedEdge> MakeRelaxedEdges(const StepsAdjacencyList& steps_list
+std::vector<WeightedEdge> MakeRelaxedEdges(
+    const StepsAdjacencyList& steps_list
 ) {
   const int num_stops = steps_list.NumStops();
   std::vector<WeightedEdge> edges;
@@ -31,9 +33,9 @@ std::vector<WeightedEdge> MakeRelaxedEdges(const StepsAdjacencyList& steps_list
       }
 
       if (min_duration < std::numeric_limits<int>::max()) {
-        edges.push_back(WeightedEdge{
-            StopId{origin_v}, group.destination_stop, min_duration
-        });
+        edges.push_back(
+            WeightedEdge{StopId{origin_v}, group.destination_stop, min_duration}
+        );
       }
     }
   }
@@ -121,8 +123,7 @@ RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
   std::vector<std::vector<RelaxedEdge>> per_origin_edges(num_stops);
 
   for (int origin_v = 0; origin_v < num_stops; ++origin_v) {
-    for (const RelaxedEdge& edge :
-         adjacency_list.GetEdges(StopId{origin_v})) {
+    for (const RelaxedEdge& edge : adjacency_list.GetEdges(StopId{origin_v})) {
       // Reverse the edge: destination becomes origin
       per_origin_edges[edge.destination_stop.v].push_back(
           RelaxedEdge{StopId{origin_v}, edge.weight_seconds}

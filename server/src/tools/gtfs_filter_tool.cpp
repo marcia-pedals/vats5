@@ -1,11 +1,10 @@
+#include <CLI/CLI.hpp>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
-
-#include <CLI/CLI.hpp>
 
 #include "gtfs/gtfs.h"
 #include "util/date.h"
@@ -53,7 +52,6 @@ void RemoveUnreferencedTripsRoutesAndDirections(GtfsDay& gtfs_day) {
   });
 }
 
-
 std::vector<std::string> split(const std::string& str, char delimiter) {
   std::vector<std::string> tokens;
   std::stringstream ss(str);
@@ -98,18 +96,27 @@ int main(int argc, char* argv[]) {
   std::string output_dir;
   std::string trip_filter;
 
-  app.add_option("input_dir", input_dir,
-                 "Directory containing GTFS files (stops.txt, trips.txt, etc.)")
+  app.add_option(
+         "input_dir",
+         input_dir,
+         "Directory containing GTFS files (stops.txt, trips.txt, etc.)"
+  )
       ->required()
       ->check(CLI::ExistingDirectory);
   app.add_option("date", date, "Date in YYYYMMDD format (e.g., 20250708)")
       ->required();
-  app.add_option("output_dir", output_dir,
-                 "Directory where filtered GTFS files will be saved")
+  app.add_option(
+         "output_dir",
+         output_dir,
+         "Directory where filtered GTFS files will be saved"
+  )
       ->required();
-  app.add_option("--prefix", trip_filter,
-                 "Filter by trip ID prefix (comma-separated list, e.g., "
-                 "\"CT:,SR:\")");
+  app.add_option(
+      "--prefix",
+      trip_filter,
+      "Filter by trip ID prefix (comma-separated list, e.g., "
+      "\"CT:,SR:\")"
+  );
 
   CLI11_PARSE(app, argc, argv);
 
