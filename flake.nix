@@ -51,6 +51,7 @@
             crow
             gcc
             gh
+            git
             llvm
             ninja
             nlohmann_json
