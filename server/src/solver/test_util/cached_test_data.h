@@ -3,8 +3,10 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "gtfs/gtfs.h"
+#include "gtfs/gtfs_filter.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 
@@ -16,29 +18,54 @@ struct CachedTestData {
   StepsAdjacencyList adjacency_list;
 };
 
-inline CachedTestData GetCachedTestData(const std::string& gtfs_path) {
+struct FilterOptions {
+  std::string raw_gtfs_path;
+  std::string date;
+  std::vector<std::string> prefixes;
+  bool combine_service_days = true;
+};
+
+inline CachedTestData MakeCachedTestData(GtfsDay gtfs_day) {
+  gtfs_day = GtfsNormalizeStops(gtfs_day);
+  StepsFromGtfs steps_from_gtfs =
+      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  return CachedTestData{
+      std::move(gtfs_day), std::move(steps_from_gtfs), std::move(adjacency_list)
+  };
+}
+
+inline CachedTestData GetCachedFilteredTestData(const FilterOptions& options) {
   static std::unordered_map<std::string, CachedTestData> cache;
 
-  auto it = cache.find(gtfs_path);
+  std::string cache_key = options.raw_gtfs_path + "|" + options.date + "|" +
+                          (options.combine_service_days ? "csd" : "no-csd");
+  for (const auto& prefix : options.prefixes) {
+    cache_key += "|" + prefix;
+  }
+
+  auto it = cache.find(cache_key);
   if (it != cache.end()) {
     return it->second;
   }
 
-  std::cout << "Loading for test: " << gtfs_path << "\n";
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
-  std::cout << "Normalizing stops...\n";
-  gtfs_day = GtfsNormalizeStops(gtfs_day);
-  std::cout << "Getting steps...\n";
-  StepsFromGtfs steps_from_gtfs =
-      GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
-  std::cout << "Making adjacency list...\n";
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  std::cout << "Loading raw GTFS for test: " << options.raw_gtfs_path << "\n";
+  Gtfs gtfs = GtfsLoad(options.raw_gtfs_path);
+  if (!options.prefixes.empty()) {
+    std::cout << "Filtering by prefixes...\n";
+    gtfs = GtfsFilterByPrefixes(gtfs, options.prefixes);
+  }
+  std::cout << "Filtering by date: " << options.date
+            << (options.combine_service_days ? " (with service days)" : "")
+            << "\n";
+  GtfsDay gtfs_day = options.combine_service_days
+                         ? GtfsFilterDateWithServiceDays(gtfs, options.date)
+                         : GtfsFilterByDate(gtfs, options.date);
+  std::cout << "Computing test data...\n";
+  CachedTestData data = MakeCachedTestData(std::move(gtfs_day));
   std::cout << "Done computing test data.\n";
 
-  CachedTestData data{
-      std::move(gtfs_day), std::move(steps_from_gtfs), std::move(adjacency_list)
-  };
-  cache[gtfs_path] = data;
+  cache[cache_key] = data;
   return data;
 }
 
