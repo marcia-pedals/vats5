@@ -25,14 +25,14 @@ StepPathsAdjacencyList MakeCompleted(
 TEST(TourPathsTest, EmptySequenceReturnsEmpty) {
   StepPathsAdjacencyList completed;
   std::vector<StopId> stop_sequence;
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   EXPECT_TRUE(result.empty());
 }
 
 TEST(TourPathsTest, SingleStopReturnsEmpty) {
   StepPathsAdjacencyList completed;
   std::vector<StopId> stop_sequence = {StopId{1}};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   EXPECT_TRUE(result.empty());
 }
 
@@ -44,7 +44,7 @@ TEST(TourPathsTest, SingleEdgeFlexPath) {
   auto completed = MakeCompleted(steps, {a, b});
 
   std::vector<StopId> stop_sequence = {a, b};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   ASSERT_EQ(result.size(), 1);
   EXPECT_EQ(result[0].merged_step.origin.stop, a);
   EXPECT_EQ(result[0].merged_step.destination.stop, b);
@@ -69,8 +69,8 @@ TEST(TourPathsTest, MultiHopSelectsMinDuration) {
   auto completed = MakeCompleted(steps, {a, b, c});
 
   std::vector<StopId> stop_sequence = {a, b, c};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
-  ASSERT_GE(result.size(), 1);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
+  ASSERT_EQ(result.size(), 1);
   EXPECT_EQ(result[0].DurationSeconds(), 250);
 }
 
@@ -80,7 +80,7 @@ TEST(TourPathsTest, NoFeasiblePathReturnsEmpty) {
   StepPathsAdjacencyList completed;
 
   std::vector<StopId> stop_sequence = {a, b};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   EXPECT_TRUE(result.empty());
 }
 
@@ -96,17 +96,17 @@ TEST(TourPathsTest, FiltersNegativeTime) {
   auto completed = MakeCompleted(steps, {a, b});
 
   std::vector<StopId> stop_sequence = {a, b};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   // The step has origin.time < 0, so after filtering there are no feasible
   // steps, and we should get empty result.
   EXPECT_TRUE(result.empty());
 }
 
-TEST(TourPathsTest, MultiplePathsOnlyMinDurationReturned) {
+TEST(TourPathsTest, MultiplePathsAllReturned) {
   StopId a{1}, b{2};
   // Two scheduled paths a->b with different durations.
-  // Path 1: depart 100, arrive 200 (duration 100) — min
-  // Path 2: depart 300, arrive 500 (duration 200) — not min
+  // Path 1: depart 100, arrive 200 (duration 100)
+  // Path 2: depart 300, arrive 500 (duration 200)
   std::vector<Step> steps = {
       Step::PrimitiveScheduled(
           a, b, TimeSinceServiceStart{100}, TimeSinceServiceStart{200},
@@ -120,12 +120,10 @@ TEST(TourPathsTest, MultiplePathsOnlyMinDurationReturned) {
   auto completed = MakeCompleted(steps, {a, b});
 
   std::vector<StopId> stop_sequence = {a, b};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
-  ASSERT_GE(result.size(), 1);
-  // All returned paths should have the minimum duration (100).
-  for (const auto& path : result) {
-    EXPECT_EQ(path.DurationSeconds(), 100);
-  }
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
+  ASSERT_EQ(result.size(), 2);
+  EXPECT_EQ(result[0].DurationSeconds(), 100);
+  EXPECT_EQ(result[1].DurationSeconds(), 200);
 }
 
 TEST(TourPathsTest, FlexStepUsedInPath) {
@@ -145,8 +143,8 @@ TEST(TourPathsTest, FlexStepUsedInPath) {
   auto completed = MakeCompleted(steps, {a, b, c});
 
   std::vector<StopId> stop_sequence = {a, b, c};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
-  ASSERT_GE(result.size(), 1);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
+  ASSERT_EQ(result.size(), 1);
   EXPECT_EQ(result[0].DurationSeconds(), 160);
 }
 
@@ -167,6 +165,6 @@ TEST(TourPathsTest, FlexStepFilteredWhenRequiresNegativeStart) {
   auto completed = MakeCompleted(steps, {a, b, c});
 
   std::vector<StopId> stop_sequence = {a, b, c};
-  auto result = ComputeMinDurationFeasiblePaths(stop_sequence, completed);
+  auto result = ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
   EXPECT_TRUE(result.empty());
 }

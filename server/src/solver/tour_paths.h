@@ -7,14 +7,9 @@
 
 namespace vats5 {
 
-// Compute the minimum-duration feasible paths along a stop sequence.
-//
-// `stop_sequence` is the ordered list of stops to visit (e.g. [START, A, B, C,
-// END]). Consecutive pairs form the edges. The first element
-// (stop_sequence[0]) is used as the start point.
-//
-// `completed` provides the merged steps between consecutive stops.
-std::vector<Path> ComputeMinDurationFeasiblePaths(
+// Returns a sorted and minimal (in the sense of CheckSortedAndMinimal) sequence
+// of paths that visit `stop_sequence` in order.
+std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     const std::vector<StopId>& stop_sequence,
     const StepPathsAdjacencyList& completed);
 
