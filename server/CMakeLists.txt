@@ -56,6 +56,11 @@ add_library(gtfs STATIC src/gtfs/gtfs.cpp)
 target_link_libraries(gtfs PUBLIC csv nlohmann_json::nlohmann_json)
 target_include_directories(gtfs PUBLIC src)
 
+# Create GTFS filter library target
+add_library(gtfs_filter STATIC src/gtfs/gtfs_filter.cpp)
+target_link_libraries(gtfs_filter PUBLIC gtfs date)
+target_include_directories(gtfs_filter PUBLIC src)
+
 # Create data library target
 add_library(data STATIC src/solver/data.cpp)
 target_link_libraries(data PUBLIC gtfs)
@@ -121,7 +126,7 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
 # Add GTFS filter tool
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
-target_link_libraries(gtfs_filter_tool PUBLIC gtfs date CLI11::CLI11)
+target_link_libraries(gtfs_filter_tool PUBLIC gtfs_filter CLI11::CLI11)
 
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
@@ -177,6 +182,11 @@ add_custom_target(test-all
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
 target_link_libraries(gtfs_test PUBLIC gunit gtfs)
 add_test(NAME gtfs_test COMMAND gtfs_test)
+
+# Add GTFS filter test executable
+add_executable(gtfs_filter_test src/gtfs/gtfs_filter_test.cpp)
+target_link_libraries(gtfs_filter_test PUBLIC gunit gtfs_filter)
+add_test(NAME gtfs_filter_test COMMAND gtfs_filter_test)
 
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)
