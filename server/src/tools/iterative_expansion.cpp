@@ -34,27 +34,10 @@ struct UnionFind {
   }
 };
 
-int main(int argc, char* argv[]) {
-  CLI::App app{"Iterative expansion tool"};
-
-  std::string input_path;
-  app.add_option("input_path", input_path, "Path to problem state JSON")
-      ->required();
-
-  CLI11_PARSE(app, argc, argv);
-
-  // Load problem state.
-  std::ifstream in(input_path);
-  if (!in.is_open()) {
-    std::cerr << "Error: could not open " << input_path << "\n";
-    return 1;
-  }
-
-  nlohmann::json j = nlohmann::json::parse(in);
-  ProblemState state = j.get<ProblemState>();
-
-  // Collect required stops, excluding START and END, into a sorted vector with
-  // index mapping.
+// Builds an MST over the required stops (excluding start/end) using min
+// duration as edge weight, and returns the leaves (degree-1 nodes).
+std::vector<StopId> MstLeaves(const ProblemState& state) {
+  // Collect required stops, excluding START and END.
   std::vector<StopId> stops(
       state.required_stops.begin(), state.required_stops.end()
   );
@@ -63,12 +46,6 @@ int main(int argc, char* argv[]) {
   });
   std::sort(stops.begin(), stops.end());
   int n = static_cast<int>(stops.size());
-
-  std::cout << "Required stops (" << n << "):\n";
-  for (const StopId& s : stops) {
-    std::cout << "  " << state.StopName(s) << " (" << s.v << ")\n";
-  }
-  std::cout << "\n";
 
   // Build weighted undirected edges: for each pair of required stops, the
   // weight is the min duration step between them in either direction.
@@ -104,32 +81,55 @@ int main(int argc, char* argv[]) {
   });
 
   UnionFind uf(n);
-  std::vector<Edge> mst_edges;
   std::vector<int> degree(n, 0);
 
   for (const Edge& e : edges) {
     if (uf.Unite(e.u, e.v)) {
-      mst_edges.push_back(e);
       degree[e.u]++;
       degree[e.v]++;
     }
   }
 
-  std::cout << "MST edges (" << mst_edges.size() << "):\n";
-  for (const Edge& e : mst_edges) {
-    std::cout << "  " << state.StopName(stops[e.u]) << " -- "
-              << state.StopName(stops[e.v]) << " (" << e.weight << "s)\n";
-  }
-  std::cout << "\n";
-
-  // Find and print leaves (degree 1 in the MST).
-  std::cout << "MST leaves:\n";
+  // Collect leaves (degree 1 in the MST).
+  std::vector<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
-      std::cout << "  " << state.StopName(stops[i]) << " (" << stops[i].v
-                << ")\n";
+      leaves.push_back(stops[i]);
     }
   }
+  return leaves;
+}
+
+int main(int argc, char* argv[]) {
+  CLI::App app{"Iterative expansion tool"};
+
+  std::string input_path;
+  app.add_option("input_path", input_path, "Path to problem state JSON")
+      ->required();
+
+  CLI11_PARSE(app, argc, argv);
+
+  // Load problem state.
+  std::ifstream in(input_path);
+  if (!in.is_open()) {
+    std::cerr << "Error: could not open " << input_path << "\n";
+    return 1;
+  }
+
+  nlohmann::json j = nlohmann::json::parse(in);
+  ProblemState state = j.get<ProblemState>();
+
+  std::vector<StopId> leaves = MstLeaves(state);
+  std::sort(leaves.begin(), leaves.end());
+
+  std::cout << "Permutations of MST leaves (" << leaves.size() << " leaves):\n";
+  do {
+    for (size_t i = 0; i < leaves.size(); i++) {
+      if (i > 0) std::cout << " -> ";
+      std::cout << state.StopName(leaves[i]);
+    }
+    std::cout << "\n";
+  } while (std::next_permutation(leaves.begin(), leaves.end()));
 
   return 0;
 }
