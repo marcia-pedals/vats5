@@ -430,23 +430,27 @@ GTEST("GtfsFilterByPrefixes on real data filters CT trips") {
 
   Gtfs filtered = GtfsFilterByPrefixes(gtfs, {"CT:"});
 
-  // Should have some Caltrain trips
-  EXPECT_GT(filtered.trips.size(), 0);
+  // Exact counts for the CT: prefix in raw_RG_202506
+  EXPECT_EQ(filtered.trips.size(), 178);
+  EXPECT_EQ(filtered.routes.size(), 5);
 
-  // All trips should start with CT:
+  // CT:507 (Express northbound) should be present
+  bool found_507 = false;
   for (const auto& trip : filtered.trips) {
-    EXPECT_EQ(trip.trip_id.v.substr(0, 3), "CT:")
-        << "Trip " << trip.trip_id.v << " does not start with CT:";
+    if (trip.trip_id.v == "CT:507") {
+      found_507 = true;
+      EXPECT_EQ(trip.route_direction_id.route_id.v, "CT:Express");
+      EXPECT_EQ(trip.route_direction_id.direction_id, 0);
+      EXPECT_EQ(trip.service_id.v, "CT:72982");
+    }
   }
+  EXPECT_TRUE(found_507) << "CT:507 should be in the filtered data";
 
-  // All routes should start with CT:
-  for (const auto& route : filtered.routes) {
-    EXPECT_EQ(route.route_id.v.substr(0, 3), "CT:")
-        << "Route " << route.route_id.v << " does not start with CT:";
+  // Non-CT trip SR:198 should be absent
+  for (const auto& trip : filtered.trips) {
+    EXPECT_NE(trip.trip_id.v, "SR:198")
+        << "Non-CT trip SR:198 should not be in CT-filtered data";
   }
-
-  // Should be fewer trips than the full dataset
-  EXPECT_LT(filtered.trips.size(), gtfs.trips.size());
 }
 
 GTEST("GtfsFilterByPrefixes on real data filters multiple prefixes") {
@@ -456,98 +460,153 @@ GTEST("GtfsFilterByPrefixes on real data filters multiple prefixes") {
   Gtfs sr_only = GtfsFilterByPrefixes(gtfs, {"SR:"});
   Gtfs both = GtfsFilterByPrefixes(gtfs, {"CT:", "SR:"});
 
-  // Combined should have trips from both
+  EXPECT_EQ(ct_only.trips.size(), 178);
   EXPECT_EQ(both.trips.size(), ct_only.trips.size() + sr_only.trips.size());
 }
 
 GTEST(
-    "GtfsFilterDateWithServiceDays on real data produces consistent results"
+    "GtfsFilterDateWithServiceDays on real data includes target day CT:507"
 ) {
   const Gtfs& gtfs = *getGlobalGtfs();
 
-  // Tuesday 2025-07-08
+  // Tuesday 2025-07-08. CT:507 is an Express northbound trip on weekday
+  // service CT:72982.
   GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
 
-  // Should have substantial data
-  EXPECT_GT(result.trips.size(), 0);
-  EXPECT_GT(result.stop_times.size(), 0);
-  EXPECT_GT(result.stops.size(), 0);
-  EXPECT_GT(result.routes.size(), 0);
+  // Find CT:507 and check its stop times (San Jose Diridon -> SF 4th & King)
+  std::vector<GtfsStopTime> trip_507_times;
+  for (const auto& st : result.stop_times) {
+    if (st.trip_id.v == "CT:507") {
+      trip_507_times.push_back(st);
+    }
+  }
+  std::sort(trip_507_times.begin(), trip_507_times.end(),
+      [](const GtfsStopTime& a, const GtfsStopTime& b) {
+        return a.stop_sequence < b.stop_sequence;
+      });
 
-  // All stop_times should reference valid trips
-  std::unordered_set<std::string> trip_ids;
+  ASSERT_EQ(trip_507_times.size(), 11);
+
+  // First stop: San Jose Diridon Northbound (70261) at 07:22 = 26520s
+  EXPECT_EQ(trip_507_times[0].stop_id.v, "70261");
+  EXPECT_EQ(trip_507_times[0].stop_sequence, 1);
+  EXPECT_EQ(trip_507_times[0].arrival_time.seconds, 26520);
+
+  // Middle stop: Redwood City Northbound (70141) at 07:49 = 28140s
+  EXPECT_EQ(trip_507_times[4].stop_id.v, "70141");
+  EXPECT_EQ(trip_507_times[4].stop_sequence, 5);
+  EXPECT_EQ(trip_507_times[4].arrival_time.seconds, 28140);
+
+  // Last stop: SF 4th & King Northbound (70011) at 08:22 = 30120s
+  EXPECT_EQ(trip_507_times[10].stop_id.v, "70011");
+  EXPECT_EQ(trip_507_times[10].stop_sequence, 11);
+  EXPECT_EQ(trip_507_times[10].arrival_time.seconds, 30120);
+}
+
+GTEST(
+    "GtfsFilterDateWithServiceDays on real data includes prev-sd CT:176"
+) {
+  const Gtfs& gtfs = *getGlobalGtfs();
+
+  // Tuesday 2025-07-08. CT:176 is a Local Weekday southbound trip that runs
+  // past midnight on Monday (service CT:72982). Its first stop departs at
+  // 24:05:00 (86700s). After -24h shift it becomes 00:05:00 (300s).
+  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
+
+  std::vector<GtfsStopTime> trip_176_times;
+  for (const auto& st : result.stop_times) {
+    if (st.trip_id.v == "CT:176:prev-sd") {
+      trip_176_times.push_back(st);
+    }
+  }
+  std::sort(trip_176_times.begin(), trip_176_times.end(),
+      [](const GtfsStopTime& a, const GtfsStopTime& b) {
+        return a.stop_sequence < b.stop_sequence;
+      });
+
+  ASSERT_EQ(trip_176_times.size(), 22);
+
+  // First stop: SF 4th & King Southbound (70012) at 24:05 - 24:00 = 00:05 =
+  // 300s
+  EXPECT_EQ(trip_176_times[0].stop_id.v, "70012");
+  EXPECT_EQ(trip_176_times[0].stop_sequence, 1);
+  EXPECT_EQ(trip_176_times[0].arrival_time.seconds, 300);
+
+  // Last stop: San Jose Diridon Southbound (70262) at 25:23 - 24:00 = 01:23 =
+  // 4980s
+  EXPECT_EQ(trip_176_times[21].stop_id.v, "70262");
+  EXPECT_EQ(trip_176_times[21].stop_sequence, 22);
+  EXPECT_EQ(trip_176_times[21].arrival_time.seconds, 4980);
+
+  // Verify the trip itself has :prev-sd suffix and correct route
+  bool found = false;
   for (const auto& trip : result.trips) {
-    trip_ids.insert(trip.trip_id.v);
+    if (trip.trip_id.v == "CT:176:prev-sd") {
+      found = true;
+      EXPECT_EQ(trip.route_direction_id.route_id.v, "CT:Local Weekday");
+      EXPECT_EQ(trip.route_direction_id.direction_id, 1);
+    }
   }
-  for (const auto& st : result.stop_times) {
-    EXPECT_TRUE(trip_ids.count(st.trip_id.v))
-        << "Stop time references unknown trip: " << st.trip_id.v;
-  }
+  EXPECT_TRUE(found) << "CT:176:prev-sd should be present";
+}
 
-  // Should have some prev-sd and next-sd trips
-  int prev_sd_count = 0;
-  int next_sd_count = 0;
-  int target_day_count = 0;
+GTEST(
+    "GtfsFilterDateWithServiceDays on real data includes next-sd CT:101"
+) {
+  const Gtfs& gtfs = *getGlobalGtfs();
+
+  // Tuesday 2025-07-08. CT:101 is a Local Weekday northbound trip on
+  // Wednesday's service (CT:72982). Its first stop departs at 04:43:00
+  // (16980s). After +24h shift it becomes 28:43:00 (103380s).
+  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
+
+  std::vector<GtfsStopTime> trip_101_times;
+  for (const auto& st : result.stop_times) {
+    if (st.trip_id.v == "CT:101:next-sd") {
+      trip_101_times.push_back(st);
+    }
+  }
+  std::sort(trip_101_times.begin(), trip_101_times.end(),
+      [](const GtfsStopTime& a, const GtfsStopTime& b) {
+        return a.stop_sequence < b.stop_sequence;
+      });
+
+  ASSERT_EQ(trip_101_times.size(), 22);
+
+  // First stop: San Jose Diridon Northbound (70261) at 04:43 + 24:00 = 28:43
+  // = 103380s
+  EXPECT_EQ(trip_101_times[0].stop_id.v, "70261");
+  EXPECT_EQ(trip_101_times[0].stop_sequence, 1);
+  EXPECT_EQ(trip_101_times[0].arrival_time.seconds, 103380);
+
+  // Last stop: SF 4th & King Northbound (70011) at 06:01 + 24:00 = 30:01 =
+  // 108060s
+  EXPECT_EQ(trip_101_times[21].stop_id.v, "70011");
+  EXPECT_EQ(trip_101_times[21].stop_sequence, 22);
+  EXPECT_EQ(trip_101_times[21].arrival_time.seconds, 108060);
+
+  // Verify the trip itself has :next-sd suffix and correct route
+  bool found = false;
   for (const auto& trip : result.trips) {
-    if (trip.trip_id.v.find(":prev-sd") != std::string::npos) {
-      prev_sd_count++;
-    } else if (trip.trip_id.v.find(":next-sd") != std::string::npos) {
-      next_sd_count++;
-    } else {
-      target_day_count++;
+    if (trip.trip_id.v == "CT:101:next-sd") {
+      found = true;
+      EXPECT_EQ(trip.route_direction_id.route_id.v, "CT:Local Weekday");
+      EXPECT_EQ(trip.route_direction_id.direction_id, 0);
     }
   }
-
-  EXPECT_GT(target_day_count, 0) << "Should have target day trips";
-  EXPECT_GT(prev_sd_count, 0) << "Should have previous service day trips";
-  EXPECT_GT(next_sd_count, 0) << "Should have next service day trips";
+  EXPECT_TRUE(found) << "CT:101:next-sd should be present";
 }
 
-GTEST("GtfsFilterDateWithServiceDays prev-sd times are below 24h") {
+GTEST("GtfsFilterDateWithServiceDays excludes weekend trip on weekday") {
   const Gtfs& gtfs = *getGlobalGtfs();
 
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
+  // Tuesday 2025-07-08. CT:Local Weekend trips should NOT appear.
+  Gtfs ct_only = GtfsFilterByPrefixes(gtfs, {"CT:"});
+  GtfsDay result = GtfsFilterDateWithServiceDays(ct_only, "20250708");
 
-  constexpr int kSecondsPerDay = 24 * 3600;
-  for (const auto& st : result.stop_times) {
-    if (st.trip_id.v.find(":prev-sd") != std::string::npos) {
-      // Previous day times are >= 24:00 shifted down by 24h, so they should
-      // be in the range [0, 24h) after shift.
-      EXPECT_LT(st.arrival_time.seconds, kSecondsPerDay)
-          << "prev-sd stop time should be < 24h after shift, trip: "
-          << st.trip_id.v;
-    }
+  for (const auto& trip : result.trips) {
+    EXPECT_NE(trip.route_direction_id.route_id.v, "CT:Local Weekend")
+        << "Weekend route should not appear on Tuesday, trip: "
+        << trip.trip_id.v;
   }
-}
-
-GTEST("GtfsFilterDateWithServiceDays next-sd times are above 24h") {
-  const Gtfs& gtfs = *getGlobalGtfs();
-
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
-
-  constexpr int kSecondsPerDay = 24 * 3600;
-  for (const auto& st : result.stop_times) {
-    if (st.trip_id.v.find(":next-sd") != std::string::npos) {
-      // Next day times are < 24:00 shifted up by 24h, so they should
-      // be in the range [24h, 48h).
-      EXPECT_GE(st.arrival_time.seconds, kSecondsPerDay)
-          << "next-sd stop time should be >= 24h after shift, trip: "
-          << st.trip_id.v;
-      EXPECT_LT(st.arrival_time.seconds, 2 * kSecondsPerDay)
-          << "next-sd stop time should be < 48h after shift, trip: "
-          << st.trip_id.v;
-    }
-  }
-}
-
-GTEST("GtfsFilterDateWithServiceDays result has more trips than date alone") {
-  const Gtfs& gtfs = *getGlobalGtfs();
-
-  GtfsDay date_only = GtfsFilterByDate(gtfs, "20250708");
-  GtfsDay combined = GtfsFilterDateWithServiceDays(gtfs, "20250708");
-
-  // The combined result should have strictly more trips than just the target
-  // date, because it includes prev-sd and next-sd trips.
-  EXPECT_GT(combined.trips.size(), date_only.trips.size());
-  EXPECT_GT(combined.stop_times.size(), date_only.stop_times.size());
 }
