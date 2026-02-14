@@ -159,7 +159,7 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph CLI11::CLI11)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths CLI11::CLI11)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)

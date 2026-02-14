@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "solver/tarel_graph.h"
+#include "solver/tour_paths.h"
 
 using namespace vats5;
 
@@ -122,14 +123,50 @@ int main(int argc, char* argv[]) {
   std::vector<StopId> leaves = MstLeaves(state);
   std::sort(leaves.begin(), leaves.end());
 
-  std::cout << "Permutations of MST leaves (" << leaves.size() << " leaves):\n";
+  int best_duration = INT_MAX;
+  std::vector<Path> best_paths;
+  std::vector<StopId> best_sequence;
+
+  // NEXT STEP: See which of the required_stops the "best" path actually hits.
+
+  std::cout << "Evaluating permutations of " << leaves.size() << " MST leaves:\n";
   do {
-    for (size_t i = 0; i < leaves.size(); i++) {
-      if (i > 0) std::cout << " -> ";
-      std::cout << state.StopName(leaves[i]);
+    // Build full stop sequence: start + leaves + end.
+    std::vector<StopId> sequence;
+    sequence.push_back(state.boundary.start);
+    sequence.insert(sequence.end(), leaves.begin(), leaves.end());
+    sequence.push_back(state.boundary.end);
+
+    std::vector<Path> paths =
+        ComputeMinDurationFeasiblePaths(sequence, state.completed);
+
+    if (!paths.empty() && paths[0].DurationSeconds() < best_duration) {
+      best_duration = paths[0].DurationSeconds();
+      best_paths = paths;
+      best_sequence = sequence;
     }
-    std::cout << "\n";
   } while (std::next_permutation(leaves.begin(), leaves.end()));
+
+  if (best_paths.empty()) {
+    std::cout << "No feasible path found for any permutation.\n";
+    return 1;
+  }
+
+  std::cout << "\nBest duration: " << TimeSinceServiceStart{best_duration}.ToString() << "\n";
+  std::cout << "Stop sequence: ";
+  for (size_t i = 0; i < best_sequence.size(); i++) {
+    if (i > 0) std::cout << " -> ";
+    std::cout << state.StopName(best_sequence[i]);
+  }
+  std::cout << "\n";
+
+  std::cout << "Path (" << best_paths[0].steps.size() << " steps):\n";
+  for (const Step& step : best_paths[0].steps) {
+    std::cout << "  " << state.StopName(step.origin.stop) << " ("
+              << step.origin.time.ToString() << ") -> "
+              << state.StopName(step.destination.stop) << " ("
+              << step.destination.time.ToString() << ")\n";
+  }
 
   return 0;
 }
