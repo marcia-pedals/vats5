@@ -95,7 +95,9 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
 }
 
 TEST(TarelGraphTest, TarelEdges_BART) {
-  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_202506", "20250718", {"BA:"}}
+  );
   std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );

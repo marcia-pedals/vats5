@@ -158,7 +158,7 @@ target_link_libraries(iterative_expansion PUBLIC tarel_graph CLI11::CLI11)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
-target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)
+target_link_libraries(cached_test_data INTERFACE steps_adjacency_list gtfs_filter)
 target_include_directories(cached_test_data INTERFACE src)
 
 add_library(problem_state_gen src/solver/test_util/problem_state_gen.cpp)
@@ -237,7 +237,7 @@ set_tests_properties(branch_and_bound_test PROPERTIES LABELS "slow")
 
 # Add tarel_graph test executable
 add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
-target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve rapidcheck_gtest)
+target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 

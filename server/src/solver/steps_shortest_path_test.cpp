@@ -98,7 +98,7 @@ struct ExpectedPath {
 
 struct ShortestPathTestCase {
   std::string test_name;
-  std::string gtfs_path;
+  FilterOptions filter_options;
   std::string origin_stop_name;
   std::string origin_time;
   std::vector<ExpectedPath> expected_paths;
@@ -113,7 +113,7 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
   const auto& test_case = GetParam();
 
   try {
-    auto cached_data = GetCachedTestData(test_case.gtfs_path);
+    auto cached_data = GetCachedFilteredTestData(test_case.filter_options);
     const auto& steps_from_gtfs = cached_data.steps_from_gtfs;
     const auto& adjacency_list = cached_data.adjacency_list;
 
@@ -158,7 +158,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(
         ShortestPathTestCase{
             .test_name = "BerryessaTo5Destinations",
-            .gtfs_path = "../data/RG_20250718_BA",
+            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:"}},
             .origin_stop_name = "Berryessa / North San Jose",
             .origin_time = "08:00:00",
             .expected_paths =
@@ -195,7 +195,7 @@ INSTANTIATE_TEST_SUITE_P(
         },
         ShortestPathTestCase{
             .test_name = "WarmSpringsToMillbraeWithCaltrain",
-            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
             .origin_stop_name = "Warm Springs South Fremont BART",
             .origin_time = "07:49:00",
             .expected_paths =
@@ -208,7 +208,7 @@ INSTANTIATE_TEST_SUITE_P(
         },
         ShortestPathTestCase{
             .test_name = "WalkToCaltrainMillbrae",
-            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
             .origin_stop_name = "Sunnyvale & Hendy",
             .origin_time = "08:00:00",
             .expected_paths =
@@ -222,7 +222,7 @@ INSTANTIATE_TEST_SUITE_P(
 
         ShortestPathTestCase{
             .test_name = "WarmSpringsToMillbraeVERYEARLY",
-            .gtfs_path = "../data/RG_20250718_BA_CT_SC",
+            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}, false},
             .origin_stop_name = "Berryessa / North San Jose",
             .origin_time = "00:00:00",
             .expected_paths =
@@ -383,7 +383,9 @@ void PrintPaths(
 
 TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
   const auto test_data =
-      GetCachedTestData("../data/RG_20260109_BA_CT_SC_SM_AC");
+      GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  );
   StopId milpitas =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:great-mall-milpitas-bart"}
@@ -565,7 +567,9 @@ TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
 
 TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
   const auto test_data =
-      GetCachedTestData("../data/RG_20260109_BA_CT_SC_SM_AC");
+      GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  );
   StopId fruitvale =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:fruitvale"}
@@ -1257,7 +1261,9 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
 }
 
 TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
-  const auto test_data = GetCachedTestData("../data/RG_20250718_BA");
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_202506", "20250718", {"BA:"}, false}
+  );
 
   std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
@@ -1298,7 +1304,9 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
 
 TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
   const auto test_data =
-      GetCachedTestData("../data/RG_20260109_BA_CT_SC_SM_AC");
+      GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  );
 
   std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
