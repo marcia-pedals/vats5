@@ -6,6 +6,15 @@
 
 namespace vats5 {
 
+Step ZeroEdge(StopId a, StopId b) {
+  return Step::PrimitiveFlex(a, b, 0, TripId{-2});
+}
+
+Path ZeroPath(StopId a, StopId b) {
+  Step step = ZeroEdge(a, b);
+  return Path{step, {step}};
+}
+
 StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   StepsFromGtfs result;
   result.mapping = DataGtfsMapping{};

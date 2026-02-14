@@ -17,6 +17,7 @@
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
+#include "solver/tour_paths.h"
 
 namespace vats5 {
 
@@ -300,8 +301,13 @@ int BranchAndBoundSolve(
     }
 
     // Make an upper bound by actually following the LB path.
+    std::vector<StopId> stop_sequence;
+    stop_sequence.push_back(lb_result.tour_edges[0].origin.stop);
+    for (const auto& edge : lb_result.tour_edges) {
+      stop_sequence.push_back(edge.destination.stop);
+    }
     std::vector<Path> feasible_paths =
-        ComputeMinDurationFeasiblePaths(lb_result, state);
+        ComputeMinDurationFeasiblePaths(stop_sequence, state.completed);
     if (feasible_paths.size() > 0) {
       const Path& feasible_path = feasible_paths[0];
       if (search_log != nullptr) {
