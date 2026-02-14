@@ -251,6 +251,9 @@ struct StopPosition {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StopPosition, stop_id, x_meters, y_meters)
 
+Step ZeroEdge(StopId a, StopId b);
+Path ZeroPath(StopId a, StopId b);
+
 }  // namespace vats5
 
 // Hash functions for solver Id structs to use in unordered_set/unordered_map

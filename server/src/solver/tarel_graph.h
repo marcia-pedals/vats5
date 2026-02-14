@@ -276,9 +276,6 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
     const TarelEdgeIntermediateData& data
 );
 
-Step ZeroEdge(StopId a, StopId b);
-Path ZeroPath(StopId a, StopId b);
-
 constexpr int kCycleEdgeWeight = -1000;
 
 // Return type for MakeTspGraphEdges.
@@ -327,10 +324,6 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const ProblemBoundary& boundary,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr
-);
-
-std::vector<Path> ComputeMinDurationFeasiblePaths(
-    const TspTourResult& tour_result, const ProblemState& state
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
