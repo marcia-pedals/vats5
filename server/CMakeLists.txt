@@ -248,7 +248,7 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 
 # Add tour_paths test executable
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
-target_link_libraries(tour_paths_test PUBLIC gunit tour_paths)
+target_link_libraries(tour_paths_test PUBLIC gunit tour_paths steps_shortest_path)
 add_test(NAME tour_paths_test COMMAND tour_paths_test)
 
 # Add graph_util test executable
