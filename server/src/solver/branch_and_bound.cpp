@@ -307,9 +307,13 @@ int BranchAndBoundSolve(
       stop_sequence.push_back(edge.destination.stop);
     }
     std::vector<Path> feasible_paths =
-        ComputeMinDurationFeasiblePaths(stop_sequence, state.completed);
+        ComputeMinimalFeasiblePathsAlong(stop_sequence, state.completed);
     if (feasible_paths.size() > 0) {
-      const Path& feasible_path = feasible_paths[0];
+      const Path& feasible_path = *std::min_element(
+          feasible_paths.begin(), feasible_paths.end(),
+          [](const Path& a, const Path& b) {
+            return a.DurationSeconds() < b.DurationSeconds();
+          });
       if (search_log != nullptr) {
         *search_log
             << "  ub path ("

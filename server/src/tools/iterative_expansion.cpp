@@ -138,10 +138,15 @@ int main(int argc, char* argv[]) {
     sequence.push_back(state.boundary.end);
 
     std::vector<Path> paths =
-        ComputeMinDurationFeasiblePaths(sequence, state.completed);
+        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
 
-    if (!paths.empty() && paths[0].DurationSeconds() < best_duration) {
-      best_duration = paths[0].DurationSeconds();
+    auto min_it = std::min_element(
+        paths.begin(), paths.end(),
+        [](const Path& a, const Path& b) {
+          return a.DurationSeconds() < b.DurationSeconds();
+        });
+    if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
+      best_duration = min_it->DurationSeconds();
       best_paths = paths;
       best_sequence = sequence;
     }
