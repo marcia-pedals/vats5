@@ -147,6 +147,10 @@ target_link_libraries(initialize_problem_state PUBLIC tarel_graph CLI11::CLI11)
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
 target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
+# Add iterative_expansion tool
+add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
+target_link_libraries(iterative_expansion PUBLIC CLI11::CLI11)
+
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
 target_link_libraries(cached_test_data INTERFACE steps_adjacency_list)
