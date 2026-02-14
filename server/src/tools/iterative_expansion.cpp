@@ -53,10 +53,14 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  // Collect required stops into a sorted vector with index mapping.
+  // Collect required stops, excluding START and END, into a sorted vector with
+  // index mapping.
   std::vector<StopId> stops(
       state.required_stops.begin(), state.required_stops.end()
   );
+  std::erase_if(stops, [&](StopId s) {
+    return s == state.boundary.start || s == state.boundary.end;
+  });
   std::sort(stops.begin(), stops.end());
   int n = static_cast<int>(stops.size());
 
