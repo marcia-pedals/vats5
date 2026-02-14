@@ -31,8 +31,8 @@
 
         # Test data (GTFS feeds for tests and dev tools)
         testData = pkgs.fetchzip {
-          url = "https://pub-42e805ab0ef7400f8f4eca373798da93.r2.dev/vats5-test-data-v1.tar.gz";
-          sha256 = "sha256-9deT2h6s5qCBLukYbi7mvNhmEIfPwIxkFwPKNp0dGEk=";
+          url = "https://pub-42e805ab0ef7400f8f4eca373798da93.r2.dev/vats5-test-data-v2.tar.gz";
+          sha256 = "sha256-RBztSmqJVDFRCdyFVkUGiUZynnPut/6gR7XXjRSPiyI=";
           stripRoot = false;
         };
       in
