@@ -23,8 +23,8 @@ TEST(GraphUtilTest, ComputeExtremeStops_BART) {
 
   StepPathsAdjacencyList minimal =
       ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
-  StepPathsAdjacencyList complete = ReduceToMinimalSystemPaths(
-      MakeAdjacencyList(minimal.AllMergedSteps()), bart_stops, true
+  StepPathsAdjacencyList complete = CompleteShortestPathsGraph(
+      MakeAdjacencyList(minimal.AllMergedSteps()), bart_stops
   );
 
   // Compute extreme stops

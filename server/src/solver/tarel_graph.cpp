@@ -142,7 +142,7 @@ ProblemState MakeProblemState(
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
   StepPathsAdjacencyList completed =
-      ReduceToMinimalSystemPaths(minimal, stops, true);
+      CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}

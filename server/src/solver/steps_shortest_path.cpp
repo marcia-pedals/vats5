@@ -536,7 +536,9 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   return result_with_paths;
 }
 
-StepPathsAdjacencyList ReduceToMinimalSystemPaths(
+namespace {
+
+StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops,
     bool keep_through_other_destination
@@ -677,6 +679,26 @@ StepPathsAdjacencyList ReduceToMinimalSystemPaths(
   }
 
   return result;
+}
+
+}  // namespace
+
+StepPathsAdjacencyList ReduceToMinimalSystemPaths(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
+) {
+  return ReduceToMinimalSystemPathsImpl(
+      adjacency_list, system_stops, /*keep_through_other_destination=*/false
+  );
+}
+
+StepPathsAdjacencyList CompleteShortestPathsGraph(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
+) {
+  return ReduceToMinimalSystemPathsImpl(
+      adjacency_list, system_stops, /*keep_through_other_destination=*/true
+  );
 }
 
 }  // namespace vats5

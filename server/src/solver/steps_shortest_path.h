@@ -95,12 +95,21 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 // matched or beat by a path in the reduced list. (b) If you remove any step
 // from the reduced list, (a) no longer holds.
 //
+// Paths that pass through other system_stops before reaching their final
+// destination are excluded.
+//
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops,
-    bool keep_through_other_destination = false
+    const std::unordered_set<StopId>& system_stops
+);
+
+// Like ReduceToMinimalSystemPaths, but keeps paths that pass through other
+// system_stops before reaching their final destination.
+StepPathsAdjacencyList CompleteShortestPathsGraph(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
 );
 
 }  // namespace vats5
