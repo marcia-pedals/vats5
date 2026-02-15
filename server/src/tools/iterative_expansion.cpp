@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <numeric>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "solver/tarel_graph.h"
@@ -171,6 +172,27 @@ int main(int argc, char* argv[]) {
               << step.origin.time.ToString() << ") -> "
               << state.StopName(step.destination.stop) << " ("
               << step.destination.time.ToString() << ")\n";
+  }
+
+  // Find required stops not visited by the best path.
+  std::unordered_set<StopId> visited_stops;
+  visited_stops.insert(best_paths[0].steps.front().origin.stop);
+  best_paths[0].VisitIntermediateStops([&](StopId s) {
+    visited_stops.insert(s);
+  });
+  std::vector<StopId> missing;
+  for (StopId s : state.required_stops) {
+    if (!visited_stops.contains(s)) {
+      missing.push_back(s);
+    }
+  }
+  if (missing.empty()) {
+    std::cout << "\nAll required stops are visited.\n";
+  } else {
+    std::cout << "\nRequired stops NOT visited (" << missing.size() << "):\n";
+    for (StopId s : missing) {
+      std::cout << "  " << state.StopName(s) << "\n";
+    }
   }
 
   return 0;
