@@ -90,17 +90,29 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     bool keep_through_other_destination = false
 );
 
-// Return an adjacency list ("reduced list") with these properties:
-// (a) Any path in `adjacency_list` between two `system_stops` [1] can be
-// matched or beat by a path in the reduced list. (b) If you remove any step
-// from the reduced list, (a) no longer holds.
+// Return a "minimal" graph with these properties:
+//
+// (a) Any path on `adjacency_list` between two `system_stops` [1] can be
+// matched or beat by a path on the minimal graph.
+//
+// (b) If you remove any "step" from the minimal graph, (a) no longer holds. (Here
+// "step" is used in the sense of one element of PathsBetween(a, b) even though
+// that's technically a Path, to disambiguate from the concept of a "path" made
+// up of multiple steps on a graph).
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops,
-    bool keep_through_other_destination = false
+    const std::unordered_set<StopId>& system_stops
+);
+
+// Return a "completed" graph where the "steps" from a to b are a minimal cover
+// of all the paths from a to b on `adjacency_list`. ("Steps" used in the same
+// sense as in (b) above).
+StepPathsAdjacencyList CompleteShortestPathsGraph(
+    const StepsAdjacencyList& adjacency_list,
+    const std::unordered_set<StopId>& system_stops
 );
 
 }  // namespace vats5

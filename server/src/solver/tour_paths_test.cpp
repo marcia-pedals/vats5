@@ -17,7 +17,7 @@ StepPathsAdjacencyList MakeCompleted(
     const std::vector<Step>& steps,
     const std::unordered_set<StopId>& stops
 ) {
-  return ReduceToMinimalSystemPaths(MakeAdjacencyList(steps), stops, true);
+  return CompleteShortestPathsGraph(MakeAdjacencyList(steps), stops);
 }
 
 }  // namespace
