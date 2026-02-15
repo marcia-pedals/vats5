@@ -5,6 +5,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -102,6 +103,70 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   return leaves;
 }
 
+struct BestPathResult {
+  std::vector<Path> paths;
+  std::vector<StopId> sequence;
+  int duration;
+};
+
+// Tries all permutations of `leaves` as intermediate stops between start and
+// end, and returns the permutation yielding the shortest feasible path.
+std::optional<BestPathResult> FindBestPermutationPath(
+    std::vector<StopId> leaves,
+    const ProblemState& state) {
+  std::sort(leaves.begin(), leaves.end());
+
+  int best_duration = INT_MAX;
+  BestPathResult best;
+
+  do {
+    std::vector<StopId> sequence;
+    sequence.push_back(state.boundary.start);
+    sequence.insert(sequence.end(), leaves.begin(), leaves.end());
+    sequence.push_back(state.boundary.end);
+
+    std::vector<Path> paths =
+        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
+
+    auto min_it = std::min_element(
+        paths.begin(), paths.end(),
+        [](const Path& a, const Path& b) {
+          return a.DurationSeconds() < b.DurationSeconds();
+        });
+    if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
+      best_duration = min_it->DurationSeconds();
+      std::erase_if(paths, [&](const Path& p) {
+        return p.DurationSeconds() != best_duration;
+      });
+      best.paths = std::move(paths);
+      best.sequence = std::move(sequence);
+      best.duration = best_duration;
+    }
+  } while (std::next_permutation(leaves.begin(), leaves.end()));
+
+  if (best.paths.empty()) {
+    return std::nullopt;
+  }
+  return best;
+}
+
+// Returns required stops not visited by `path`.
+std::vector<StopId> MissingRequiredStops(
+    const Path& path,
+    const std::unordered_set<StopId>& required_stops) {
+  std::unordered_set<StopId> visited;
+  visited.insert(path.steps.front().origin.stop);
+  path.VisitIntermediateStops([&](StopId s) { visited.insert(s); });
+
+  std::vector<StopId> missing;
+  for (StopId s : required_stops) {
+    if (!visited.contains(s)) {
+      missing.push_back(s);
+    }
+  }
+  return missing;
+}
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
 
@@ -122,69 +187,41 @@ int main(int argc, char* argv[]) {
   ProblemState state = j.get<ProblemState>();
 
   std::vector<StopId> leaves = MstLeaves(state);
-  std::sort(leaves.begin(), leaves.end());
-
-  int best_duration = INT_MAX;
-  std::vector<Path> best_paths;
-  std::vector<StopId> best_sequence;
-
-  // NEXT STEP: See which of the required_stops the "best" path actually hits.
 
   std::cout << "Evaluating permutations of " << leaves.size() << " MST leaves:\n";
-  do {
-    // Build full stop sequence: start + leaves + end.
-    std::vector<StopId> sequence;
-    sequence.push_back(state.boundary.start);
-    sequence.insert(sequence.end(), leaves.begin(), leaves.end());
-    sequence.push_back(state.boundary.end);
+  auto best = FindBestPermutationPath(leaves, state);
 
-    std::vector<Path> paths =
-        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
-
-    auto min_it = std::min_element(
-        paths.begin(), paths.end(),
-        [](const Path& a, const Path& b) {
-          return a.DurationSeconds() < b.DurationSeconds();
-        });
-    if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
-      best_duration = min_it->DurationSeconds();
-      best_paths = paths;
-      best_sequence = sequence;
-    }
-  } while (std::next_permutation(leaves.begin(), leaves.end()));
-
-  if (best_paths.empty()) {
+  if (!best) {
     std::cout << "No feasible path found for any permutation.\n";
     return 1;
   }
 
-  std::cout << "\nBest duration: " << TimeSinceServiceStart{best_duration}.ToString() << "\n";
+  // Pick the path with the fewest missing required stops.
+  const Path* best_path = &best->paths[0];
+  std::vector<StopId> missing =
+      MissingRequiredStops(*best_path, state.required_stops);
+  for (size_t i = 1; i < best->paths.size(); i++) {
+    auto m = MissingRequiredStops(best->paths[i], state.required_stops);
+    if (m.size() < missing.size()) {
+      best_path = &best->paths[i];
+      missing = std::move(m);
+    }
+  }
+
+  std::cout << "\nBest duration: " << TimeSinceServiceStart{best->duration}.ToString() << "\n";
   std::cout << "Stop sequence: ";
-  for (size_t i = 0; i < best_sequence.size(); i++) {
+  for (size_t i = 0; i < best->sequence.size(); i++) {
     if (i > 0) std::cout << " -> ";
-    std::cout << state.StopName(best_sequence[i]);
+    std::cout << state.StopName(best->sequence[i]);
   }
   std::cout << "\n";
 
-  std::cout << "Path (" << best_paths[0].steps.size() << " steps):\n";
-  for (const Step& step : best_paths[0].steps) {
+  std::cout << "Path (" << best_path->steps.size() << " steps):\n";
+  for (const Step& step : best_path->steps) {
     std::cout << "  " << state.StopName(step.origin.stop) << " ("
               << step.origin.time.ToString() << ") -> "
               << state.StopName(step.destination.stop) << " ("
               << step.destination.time.ToString() << ")\n";
-  }
-
-  // Find required stops not visited by the best path.
-  std::unordered_set<StopId> visited_stops;
-  visited_stops.insert(best_paths[0].steps.front().origin.stop);
-  best_paths[0].VisitIntermediateStops([&](StopId s) {
-    visited_stops.insert(s);
-  });
-  std::vector<StopId> missing;
-  for (StopId s : state.required_stops) {
-    if (!visited_stops.contains(s)) {
-      missing.push_back(s);
-    }
   }
   if (missing.empty()) {
     std::cout << "\nAll required stops are visited.\n";
