@@ -174,7 +174,7 @@ ProblemState ApplyConstraints(
   );
 }
 
-int BranchAndBoundSolve(
+BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
@@ -208,6 +208,8 @@ int BranchAndBoundSolve(
 
   int iter_num = 0;
   int best_ub = std::numeric_limits<int>::max();
+  std::vector<Path> best_paths;
+  std::unordered_map<StopId, PlainEdge> best_original_edges;
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -251,7 +253,7 @@ int BranchAndBoundSolve(
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
       }
-      return best_ub;
+      return {best_ub, std::move(best_paths), std::move(best_original_edges)};
     }
 
     // Compute lower bound.
@@ -330,6 +332,13 @@ int BranchAndBoundSolve(
       }
       if (feasible_path.DurationSeconds() < best_ub) {
         best_ub = feasible_path.DurationSeconds();
+        best_paths.clear();
+        for (const Path& p : feasible_paths) {
+          if (p.DurationSeconds() == best_ub) {
+            best_paths.push_back(p);
+          }
+        }
+        best_original_edges = state.original_edges;
         if (search_log != nullptr) {
           *search_log << "  found new ub "
                       << TimeSinceServiceStart{best_ub}.ToString() << " "
@@ -431,7 +440,7 @@ int BranchAndBoundSolve(
     );
   }
 
-  return best_ub;
+  return {best_ub, std::move(best_paths), std::move(best_original_edges)};
 }
 
 }  // namespace vats5
