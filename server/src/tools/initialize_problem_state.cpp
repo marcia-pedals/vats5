@@ -3,8 +3,10 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <toml++/toml.hpp>
 #include <unordered_set>
 
+#include "gtfs/gtfs_filter.h"
 #include "solver/data.h"
 #include "solver/graph_util.h"
 #include "solver/steps_adjacency_list.h"
@@ -16,12 +18,23 @@ using namespace vats5;
 int main(int argc, char* argv[]) {
   CLI::App app{"Initialize problem state from GTFS data"};
 
-  std::string gtfs_path;
+  std::string world_config_path;
+  std::string required_stops_config;
   std::string output_path;
   double max_walking_distance = 500.0;
   double walking_speed = 1.0;
 
-  app.add_option("gtfs_path", gtfs_path, "Path to GTFS data directory")
+  app.add_option(
+         "world_config_path",
+         world_config_path,
+         "Path to world TOML config file"
+  )
+      ->required();
+  app.add_option(
+         "required_stops_config",
+         required_stops_config,
+         "Path to required stops TOML config file"
+  )
       ->required();
   app.add_option("output_path", output_path, "Output JSON file path")
       ->required();
@@ -41,20 +54,28 @@ int main(int argc, char* argv[]) {
       .walking_speed_ms = walking_speed,
   };
 
-  std::cout << "Loading GTFS data from: " << gtfs_path << std::endl;
+  GtfsFilterConfig filter_config = GtfsFilterConfigLoad(world_config_path);
+  GtfsDay gtfs_day = GtfsNormalizeStops(GtfsFilterFromConfig(filter_config));
+
+  toml::table required_stops_toml = toml::parse_file(required_stops_config);
+  auto stops_prefix =
+      required_stops_toml["stops_for_trip_id_prefix"].value<std::string>();
+  if (!stops_prefix) {
+    throw std::runtime_error(
+        "Required stops config must contain stops_for_trip_id_prefix"
+    );
+  }
+
   std::cout << "Options: max_walking_distance=" << max_walking_distance
             << "m, walking_speed=" << walking_speed << "m/s\n";
-  GtfsDay gtfs_day = GtfsLoadDay(gtfs_path);
-
-  gtfs_day = GtfsNormalizeStops(gtfs_day);
   StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day, options);
 
-  std::unordered_set<StopId> bart_stops =
-      GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
+  std::unordered_set<StopId> required_stops =
+      GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, *stops_prefix);
 
   std::cout << "Initializing solution state...\n";
   ProblemState state = InitializeProblemState(
-      steps_from_gtfs, bart_stops, /*optimize_edges=*/true
+      steps_from_gtfs, required_stops, /*optimize_edges=*/true
   );
 
   auto extreme_stops = ComputeExtremeStops(

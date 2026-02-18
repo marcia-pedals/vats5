@@ -162,7 +162,7 @@ target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
-target_link_libraries(initialize_problem_state PUBLIC tarel_graph CLI11::CLI11)
+target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter CLI11::CLI11)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
