@@ -1,8 +1,10 @@
 #include "solver/concorde.h"
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cassert>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -222,9 +224,12 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   DoubledGraphWeights weights(relaxed);
   int n = weights.NumStops();
 
-  // Create temp directory in cwd so it works in Claude sandbox (which restricts
-  // /tmp).
-  std::string temp_dir = "vats5_tsp_XXXXXX";
+  // Create temp directory under concorde_work/ in cwd so it works in Claude
+  // sandbox (which restricts /tmp) and doesn't clutter the cwd.
+  if (mkdir("concorde_work", 0755) != 0 && errno != EEXIST) {
+    throw std::runtime_error("Failed to create concorde_work directory");
+  }
+  std::string temp_dir = "concorde_work/vats5_tsp_XXXXXX";
   if (mkdtemp(temp_dir.data()) == nullptr) {
     throw std::runtime_error("Failed to create temp directory");
   }
