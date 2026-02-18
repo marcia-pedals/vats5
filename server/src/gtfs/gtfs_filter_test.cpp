@@ -299,35 +299,6 @@ GTEST("GtfsFilterDateWithServiceDays includes target day trips") {
       << "Weekend trip T3 should not be on a weekday";
 }
 
-GTEST("GtfsFilterDateWithServiceDays includes previous day late-night trips") {
-  Gtfs gtfs = MakeSyntheticGtfs();
-
-  // 20250708 is a Tuesday. Previous day (Monday) also has weekday service.
-  // T4 runs at 25:00 on the previous day, so it should appear with :prev-sd
-  // suffix and shifted times.
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
-
-  std::unordered_set<std::string> trip_ids;
-  for (const auto& trip : result.trips) {
-    trip_ids.insert(trip.trip_id.v);
-  }
-
-  EXPECT_TRUE(trip_ids.count("T4:prev-sd"))
-      << "Previous day late-night trip T4:prev-sd should be present";
-
-  // Check that times are shifted by -24h: 25:00 - 24:00 = 01:00 = 3600s
-  for (const auto& st : result.stop_times) {
-    if (st.trip_id.v == "T4:prev-sd" && st.stop_sequence == 1) {
-      EXPECT_EQ(st.arrival_time.seconds, 1 * 3600)
-          << "Previous day trip time should be shifted by -24h";
-    }
-    if (st.trip_id.v == "T4:prev-sd" && st.stop_sequence == 2) {
-      EXPECT_EQ(st.arrival_time.seconds, 1 * 3600 + 1800)
-          << "Previous day trip time should be shifted by -24h";
-    }
-  }
-}
-
 GTEST("GtfsFilterDateWithServiceDays includes next day early-morning trips") {
   Gtfs gtfs = MakeSyntheticGtfs();
 
@@ -376,25 +347,6 @@ GTEST("GtfsFilterDateWithServiceDays on weekend excludes weekday trips") {
       << "Weekday trip T1 should not be on Saturday";
   EXPECT_FALSE(trip_ids.count("T2"))
       << "Weekday trip T2 should not be on Saturday";
-}
-
-GTEST(
-    "GtfsFilterDateWithServiceDays weekday-weekend boundary handles prev-sd "
-    "correctly"
-) {
-  Gtfs gtfs = MakeSyntheticGtfs();
-
-  // 20250712 is Saturday. Previous day (Friday) has weekday service.
-  // T4 (latenight, runs at 25:00) should appear as prev-sd.
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250712");
-
-  std::unordered_set<std::string> trip_ids;
-  for (const auto& trip : result.trips) {
-    trip_ids.insert(trip.trip_id.v);
-  }
-
-  EXPECT_TRUE(trip_ids.count("T4:prev-sd"))
-      << "Friday late-night trip should carry over to Saturday";
 }
 
 GTEST("GtfsFilterDateWithServiceDays all stop_times reference valid trips") {
@@ -501,53 +453,6 @@ GTEST(
   EXPECT_EQ(trip_507_times[10].stop_id.v, "70011");
   EXPECT_EQ(trip_507_times[10].stop_sequence, 11);
   EXPECT_EQ(trip_507_times[10].arrival_time.seconds, 30120);
-}
-
-GTEST(
-    "GtfsFilterDateWithServiceDays on real data includes prev-sd CT:176"
-) {
-  const Gtfs& gtfs = *getGlobalGtfs();
-
-  // Tuesday 2025-07-08. CT:176 is a Local Weekday southbound trip that runs
-  // past midnight on Monday (service CT:72982). Its first stop departs at
-  // 24:05:00 (86700s). After -24h shift it becomes 00:05:00 (300s).
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
-
-  std::vector<GtfsStopTime> trip_176_times;
-  for (const auto& st : result.stop_times) {
-    if (st.trip_id.v == "CT:176:prev-sd") {
-      trip_176_times.push_back(st);
-    }
-  }
-  std::sort(trip_176_times.begin(), trip_176_times.end(),
-      [](const GtfsStopTime& a, const GtfsStopTime& b) {
-        return a.stop_sequence < b.stop_sequence;
-      });
-
-  ASSERT_EQ(trip_176_times.size(), 22);
-
-  // First stop: SF 4th & King Southbound (70012) at 24:05 - 24:00 = 00:05 =
-  // 300s
-  EXPECT_EQ(trip_176_times[0].stop_id.v, "70012");
-  EXPECT_EQ(trip_176_times[0].stop_sequence, 1);
-  EXPECT_EQ(trip_176_times[0].arrival_time.seconds, 300);
-
-  // Last stop: San Jose Diridon Southbound (70262) at 25:23 - 24:00 = 01:23 =
-  // 4980s
-  EXPECT_EQ(trip_176_times[21].stop_id.v, "70262");
-  EXPECT_EQ(trip_176_times[21].stop_sequence, 22);
-  EXPECT_EQ(trip_176_times[21].arrival_time.seconds, 4980);
-
-  // Verify the trip itself has :prev-sd suffix and correct route
-  bool found = false;
-  for (const auto& trip : result.trips) {
-    if (trip.trip_id.v == "CT:176:prev-sd") {
-      found = true;
-      EXPECT_EQ(trip.route_direction_id.route_id.v, "CT:Local Weekday");
-      EXPECT_EQ(trip.route_direction_id.direction_id, 1);
-    }
-  }
-  EXPECT_TRUE(found) << "CT:176:prev-sd should be present";
 }
 
 GTEST(

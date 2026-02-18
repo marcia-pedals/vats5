@@ -29,10 +29,9 @@ Gtfs GtfsFilterByPrefixes(
     const Gtfs& gtfs, const std::vector<std::string>& prefixes
 );
 
-// Filter GTFS data for a given date and combine with adjacent service days.
-// Takes trips from the previous day that run past midnight (times >= 24:00,
-// shifted to negative), the target day, and the next day's early morning trips
-// (times < 24:00, shifted to +24:00). Returns a single combined GtfsDay.
+// Filter GTFS data for a given date and combine with the next service day.
+// Takes the target day and the next day's early morning trips (times < 24:00,
+// shifted to +24:00). Returns a single combined GtfsDay.
 GtfsDay GtfsFilterDateWithServiceDays(
     const Gtfs& gtfs, const std::string& date
 );
