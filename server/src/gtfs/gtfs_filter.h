@@ -7,6 +7,19 @@
 
 namespace vats5 {
 
+struct GtfsFilterConfig {
+  std::string input_dir;
+  std::string date;
+  std::string output_dir;
+  std::vector<std::string> prefixes;
+};
+
+// Parse a TOML config file into a GtfsFilterConfig.
+GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path);
+
+// Load GTFS data, apply prefix and date filters, and return the result.
+GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config);
+
 // Removes trips not referenced by stop_times, then removes routes and
 // directions not referenced by remaining trips.
 void RemoveUnreferencedTripsRoutesAndDirections(GtfsDay& gtfs_day);
