@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <ostream>
@@ -236,6 +237,10 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   std::string problem_path = temp_dir + "/problem";
   std::string solution_path = temp_dir + "/solution";
 
+  auto cleanup_temp = [&]() {
+    std::filesystem::remove_all(temp_dir);
+  };
+
   // Write TSP problem to temp file
   {
     std::ofstream out(problem_path);
@@ -279,9 +284,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     // );
     // TODO: Consider whether this is really infeasible always or if there are
     // error cases we should detect and fail for.
-    std::remove(problem_path.c_str());
-    std::remove(solution_path.c_str());
-    rmdir(temp_dir.c_str());
+    cleanup_temp();
     return std::nullopt;
   }
   int raw_optimal_value =
@@ -289,9 +292,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
   if (ub.has_value() && raw_optimal_value >= concorde_ub) {
     // Cleanup temp directory before returning
-    std::remove(problem_path.c_str());
-    std::remove(solution_path.c_str());
-    rmdir(temp_dir.c_str());
+    cleanup_temp();
     return std::nullopt;
   }
 
@@ -308,9 +309,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // practice, because kForbiddenEdgeCost is so big.
   if (DoubledTourUsesForbiddenEdge(doubled_tour, weights)) {
     // Cleanup temp directory before returning
-    std::remove(problem_path.c_str());
-    std::remove(solution_path.c_str());
-    rmdir(temp_dir.c_str());
+    cleanup_temp();
     return std::nullopt;
   }
 
@@ -323,9 +322,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   int optimal_value = raw_optimal_value - n * kInterVertexOffset;
 
   // Cleanup temp directory
-  std::remove(problem_path.c_str());
-  std::remove(solution_path.c_str());
-  rmdir(temp_dir.c_str());
+  cleanup_temp();
 
   return ConcordeSolution{
       .tour = std::move(tour), .optimal_value = optimal_value

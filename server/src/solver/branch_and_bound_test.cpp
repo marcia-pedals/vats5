@@ -77,39 +77,42 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
 
-  auto LogResult = [&](const TspTourResult& result) {
+  auto LogResult = [&](const ProblemState& state, const TspTourResult& result) {
     RC_LOG() << result.optimal_value << " ";
     for (int i = 0; i < result.original_stop_tour.size(); ++i) {
       if (i > 0) {
         RC_LOG() << " -> ";
       }
-      RC_LOG() << state_require.StopName(result.original_stop_tour[i]);
+      RC_LOG() << state.StopName(result.original_stop_tour[i]);
     }
     RC_LOG() << "\n\n";
   };
 
   RC_ASSERT(result_orig.has_value());
   RC_LOG() << "result_orig: ";
-  LogResult(result_orig.value());
+  LogResult(state_orig, result_orig.value());
 
   RC_LOG() << "result_forbid: ";
   if (result_forbid.has_value()) {
-    LogResult(result_forbid.value());
+    LogResult(state_forbid, result_forbid.value());
   } else {
     RC_LOG() << "no solution\n";
   }
 
   RC_LOG() << "result_require: ";
   if (result_require.has_value()) {
-    LogResult(result_require.value());
+    LogResult(state_require, result_require.value());
   } else {
     RC_LOG() << "no solution\n";
   }
 
-  RC_ASSERT(
-      !result_forbid.has_value() ||
-      result_forbid->optimal_value >= result_orig->optimal_value
-  );
+  // Use an if-guard instead of || inside RC_ASSERT, because RC_ASSERT uses
+  // expression templates that overload operator||, which does NOT short-circuit
+  // in C++. Without the guard, result_forbid->optimal_value would be evaluated
+  // even when result_forbid is empty, causing undefined behavior.
+  if (result_forbid.has_value()) {
+    RC_ASSERT(result_forbid->optimal_value >= result_orig->optimal_value);
+  }
 
   // Non-decreasing does not hold for the require branch. The tarel relaxation
   // captures waiting times in merged edges between stops, but when requiring an

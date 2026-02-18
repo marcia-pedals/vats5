@@ -377,7 +377,7 @@ BranchAndBoundResult BranchAndBoundSolve(
       }
     }
 
-    if (primitive_steps.size() > 0) {
+    if (search_log != nullptr && primitive_steps.size() > 0) {
       *search_log << "  primitive: ";
       *search_log << state.StopName(primitive_steps[0].origin.stop);
       for (const Step& step : primitive_steps) {
