@@ -140,6 +140,10 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
 target_link_libraries(gtfs_filter_tool PUBLIC gtfs_filter)
 
+# Add GTFS query tool
+add_executable(gtfs_query src/tools/gtfs_query.cpp)
+target_link_libraries(gtfs_query PUBLIC gtfs_filter CLI11::CLI11)
+
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)
 target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path CLI11::CLI11)

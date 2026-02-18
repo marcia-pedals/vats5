@@ -1,6 +1,7 @@
 #include "gtfs/gtfs_filter.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -43,8 +44,13 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
     }
   }
 
+  // Resolve input_dir relative to the config file's directory.
+  std::filesystem::path config_dir =
+      std::filesystem::weakly_canonical(config_path).parent_path();
+  std::string resolved_input_dir = (config_dir / *input_dir).string();
+
   return GtfsFilterConfig{
-      .input_dir = *input_dir,
+      .input_dir = resolved_input_dir,
       .date = *date,
       .prefixes = std::move(prefixes),
   };
