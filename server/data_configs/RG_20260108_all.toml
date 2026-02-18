@@ -1,2 +1,2 @@
-input_dir = "raw_RG_20251231"
+input_dir = "../data/raw_RG_20251231"
 date = "20260108"
