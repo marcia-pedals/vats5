@@ -412,12 +412,6 @@ TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
       minimal_path_set[berryessa],
       ElementsAre(
           BFlex("00:00:00", "01:21:12"),
-          B("00:02:00", "00:09:09"),
-          B("00:22:00", "00:29:09"),
-          B("00:42:00", "00:49:09"),
-          B("01:02:00", "01:09:09"),
-          B("01:22:00", "01:29:09"),
-          B("01:47:00", "01:54:09"),
           B("05:09:00", "05:16:09"),
           B("05:29:00", "05:36:09"),
           B("05:49:00", "05:56:09"),
@@ -619,26 +613,34 @@ TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
     );
   };
 
+  auto LMFlex = [&](const char* origin_time, const char* destination_time) {
+    return MergedStepIs(
+        fruitvale, lake_merritt, origin_time, destination_time, true
+    );
+  };
+  auto COLSFlex = [&](const char* origin_time, const char* destination_time) {
+    return MergedStepIs(
+        fruitvale, coliseum, origin_time, destination_time, true
+    );
+  };
+  auto SLFlex = [&](const char* origin_time, const char* destination_time) {
+    return MergedStepIs(
+        fruitvale, san_leandro, origin_time, destination_time, true
+    );
+  };
   using ::testing::ElementsAre;
   EXPECT_THAT(
       minimal_path_set[lake_merritt],
       ElementsAre(
-          LM("00:07:00", "00:11:00"),
-          LM("00:15:00", "00:19:00"),
-          LM("00:27:00", "00:31:00"),
-          LM("00:37:00", "00:41:00"),
-          LM("01:03:48", "01:24:53"),
+          LMFlex("00:00:00", "01:13:58"),
+          LM("00:07:41", "00:37:01"),
+          LM("00:14:00", "00:41:46"),
           LM("01:07:41", "01:37:01"),
           LM("01:14:00", "01:41:46"),
-          LM("01:33:48", "01:54:53"),
-          LM("02:03:48", "02:24:53"),
           LM("02:07:41", "02:37:01"),
           LM("02:14:00", "02:41:46"),
-          LM("02:33:48", "02:54:53"),
-          LM("03:03:48", "03:24:53"),
           LM("03:07:41", "03:37:01"),
           LM("03:14:00", "03:41:46"),
-          LM("03:33:48", "03:54:53"),
           LM("04:03:48", "04:24:53"),
           LM("04:07:41", "04:37:01"),
           LM("04:14:00", "04:41:46"),
@@ -885,17 +887,10 @@ TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
   EXPECT_THAT(
       minimal_path_set[coliseum],
       ElementsAre(
-          COLS("00:08:00", "00:11:00"),
-          COLS("00:19:00", "00:22:00"),
-          COLS("00:28:00", "00:31:00"),
-          COLS("00:39:00", "00:42:00"),
-          COLS("00:47:00", "00:50:00"),
-          COLS("01:04:00", "01:07:00"),
-          COLS("01:23:55", "01:51:32"),
-          COLS("01:53:55", "02:17:57"),
-          COLS("02:23:55", "02:51:32"),
-          COLS("02:53:55", "03:17:57"),
-          COLS("03:23:55", "03:51:32"),
+          COLSFlex("00:00:00", "00:59:13"),
+          COLS("00:40:32", "01:17:57"),
+          COLS("01:40:32", "02:17:57"),
+          COLS("02:40:32", "03:17:57"),
           COLS("03:53:55", "04:17:57"),
           COLS("04:23:55", "04:51:32"),
           COLS("04:53:55", "05:17:57"),
@@ -1128,11 +1123,11 @@ TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
   EXPECT_THAT(
       minimal_path_set[san_leandro],
       ElementsAre(
-          SL("01:23:55", "01:50:55"),
-          SL("01:53:55", "02:20:55"),
-          SL("02:23:55", "02:50:55"),
-          SL("02:53:55", "03:20:55"),
-          SL("03:23:55", "03:50:55"),
+          SLFlex("00:00:00", "02:25:08"),
+          SL("00:45:12", "03:05:56"),
+          SL("00:50:24", "03:14:36"),
+          SL("01:45:12", "04:05:56"),
+          SL("01:50:24", "04:14:36"),
           SL("03:53:55", "04:20:55"),
           SL("04:23:55", "04:50:55"),
           SL("04:53:55", "05:20:55"),
@@ -1151,15 +1146,13 @@ TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
   EXPECT_THAT(
       minimal_path_set[west_oakland],
       ElementsAre(
-          WO("01:03:48", "01:56:30"),
+          WO("00:14:00", "01:07:02"),
+          WO("00:24:14", "02:01:38"),
           WO("01:14:00", "02:07:02"),
-          WO("01:33:48", "02:26:30"),
-          WO("02:03:48", "02:56:30"),
+          WO("01:24:14", "03:01:38"),
           WO("02:14:00", "03:07:02"),
-          WO("02:33:48", "03:26:30"),
-          WO("03:03:48", "03:56:30"),
+          WO("02:24:14", "04:01:38"),
           WO("03:14:00", "04:07:02"),
-          WO("03:33:48", "04:26:30"),
           WO("04:03:48", "04:56:30"),
           WO("04:20:00", "05:01:58"),
           WO("25:03:48", "25:56:30"),
