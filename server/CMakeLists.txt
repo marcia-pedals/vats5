@@ -43,6 +43,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(cli11)
 
+FetchContent_Declare(
+  tomlplusplus
+  GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+  GIT_TAG        v3.4.0
+)
+FetchContent_MakeAvailable(tomlplusplus)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
@@ -58,7 +65,7 @@ target_include_directories(gtfs PUBLIC src)
 
 # Create GTFS filter library target
 add_library(gtfs_filter STATIC src/gtfs/gtfs_filter.cpp)
-target_link_libraries(gtfs_filter PUBLIC gtfs date)
+target_link_libraries(gtfs_filter PUBLIC gtfs date tomlplusplus::tomlplusplus)
 target_include_directories(gtfs_filter PUBLIC src)
 
 # Create data library target
@@ -131,7 +138,7 @@ target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
 # Add GTFS filter tool
 add_executable(gtfs_filter_tool src/tools/gtfs_filter_tool.cpp)
-target_link_libraries(gtfs_filter_tool PUBLIC gtfs_filter CLI11::CLI11)
+target_link_libraries(gtfs_filter_tool PUBLIC gtfs_filter)
 
 # Add benchmark reduction tool
 add_executable(benchmark_reduction src/tools/benchmark_reduction.cpp)

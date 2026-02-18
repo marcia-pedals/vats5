@@ -1,0 +1,3 @@
+input_dir = "raw_RG_202506"
+date = "20250718"
+prefixes = ["BA:", "CT:", "SC:"]

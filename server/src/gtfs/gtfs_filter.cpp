@@ -1,11 +1,83 @@
 #include "gtfs/gtfs_filter.h"
 
 #include <algorithm>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <toml++/toml.hpp>
 #include <unordered_set>
 
 #include "util/date.h"
 
 namespace vats5 {
+
+namespace {
+template <typename T>
+std::string FormatGtfsSizes(const T& gtfs) {
+  std::ostringstream oss;
+  oss << gtfs.stops.size() << " stops, " << gtfs.trips.size() << " trips, "
+      << gtfs.stop_times.size() << " stop times, " << gtfs.routes.size()
+      << " routes, " << gtfs.directions.size() << " directions";
+  return oss.str();
+}
+}  // namespace
+
+GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
+  toml::table config = toml::parse_file(config_path);
+
+  auto input_dir = config["input_dir"].value<std::string>();
+  auto date = config["date"].value<std::string>();
+
+  if (!input_dir || !date) {
+    throw std::runtime_error(
+        "Config file must contain input_dir and date"
+    );
+  }
+
+  std::vector<std::string> prefixes;
+  if (auto arr = config["prefixes"].as_array()) {
+    for (const auto& elem : *arr) {
+      if (auto val = elem.value<std::string>()) {
+        prefixes.push_back(*val);
+      }
+    }
+  }
+
+  return GtfsFilterConfig{
+      .input_dir = *input_dir,
+      .date = *date,
+      .prefixes = std::move(prefixes),
+  };
+}
+
+GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config) {
+  std::cout << "Loading GTFS data from: " << config.input_dir << std::endl;
+  std::cout << "Filtering for date: " << config.date << std::endl;
+  if (config.prefixes.empty()) {
+    std::cout << "Including all trips (no prefix filter)" << std::endl;
+  } else {
+    std::cout << "Using prefix filter(s): ";
+    for (size_t i = 0; i < config.prefixes.size(); ++i) {
+      std::cout << "\"" << config.prefixes[i] << "\"";
+      if (i < config.prefixes.size() - 1) std::cout << ", ";
+    }
+    std::cout << std::endl;
+  }
+
+  Gtfs gtfs = GtfsLoad(config.input_dir);
+  std::cout << "Loaded: " << FormatGtfsSizes(gtfs) << std::endl;
+
+  if (!config.prefixes.empty()) {
+    gtfs = GtfsFilterByPrefixes(gtfs, config.prefixes);
+    std::cout << "After filtering trips: " << FormatGtfsSizes(gtfs)
+              << std::endl;
+  }
+
+  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, config.date);
+  std::cout << "Combined result: " << FormatGtfsSizes(result) << std::endl;
+
+  return result;
+}
 
 void RemoveUnreferencedTripsRoutesAndDirections(GtfsDay& gtfs_day) {
   // Collect trip_ids referenced by stop_times
