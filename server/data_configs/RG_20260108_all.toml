@@ -1,0 +1,3 @@
+input_dir = "raw_RG_20251231"
+date = "20260108"
+output_dir = "RG_20260108_all"

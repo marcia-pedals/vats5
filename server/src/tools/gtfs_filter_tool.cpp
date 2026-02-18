@@ -1,8 +1,8 @@
-#include <CLI/CLI.hpp>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <toml++/toml.hpp>
 #include <vector>
 
 #include "gtfs/gtfs.h"
@@ -19,26 +19,6 @@ std::string formatGtfsSizes(const T& gtfs) {
   return oss.str();
 }
 
-std::vector<std::string> split(const std::string& str, char delimiter) {
-  std::vector<std::string> tokens;
-  std::stringstream ss(str);
-  std::string token;
-
-  while (std::getline(ss, token, delimiter)) {
-    // Trim whitespace
-    size_t start = token.find_first_not_of(" \t\r\n");
-    size_t end = token.find_last_not_of(" \t\r\n");
-
-    if (start != std::string::npos && end != std::string::npos) {
-      tokens.push_back(token.substr(start, end - start + 1));
-    } else if (start != std::string::npos) {
-      tokens.push_back(token.substr(start));
-    }
-  }
-
-  return tokens;
-}
-
 bool isValidDate(const std::string& date) {
   if (date.length() != 8) return false;
 
@@ -46,7 +26,6 @@ bool isValidDate(const std::string& date) {
     if (c < '0' || c > '9') return false;
   }
 
-  // Basic validation - could be more thorough
   int year = std::stoi(date.substr(0, 4));
   int month = std::stoi(date.substr(4, 2));
   int day = std::stoi(date.substr(6, 2));
@@ -56,89 +35,92 @@ bool isValidDate(const std::string& date) {
 }
 
 int main(int argc, char* argv[]) {
-  CLI::App app{"Filter GTFS data by date and optionally by trip ID prefixes"};
+  if (argc != 2) {
+    std::cerr << "Usage: gtfs_filter_tool <config.toml>" << std::endl;
+    return 1;
+  }
 
-  std::string input_dir;
-  std::string date;
-  std::string output_dir;
-  std::string trip_filter;
+  std::string config_path = argv[1];
 
-  app.add_option(
-         "input_dir",
-         input_dir,
-         "Directory containing GTFS files (stops.txt, trips.txt, etc.)"
-  )
-      ->required()
-      ->check(CLI::ExistingDirectory);
-  app.add_option("date", date, "Date in YYYYMMDD format (e.g., 20250708)")
-      ->required();
-  app.add_option(
-         "output_dir",
-         output_dir,
-         "Directory where filtered GTFS files will be saved"
-  )
-      ->required();
-  app.add_option(
-      "--prefix",
-      trip_filter,
-      "Filter by trip ID prefix (comma-separated list, e.g., "
-      "\"CT:,SR:\")"
-  );
+  toml::table config;
+  try {
+    config = toml::parse_file(config_path);
+  } catch (const toml::parse_error& e) {
+    std::cerr << "Error parsing config file: " << e << std::endl;
+    return 1;
+  }
 
-  CLI11_PARSE(app, argc, argv);
+  auto input_dir = config["input_dir"].value<std::string>();
+  auto date = config["date"].value<std::string>();
+  auto output_dir = config["output_dir"].value<std::string>();
 
-  if (!isValidDate(date)) {
-    std::cerr << "Error: Invalid date format '" << date
+  if (!input_dir || !date || !output_dir) {
+    std::cerr << "Config file must contain input_dir, date, and output_dir"
+              << std::endl;
+    return 1;
+  }
+
+  if (!isValidDate(*date)) {
+    std::cerr << "Error: Invalid date format '" << *date
               << "'. Expected YYYYMMDD format." << std::endl;
     return 1;
   }
 
-  std::cout << "Loading GTFS data from: " << input_dir << std::endl;
-  std::cout << "Filtering for date: " << date << std::endl;
-  if (trip_filter.empty()) {
+  if (!std::filesystem::is_directory(*input_dir)) {
+    std::cerr << "Error: Input directory '" << *input_dir
+              << "' does not exist." << std::endl;
+    return 1;
+  }
+
+  std::vector<std::string> prefixes;
+  if (auto arr = config["prefixes"].as_array()) {
+    for (const auto& elem : *arr) {
+      if (auto val = elem.value<std::string>()) {
+        prefixes.push_back(*val);
+      }
+    }
+  }
+
+  std::cout << "Loading GTFS data from: " << *input_dir << std::endl;
+  std::cout << "Filtering for date: " << *date << std::endl;
+  if (prefixes.empty()) {
     std::cout << "Including all trips (no prefix filter)" << std::endl;
   } else {
-    std::vector<std::string> prefix_list = split(trip_filter, ',');
     std::cout << "Using prefix filter(s): ";
-    for (size_t i = 0; i < prefix_list.size(); ++i) {
-      std::cout << "\"" << prefix_list[i] << "\"";
-      if (i < prefix_list.size() - 1) std::cout << ", ";
+    for (size_t i = 0; i < prefixes.size(); ++i) {
+      std::cout << "\"" << prefixes[i] << "\"";
+      if (i < prefixes.size() - 1) std::cout << ", ";
     }
     std::cout << std::endl;
   }
-  std::cout << "Output directory: " << output_dir << std::endl;
+  std::cout << "Output directory: " << *output_dir << std::endl;
   std::cout << std::endl;
 
   try {
-    // Load GTFS data
     std::cout << "Loading GTFS data..." << std::endl;
-    Gtfs gtfs = GtfsLoad(input_dir);
+    Gtfs gtfs = GtfsLoad(*input_dir);
 
     std::cout << "Loaded: " << formatGtfsSizes(gtfs) << std::endl;
 
-    // Filter by prefix.
-    if (!trip_filter.empty()) {
-      std::vector<std::string> prefix_list = split(trip_filter, ',');
-      gtfs = GtfsFilterByPrefixes(gtfs, prefix_list);
+    if (!prefixes.empty()) {
+      gtfs = GtfsFilterByPrefixes(gtfs, prefixes);
       std::cout << "After filtering trips: " << formatGtfsSizes(gtfs)
                 << std::endl;
     }
 
-    // Filter by date and combine with adjacent service days.
-    GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, date);
+    GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, *date);
     std::cout << "Combined result: " << formatGtfsSizes(result) << std::endl;
 
-    // Save to output directory
-    std::cout << "Saving filtered data to: " << output_dir << "..."
+    std::cout << "Saving filtered data to: " << *output_dir << "..."
               << std::endl;
-    GtfsSave(result, output_dir);
+    GtfsSave(result, *output_dir);
 
     std::cout << "Successfully saved filtered GTFS data!" << std::endl;
-    std::cout << "Output files created in: " << output_dir << std::endl;
+    std::cout << "Output files created in: " << *output_dir << std::endl;
 
-    // List created files
     std::cout << "\nCreated files:" << std::endl;
-    for (const auto& entry : std::filesystem::directory_iterator(output_dir)) {
+    for (const auto& entry :
+         std::filesystem::directory_iterator(*output_dir)) {
       if (entry.is_regular_file()) {
         auto file_size = std::filesystem::file_size(entry.path());
         std::cout << "  " << entry.path().filename().string() << " ("
