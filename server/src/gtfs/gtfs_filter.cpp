@@ -138,20 +138,6 @@ GtfsDay GtfsFilterDateWithServiceDays(
   // Filter to the target date.
   GtfsDay gtfs_day = GtfsFilterByDate(gtfs, date);
 
-  // Take all >=24:00 stop times from the day before and add them to
-  // `gtfs_day` with time -24:00.
-  const std::string prev_date = OffsetDate(date, -1);
-  GtfsDay prev_gtfs_day = GtfsFilterByDate(gtfs, prev_date);
-  prev_gtfs_day.AppendToTripIds(":prev-sd");
-  std::erase_if(prev_gtfs_day.stop_times, [](const GtfsStopTime& st) {
-    return st.arrival_time.seconds < kSecondsPerDay;
-  });
-  RemoveUnreferencedTripsRoutesAndDirections(prev_gtfs_day);
-  for (auto& stop_time : prev_gtfs_day.stop_times) {
-    stop_time.arrival_time.seconds -= kSecondsPerDay;
-    stop_time.departure_time.seconds -= kSecondsPerDay;
-  }
-
   // Take all <24:00 stop times from the next day and add them to `gtfs_day`
   // with time +24:00.
   const std::string next_date = OffsetDate(date, 1);
@@ -166,7 +152,7 @@ GtfsDay GtfsFilterDateWithServiceDays(
     stop_time.departure_time.seconds += kSecondsPerDay;
   }
 
-  return GtfsDayCombine({prev_gtfs_day, gtfs_day, next_gtfs_day});
+  return GtfsDayCombine({gtfs_day, next_gtfs_day});
 }
 
 }  // namespace vats5
