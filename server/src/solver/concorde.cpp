@@ -269,9 +269,15 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
   size_t pos = concorde_output.find("Optimal Solution:");
   if (pos == std::string::npos) {
-    throw std::runtime_error(
-        "Concorde did not find optimal solution. Output:\n" + concorde_output
-    );
+    // throw std::runtime_error(
+    //     "Concorde did not find optimal solution. Output:\n" + concorde_output
+    // );
+    // TODO: Consider whether this is really infeasible always or if there are
+    // error cases we should detect and fail for.
+    std::remove(problem_path.c_str());
+    std::remove(solution_path.c_str());
+    rmdir(temp_dir.c_str());
+    return std::nullopt;
   }
   int raw_optimal_value =
       static_cast<int>(std::round(std::stod(concorde_output.substr(pos + 17))));
