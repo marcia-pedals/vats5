@@ -10,7 +10,6 @@ namespace vats5 {
 struct GtfsFilterConfig {
   std::string input_dir;
   std::string date;
-  std::string output_dir;
   std::vector<std::string> prefixes;
 };
 

@@ -1,4 +1,3 @@
 input_dir = "raw_RG_20251231"
 date = "20260109"
-output_dir = "RG_20260109_BA_CT_SC_SM_AC"
 prefixes = ["BA:", "CT:", "SC:", "SM:", "AC:"]

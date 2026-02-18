@@ -1,4 +1,3 @@
 input_dir = "raw_RG_202506"
 date = "20250718"
-output_dir = "RG_20250718_CT"
 prefixes = ["CT:"]
