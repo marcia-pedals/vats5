@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Initialize a bunch of problems.
+# Saves the problems in the home dir so that we can work on them from multiple
+# checkouts.
+
+set -euo pipefail
+
+mkdir -p ~/vats5-problems
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w1.json --walking-speed 1
+initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w5.json --walking-speed 5

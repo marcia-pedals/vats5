@@ -24,7 +24,15 @@ std::string FormatGtfsSizes(const T& gtfs) {
 }  // namespace
 
 GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
-  toml::table config = toml::parse_file(config_path);
+  toml::table config;
+  try {
+    config = toml::parse_file(config_path);
+  } catch (const toml::parse_error& err) {
+    throw std::runtime_error(
+        "Failed to parse world config file '" + config_path + "': " +
+        std::string(err.what())
+    );
+  }
 
   auto input_dir = config["input_dir"].value<std::string>();
   auto date = config["date"].value<std::string>();
