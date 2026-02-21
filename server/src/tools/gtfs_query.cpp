@@ -41,7 +41,8 @@ void QueryRoutes(const GtfsDay& data) {
 void QueryRequiredStopsConfig(
     const GtfsDay& data,
     int argc,
-    char* argv[]
+    char* argv[],
+    const std::unordered_set<GtfsStopId>& exclude_stop_ids = {}
 ) {
   // Build a map of stop_id to stop_name
   std::unordered_map<GtfsStopId, std::string> stop_names;
@@ -83,8 +84,13 @@ void QueryRequiredStopsConfig(
     }
   }
 
-  // Convert to sorted vector, sorted by stop name
-  std::vector<GtfsStopId> sorted_stops(stop_ids.begin(), stop_ids.end());
+  // Convert to sorted vector, sorted by stop name, excluding any excluded stops
+  std::vector<GtfsStopId> sorted_stops;
+  for (const auto& stop_id : stop_ids) {
+    if (exclude_stop_ids.find(stop_id) == exclude_stop_ids.end()) {
+      sorted_stops.push_back(stop_id);
+    }
+  }
   std::sort(sorted_stops.begin(), sorted_stops.end(),
             [&stop_names](const GtfsStopId& a, const GtfsStopId& b) {
               return stop_names[a] < stop_names[b];
@@ -136,6 +142,7 @@ int main(int argc, char* argv[]) {
   std::string command;
   std::string trip_id_prefix;
   std::string route_ids;
+  std::string exclude_stop_ids;
 
   app.add_option("config_path", config_path, "Path to TOML config file")
       ->required();
@@ -146,6 +153,8 @@ int main(int argc, char* argv[]) {
                  "Comma-separated list of trip ID prefixes to filter by");
   app.add_option("--route_ids", route_ids,
                  "Comma-separated list of exact route IDs to include");
+  app.add_option("--exclude_stop_ids", exclude_stop_ids,
+                 "Comma-separated list of stop IDs to exclude from output");
 
   CLI11_PARSE(app, argc, argv);
 
@@ -192,12 +201,22 @@ int main(int argc, char* argv[]) {
       RemoveUnreferencedTripsRoutesAndDirections(data);
     }
 
+    // Parse exclude_stop_ids if provided
+    std::unordered_set<GtfsStopId> exclude_stop_id_set;
+    if (!exclude_stop_ids.empty()) {
+      std::istringstream ss(exclude_stop_ids);
+      std::string id;
+      while (std::getline(ss, id, ',')) {
+        exclude_stop_id_set.insert(GtfsStopId{id});
+      }
+    }
+
     if (command == "stops") {
       QueryStops(data);
     } else if (command == "routes") {
       QueryRoutes(data);
     } else if (command == "required_stops_config") {
-      QueryRequiredStopsConfig(data, argc, argv);
+      QueryRequiredStopsConfig(data, argc, argv, exclude_stop_id_set);
     } else {
       std::cerr << "Unknown command: " << command << std::endl;
       std::cerr << "Available commands: stops, routes, required_stops_config"
