@@ -66,11 +66,10 @@ int main(int argc, char* argv[]) {
         "': " + std::string(err.what())
     );
   }
-  auto stops_prefix =
-      required_stops_toml["stops_for_trip_id_prefix"].value<std::string>();
-  if (!stops_prefix) {
+  auto stop_ids_array = required_stops_toml["stop_ids"].as_array();
+  if (!stop_ids_array) {
     throw std::runtime_error(
-        "Required stops config must contain stops_for_trip_id_prefix"
+        "Required stops config must contain stop_ids array"
     );
   }
 
@@ -78,8 +77,18 @@ int main(int argc, char* argv[]) {
             << "m, walking_speed=" << walking_speed << "m/s\n";
   StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day, options);
 
-  std::unordered_set<StopId> required_stops =
-      GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, *stops_prefix);
+  std::unordered_set<StopId> required_stops;
+  for (const auto& stop_id_elem : *stop_ids_array) {
+    auto stop_id_str = stop_id_elem.value<std::string>();
+    if (!stop_id_str) {
+      throw std::runtime_error("Invalid stop_id in required stops config");
+    }
+    GtfsStopId gtfs_stop_id{*stop_id_str};
+    auto it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
+    if (it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+      required_stops.insert(it->second);
+    }
+  }
 
   std::cout << "Initializing solution state...\n";
   ProblemState state = InitializeProblemState(

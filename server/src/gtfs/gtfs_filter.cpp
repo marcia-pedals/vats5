@@ -65,30 +65,30 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
 }
 
 GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config) {
-  std::cout << "Loading GTFS data from: " << config.input_dir << std::endl;
-  std::cout << "Filtering for date: " << config.date << std::endl;
+  std::cerr << "Loading GTFS data from: " << config.input_dir << std::endl;
+  std::cerr << "Filtering for date: " << config.date << std::endl;
   if (config.prefixes.empty()) {
-    std::cout << "Including all trips (no prefix filter)" << std::endl;
+    std::cerr << "Including all trips (no prefix filter)" << std::endl;
   } else {
-    std::cout << "Using prefix filter(s): ";
+    std::cerr << "Using prefix filter(s): ";
     for (size_t i = 0; i < config.prefixes.size(); ++i) {
-      std::cout << "\"" << config.prefixes[i] << "\"";
-      if (i < config.prefixes.size() - 1) std::cout << ", ";
+      std::cerr << "\"" << config.prefixes[i] << "\"";
+      if (i < config.prefixes.size() - 1) std::cerr << ", ";
     }
-    std::cout << std::endl;
+    std::cerr << std::endl;
   }
 
   Gtfs gtfs = GtfsLoad(config.input_dir);
-  std::cout << "Loaded: " << FormatGtfsSizes(gtfs) << std::endl;
+  std::cerr << "Loaded: " << FormatGtfsSizes(gtfs) << std::endl;
 
   if (!config.prefixes.empty()) {
     gtfs = GtfsFilterByPrefixes(gtfs, config.prefixes);
-    std::cout << "After filtering trips: " << FormatGtfsSizes(gtfs)
+    std::cerr << "After filtering trips: " << FormatGtfsSizes(gtfs)
               << std::endl;
   }
 
   GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, config.date);
-  std::cout << "Combined result: " << FormatGtfsSizes(result) << std::endl;
+  std::cerr << "Combined result: " << FormatGtfsSizes(result) << std::endl;
 
   return result;
 }
