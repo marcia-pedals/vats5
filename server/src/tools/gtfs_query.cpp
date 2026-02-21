@@ -108,14 +108,18 @@ void QueryRequiredStopsConfig(
       bool first_route = true;
       for (const auto& [route_name, directions] : route_dir_it->second) {
         if (!first_route) std::cout << ",";
-        std::cout << " " << route_name << " [";
-        bool first_dir = true;
-        for (const auto& dir : directions) {
-          if (!first_dir) std::cout << ", ";
-          std::cout << dir;
-          first_dir = false;
+        std::cout << " " << route_name;
+        // Only show directions in brackets if there's more than one
+        if (directions.size() > 1) {
+          std::cout << " [";
+          bool first_dir = true;
+          for (const auto& dir : directions) {
+            if (!first_dir) std::cout << ", ";
+            std::cout << dir;
+            first_dir = false;
+          }
+          std::cout << "]";
         }
-        std::cout << "]";
         first_route = false;
       }
     }
