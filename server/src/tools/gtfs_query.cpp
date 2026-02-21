@@ -1,6 +1,7 @@
 #include <CLI/CLI.hpp>
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -48,10 +49,30 @@ void QueryRequiredStopsConfig(
     stop_names[stop.stop_id] = stop.stop_name;
   }
 
-  // Collect all unique stop IDs from the filtered data
+  // Build a map of trip_id to route_direction_id
+  std::unordered_map<GtfsTripId, GtfsRouteDirectionId> trip_to_route_dir;
+  for (const auto& trip : data.trips) {
+    trip_to_route_dir[trip.trip_id] = trip.route_direction_id;
+  }
+
+  // Build a map of route_direction_id to direction name
+  std::unordered_map<GtfsRouteDirectionId, std::string> route_dir_to_name;
+  for (const auto& dir : data.directions) {
+    route_dir_to_name[dir.route_direction_id] = dir.direction;
+  }
+
+  // Collect all unique stop IDs and their route directions
   std::unordered_set<GtfsStopId> stop_ids;
+  std::unordered_map<GtfsStopId, std::set<std::string>> stop_to_directions;
   for (const auto& stop_time : data.stop_times) {
     stop_ids.insert(stop_time.stop_id);
+    auto trip_it = trip_to_route_dir.find(stop_time.trip_id);
+    if (trip_it != trip_to_route_dir.end()) {
+      auto dir_it = route_dir_to_name.find(trip_it->second);
+      if (dir_it != route_dir_to_name.end()) {
+        stop_to_directions[stop_time.stop_id].insert(dir_it->second);
+      }
+    }
   }
 
   // Convert to sorted vector, sorted by stop name
@@ -66,10 +87,25 @@ void QueryRequiredStopsConfig(
   for (int i = 1; i < argc; ++i) {
     std::cout << " " << argv[i];
   }
+  std::cout << "\n# Number of stops: " << sorted_stops.size();
   std::cout << "\n\nstop_ids = [\n";
 
   for (const auto& stop_id : sorted_stops) {
-    std::cout << "  \"" << stop_id.v << "\", # " << stop_names[stop_id] << "\n";
+    std::cout << "  \"" << stop_id.v << "\", # " << stop_names[stop_id];
+
+    // Add route directions if any
+    auto dir_it = stop_to_directions.find(stop_id);
+    if (dir_it != stop_to_directions.end() && !dir_it->second.empty()) {
+      std::cout << " [";
+      bool first = true;
+      for (const auto& dir : dir_it->second) {
+        if (!first) std::cout << ", ";
+        std::cout << dir;
+        first = false;
+      }
+      std::cout << "]";
+    }
+    std::cout << "\n";
   }
 
   std::cout << "]\n";
