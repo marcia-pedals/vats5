@@ -72,6 +72,9 @@
               echo "Linking test data from nix store..."
               ln -s ${testData} server/data
             fi
+
+            # Add build-debug binaries and project bin to PATH
+            export PATH="$PWD/bin:$PWD/server/build-debug:$PATH"
           '';
         };
       });
