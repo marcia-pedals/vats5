@@ -49,6 +49,12 @@ void QueryRequiredStopsConfig(
     stop_names[stop.stop_id] = stop.stop_name;
   }
 
+  // Build a map of route_id to route_short_name
+  std::unordered_map<GtfsRouteId, std::string> route_short_names;
+  for (const auto& route : data.routes) {
+    route_short_names[route.route_id] = route.route_short_name;
+  }
+
   // Build a map of trip_id to route_direction_id
   std::unordered_map<GtfsTripId, GtfsRouteDirectionId> trip_to_route_dir;
   for (const auto& trip : data.trips) {
@@ -61,16 +67,18 @@ void QueryRequiredStopsConfig(
     route_dir_to_name[dir.route_direction_id] = dir.direction;
   }
 
-  // Collect all unique stop IDs and their route directions
+  // Collect all unique stop IDs and map them to routes with their directions
   std::unordered_set<GtfsStopId> stop_ids;
-  std::unordered_map<GtfsStopId, std::set<std::string>> stop_to_directions;
+  // Map: stop_id -> (route_short_name -> set of directions)
+  std::unordered_map<GtfsStopId, std::map<std::string, std::set<std::string>>> stop_to_route_directions;
   for (const auto& stop_time : data.stop_times) {
     stop_ids.insert(stop_time.stop_id);
     auto trip_it = trip_to_route_dir.find(stop_time.trip_id);
     if (trip_it != trip_to_route_dir.end()) {
       auto dir_it = route_dir_to_name.find(trip_it->second);
-      if (dir_it != route_dir_to_name.end()) {
-        stop_to_directions[stop_time.stop_id].insert(dir_it->second);
+      auto route_name_it = route_short_names.find(trip_it->second.route_id);
+      if (dir_it != route_dir_to_name.end() && route_name_it != route_short_names.end()) {
+        stop_to_route_directions[stop_time.stop_id][route_name_it->second].insert(dir_it->second);
       }
     }
   }
@@ -93,17 +101,23 @@ void QueryRequiredStopsConfig(
   for (const auto& stop_id : sorted_stops) {
     std::cout << "  \"" << stop_id.v << "\", # " << stop_names[stop_id];
 
-    // Add route directions if any
-    auto dir_it = stop_to_directions.find(stop_id);
-    if (dir_it != stop_to_directions.end() && !dir_it->second.empty()) {
-      std::cout << " [";
-      bool first = true;
-      for (const auto& dir : dir_it->second) {
-        if (!first) std::cout << ", ";
-        std::cout << dir;
-        first = false;
+    // Add route short names with their directions
+    auto route_dir_it = stop_to_route_directions.find(stop_id);
+    if (route_dir_it != stop_to_route_directions.end() && !route_dir_it->second.empty()) {
+      std::cout << ":";
+      bool first_route = true;
+      for (const auto& [route_name, directions] : route_dir_it->second) {
+        if (!first_route) std::cout << ",";
+        std::cout << " " << route_name << " [";
+        bool first_dir = true;
+        for (const auto& dir : directions) {
+          if (!first_dir) std::cout << ", ";
+          std::cout << dir;
+          first_dir = false;
+        }
+        std::cout << "]";
+        first_route = false;
       }
-      std::cout << "]";
     }
     std::cout << "\n";
   }
