@@ -57,7 +57,15 @@ int main(int argc, char* argv[]) {
   GtfsFilterConfig filter_config = GtfsFilterConfigLoad(world_config_path);
   GtfsDay gtfs_day = GtfsNormalizeStops(GtfsFilterFromConfig(filter_config));
 
-  toml::table required_stops_toml = toml::parse_file(required_stops_config);
+  toml::table required_stops_toml;
+  try {
+    required_stops_toml = toml::parse_file(required_stops_config);
+  } catch (const toml::parse_error& err) {
+    throw std::runtime_error(
+        "Failed to parse required stops config file '" + required_stops_config +
+        "': " + std::string(err.what())
+    );
+  }
   auto stops_prefix =
       required_stops_toml["stops_for_trip_id_prefix"].value<std::string>();
   if (!stops_prefix) {
