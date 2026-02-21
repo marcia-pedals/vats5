@@ -96,6 +96,17 @@ void QueryRequiredStopsConfig(
     route_dir_to_name[dir.route_direction_id] = dir.direction;
   }
 
+  // Build a map of all directions for each route (globally)
+  // Map: route_short_name -> set of all directions for that route
+  std::map<std::string, std::set<std::string>> route_all_directions;
+  for (const auto& trip : data.trips) {
+    auto route_name_it = route_short_names.find(trip.route_direction_id.route_id);
+    auto dir_it = route_dir_to_name.find(trip.route_direction_id);
+    if (route_name_it != route_short_names.end() && dir_it != route_dir_to_name.end()) {
+      route_all_directions[route_name_it->second].insert(dir_it->second);
+    }
+  }
+
   // Collect all unique stop IDs and map them to routes with their directions
   std::unordered_set<GtfsStopId> stop_ids;
   // Map: stop_id -> (route_short_name -> set of directions)
@@ -143,8 +154,9 @@ void QueryRequiredStopsConfig(
       for (const auto& [route_name, directions] : route_dir_it->second) {
         if (!first_route) std::cout << ",";
         std::cout << " " << route_name;
-        // Only show directions in brackets if there's more than one
-        if (directions.size() > 1) {
+        // Only show directions if they differ from the full set for this route
+        auto all_dirs_it = route_all_directions.find(route_name);
+        if (all_dirs_it != route_all_directions.end() && directions != all_dirs_it->second) {
           std::cout << " [";
           bool first_dir = true;
           for (const auto& dir : directions) {

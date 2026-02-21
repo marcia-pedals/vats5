@@ -2,66 +2,66 @@
 # Number of stops: 62
 
 stop_ids = [
-  "PS_ALDR", # Alder Station: Orange Line [East, West]
-  "PS_ALUM", # Alum Rock Station: Orange Line [East, West]
-  "PS_BASC", # Bascom Station: Green Line [North, South]
-  "PS_BAYP", # Baypointe Station: Blue Line [North, South], Orange Line [East, West]
-  "PS_NASA", # Bayshore Nasa Station: Orange Line [East, West]
-  "PS_BRRS", # Berryessa Station: Orange Line [East, West]
-  "PS_BLSM", # Blossom Hill Station: Blue Line [North, South]
-  "PS_BONA", # Bonaventura Station: Blue Line [North, South], Green Line [North, South]
-  "PS_BORR", # Borregas Station: Orange Line [East, West]
-  "PS_BRNM", # Branham Station: Blue Line [North, South]
-  "PS_CMBL", # Campbell Station: Green Line [North, South]
-  "PS_CPTL", # Capitol Station: Blue Line [North, South]
-  "PS_CHMP", # Champion Station: Green Line [North, South], Orange Line [East, West]
-  "PS_CDMS", # Children's Discovery Museum Station: Blue Line [North, South]
-  "PS_CISC", # Cisco Station: Orange Line [East, West]
-  "PS_CIVC", # Civic Center Station: Blue Line [North, South], Green Line [North, South]
-  "PS_COMP", # Component Station: Blue Line [North, South], Green Line [North, South]
-  "PS_CONV", # Convention Center Station: Blue Line [North, South], Green Line [North, South]
-  "PS_CTTL", # Cottle Station: Blue Line [North, South]
-  "PS_CROP", # Cropley Station: Orange Line [East, West]
-  "PS_CRSS", # Crossman Station: Orange Line [East, West]
-  "PS_CURT", # Curtner Station: Blue Line [North, South]
-  "PS_FAIR", # Fair Oaks Station: Orange Line [East, West]
-  "PS_FRTD", # Fruitdale Station: Green Line [North, South]
-  "PS_GISH", # Gish Station: Blue Line [North, South], Green Line [North, South]
-  "PS_GRAM", # Great America Station: Green Line [North, South], Orange Line [East, West]
-  "PS_GRML", # Great Mall Station: Orange Line [East, West]
-  "mtc:great-mall-milpitas-bart", # Great Mall/Milpitas BART: Orange Line [East, West]
-  "PS_HAML", # Hamilton Station: Green Line [North, South]
-  "PS_HOST", # Hostetter Station: Orange Line [East, West]
-  "PS_JAPN", # Japantown/Ayer Station: Blue Line [North, South], Green Line [North, South]
-  "PS_KRNA", # Karina Station: Blue Line [North, South], Green Line [North, South]
-  "PS_LICK", # Lick Mill Station: Green Line [North, South], Orange Line [East, West]
-  "PS_LOCK", # Lockheed Martin Station: Orange Line [East, West]
-  "PS_MKEE", # Mckee Station: Orange Line [East, West]
-  "PS_METR", # Metro/Airport Station: Blue Line [North, South], Green Line [North, South]
-  "PS_MIDD", # Middlefield Station: Orange Line [East, West]
-  "PS_MOFF", # Moffett Park Station: Orange Line [East, West]
-  "mtc:mountain-view-station", # Mountain View Station: Orange Line [East, West]
-  "PS_OHLO", # Ohlone-Chynoweth Station: Blue Line [North, South]
-  "PS_OLDI", # Old Ironsides Station: Green Line [North, South], Orange Line [East, West]
-  "PS_ORCH", # Orchard Station: Blue Line [North, South], Green Line [North, South]
-  "PS_PENC", # Penitencia Creek Station: Orange Line [East, West]
-  "PS_RACE", # Race Station: Green Line [North, South]
-  "PS_REAM", # Reamwood Station: Orange Line [East, West]
-  "PS_ROAK", # River Oaks Station: Blue Line [North, South], Green Line [North, South]
-  "64749", # Saint James Station: Blue Line, Green Line
-  "64772", # Saint James Station: Blue Line, Green Line
-  "64747", # San Antonio Station: Blue Line, Green Line
-  "64774", # San Antonio Station: Blue Line, Green Line
-  "PS_SFND", # San Fernando Station: Green Line [North, South]
-  "mtc:san-jose-diridon-station", # San Jose Diridon Station: Green Line [North, South]
-  "64773", # Santa Clara Station: Blue Line, Green Line
-  "64748", # Santa Clara Station: Blue Line, Green Line
-  "PS_TRSA", # Santa Teresa Station: Blue Line [North, South]
-  "PS_SNLL", # Snell Station: Blue Line [North, South]
-  "PS_TAMN", # Tamien Station: Blue Line [North, South]
-  "PS_TASM", # Tasman Station: Blue Line [North, South], Green Line [North, South]
-  "PS_VIEN", # Vienna Station: Orange Line [East, West]
-  "PS_VIRG", # Virginia Station: Blue Line [North, South]
-  "PS_WHIS", # Whisman Station: Orange Line [East, West]
-  "PS_WINC", # Winchester Station: Green Line [North, South]
+  "PS_ALDR", # Alder Station: Orange Line
+  "PS_ALUM", # Alum Rock Station: Orange Line
+  "PS_BASC", # Bascom Station: Green Line
+  "PS_BAYP", # Baypointe Station: Blue Line, Orange Line
+  "PS_NASA", # Bayshore Nasa Station: Orange Line
+  "PS_BRRS", # Berryessa Station: Orange Line
+  "PS_BLSM", # Blossom Hill Station: Blue Line
+  "PS_BONA", # Bonaventura Station: Blue Line, Green Line
+  "PS_BORR", # Borregas Station: Orange Line
+  "PS_BRNM", # Branham Station: Blue Line
+  "PS_CMBL", # Campbell Station: Green Line
+  "PS_CPTL", # Capitol Station: Blue Line
+  "PS_CHMP", # Champion Station: Green Line, Orange Line
+  "PS_CDMS", # Children's Discovery Museum Station: Blue Line
+  "PS_CISC", # Cisco Station: Orange Line
+  "PS_CIVC", # Civic Center Station: Blue Line, Green Line
+  "PS_COMP", # Component Station: Blue Line, Green Line
+  "PS_CONV", # Convention Center Station: Blue Line, Green Line
+  "PS_CTTL", # Cottle Station: Blue Line
+  "PS_CROP", # Cropley Station: Orange Line
+  "PS_CRSS", # Crossman Station: Orange Line
+  "PS_CURT", # Curtner Station: Blue Line
+  "PS_FAIR", # Fair Oaks Station: Orange Line
+  "PS_FRTD", # Fruitdale Station: Green Line
+  "PS_GISH", # Gish Station: Blue Line, Green Line
+  "PS_GRAM", # Great America Station: Green Line, Orange Line
+  "PS_GRML", # Great Mall Station: Orange Line
+  "mtc:great-mall-milpitas-bart", # Great Mall/Milpitas BART: Orange Line
+  "PS_HAML", # Hamilton Station: Green Line
+  "PS_HOST", # Hostetter Station: Orange Line
+  "PS_JAPN", # Japantown/Ayer Station: Blue Line, Green Line
+  "PS_KRNA", # Karina Station: Blue Line, Green Line
+  "PS_LICK", # Lick Mill Station: Green Line, Orange Line
+  "PS_LOCK", # Lockheed Martin Station: Orange Line
+  "PS_MKEE", # Mckee Station: Orange Line
+  "PS_METR", # Metro/Airport Station: Blue Line, Green Line
+  "PS_MIDD", # Middlefield Station: Orange Line
+  "PS_MOFF", # Moffett Park Station: Orange Line
+  "mtc:mountain-view-station", # Mountain View Station: Orange Line
+  "PS_OHLO", # Ohlone-Chynoweth Station: Blue Line
+  "PS_OLDI", # Old Ironsides Station: Green Line, Orange Line
+  "PS_ORCH", # Orchard Station: Blue Line, Green Line
+  "PS_PENC", # Penitencia Creek Station: Orange Line
+  "PS_RACE", # Race Station: Green Line
+  "PS_REAM", # Reamwood Station: Orange Line
+  "PS_ROAK", # River Oaks Station: Blue Line, Green Line
+  "64749", # Saint James Station: Blue Line [North], Green Line [North]
+  "64772", # Saint James Station: Blue Line [South], Green Line [South]
+  "64747", # San Antonio Station: Blue Line [North], Green Line [North]
+  "64774", # San Antonio Station: Blue Line [South], Green Line [South]
+  "PS_SFND", # San Fernando Station: Green Line
+  "mtc:san-jose-diridon-station", # San Jose Diridon Station: Green Line
+  "64773", # Santa Clara Station: Blue Line [South], Green Line [South]
+  "64748", # Santa Clara Station: Blue Line [North], Green Line [North]
+  "PS_TRSA", # Santa Teresa Station: Blue Line
+  "PS_SNLL", # Snell Station: Blue Line
+  "PS_TAMN", # Tamien Station: Blue Line
+  "PS_TASM", # Tasman Station: Blue Line, Green Line
+  "PS_VIEN", # Vienna Station: Orange Line
+  "PS_VIRG", # Virginia Station: Blue Line
+  "PS_WHIS", # Whisman Station: Orange Line
+  "PS_WINC", # Winchester Station: Green Line
 ]
