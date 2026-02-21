@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Run ninja in server/build-debug from anywhere in the project
+
+# Find the project root (where this script's parent directory is)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+exec ninja -C "$PROJECT_ROOT/server/build-debug" "$@"
