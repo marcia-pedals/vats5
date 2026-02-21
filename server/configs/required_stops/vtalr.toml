@@ -54,8 +54,8 @@ stop_ids = [
   "64774", # San Antonio Station: Blue Line [South], Green Line [South]
   "PS_SFND", # San Fernando Station: Green Line
   "mtc:san-jose-diridon-station", # San Jose Diridon Station: Green Line
-  "64773", # Santa Clara Station: Blue Line [South], Green Line [South]
   "64748", # Santa Clara Station: Blue Line [North], Green Line [North]
+  "64773", # Santa Clara Station: Blue Line [South], Green Line [South]
   "PS_TRSA", # Santa Teresa Station: Blue Line
   "PS_SNLL", # Snell Station: Blue Line
   "PS_TAMN", # Tamien Station: Blue Line

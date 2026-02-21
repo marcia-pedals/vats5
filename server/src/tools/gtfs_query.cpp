@@ -123,7 +123,35 @@ void QueryRequiredStopsConfig(
     }
   }
 
-  // Convert to sorted vector, sorted by stop name, excluding any excluded stops
+  // Helper function to generate the full comment for a stop
+  auto generate_comment = [&](const GtfsStopId& stop_id) -> std::string {
+    std::stringstream ss;
+    ss << stop_names[stop_id];
+    auto route_dir_it = stop_to_route_directions.find(stop_id);
+    if (route_dir_it != stop_to_route_directions.end() && !route_dir_it->second.empty()) {
+      ss << ":";
+      bool first_route = true;
+      for (const auto& [route_name, directions] : route_dir_it->second) {
+        if (!first_route) ss << ",";
+        ss << " " << route_name;
+        auto all_dirs_it = route_all_directions.find(route_name);
+        if (all_dirs_it != route_all_directions.end() && directions != all_dirs_it->second) {
+          ss << " [";
+          bool first_dir = true;
+          for (const auto& dir : directions) {
+            if (!first_dir) ss << ", ";
+            ss << dir;
+            first_dir = false;
+          }
+          ss << "]";
+        }
+        first_route = false;
+      }
+    }
+    return ss.str();
+  };
+
+  // Convert to sorted vector, sorted by full comment, excluding any excluded stops
   std::vector<GtfsStopId> sorted_stops;
   for (const auto& stop_id : stop_ids) {
     if (exclude_stop_ids.find(stop_id) == exclude_stop_ids.end()) {
@@ -131,8 +159,8 @@ void QueryRequiredStopsConfig(
     }
   }
   std::sort(sorted_stops.begin(), sorted_stops.end(),
-            [&stop_names](const GtfsStopId& a, const GtfsStopId& b) {
-              return stop_names[a] < stop_names[b];
+            [&generate_comment](const GtfsStopId& a, const GtfsStopId& b) {
+              return generate_comment(a) < generate_comment(b);
             });
 
   // Output the TOML file with original command
