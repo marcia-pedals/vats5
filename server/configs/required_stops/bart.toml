@@ -2,54 +2,54 @@
 # Number of stops: 50
 
 stop_ids = [
-  "mtc:12th-st-oakland-city-center-bart", # 12th St Oakland City Center BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "901509", # 16th Street / Mission: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "mtc:19th-st-oakland-bart", # 19TH St Oakland BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "901609", # 24th Street / Mission: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "908309", # Antioch: Yellow-N, Yellow-S
+  "mtc:12th-st-oakland-city-center-bart", # 12th St Oakland City Center BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "901509", # 16th Street / Mission: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "mtc:19th-st-oakland-bart", # 19TH St Oakland BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "901609", # 24th Street / Mission: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "908309", # Antioch: Yellow-N [North], Yellow-S
   "904109", # Ashby: Orange-N, Orange-S, Red-N, Red-S
-  "901809", # Balboa Park: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "901809", # Balboa Park: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "902509", # Bay Fair: Blue-N, Blue-S, Green-N, Green-S, Orange-N, Orange-S
   "909509", # Berryessa / North San Jose: Green-N, Green-S, Orange-N, Orange-S
   "905109", # Castro Valley: Blue-N, Blue-S
-  "mtc:civic-center-bart", # Civic Center BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "906109", # Colma: Red-N, Red-S, Yellow-N, Yellow-S
-  "903609", # Concord: Yellow-N, Yellow-S
-  "mtc:daly-city-bart", # Daly City BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "mtc:civic-center-bart", # Civic Center BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "906109", # Colma: Red-N, Red-S, Yellow-N [North], Yellow-S
+  "903609", # Concord: Yellow-N [North], Yellow-S
+  "mtc:daly-city-bart", # Daly City BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "904209", # Downtown Berkeley: Orange-N, Orange-S, Red-N, Red-S
   "mtc:dublin-pleasanton-bart", # Dublin / Pleasanton BART: Blue-N, Blue-S
   "mtc:el-cerrito-del-norte-bart", # El Cerrito Del Norte BART: Orange-N, Orange-S, Red-N, Red-S
   "904409", # El Cerrito Plaza: Orange-N, Orange-S, Red-N, Red-S
-  "mtc:embarcadero-bart", # Embarcadero BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "mtc:embarcadero-bart", # Embarcadero BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "902909", # Fremont: Green-N, Green-S, Orange-N, Orange-S
   "mtc:fruitvale", # Fruitvale: Blue-N, Blue-S, Green-N, Green-S, Orange-N, Orange-S
-  "901709", # Glen Park: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "901709", # Glen Park: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "mtc:great-mall-milpitas-bart", # Great Mall/Milpitas BART: Green-N, Green-S, Orange-N, Orange-S
   "902609", # Hayward: Green-N, Green-S, Orange-N, Orange-S
-  "903309", # Lafayette: Yellow-N, Yellow-S
+  "903309", # Lafayette: Yellow-N [North], Yellow-S
   "902109", # Lake Merritt: Blue-N, Blue-S, Green-N, Green-S, Orange-N, Orange-S
-  "mtc:macarthur-bart", # MacArthur BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N, Yellow-S
-  "mtc:millbrae-bart", # Millbrae BART: Red-N, Red-S, Yellow-N [North, Outbound], Yellow-S
-  "mtc:montgomery-bart", # Montgomery BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "mtc:macarthur-bart", # MacArthur BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N [North], Yellow-S
+  "mtc:millbrae-bart", # Millbrae BART: Red-N, Red-S, Yellow-N, Yellow-S
+  "mtc:montgomery-bart", # Montgomery BART: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "904309", # North Berkeley: Orange-N, Orange-S, Red-N, Red-S
-  "903709", # North Concord / Martinez: Yellow-N, Yellow-S
+  "903709", # North Concord / Martinez: Yellow-N [North], Yellow-S
   "mtc:oak", # OAK: Grey-N, Grey-S
   "mtc:oakland-coliseum-bart", # Oakland Coliseum BART: Blue-N, Blue-S, Green-N, Green-S, Grey-N, Grey-S, Orange-N, Orange-S
-  "903209", # Orinda: Yellow-N, Yellow-S
-  "903809", # Pittsburg / Bay Point: Yellow-N, Yellow-S
-  "908209", # Pittsburg Center: Yellow-N, Yellow-S
-  "mtc:pleasant-hill-bart", # Pleasant Hill BART: Yellow-N, Yellow-S
-  "mtc:powell", # Powell: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "903209", # Orinda: Yellow-N [North], Yellow-S
+  "903809", # Pittsburg / Bay Point: Yellow-N [North], Yellow-S
+  "908209", # Pittsburg Center: Yellow-N [North], Yellow-S
+  "mtc:pleasant-hill-bart", # Pleasant Hill BART: Yellow-N [North], Yellow-S
+  "mtc:powell", # Powell: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
   "mtc:richmond-bart-amtrak", # Richmond BART/Amtrak: Orange-N, Orange-S, Red-N, Red-S
-  "903109", # Rockridge: Yellow-N, Yellow-S
-  "mtc:sfo", # SFO: Red-N, Red-S, Yellow-N [North, Outbound], Yellow-S
-  "906309", # San Bruno: Red-N, Red-S, Yellow-N, Yellow-S
+  "903109", # Rockridge: Yellow-N [North], Yellow-S
+  "mtc:sfo", # SFO: Red-N, Red-S, Yellow-N, Yellow-S
+  "906309", # San Bruno: Red-N, Red-S, Yellow-N [North], Yellow-S
   "902409", # San Leandro: Blue-N, Blue-S, Green-N, Green-S, Orange-N, Orange-S
   "902709", # South Hayward: Green-N, Green-S, Orange-N, Orange-S
-  "906209", # South San Francisco: Red-N, Red-S, Yellow-N, Yellow-S
+  "906209", # South San Francisco: Red-N, Red-S, Yellow-N [North], Yellow-S
   "mtc:union-city-bart", # Union City BART: Green-N, Green-S, Orange-N, Orange-S
-  "mtc:walnut-creek-bart", # Walnut Creek BART: Yellow-N, Yellow-S
+  "mtc:walnut-creek-bart", # Walnut Creek BART: Yellow-N [North], Yellow-S
   "mtc:warm-springs-south-fremont-bart", # Warm Springs South Fremont BART: Green-N, Green-S, Orange-N, Orange-S
   "905209", # West Dublin / Pleasanton: Blue-N, Blue-S
-  "901109", # West Oakland: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N, Yellow-S
+  "901109", # West Oakland: Blue-N, Blue-S, Green-N, Green-S, Red-N, Red-S, Yellow-N [North], Yellow-S
 ]
