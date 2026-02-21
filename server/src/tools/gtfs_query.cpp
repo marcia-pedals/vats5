@@ -172,32 +172,7 @@ void QueryRequiredStopsConfig(
   std::cout << "\n\nstop_ids = [\n";
 
   for (const auto& stop_id : sorted_stops) {
-    std::cout << "  \"" << stop_id.v << "\", # " << stop_names[stop_id];
-
-    // Add route short names with their directions
-    auto route_dir_it = stop_to_route_directions.find(stop_id);
-    if (route_dir_it != stop_to_route_directions.end() && !route_dir_it->second.empty()) {
-      std::cout << ":";
-      bool first_route = true;
-      for (const auto& [route_name, directions] : route_dir_it->second) {
-        if (!first_route) std::cout << ",";
-        std::cout << " " << route_name;
-        // Only show directions if they differ from the full set for this route
-        auto all_dirs_it = route_all_directions.find(route_name);
-        if (all_dirs_it != route_all_directions.end() && directions != all_dirs_it->second) {
-          std::cout << " [";
-          bool first_dir = true;
-          for (const auto& dir : directions) {
-            if (!first_dir) std::cout << ", ";
-            std::cout << dir;
-            first_dir = false;
-          }
-          std::cout << "]";
-        }
-        first_route = false;
-      }
-    }
-    std::cout << "\n";
+    std::cout << "  \"" << stop_id.v << "\", # " << generate_comment(stop_id) << "\n";
   }
 
   std::cout << "]\n";
