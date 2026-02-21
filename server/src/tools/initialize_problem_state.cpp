@@ -85,9 +85,12 @@ int main(int argc, char* argv[]) {
     }
     GtfsStopId gtfs_stop_id{*stop_id_str};
     auto it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
-    if (it != steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      required_stops.insert(it->second);
+    if (it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+      throw std::runtime_error(
+          "Stop ID '" + *stop_id_str + "' from required stops config not found in GTFS data"
+      );
     }
+    required_stops.insert(it->second);
   }
 
   std::cout << "Initializing solution state...\n";
