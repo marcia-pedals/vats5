@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/*
+ * Transit Control Center — Design System
+ *
+ * A light-mode, information-dense control center aesthetic.
+ * Clean white and cool gray surfaces, monospace data readouts,
+ * color-coded status indicators, and the crisp clarity of
+ * a daytime operations display.
+ */
+
+@theme {
+  /* ── Surface colors (light palette) ── */
+  --color-tc-void: #f5f6f9;
+  --color-tc-base: #edeef2;
+  --color-tc-raised: #ffffff;
+  --color-tc-surface: #f0f1f4;
+  --color-tc-overlay: #e8e9ee;
+  --color-tc-subtle: #dfe1e8;
+
+  /* ── Border / divider ── */
+  --color-tc-border: #d0d3dc;
+  --color-tc-border-bright: #b8bcc8;
+
+  /* ── Text ── */
+  --color-tc-text: #1a1e2e;
+  --color-tc-text-muted: #5c6378;
+  --color-tc-text-dim: #8b90a0;
+
+  /* ── Status / accent colors (slightly desaturated for light bg) ── */
+  --color-tc-green: #0db340;
+  --color-tc-green-dim: #d6f5df;
+  --color-tc-amber: #d69e00;
+  --color-tc-amber-dim: #fef4d6;
+  --color-tc-red: #dc2a38;
+  --color-tc-red-dim: #fde0e2;
+  --color-tc-cyan: #0094b3;
+  --color-tc-cyan-dim: #d5f0f7;
+  --color-tc-blue: #2d6ae0;
+  --color-tc-blue-dim: #dde8fc;
+  --color-tc-magenta: #a040d0;
+
+  /* ── Route line colors ── */
+  --color-route-yellow: #ffd000;
+  --color-route-orange: #ff8800;
+  --color-route-red: #e22030;
+  --color-route-green: #00b050;
+  --color-route-blue: #0080e0;
+
+  /* ── Typography ── */
+  --font-mono: "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-sans: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
+  --font-display: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
+
+  /* ── Glow / shadow (subtle on light) ── */
+  --shadow-glow-green: 0 0 6px #0db34030, 0 0 14px #0db34010;
+  --shadow-glow-cyan: 0 0 6px #0094b330, 0 0 14px #0094b310;
+  --shadow-glow-amber: 0 0 6px #d69e0030, 0 0 14px #d69e0010;
+  --shadow-glow-red: 0 0 6px #dc2a3830, 0 0 14px #dc2a3810;
+
+  /* ── Spacing ── */
+  --spacing-panel: 1rem;
+
+  /* ── Radius ── */
+  --radius-panel: 0.375rem;
+}
+
+/* ── Base layer ── */
+@layer base {
+  html {
+    background-color: var(--color-tc-void);
+    color: var(--color-tc-text);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-tc-void);
+    color: var(--color-tc-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  ::selection {
+    background-color: var(--color-tc-cyan-dim);
+    color: var(--color-tc-text);
+  }
+}
+
+/* ── Custom utility classes ── */
+@utility panel {
+  background-color: var(--color-tc-raised);
+  border: 1px solid var(--color-tc-border);
+  border-radius: var(--radius-panel);
+  padding: var(--spacing-panel);
+}
+
+@utility panel-surface {
+  background-color: var(--color-tc-surface);
+  border: 1px solid var(--color-tc-border);
+  border-radius: var(--radius-panel);
+  padding: var(--spacing-panel);
+}
+
+@utility scanline {
+  position: relative;
+  overflow: hidden;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 0, 0, 0.02) 2px,
+      rgba(0, 0, 0, 0.02) 4px
+    );
+    pointer-events: none;
+  }
+}
+
+@utility status-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+}
+
+@utility glow-green {
+  box-shadow: var(--shadow-glow-green);
+}
+
+@utility glow-cyan {
+  box-shadow: var(--shadow-glow-cyan);
+}
+
+@utility glow-amber {
+  box-shadow: var(--shadow-glow-amber);
+}
+
+@utility glow-red {
+  box-shadow: var(--shadow-glow-red);
+}
+
+@utility text-glow-green {
+  text-shadow: 0 0 4px var(--color-tc-green), 0 0 8px rgba(13, 179, 64, 0.15);
+}
+
+@utility text-glow-cyan {
+  text-shadow: 0 0 4px var(--color-tc-cyan), 0 0 8px rgba(0, 148, 179, 0.15);
+}
+
+@utility text-glow-amber {
+  text-shadow: 0 0 4px var(--color-tc-amber), 0 0 8px rgba(214, 158, 0, 0.15);
+}

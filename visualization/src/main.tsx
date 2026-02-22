@@ -4,6 +4,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { routeTree } from "./routeTree.gen";
 import { trpc, trpcClient } from "./client/trpc";
+import "./index.css";
 
 const queryClient = new QueryClient();
 const router = createRouter({ routeTree });
