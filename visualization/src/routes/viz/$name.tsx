@@ -50,8 +50,6 @@ function VizPage() {
     const h = containerSize.h;
     const pad = 50;
 
-    // Use uniform scale to preserve geographic aspect ratio
-    // cos(lat) corrects for longitude compression at higher latitudes
     const midLat = (minLat + maxLat) / 2;
     const cosLat = Math.cos((midLat * Math.PI) / 180);
     const dataW = lonRange * cosLat;
@@ -81,17 +79,12 @@ function VizPage() {
         const container = containerRef.current;
         if (!container) return;
         const rect = container.getBoundingClientRect();
-        // Mouse position relative to container
         const px = we.clientX - rect.left;
         const py = we.clientY - rect.top;
 
         setTransform((t) => {
           const factor = we.deltaY > 0 ? 1 / 1.1 : 1.1;
           const newScale = Math.min(Math.max(t.scale * factor, 0.1), 100);
-          // Adjust translation so the point under the cursor stays fixed:
-          // Before: screenPoint = point * oldScale + oldTranslate
-          // After:  screenPoint = point * newScale + newTranslate
-          // => newTranslate = screenPoint - (screenPoint - oldTranslate) * (newScale / oldScale)
           return {
             x: px - (px - t.x) * (newScale / t.scale),
             y: py - (py - t.y) * (newScale / t.scale),
@@ -117,112 +110,61 @@ function VizPage() {
     }
   }, []);
 
-  const btnStyle: React.CSSProperties = {
-    background: "none",
-    border: "1px solid #ddd",
-    borderRadius: "0.25rem",
-    padding: "0.3rem 0.6rem",
-    fontSize: "0.75rem",
-    color: "#555",
-    cursor: "pointer",
-  };
-
   return (
     <div
       ref={containerCallbackRef}
-      style={{
-        position: "relative",
-        width: "100vw",
-        height: "100vh",
-        overflow: "hidden",
-        touchAction: "none",
-        cursor: "grab",
-      }}
+      className="relative w-screen h-screen overflow-hidden touch-none cursor-grab bg-tc-void"
     >
-      {/* Control menu */}
-      <div
-        style={{
-          position: "absolute",
-          top: "0.75rem",
-          left: "0.75rem",
-          zIndex: 10,
-          display: "flex",
-          gap: "0.4rem",
-          alignItems: "center",
-          background: "rgba(255,255,255,0.9)",
-          padding: "0.35rem 0.5rem",
-          borderRadius: "0.375rem",
-          border: "1px solid #e5e5e5",
-        }}
-      >
+      {/* Control bar */}
+      <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 panel-surface py-1.5 px-2.5">
         <Link
           to="/"
-          style={{
-            ...btnStyle,
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-          }}
+          className="inline-flex items-center px-2.5 py-1 rounded text-xs font-mono text-tc-text-muted border border-tc-border hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors no-underline"
         >
           &larr; back
         </Link>
-        <button style={btnStyle} onClick={resetView}>
+        <button
+          onClick={resetView}
+          className="px-2.5 py-1 rounded text-xs font-mono text-tc-text-muted border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer"
+        >
           Reset view
         </button>
+        <span className="text-xs font-mono text-tc-text-dim ml-2">
+          {name}
+        </span>
       </div>
 
+      {/* Loading */}
       {visualizationQuery.isLoading && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#888",
-          }}
-        >
-          Loading...
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-tc-text-muted font-mono text-sm animate-pulse">
+            Loading feed...
+          </span>
         </div>
       )}
 
+      {/* Error */}
       {visualizationQuery.error && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#c00",
-          }}
-        >
-          Error: {visualizationQuery.error.message}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="panel border-tc-red/40 bg-tc-red-dim">
+            <span className="text-tc-red text-sm font-mono">
+              ERR: {visualizationQuery.error.message}
+            </span>
+          </div>
         </div>
       )}
 
+      {/* Map */}
       {svgStops && (
         <>
-          <span
-            style={{
-              position: "absolute",
-              bottom: "0.75rem",
-              right: "0.75rem",
-              zIndex: 10,
-              fontSize: "0.75rem",
-              color: "#999",
-              background: "rgba(255,255,255,0.85)",
-              padding: "0.2rem 0.5rem",
-              borderRadius: "0.25rem",
-            }}
-          >
+          <span className="absolute bottom-3 right-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
             {svgStops.length} stops
           </span>
 
           <svg
             width="100%"
             height="100%"
-            style={{ display: "block", pointerEvents: "none" }}
+            className="block pointer-events-none"
           >
             <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
               {svgStops.map((stop) => (
@@ -231,9 +173,10 @@ function VizPage() {
                     cx={stop.cx}
                     cy={stop.cy}
                     r={DOT_R / transform.scale}
-                    fill="#2563eb"
-                    stroke="#1e40af"
+                    fill="#0094b3"
+                    stroke="#006880"
                     strokeWidth={1 / transform.scale}
+                    opacity={0.85}
                   />
                   <title>
                     {stop.stop_name} ({stop.stop_id})
