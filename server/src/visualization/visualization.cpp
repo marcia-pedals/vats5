@@ -89,21 +89,16 @@ class SqliteStmt {
 void WriteVisualizationSqlite(
     const ProblemState& state, const GtfsDay& gtfs_day, const std::string& path
 ) {
-  // Delete existing db file if present
+  // Delete existing db file and associated WAL/shm files if present
   std::remove(path.c_str());
+  std::remove((path + "-wal").c_str());
+  std::remove((path + "-shm").c_str());
 
   // Build a map from GtfsStopId to GtfsStop for direct lookup
   std::unordered_map<GtfsStopId, GtfsStop> gtfs_stop_by_id;
   for (const auto& stop : gtfs_day.stops) {
     gtfs_stop_by_id[stop.stop_id] = stop;
   }
-
-  // Helper to get the GTFS stop_id string for a StopId
-  auto gtfs_id_for = [&](StopId sid) -> std::string {
-    auto it = state.stop_infos.find(sid);
-    if (it == state.stop_infos.end()) return "";
-    return it->second.gtfs_stop_id.v;
-  };
 
   SqliteDb db(path);
   db.exec("PRAGMA journal_mode=WAL");
@@ -113,8 +108,8 @@ void WriteVisualizationSqlite(
   // Insert stops (all stops from stop_infos, marking which are required)
   SqliteStmt stop_stmt(
       db,
-      "INSERT INTO stops (stop_id, stop_name, lat, lon, required) VALUES (?, "
-      "?, ?, ?, ?)"
+      "INSERT INTO stops (stop_id, gtfs_stop_id, stop_name, lat, lon, "
+      "required) VALUES (?, ?, ?, ?, ?, ?)"
   );
 
   for (const auto& [stop_id, stop_info] : state.stop_infos) {
@@ -132,29 +127,35 @@ void WriteVisualizationSqlite(
 
     bool is_required = state.required_stops.count(stop_id) > 0;
 
-    stop_stmt.bind_text(1, gtfs_stop.stop_id.v.c_str());
-    stop_stmt.bind_text(2, gtfs_stop.stop_name.c_str());
-    stop_stmt.bind_double(3, gtfs_stop.stop_lat);
-    stop_stmt.bind_double(4, gtfs_stop.stop_lon);
-    stop_stmt.bind_int(5, is_required ? 1 : 0);
+    stop_stmt.bind_int(1, stop_id.v);
+    stop_stmt.bind_text(2, gtfs_stop.stop_id.v.c_str());
+    stop_stmt.bind_text(3, gtfs_stop.stop_name.c_str());
+    stop_stmt.bind_double(4, gtfs_stop.stop_lat);
+    stop_stmt.bind_double(5, gtfs_stop.stop_lon);
+    stop_stmt.bind_int(6, is_required ? 1 : 0);
     stop_stmt.step_and_reset();
   }
 
-  // Insert paths
+  // Insert paths and path steps
   SqliteStmt path_stmt(
       db,
-      "INSERT INTO paths (origin_stop_id, destination_stop_id, depart_time, "
-      "arrive_time, duration_seconds, is_flex) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO paths (path_id, origin_stop_id, destination_stop_id, "
+      "depart_time, arrive_time, is_flex) VALUES (?, ?, ?, ?, ?, ?)"
   );
+  SqliteStmt step_stmt(
+      db,
+      "INSERT INTO paths_steps (path_id, origin_stop_id, "
+      "destination_stop_id, depart_time, arrive_time, "
+      "is_flex) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+
+  int next_path_id = 1;
 
   for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
     if (origin_stop == state.boundary.start ||
         origin_stop == state.boundary.end) {
       continue;
     }
-
-    std::string origin_gtfs_id = gtfs_id_for(origin_stop);
-    if (origin_gtfs_id.empty()) continue;
 
     for (const auto& path_group : path_groups) {
       if (path_group.empty()) continue;
@@ -165,17 +166,26 @@ void WriteVisualizationSqlite(
         continue;
       }
 
-      std::string dest_gtfs_id = gtfs_id_for(dest_stop);
-      if (dest_gtfs_id.empty()) continue;
-
       for (const Path& p : path_group) {
-        path_stmt.bind_text(1, origin_gtfs_id.c_str());
-        path_stmt.bind_text(2, dest_gtfs_id.c_str());
-        path_stmt.bind_int(3, p.merged_step.origin.time.seconds);
-        path_stmt.bind_int(4, p.merged_step.destination.time.seconds);
-        path_stmt.bind_int(5, p.DurationSeconds());
+        int path_id = next_path_id++;
+
+        path_stmt.bind_int(1, path_id);
+        path_stmt.bind_int(2, origin_stop.v);
+        path_stmt.bind_int(3, dest_stop.v);
+        path_stmt.bind_int(4, p.merged_step.origin.time.seconds);
+        path_stmt.bind_int(5, p.merged_step.destination.time.seconds);
         path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
         path_stmt.step_and_reset();
+
+        for (const Step& s : p.steps) {
+          step_stmt.bind_int(1, path_id);
+          step_stmt.bind_int(2, s.origin.stop.v);
+          step_stmt.bind_int(3, s.destination.stop.v);
+          step_stmt.bind_int(4, s.origin.time.seconds);
+          step_stmt.bind_int(5, s.destination.time.seconds);
+          step_stmt.bind_int(6, s.is_flex ? 1 : 0);
+          step_stmt.step_and_reset();
+        }
       }
     }
   }

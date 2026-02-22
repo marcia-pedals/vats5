@@ -49,9 +49,9 @@ function StopDropdown({
   onClear,
 }: {
   label: string;
-  value: string | null;
+  value: number | null;
   stops: Stop[];
-  onChange: (stopId: string) => void;
+  onChange: (stopId: number) => void;
   onClear: () => void;
 }) {
   return (
@@ -60,7 +60,7 @@ function StopDropdown({
       <select
         value={value ?? ""}
         onChange={(e) => {
-          if (e.target.value) onChange(e.target.value);
+          if (e.target.value) onChange(Number(e.target.value));
         }}
         className="flex-1 min-w-0 text-xs font-mono bg-tc-raised border border-tc-border rounded px-1.5 py-1 text-tc-text truncate cursor-pointer"
       >
@@ -76,7 +76,7 @@ function StopDropdown({
       <button
         type="button"
         onClick={onClear}
-        disabled={!value}
+        disabled={value === null}
         className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-red/50 hover:text-tc-red transition-colors cursor-pointer disabled:opacity-0 disabled:cursor-default shrink-0"
         aria-label={`Clear ${label.toLowerCase()}`}
       >
@@ -99,16 +99,16 @@ function StationPanel({
 }: {
   name: string;
   stops: Stop[];
-  origin: string | null;
-  destination: string | null;
-  onOriginChange: (stopId: string) => void;
-  onDestChange: (stopId: string) => void;
+  origin: number | null;
+  destination: number | null;
+  onOriginChange: (stopId: number) => void;
+  onDestChange: (stopId: number) => void;
   onOriginClear: () => void;
   onDestClear: () => void;
   onSwap: () => void;
 }) {
   const pathsQuery = trpc.getPaths.useQuery(
-    origin && destination ? { name, origin, destination } : skipToken
+    origin !== null && destination !== null ? { name, origin, destination } : skipToken
   );
   const paths: VizPath[] | null = pathsQuery.data ?? null;
 
@@ -119,7 +119,7 @@ function StationPanel({
         <button
           type="button"
           onClick={onSwap}
-          disabled={!origin && !destination}
+          disabled={origin === null && destination === null}
           className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default shrink-0 self-center"
           aria-label="Swap origin and destination"
         >
@@ -170,7 +170,7 @@ function StationPanel({
                     <td className="px-2 py-1.5 text-tc-text">{formatTime(p.depart_time)}</td>
                     <td className="px-2 py-1.5 text-tc-text">{formatTime(p.arrive_time)}</td>
                     <td className="px-2 py-1.5 text-right text-tc-text-muted">
-                      {formatDuration(p.duration_seconds)}
+                      {formatDuration(p.arrive_time - p.depart_time)}
                     </td>
                     <td className="px-2 py-1.5 text-center">
                       {p.is_flex ? (
@@ -188,16 +188,16 @@ function StationPanel({
       )}
 
       {/* No paths message */}
-      {origin && destination && paths !== null && paths.length === 0 && (
+      {origin !== null && destination !== null && paths !== null && paths.length === 0 && (
         <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
           No paths found between these stops
         </div>
       )}
 
       {/* Empty state */}
-      {(!origin || !destination) && (
+      {(origin === null || destination === null) && (
         <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
-          {!origin
+          {origin === null
             ? "Click a station on the map to set origin"
             : "Click a station on the map to set destination"}
         </div>
@@ -217,8 +217,8 @@ function VizPage() {
     w: number;
     h: number;
   } | null>(null);
-  const [origin, setOrigin] = useState<string | null>(null);
-  const [destination, setDestination] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<number | null>(null);
+  const [destination, setDestination] = useState<number | null>(null);
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -263,7 +263,7 @@ function VizPage() {
   }, [stopsQuery.data, containerSize]);
 
   const handleStopClick = useCallback(
-    (stopId: string) => {
+    (stopId: number) => {
       // Fill first blank slot; if both filled, change destination
       if (origin === null) {
         setOrigin(stopId);
@@ -412,13 +412,13 @@ function VizPage() {
   }, []);
 
   const selectedStops = useMemo(() => {
-    const s = new Set<string>();
-    if (origin) s.add(origin);
-    if (destination) s.add(destination);
+    const s = new Set<number>();
+    if (origin !== null) s.add(origin);
+    if (destination !== null) s.add(destination);
     return s;
   }, [origin, destination]);
 
-  const isSelected = (stopId: string) => selectedStops.has(stopId);
+  const isSelected = (stopId: number) => selectedStops.has(stopId);
 
   return (
     <div

@@ -12,7 +12,7 @@ export const appRouter = t.router({
   }),
 
   getPaths: t.procedure
-    .input(z.object({ name: z.string(), origin: z.string(), destination: z.string() }))
+    .input(z.object({ name: z.string(), origin: z.number(), destination: z.number() }))
     .query(({ input }) => {
       return getPaths(input.name, input.origin, input.destination);
     }),
