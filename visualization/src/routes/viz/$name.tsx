@@ -271,21 +271,16 @@ function VizPage() {
               transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}
             >
               {svgStops.map((stop) => (
-                <g key={stop.stop_id}>
-                  <circle
-                    cx={stop.cx}
-                    cy={stop.cy}
-                    r={DOT_R / transform.scale}
-                    fill="#0094b3"
-                    stroke="#006880"
-                    strokeWidth={1 / transform.scale}
-                    opacity={0.85}
-                  />
-                  <title>
-                    {stop.stop_name} ({stop.stop_id}){"\n"}Lat:{" "}
-                    {stop.lat.toFixed(5)}, Lon: {stop.lon.toFixed(5)}
-                  </title>
-                </g>
+                <circle
+                  key={stop.stop_id}
+                  cx={stop.cx}
+                  cy={stop.cy}
+                  r={DOT_R / transform.scale}
+                  fill="#0094b3"
+                  stroke="#006880"
+                  strokeWidth={1 / transform.scale}
+                  opacity={0.85}
+                />
               ))}
               {/* Station name labels — greedy collision-avoidance placement */}
               {labelPlacements &&
