@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpDown, X } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
 import type { Stop, VizPath, VizPathGroup } from "../../server/schemas";
 
@@ -78,19 +79,7 @@ function StopDropdown({
         className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-red/50 hover:text-tc-red transition-colors cursor-pointer disabled:opacity-0 disabled:cursor-default shrink-0"
         aria-label={`Clear ${label.toLowerCase()}`}
       >
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          role="img"
-          aria-hidden="true"
-        >
-          <path d="M2 2l6 6M8 2l-6 6" />
-        </svg>
+        <X size={10} />
       </button>
     </div>
   );
@@ -106,7 +95,6 @@ function StationPanel({
   onDestClear,
   onSwap,
   paths,
-  panelRef,
 }: {
   stops: Stop[];
   origin: string | null;
@@ -117,38 +105,9 @@ function StationPanel({
   onDestClear: () => void;
   onSwap: () => void;
   paths: VizPath[] | null;
-  panelRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  // Native stopPropagation on <select> elements only, so useGesture
-  // (which uses native addEventListener) doesn't interfere with dropdowns.
-  // We target selects specifically so button clicks still reach React's root.
-  const localRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = localRef.current;
-    if (!el) return;
-    const stop = (e: Event) => {
-      if (e.target instanceof HTMLSelectElement) {
-        e.stopPropagation();
-      }
-    };
-    el.addEventListener("pointerdown", stop);
-    el.addEventListener("pointerup", stop);
-    el.addEventListener("pointermove", stop);
-    return () => {
-      el.removeEventListener("pointerdown", stop);
-      el.removeEventListener("pointerup", stop);
-      el.removeEventListener("pointermove", stop);
-    };
-  }, []);
-
   return (
-    <div
-      ref={(node) => {
-        localRef.current = node;
-        if (typeof panelRef === "object" && panelRef) panelRef.current = node;
-      }}
-      className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden cursor-default select-auto"
-    >
+    <div className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
       {/* Station selectors */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-tc-border shrink-0">
         <button
@@ -158,20 +117,7 @@ function StationPanel({
           className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default shrink-0 self-center"
           aria-label="Swap origin and destination"
         >
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            role="img"
-            aria-hidden="true"
-          >
-            <path d="M3 0v10M3 10L0.5 7.5M3 10l2.5-2.5M7 10V0M7 0L4.5 2.5M7 0l2.5 2.5" />
-          </svg>
+          <ArrowUpDown size={10} />
         </button>
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">
           <StopDropdown
@@ -260,7 +206,7 @@ function VizPage() {
 
   const visualizationQuery = trpc.getVisualization.useQuery({ filename });
   const containerRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
   const [transform, setTransform] = useState<Transform>(DEFAULT_TRANSFORM);
   const [containerSize, setContainerSize] = useState<{
     w: number;
@@ -340,11 +286,6 @@ function VizPage() {
     },
     [origin]
   );
-
-  const isEventInPanel = useCallback((event: Event) => {
-    const panel = panelRef.current;
-    return panel != null && event.target instanceof Node && panel.contains(event.target);
-  }, []);
 
   // Greedy label placement: right or left, suppress in dense clusters
   const labelPlacements = useMemo(() => {
@@ -441,17 +382,15 @@ function VizPage() {
 
   useGesture(
     {
-      onDrag: ({ event, delta: [dx, dy] }) => {
-        if (isEventInPanel(event)) return;
+      onDrag: ({ delta: [dx, dy] }) => {
         setTransform((t) => ({ ...t, x: t.x + dx, y: t.y + dy }));
       },
       onWheel: ({ event }) => {
-        if (isEventInPanel(event)) return;
         event.preventDefault();
         const we = event as WheelEvent;
-        const container = containerRef.current;
-        if (!container) return;
-        const rect = container.getBoundingClientRect();
+        const map = mapRef.current;
+        if (!map) return;
+        const rect = map.getBoundingClientRect();
         const px = we.clientX - rect.left;
         const py = we.clientY - rect.top;
 
@@ -469,7 +408,7 @@ function VizPage() {
       },
     },
     {
-      target: containerRef,
+      target: mapRef,
       drag: { filterTaps: true },
       eventOptions: { passive: false },
     }
@@ -497,7 +436,7 @@ function VizPage() {
   return (
     <div
       ref={containerCallbackRef}
-      className="relative w-screen h-screen overflow-hidden touch-none cursor-grab bg-tc-void select-none"
+      className="relative w-screen h-screen overflow-hidden bg-tc-void select-none"
     >
       {/* Control bar */}
       <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 panel-surface py-1.5 px-2.5">
@@ -517,102 +456,101 @@ function VizPage() {
         <span className="text-xs font-mono text-tc-text-dim ml-2">{name}</span>
       </div>
 
-      {/* Loading */}
-      {visualizationQuery.isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-tc-text-muted font-mono text-sm animate-pulse">
-            Loading feed...
-          </span>
-        </div>
-      )}
-
-      {/* Error */}
-      {visualizationQuery.error && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="panel border-tc-red/40 bg-tc-red-dim">
-            <span className="text-tc-red text-sm font-mono">
-              ERR: {visualizationQuery.error.message}
+      {/* Map area — gesture target is scoped here so the panel is unaffected */}
+      <div ref={mapRef} className="absolute inset-0 touch-none cursor-grab">
+        {/* Loading */}
+        {visualizationQuery.isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-tc-text-muted font-mono text-sm animate-pulse">
+              Loading feed...
             </span>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Map */}
-      {svgStops && (
-        <>
-          <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
-            {svgStops.length} stops
-          </span>
+        {/* Error */}
+        {visualizationQuery.error && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="panel border-tc-red/40 bg-tc-red-dim">
+              <span className="text-tc-red text-sm font-mono">
+                ERR: {visualizationQuery.error.message}
+              </span>
+            </div>
+          </div>
+        )}
 
-          <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
-            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-              {svgStops.map((stop) => {
-                const selected = isSelected(stop.stop_id);
-                return (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
-                  <g
-                    key={stop.stop_id}
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStopClick(stop.stop_id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") handleStopClick(stop.stop_id);
-                    }}
-                    style={{ cursor: "pointer", pointerEvents: "all" }}
-                  >
-                    {selected && (
+        {/* Map */}
+        {svgStops && (
+          <>
+            <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
+              {svgStops.length} stops
+            </span>
+
+            <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
+              <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+                {svgStops.map((stop) => {
+                  const selected = isSelected(stop.stop_id);
+                  return (
+                    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
+                    <g
+                      key={stop.stop_id}
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStopClick(stop.stop_id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") handleStopClick(stop.stop_id);
+                      }}
+                      style={{ cursor: "pointer", pointerEvents: "all" }}
+                    >
+                      {selected && (
+                        <circle
+                          cx={stop.cx}
+                          cy={stop.cy}
+                          r={(DOT_R + 4) / transform.scale}
+                          fill="none"
+                          stroke="#0094b3"
+                          strokeWidth={2 / transform.scale}
+                          opacity={0.6}
+                        />
+                      )}
                       <circle
                         cx={stop.cx}
                         cy={stop.cy}
-                        r={(DOT_R + 4) / transform.scale}
-                        fill="none"
-                        stroke="#0094b3"
-                        strokeWidth={2 / transform.scale}
-                        opacity={0.6}
+                        r={DOT_R / transform.scale}
+                        fill={selected ? "#00c4e8" : "#0094b3"}
+                        stroke={selected ? "#0094b3" : "#006880"}
+                        strokeWidth={1 / transform.scale}
+                        opacity={0.85}
                       />
-                    )}
-                    <circle
-                      cx={stop.cx}
-                      cy={stop.cy}
-                      r={DOT_R / transform.scale}
-                      fill={selected ? "#00c4e8" : "#0094b3"}
-                      stroke={selected ? "#0094b3" : "#006880"}
-                      strokeWidth={1 / transform.scale}
-                      opacity={0.85}
-                    />
-                    <title>
-                      {stop.stop_name} ({stop.stop_id}){"\n"}Lat: {stop.lat.toFixed(5)}, Lon:{" "}
-                      {stop.lon.toFixed(5)}
-                    </title>
-                  </g>
-                );
-              })}
-              {/* Station name labels — greedy collision-avoidance placement */}
-              {labelPlacements &&
-                svgStops.map((stop, i) => {
-                  const lp = labelPlacements[i];
-                  if (!lp.visible) return null;
-                  return (
-                    <text
-                      key={`label-${stop.stop_id}`}
-                      x={lp.dataX}
-                      y={lp.dataY}
-                      fontSize={LABEL_FONT_SIZE / transform.scale}
-                      fontFamily='"SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace'
-                      fill="#5c6378"
-                    >
-                      {stop.stop_name}
-                    </text>
+                    </g>
                   );
                 })}
-            </g>
-          </svg>
-        </>
-      )}
+                {/* Station name labels — greedy collision-avoidance placement */}
+                {labelPlacements &&
+                  svgStops.map((stop, i) => {
+                    const lp = labelPlacements[i];
+                    if (!lp.visible) return null;
+                    return (
+                      <text
+                        key={`label-${stop.stop_id}`}
+                        x={lp.dataX}
+                        y={lp.dataY}
+                        fontSize={LABEL_FONT_SIZE / transform.scale}
+                        fontFamily='"SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace'
+                        fill="#5c6378"
+                      >
+                        {stop.stop_name}
+                      </text>
+                    );
+                  })}
+              </g>
+            </svg>
+          </>
+        )}
+      </div>
 
-      {/* Station panel */}
+      {/* Station panel — outside the gesture-target div */}
       {visualizationQuery.data && (
         <StationPanel
           stops={visualizationQuery.data.stops}
@@ -627,7 +565,6 @@ function VizPage() {
             setDestination(origin);
           }}
           paths={selectedPaths}
-          panelRef={panelRef}
         />
       )}
     </div>
