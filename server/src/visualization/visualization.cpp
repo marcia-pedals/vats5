@@ -124,7 +124,9 @@ void WriteVisualizationSqlite(
 
     auto gtfs_stop_it = gtfs_stop_by_id.find(stop_info.gtfs_stop_id);
     if (gtfs_stop_it == gtfs_stop_by_id.end()) {
-      continue;  // skip stops without GTFS data
+      throw std::runtime_error(
+          "GtfsStopId '" + stop_info.gtfs_stop_id.v + "' not found in GTFS data"
+      );
     }
     const GtfsStop& gtfs_stop = gtfs_stop_it->second;
 
