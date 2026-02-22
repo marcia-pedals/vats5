@@ -467,13 +467,29 @@ function VizPage() {
         {svgStops && (
           <>
             <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
-              {svgStops.length} stops
+              {svgStops.filter((s) => s.required === 1).length} required / {svgStops.length} stops
             </span>
 
             <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
                 {svgStops.map((stop) => {
                   const selected = isSelected(stop.stop_id);
+                  const required = stop.required === 1;
+                  if (!required) {
+                    return (
+                      <circle
+                        key={stop.stop_id}
+                        cx={stop.cx}
+                        cy={stop.cy}
+                        r={(DOT_R - 1.5) / transform.scale}
+                        fill="#7a8599"
+                        stroke="#5c6378"
+                        strokeWidth={1 / transform.scale}
+                        opacity={0.5}
+                        style={{ pointerEvents: "none" }}
+                      />
+                    );
+                  }
                   return (
                     // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
                     <g
@@ -539,7 +555,7 @@ function VizPage() {
       {stopsQuery.data && (
         <StationPanel
           name={name}
-          stops={stopsQuery.data}
+          stops={stopsQuery.data.filter((s) => s.required === 1)}
           origin={origin}
           destination={destination}
           onOriginChange={setOrigin}

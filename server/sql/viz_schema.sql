@@ -2,7 +2,8 @@ CREATE TABLE stops (
   stop_id TEXT PRIMARY KEY,
   stop_name TEXT NOT NULL,
   lat REAL NOT NULL,
-  lon REAL NOT NULL
+  lon REAL NOT NULL,
+  required INTEGER NOT NULL
 );
 
 CREATE TABLE paths (
