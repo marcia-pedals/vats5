@@ -3,23 +3,9 @@ import { z } from "zod";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { homedir } from "os";
+import { VisualizationSchema, type Stop, type Visualization } from "./schemas";
 
 const t = initTRPC.create();
-
-// Zod schemas matching the C++ visualization schemas
-const StopSchema = z.object({
-  stop_id: z.string(),
-  stop_name: z.string(),
-  lat: z.number(),
-  lon: z.number(),
-});
-
-const VisualizationSchema = z.object({
-  stops: z.array(StopSchema),
-});
-
-export type Stop = z.infer<typeof StopSchema>;
-export type Visualization = z.infer<typeof VisualizationSchema>;
 
 const PROBLEMS_DIR = path.join(homedir(), "vats5-problems");
 

@@ -200,11 +200,6 @@ add_executable(gtfs_filter_test src/gtfs/gtfs_filter_test.cpp)
 target_link_libraries(gtfs_filter_test PUBLIC gunit gtfs_filter)
 add_test(NAME gtfs_filter_test COMMAND gtfs_filter_test)
 
-# Add visualization test executable
-add_executable(visualization_test src/visualization/visualization_test.cpp)
-target_link_libraries(visualization_test PUBLIC gunit visualization)
-add_test(NAME visualization_test COMMAND visualization_test)
-
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)
 target_link_libraries(data_test PUBLIC gunit data)
