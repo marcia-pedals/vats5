@@ -12,7 +12,6 @@
 
 #include "solver/concorde.h"
 #include "solver/data.h"
-#include "solver/graph_util.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
@@ -141,8 +140,7 @@ ProblemState MakeProblemState(
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
-  StepPathsAdjacencyList completed =
-      CompleteShortestPathsGraph(minimal, stops);
+  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
@@ -321,22 +319,6 @@ ProblemState InitializeProblemState(
     }
   }
 
-  // This simplification of the problem is very very good when there are few
-  // extreme stops. But we need to do some stuff to make there be few extreme
-  // stops because in the hard problems almost all the stops start out extreme
-  // until we eliminate some paths. So I have commented this out for now.
-  //
-  // std::unordered_set<StopId> extreme_stops = ComputeExtremeStops(
-  //   ReduceToMinimalSystemPaths(MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()),
-  //   system_stops, true), system_stops, StopId{-1}
-  // );
-  // std::cout << "Initialize problem state extreme stops: " <<
-  // extreme_stops.size() << "\n"; minimal_paths_sparse =
-  // ReduceToMinimalSystemPaths(
-  //   MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps()),
-  //   extreme_stops
-  // );
-
   StepsAdjacencyList minimal_steps_sparse =
       MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
@@ -351,14 +333,16 @@ ProblemState InitializeProblemState(
     if (system_stops.contains(original_stop)) {
       required_stops.insert(stop);
     }
-    auto gtfs_stop_id_it = steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.find(original_stop);
-    assert(gtfs_stop_id_it != steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.end());
-    auto stop_name_it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
+    auto gtfs_stop_id_it =
+        steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.find(original_stop);
+    assert(
+        gtfs_stop_id_it != steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.end()
+    );
+    auto stop_name_it =
+        steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
     assert(stop_name_it != steps_from_gtfs.mapping.stop_id_to_stop_name.end());
-    stop_infos[stop] = ProblemStateStopInfo{
-        gtfs_stop_id_it->second,
-        stop_name_it->second
-    };
+    stop_infos[stop] =
+        ProblemStateStopInfo{gtfs_stop_id_it->second, stop_name_it->second};
   }
 
   int num_actual_stops = minimal_compact.list.NumStops();
@@ -860,15 +844,6 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  // Reduce the number of required stops by removing "inner" stops.
-  // A stop X is "inner" if it lies on ALL paths between some pair of required
-  // stops A and B (in both directions). Such stops will necessarily be visited
-  // in any tour, so we don't need to explicitly require them.
-  // auto extreme_stops = ComputeExtremeStops(
-  //   state.completed, state.required_stops, state.boundary.start
-  // );
-  // std::cout << "  extreme stop count: " << extreme_stops.size() << "\n";
-  // ProblemState reduced_state = state.WithRequiredStops(extreme_stops);
   ProblemState reduced_state = state;
   auto edges = MakeTarelEdges(reduced_state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);

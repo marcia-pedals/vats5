@@ -74,11 +74,6 @@ add_library(data STATIC src/solver/data.cpp)
 target_link_libraries(data PUBLIC gtfs)
 target_include_directories(data PUBLIC src)
 
-# Create graph_util library target
-add_library(graph_util STATIC src/solver/graph_util.cpp)
-target_link_libraries(graph_util PUBLIC data)
-target_include_directories(graph_util PUBLIC src)
-
 # Create step_merge library target
 add_library(step_merge STATIC src/solver/step_merge.cpp)
 target_link_libraries(step_merge PUBLIC data)
@@ -126,7 +121,7 @@ target_include_directories(tour_paths PUBLIC src)
 
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
-target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
+target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
 target_include_directories(tarel_graph PUBLIC src)
 
 # Embed SQL schema as a C++ header, regenerated at build time when .sql changes
@@ -169,10 +164,6 @@ target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path CLI11::CLI1
 # Add reduction diff tool
 add_executable(reduction_diff src/tools/reduction_diff.cpp)
 target_link_libraries(reduction_diff PUBLIC steps_shortest_path CLI11::CLI11)
-
-# Add branch_and_bound_dev tool
-add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
-target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
@@ -276,7 +267,3 @@ add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
 target_link_libraries(tour_paths_test PUBLIC gunit tour_paths steps_shortest_path)
 add_test(NAME tour_paths_test COMMAND tour_paths_test)
 
-# Add graph_util test executable
-add_executable(graph_util_test src/solver/graph_util_test.cpp)
-target_link_libraries(graph_util_test PUBLIC gunit graph_util steps_shortest_path)
-add_test(NAME graph_util_test COMMAND graph_util_test)
