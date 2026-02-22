@@ -2,6 +2,7 @@
 
 #include <sqlite3.h>
 
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -42,26 +43,55 @@ class SqliteDb {
     }
   }
 
-  sqlite3_stmt* prepare(const char* sql) {
-    sqlite3_stmt* stmt = nullptr;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK) {
-      throw std::runtime_error(
-          std::string("Failed to prepare statement: ") + sqlite3_errmsg(db_)
-      );
-    }
-    return stmt;
-  }
-
   sqlite3* handle() { return db_; }
 
  private:
   sqlite3* db_ = nullptr;
 };
 
+// RAII wrapper for sqlite3 prepared statements.
+class SqliteStmt {
+ public:
+  SqliteStmt(SqliteDb& db, const char* sql) {
+    int rc = sqlite3_prepare_v2(db.handle(), sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK) {
+      throw std::runtime_error(
+          std::string("Failed to prepare statement: ") +
+          sqlite3_errmsg(db.handle())
+      );
+    }
+  }
+
+  ~SqliteStmt() {
+    if (stmt_) sqlite3_finalize(stmt_);
+  }
+
+  SqliteStmt(const SqliteStmt&) = delete;
+  SqliteStmt& operator=(const SqliteStmt&) = delete;
+
+  void bind_text(int col, const char* val) {
+    sqlite3_bind_text(stmt_, col, val, -1, SQLITE_TRANSIENT);
+  }
+  void bind_double(int col, double val) {
+    sqlite3_bind_double(stmt_, col, val);
+  }
+  void bind_int(int col, int val) { sqlite3_bind_int(stmt_, col, val); }
+
+  void step_and_reset() {
+    sqlite3_step(stmt_);
+    sqlite3_reset(stmt_);
+  }
+
+ private:
+  sqlite3_stmt* stmt_ = nullptr;
+};
+
 void WriteVisualizationSqlite(
     const ProblemState& state, const GtfsDay& gtfs_day, const std::string& path
 ) {
+  // Delete existing db file if present
+  std::remove(path.c_str());
+
   // Build a map from GtfsStopId to GtfsStop for direct lookup
   std::unordered_map<GtfsStopId, GtfsStop> gtfs_stop_by_id;
   for (const auto& stop : gtfs_day.stops) {
@@ -81,8 +111,8 @@ void WriteVisualizationSqlite(
   db.exec(kSchemaSql);
 
   // Insert stops
-  sqlite3_stmt* stop_stmt = db.prepare(
-      "INSERT INTO stops (stop_id, stop_name, lat, lon) VALUES (?, ?, ?, ?)"
+  SqliteStmt stop_stmt(
+      db, "INSERT INTO stops (stop_id, stop_name, lat, lon) VALUES (?, ?, ?, ?)"
   );
 
   for (const StopId& stop_id : state.required_stops) {
@@ -106,21 +136,16 @@ void WriteVisualizationSqlite(
     }
     const GtfsStop& gtfs_stop = gtfs_stop_it->second;
 
-    sqlite3_bind_text(
-        stop_stmt, 1, gtfs_stop.stop_id.v.c_str(), -1, SQLITE_TRANSIENT
-    );
-    sqlite3_bind_text(
-        stop_stmt, 2, gtfs_stop.stop_name.c_str(), -1, SQLITE_TRANSIENT
-    );
-    sqlite3_bind_double(stop_stmt, 3, gtfs_stop.stop_lat);
-    sqlite3_bind_double(stop_stmt, 4, gtfs_stop.stop_lon);
-    sqlite3_step(stop_stmt);
-    sqlite3_reset(stop_stmt);
+    stop_stmt.bind_text(1, gtfs_stop.stop_id.v.c_str());
+    stop_stmt.bind_text(2, gtfs_stop.stop_name.c_str());
+    stop_stmt.bind_double(3, gtfs_stop.stop_lat);
+    stop_stmt.bind_double(4, gtfs_stop.stop_lon);
+    stop_stmt.step_and_reset();
   }
-  sqlite3_finalize(stop_stmt);
 
   // Insert paths
-  sqlite3_stmt* path_stmt = db.prepare(
+  SqliteStmt path_stmt(
+      db,
       "INSERT INTO paths (origin_stop_id, destination_stop_id, depart_time, "
       "arrive_time, duration_seconds, is_flex) VALUES (?, ?, ?, ?, ?, ?)"
   );
@@ -147,22 +172,16 @@ void WriteVisualizationSqlite(
       if (dest_gtfs_id.empty()) continue;
 
       for (const Path& p : path_group) {
-        sqlite3_bind_text(
-            path_stmt, 1, origin_gtfs_id.c_str(), -1, SQLITE_TRANSIENT
-        );
-        sqlite3_bind_text(
-            path_stmt, 2, dest_gtfs_id.c_str(), -1, SQLITE_TRANSIENT
-        );
-        sqlite3_bind_int(path_stmt, 3, p.merged_step.origin.time.seconds);
-        sqlite3_bind_int(path_stmt, 4, p.merged_step.destination.time.seconds);
-        sqlite3_bind_int(path_stmt, 5, p.DurationSeconds());
-        sqlite3_bind_int(path_stmt, 6, p.merged_step.is_flex ? 1 : 0);
-        sqlite3_step(path_stmt);
-        sqlite3_reset(path_stmt);
+        path_stmt.bind_text(1, origin_gtfs_id.c_str());
+        path_stmt.bind_text(2, dest_gtfs_id.c_str());
+        path_stmt.bind_int(3, p.merged_step.origin.time.seconds);
+        path_stmt.bind_int(4, p.merged_step.destination.time.seconds);
+        path_stmt.bind_int(5, p.DurationSeconds());
+        path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
+        path_stmt.step_and_reset();
       }
     }
   }
-  sqlite3_finalize(path_stmt);
 
   db.exec("COMMIT");
 }

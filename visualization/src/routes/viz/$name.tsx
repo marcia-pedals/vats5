@@ -4,7 +4,7 @@ import { useGesture } from "@use-gesture/react";
 import { ArrowUpDown, X } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
-import type { Stop, VizPath } from "../../server/schemas";
+import type { Stop, VizPath } from "../../server/db";
 
 export const Route = createFileRoute("/viz/$name")({
   component: VizPage,

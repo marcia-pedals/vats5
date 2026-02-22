@@ -1,0 +1,72 @@
+import { homedir } from "node:os";
+import * as path from "node:path";
+import Database from "better-sqlite3";
+import { z } from "zod";
+
+const PROBLEMS_DIR = path.join(homedir(), "vats5-problems");
+
+function openDb(name: string): Database.Database {
+  const filePath = path.join(PROBLEMS_DIR, `${name}-viz.sqlite`);
+  const resolvedPath = path.resolve(filePath);
+  const resolvedProblemsDir = path.resolve(PROBLEMS_DIR);
+  if (!resolvedPath.startsWith(resolvedProblemsDir)) {
+    throw new Error("Invalid file path");
+  }
+  return new Database(filePath, { readonly: true });
+}
+
+// --- Schemas ---
+
+const StopSchema = z.object({
+  stop_id: z.string(),
+  stop_name: z.string(),
+  lat: z.number(),
+  lon: z.number(),
+});
+export type Stop = z.infer<typeof StopSchema>;
+
+const VizPathRowSchema = z.object({
+  depart_time: z.number(),
+  arrive_time: z.number(),
+  duration_seconds: z.number(),
+  is_flex: z.number(),
+});
+
+export interface VizPath {
+  depart_time: number;
+  arrive_time: number;
+  duration_seconds: number;
+  is_flex: boolean;
+}
+
+// --- Queries ---
+
+export function getStops(name: string): Stop[] {
+  const db = openDb(name);
+  try {
+    const rows = db.prepare("SELECT stop_id, stop_name, lat, lon FROM stops").all();
+    return z.array(StopSchema).parse(rows);
+  } finally {
+    db.close();
+  }
+}
+
+export function getPaths(name: string, origin: string, destination: string): VizPath[] {
+  const db = openDb(name);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT depart_time, arrive_time, duration_seconds, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
+      )
+      .all(origin, destination);
+    const parsed = z.array(VizPathRowSchema).parse(rows);
+    return parsed.map((r) => ({
+      depart_time: r.depart_time,
+      arrive_time: r.arrive_time,
+      duration_seconds: r.duration_seconds,
+      is_flex: r.is_flex === 1,
+    }));
+  } finally {
+    db.close();
+  }
+}
