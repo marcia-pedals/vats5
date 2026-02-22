@@ -46,6 +46,7 @@ const StopSchema = z.object({
   stop_name: z.string(),
   lat: z.number(),
   lon: z.number(),
+  required: z.number(),
 });
 export type Stop = z.infer<typeof StopSchema>;
 
@@ -82,7 +83,7 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 
 export function getStops(name: string): Stop[] {
   const db = getDb(name);
-  const rows = db.prepare("SELECT stop_id, stop_name, lat, lon FROM stops").all();
+  const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, required FROM stops").all();
   return z.array(StopSchema).parse(rows);
 }
 

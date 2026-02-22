@@ -110,36 +110,31 @@ void WriteVisualizationSqlite(
   db.exec("BEGIN TRANSACTION");
   db.exec(kSchemaSql);
 
-  // Insert stops
+  // Insert stops (all stops from stop_infos, marking which are required)
   SqliteStmt stop_stmt(
-      db, "INSERT INTO stops (stop_id, stop_name, lat, lon) VALUES (?, ?, ?, ?)"
+      db,
+      "INSERT INTO stops (stop_id, stop_name, lat, lon, required) VALUES (?, "
+      "?, ?, ?, ?)"
   );
 
-  for (const StopId& stop_id : state.required_stops) {
+  for (const auto& [stop_id, stop_info] : state.stop_infos) {
     if (stop_id == state.boundary.start || stop_id == state.boundary.end) {
       continue;
     }
 
-    auto stop_info_it = state.stop_infos.find(stop_id);
-    if (stop_info_it == state.stop_infos.end()) {
-      throw std::runtime_error(
-          "StopId " + std::to_string(stop_id.v) + " not found in stop_infos"
-      );
-    }
-    const ProblemStateStopInfo& stop_info = stop_info_it->second;
-
     auto gtfs_stop_it = gtfs_stop_by_id.find(stop_info.gtfs_stop_id);
     if (gtfs_stop_it == gtfs_stop_by_id.end()) {
-      throw std::runtime_error(
-          "GtfsStopId '" + stop_info.gtfs_stop_id.v + "' not found in GTFS data"
-      );
+      continue;  // skip stops without GTFS data
     }
     const GtfsStop& gtfs_stop = gtfs_stop_it->second;
+
+    bool is_required = state.required_stops.count(stop_id) > 0;
 
     stop_stmt.bind_text(1, gtfs_stop.stop_id.v.c_str());
     stop_stmt.bind_text(2, gtfs_stop.stop_name.c_str());
     stop_stmt.bind_double(3, gtfs_stop.stop_lat);
     stop_stmt.bind_double(4, gtfs_stop.stop_lon);
+    stop_stmt.bind_int(5, is_required ? 1 : 0);
     stop_stmt.step_and_reset();
   }
 
