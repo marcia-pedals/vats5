@@ -9,6 +9,10 @@ export const Route = createFileRoute("/viz/$name")({
 });
 
 const DOT_R = 5;
+const LABEL_FONT_SIZE = 10; // constant screen-px
+const LABEL_CHAR_W = 6.2; // approx monospace char width at 10px
+const LABEL_PAD = 2; // collision padding (screen px)
+const LABEL_MIN_NEIGHBOR = 15; // screen-px: suppress label if nearest neighbor closer than this
 
 interface Transform {
   x: number;
@@ -215,6 +219,99 @@ function VizPage() {
     return panel != null && event.target instanceof Node && panel.contains(event.target);
   }, []);
 
+  // Greedy label placement: right or left, suppress in dense clusters
+  const labelPlacements = useMemo(() => {
+    if (!svgStops) return null;
+
+    const scale = transform.scale;
+    const gap = 4; // screen-px gap from dot edge
+    const lh = LABEL_FONT_SIZE;
+    const minNbrSq = LABEL_MIN_NEIGHBOR * LABEL_MIN_NEIGHBOR;
+
+    // Relative screen positions (translation doesn't affect collisions)
+    const sp = svgStops.map((s) => ({ x: s.cx * scale, y: s.cy * scale }));
+
+    // Min neighbor distance (squared, screen space) for each stop
+    const nbrDistSq = sp.map((p, i) => {
+      let m = Infinity;
+      for (let j = 0; j < sp.length; j++) {
+        if (i === j) continue;
+        const dx = p.x - sp[j].x,
+          dy = p.y - sp[j].y;
+        m = Math.min(m, dx * dx + dy * dy);
+      }
+      return m;
+    });
+
+    // Place most-isolated labels first (they anchor the layout)
+    const order = sp.map((_, i) => i).sort((a, b) => nbrDistSq[b] - nbrDistSq[a]);
+
+    const boxes: [number, number, number, number][] = []; // placed bboxes
+    const out: { dataX: number; dataY: number; visible: boolean }[] = new Array(svgStops.length);
+
+    for (const i of order) {
+      // Suppress label entirely if too close to any neighbor
+      if (nbrDistSq[i] < minNbrSq) {
+        out[i] = { dataX: 0, dataY: 0, visible: false };
+        continue;
+      }
+
+      const stop = svgStops[i];
+      const sx = sp[i].x,
+        sy = sp[i].y;
+      const lw = LABEL_CHAR_W * stop.stop_name.length;
+
+      // 2 candidates: right-center, left-center (vertically centered on dot)
+      const cands: [number, number, number, number][] = [
+        [sx + DOT_R + gap, sy - lh / 2, sx + DOT_R + gap + lw, sy + lh / 2],
+        [sx - DOT_R - gap - lw, sy - lh / 2, sx - DOT_R - gap, sy + lh / 2],
+      ];
+
+      let placed = false;
+      for (const [bx1, by1, bx2, by2] of cands) {
+        const px1 = bx1 - LABEL_PAD,
+          py1 = by1 - LABEL_PAD;
+        const px2 = bx2 + LABEL_PAD,
+          py2 = by2 + LABEL_PAD;
+
+        // Check overlap with already-placed labels
+        let hit = false;
+        for (const [ox1, oy1, ox2, oy2] of boxes) {
+          if (px1 < ox2 && px2 > ox1 && py1 < oy2 && py2 > oy1) {
+            hit = true;
+            break;
+          }
+        }
+        // Check overlap with any dot
+        if (!hit) {
+          for (let j = 0; j < sp.length; j++) {
+            if (j === i) continue;
+            const cx = Math.max(px1, Math.min(sp[j].x, px2));
+            const cy = Math.max(py1, Math.min(sp[j].y, py2));
+            if ((sp[j].x - cx) ** 2 + (sp[j].y - cy) ** 2 < (DOT_R + 1) ** 2) {
+              hit = true;
+              break;
+            }
+          }
+        }
+
+        if (!hit) {
+          out[i] = {
+            dataX: bx1 / scale,
+            dataY: (by1 + 0.75 * lh) / scale,
+            visible: true,
+          };
+          boxes.push([px1, py1, px2, py2]);
+          placed = true;
+          break;
+        }
+      }
+
+      if (!placed) out[i] = { dataX: 0, dataY: 0, visible: false };
+    }
+    return out;
+  }, [svgStops, transform.scale]);
+
   useGesture(
     {
       onDrag: ({ event, delta: [dx, dy] }) => {
@@ -232,7 +329,7 @@ function VizPage() {
         const py = we.clientY - rect.top;
 
         setTransform((t) => {
-          const factor = we.deltaY > 0 ? 1 / 1.1 : 1.1;
+          const factor = 1.005 ** -we.deltaY;
           const newScale = Math.min(Math.max(t.scale * factor, 0.1), 100);
           return {
             x: px - (px - t.x) * (newScale / t.scale),
@@ -377,6 +474,24 @@ function VizPage() {
                   </g>
                 );
               })}
+              {/* Station name labels — greedy collision-avoidance placement */}
+              {labelPlacements &&
+                svgStops.map((stop, i) => {
+                  const lp = labelPlacements[i];
+                  if (!lp.visible) return null;
+                  return (
+                    <text
+                      key={`label-${stop.stop_id}`}
+                      x={lp.dataX}
+                      y={lp.dataY}
+                      fontSize={LABEL_FONT_SIZE / transform.scale}
+                      fontFamily='"SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace'
+                      fill="#5c6378"
+                    >
+                      {stop.stop_name}
+                    </text>
+                  );
+                })}
             </g>
           </svg>
         </>
