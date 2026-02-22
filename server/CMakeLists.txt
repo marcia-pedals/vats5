@@ -128,6 +128,11 @@ add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
 target_include_directories(tarel_graph PUBLIC src)
 
+# Create visualization library target
+add_library(visualization STATIC src/visualization/visualization.cpp)
+target_link_libraries(visualization PUBLIC nlohmann_json::nlohmann_json gtfs tarel_graph)
+target_include_directories(visualization PUBLIC src)
+
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
@@ -153,7 +158,7 @@ target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
-target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter CLI11::CLI11)
+target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter visualization CLI11::CLI11)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)

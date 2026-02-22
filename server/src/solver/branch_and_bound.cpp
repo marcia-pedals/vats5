@@ -28,7 +28,7 @@ ProblemState ApplyConstraints(
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
-  std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
   StopId next_stop_id{state.minimal.NumStops()};
 
@@ -59,8 +59,10 @@ ProblemState ApplyConstraints(
       // interpreting the paths harder.
       StopId ab = next_stop_id;
       next_stop_id.v += 1;
-      stop_names[ab] =
-          "(" + stop_names[require.a] + "->" + stop_names[require.b] + ")";
+      stop_infos[ab] = ProblemStateStopInfo{
+          GtfsStopId{""},
+          "(" + stop_infos[require.a].stop_name + "->" + stop_infos[require.b].stop_name + ")"
+      };
       required_stops.insert(ab);
       required_stops.erase(require.a);
       required_stops.erase(require.b);
@@ -168,7 +170,7 @@ ProblemState ApplyConstraints(
       MakeAdjacencyList(steps),
       std::move(boundary),
       std::move(required_stops),
-      std::move(stop_names),
+      std::move(stop_infos),
       state.step_partition_names,
       original_edges
   );

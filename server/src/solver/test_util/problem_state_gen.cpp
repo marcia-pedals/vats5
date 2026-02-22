@@ -86,11 +86,14 @@ rc::Gen<ProblemState> GenProblemState(
 
                     // Set up all the stops.
                     std::unordered_set<StopId> stops;
-                    std::unordered_map<StopId, std::string> stop_names;
+                    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
                     for (int i = 0; i < num_actual_stops; ++i) {
                       StopId stop{i};
                       stops.insert(stop);
-                      stop_names[stop] = std::string(1, 'a' + i);
+                      stop_infos[stop] = ProblemStateStopInfo{
+                          GtfsStopId{std::string(1, 'a' + i)},
+                          std::string(1, 'a' + i)
+                      };
                     }
 
                     // Fix up the trip ids for the random steps.
@@ -130,13 +133,13 @@ rc::Gen<ProblemState> GenProblemState(
                         .start = StopId{num_actual_stops},
                         .end = StopId{num_actual_stops + 1},
                     };
-                    AddBoundary(steps, stops, stop_names, boundary);
+                    AddBoundary(steps, stops, stop_infos, boundary);
 
                     return MakeProblemState(
                         MakeAdjacencyList(steps),
                         boundary,
                         stops,
-                        stop_names,
+                        stop_infos,
                         {},
                         {}
                     );
@@ -157,16 +160,16 @@ rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
       state.required_stops.begin(), state.required_stops.end()
   );
   ProblemBoundary boundary = state.boundary;
-  std::unordered_map<StopId, std::string> stop_names = state.stop_names;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
   int n = static_cast<int>(stops.size());
   return rc::gen::suchThat(
       rc::gen::apply(
-          [stops, stop_names, n](int ai, int b_offset) -> NamedBranchEdge {
+          [stops, stop_infos, n](int ai, int b_offset) -> NamedBranchEdge {
             int bi = (ai + 1 + b_offset) % n;
             return NamedBranchEdge{
                 BranchEdge{stops[ai], stops[bi]},
-                stop_names.at(stops[ai]),
-                stop_names.at(stops[bi]),
+                stop_infos.at(stops[ai]).stop_name,
+                stop_infos.at(stops[bi]).stop_name,
             };
           },
           rc::gen::inRange(0, n),

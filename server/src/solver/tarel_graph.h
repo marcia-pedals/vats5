@@ -17,6 +17,23 @@
 
 namespace vats5 {
 
+struct ProblemStateStopInfo {
+  GtfsStopId gtfs_stop_id;
+  std::string stop_name;
+
+  bool operator==(const ProblemStateStopInfo& other) const {
+    return gtfs_stop_id == other.gtfs_stop_id && stop_name == other.stop_name;
+  }
+};
+// Serialize as [gtfs_stop_id, stop_name] array for compactness
+inline void to_json(nlohmann::json& j, const ProblemStateStopInfo& info) {
+  j = nlohmann::json::array({info.gtfs_stop_id, info.stop_name});
+}
+inline void from_json(const nlohmann::json& j, ProblemStateStopInfo& info) {
+  info.gtfs_stop_id = j[0].get<GtfsStopId>();
+  info.stop_name = j[1].get<std::string>();
+}
+
 struct ProblemBoundary {
   StopId start;
   StopId end;
@@ -58,8 +75,8 @@ struct ProblemState {
   // All stops that are required to be visited, including START and END.
   std::unordered_set<StopId> required_stops;
 
-  // Names of all the stops for display purposes.
-  std::unordered_map<StopId, std::string> stop_names;
+  // Information about all stops (GTFS ID and name) for display and lookup.
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
 
   // Names of step partitions for display purposes.
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
@@ -70,15 +87,15 @@ struct ProblemState {
   // original edge for (a->b) has endpoints a and b.
   std::unordered_map<StopId, PlainEdge> original_edges;
 
-  const std::string& StopName(StopId stop) const { return stop_names.at(stop); }
+  const std::string& StopName(StopId stop) const { return stop_infos.at(stop).stop_name; }
 
   StopId StopIdFromName(const std::string& stop_name) {
     auto it = std::find_if(
-        stop_names.begin(), stop_names.end(), [&stop_name](const auto& pair) {
-          return pair.second == stop_name;
+        stop_infos.begin(), stop_infos.end(), [&stop_name](const auto& pair) {
+          return pair.second.stop_name == stop_name;
         }
     );
-    assert(it != stop_names.end());
+    assert(it != stop_infos.end());
     return it->first;
   }
 
@@ -100,7 +117,7 @@ ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
     std::unordered_set<StopId> stops,
-    std::unordered_map<StopId, std::string> stop_names,
+    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 );
@@ -110,9 +127,9 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   for (StopId stop : s.required_stops) {
     required_stops_vec.push_back(stop.v);
   }
-  std::vector<std::pair<int, std::string>> stop_names_vec;
-  for (const auto& [k, v] : s.stop_names) {
-    stop_names_vec.emplace_back(k.v, v);
+  std::vector<std::pair<int, ProblemStateStopInfo>> stop_infos_vec;
+  for (const auto& [k, v] : s.stop_infos) {
+    stop_infos_vec.emplace_back(k.v, v);
   }
   std::vector<std::pair<int, std::string>> step_partition_names_vec;
   for (const auto& [k, v] : s.step_partition_names) {
@@ -126,7 +143,7 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
       {"minimal", s.minimal},
       {"boundary", s.boundary},
       {"required_stops", required_stops_vec},
-      {"stop_names", stop_names_vec},
+      {"stop_infos", stop_infos_vec},
       {"step_partition_names", step_partition_names_vec},
       {"original_edges", original_edges_vec},
   };
@@ -139,10 +156,10 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
   for (int v : j.at("required_stops").get<std::vector<int>>()) {
     required_stops.insert(StopId{v});
   }
-  std::unordered_map<StopId, std::string> stop_names;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
   for (const auto& [k, v] :
-       j.at("stop_names").get<std::vector<std::pair<int, std::string>>>()) {
-    stop_names[StopId{k}] = v;
+       j.at("stop_infos").get<std::vector<std::pair<int, ProblemStateStopInfo>>>()) {
+    stop_infos[StopId{k}] = v;
   }
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
   for (const auto& [k, v] :
@@ -159,7 +176,7 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
       std::move(minimal),
       boundary,
       std::move(required_stops),
-      std::move(stop_names),
+      std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges)
   );
@@ -300,7 +317,7 @@ struct TspTourResult {
 void AddBoundary(
     std::vector<Step>& steps,
     std::unordered_set<StopId>& stops,
-    std::unordered_map<StopId, std::string>& stop_names,
+    std::unordered_map<StopId, ProblemStateStopInfo>& stop_infos,
     ProblemBoundary bounday
 );
 
