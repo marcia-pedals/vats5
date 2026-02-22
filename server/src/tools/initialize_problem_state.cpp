@@ -122,25 +122,21 @@ int main(int argc, char* argv[]) {
   out.close();
   std::cout << "Saved problem state to: " << output_path << "\n";
 
-  // Create visualization JSON with required stops
-  std::cout << "Creating visualization JSON...\n";
+  // Create visualization SQLite database with required stops
+  std::cout << "Creating visualization SQLite database...\n";
   viz::Visualization visualization = viz::MakeVisualization(state, gtfs_day);
-  nlohmann::json viz_json = visualization;
 
   // Determine visualization output path (e.g., "problem.json" ->
-  // "problem-viz.json")
+  // "problem-viz.sqlite")
   std::string viz_output_path = output_path;
   size_t dot_pos = viz_output_path.rfind('.');
   if (dot_pos != std::string::npos) {
-    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz" +
-                      viz_output_path.substr(dot_pos);
+    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz.sqlite";
   } else {
-    viz_output_path += "-viz";
+    viz_output_path += "-viz.sqlite";
   }
 
-  std::ofstream viz_out(viz_output_path);
-  viz_out << viz_json.dump();  // Compact output
-  viz_out.close();
+  viz::WriteVisualizationSqlite(visualization, viz_output_path);
   std::cout << "Saved visualization to: " << viz_output_path << "\n";
 
   return 0;

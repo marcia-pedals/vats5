@@ -3,7 +3,7 @@ import { useGesture } from "@use-gesture/react";
 import { ArrowUpDown, X } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
-import type { Stop, VizPath, VizPathGroup } from "../../server/schemas";
+import type { Stop, VizPath } from "../../server/schemas";
 
 export const Route = createFileRoute("/viz/$name")({
   component: VizPage,
@@ -202,9 +202,8 @@ function StationPanel({
 
 function VizPage() {
   const { name } = Route.useParams();
-  const filename = `${name}-viz.json`;
 
-  const visualizationQuery = trpc.getVisualization.useQuery({ filename });
+  const stopsQuery = trpc.getStops.useQuery({ name });
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const [transform, setTransform] = useState<Transform>(DEFAULT_TRANSFORM);
@@ -215,6 +214,11 @@ function VizPage() {
   const [origin, setOrigin] = useState<string | null>(null);
   const [destination, setDestination] = useState<string | null>(null);
 
+  const pathsQuery = trpc.getPaths.useQuery(
+    { name, origin: origin ?? "", destination: destination ?? "" },
+    { enabled: !!origin && !!destination }
+  );
+
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
     if (node) {
@@ -223,9 +227,9 @@ function VizPage() {
   }, []);
 
   const svgStops = useMemo(() => {
-    if (!visualizationQuery.data?.stops.length || !containerSize) return null;
+    if (!stopsQuery.data?.length || !containerSize) return null;
 
-    const stops = visualizationQuery.data.stops;
+    const stops = stopsQuery.data;
     const lats = stops.map((s) => s.lat);
     const lons = stops.map((s) => s.lon);
     const minLat = Math.min(...lats);
@@ -255,25 +259,10 @@ function VizPage() {
       cx: offsetX + (((stop.lon - minLon) * cosLat) / dataW) * drawW,
       cy: offsetY + ((maxLat - stop.lat) / dataH) * drawH,
     }));
-  }, [visualizationQuery.data, containerSize]);
+  }, [stopsQuery.data, containerSize]);
 
-  // Build a lookup map for path groups: "origin:dest" -> VizPathGroup
-  const pathLookup = useMemo(() => {
-    if (!visualizationQuery.data?.path_groups) return null;
-    const map = new Map<string, VizPathGroup>();
-    for (const pg of visualizationQuery.data.path_groups) {
-      map.set(`${pg.origin_stop_id}:${pg.destination_stop_id}`, pg);
-    }
-    return map;
-  }, [visualizationQuery.data]);
-
-  // Get paths between selected stops
-  const selectedPaths = useMemo<VizPath[] | null>(() => {
-    if (!origin || !destination || !pathLookup) return null;
-    const key = `${origin}:${destination}`;
-    const pg = pathLookup.get(key);
-    return pg ? pg.paths : [];
-  }, [origin, destination, pathLookup]);
+  // Paths from the on-demand query (null when no pair selected)
+  const selectedPaths: VizPath[] | null = origin && destination ? (pathsQuery.data ?? null) : null;
 
   const handleStopClick = useCallback(
     (stopId: string) => {
@@ -459,7 +448,7 @@ function VizPage() {
       {/* Map area — gesture target is scoped here so the panel is unaffected */}
       <div ref={mapRef} className="absolute inset-0 touch-none cursor-grab">
         {/* Loading */}
-        {visualizationQuery.isLoading && (
+        {stopsQuery.isLoading && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-tc-text-muted font-mono text-sm animate-pulse">
               Loading feed...
@@ -468,12 +457,10 @@ function VizPage() {
         )}
 
         {/* Error */}
-        {visualizationQuery.error && (
+        {stopsQuery.error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="panel border-tc-red/40 bg-tc-red-dim">
-              <span className="text-tc-red text-sm font-mono">
-                ERR: {visualizationQuery.error.message}
-              </span>
+              <span className="text-tc-red text-sm font-mono">ERR: {stopsQuery.error.message}</span>
             </div>
           </div>
         )}
@@ -551,9 +538,9 @@ function VizPage() {
       </div>
 
       {/* Station panel — outside the gesture-target div */}
-      {visualizationQuery.data && (
+      {stopsQuery.data && (
         <StationPanel
-          stops={visualizationQuery.data.stops}
+          stops={stopsQuery.data}
           origin={origin}
           destination={destination}
           onOriginChange={setOrigin}

@@ -1,5 +1,8 @@
 #include "visualization/visualization.h"
 
+#include <sqlite3.h>
+
+#include <stdexcept>
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
@@ -103,6 +106,121 @@ Visualization MakeVisualization(
   }
 
   return viz;
+}
+
+void WriteVisualizationSqlite(
+    const Visualization& viz, const std::string& path
+) {
+  sqlite3* db = nullptr;
+  int rc = sqlite3_open(path.c_str(), &db);
+  if (rc != SQLITE_OK) {
+    std::string err = sqlite3_errmsg(db);
+    sqlite3_close(db);
+    throw std::runtime_error("Failed to open SQLite database: " + err);
+  }
+
+  auto exec = [&](const char* sql) {
+    char* err_msg = nullptr;
+    rc = sqlite3_exec(db, sql, nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+      std::string err = err_msg;
+      sqlite3_free(err_msg);
+      sqlite3_close(db);
+      throw std::runtime_error("SQLite exec error: " + err);
+    }
+  };
+
+  exec("PRAGMA journal_mode=WAL");
+  exec("BEGIN TRANSACTION");
+
+  exec(R"(
+    CREATE TABLE stops (
+      stop_id TEXT PRIMARY KEY,
+      stop_name TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL
+    )
+  )");
+
+  exec(R"(
+    CREATE TABLE paths (
+      origin_stop_id TEXT NOT NULL,
+      destination_stop_id TEXT NOT NULL,
+      depart_time INTEGER NOT NULL,
+      arrive_time INTEGER NOT NULL,
+      duration_seconds INTEGER NOT NULL,
+      is_flex INTEGER NOT NULL,
+      FOREIGN KEY (origin_stop_id) REFERENCES stops(stop_id),
+      FOREIGN KEY (destination_stop_id) REFERENCES stops(stop_id)
+    )
+  )");
+
+  exec(
+      "CREATE INDEX idx_paths_pair ON paths(origin_stop_id, "
+      "destination_stop_id)"
+  );
+
+  // Insert stops
+  sqlite3_stmt* stop_stmt = nullptr;
+  rc = sqlite3_prepare_v2(
+      db,
+      "INSERT INTO stops (stop_id, stop_name, lat, lon) VALUES (?, ?, ?, ?)",
+      -1,
+      &stop_stmt,
+      nullptr
+  );
+  if (rc != SQLITE_OK) {
+    std::string err = sqlite3_errmsg(db);
+    sqlite3_close(db);
+    throw std::runtime_error("Failed to prepare stop insert: " + err);
+  }
+
+  for (const auto& stop : viz.stops) {
+    sqlite3_bind_text(stop_stmt, 1, stop.stop_id.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stop_stmt, 2, stop.stop_name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_double(stop_stmt, 3, stop.lat);
+    sqlite3_bind_double(stop_stmt, 4, stop.lon);
+    sqlite3_step(stop_stmt);
+    sqlite3_reset(stop_stmt);
+  }
+  sqlite3_finalize(stop_stmt);
+
+  // Insert paths
+  sqlite3_stmt* path_stmt = nullptr;
+  rc = sqlite3_prepare_v2(
+      db,
+      "INSERT INTO paths (origin_stop_id, destination_stop_id, depart_time, "
+      "arrive_time, duration_seconds, is_flex) VALUES (?, ?, ?, ?, ?, ?)",
+      -1,
+      &path_stmt,
+      nullptr
+  );
+  if (rc != SQLITE_OK) {
+    std::string err = sqlite3_errmsg(db);
+    sqlite3_close(db);
+    throw std::runtime_error("Failed to prepare path insert: " + err);
+  }
+
+  for (const auto& pg : viz.path_groups) {
+    for (const auto& p : pg.paths) {
+      sqlite3_bind_text(
+          path_stmt, 1, pg.origin_stop_id.c_str(), -1, SQLITE_STATIC
+      );
+      sqlite3_bind_text(
+          path_stmt, 2, pg.destination_stop_id.c_str(), -1, SQLITE_STATIC
+      );
+      sqlite3_bind_int(path_stmt, 3, p.depart_time);
+      sqlite3_bind_int(path_stmt, 4, p.arrive_time);
+      sqlite3_bind_int(path_stmt, 5, p.duration_seconds);
+      sqlite3_bind_int(path_stmt, 6, p.is_flex ? 1 : 0);
+      sqlite3_step(path_stmt);
+      sqlite3_reset(path_stmt);
+    }
+  }
+  sqlite3_finalize(path_stmt);
+
+  exec("COMMIT");
+  sqlite3_close(db);
 }
 
 }  // namespace vats5::viz

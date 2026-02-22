@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Crow)
 find_package(nlohmann_json REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 FetchContent_Declare(
   csv
@@ -130,7 +131,7 @@ target_include_directories(tarel_graph PUBLIC src)
 
 # Create visualization library target
 add_library(visualization STATIC src/visualization/visualization.cpp)
-target_link_libraries(visualization PUBLIC nlohmann_json::nlohmann_json gtfs tarel_graph)
+target_link_libraries(visualization PUBLIC nlohmann_json::nlohmann_json SQLite::SQLite3 gtfs tarel_graph)
 target_include_directories(visualization PUBLIC src)
 
 add_executable(main_server main.cpp)

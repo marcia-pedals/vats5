@@ -51,4 +51,9 @@ Visualization MakeVisualization(
     const ProblemState& state, const GtfsDay& gtfs_day
 );
 
+// Write a Visualization to a SQLite database file
+void WriteVisualizationSqlite(
+    const Visualization& viz, const std::string& path
+);
+
 }  // namespace vats5::viz
