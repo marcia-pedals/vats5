@@ -1,10 +1,10 @@
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import cors from "cors";
 import express from "express";
+import { CHECKOUT_NAME, TRPC_PORT } from "./ports";
 import { appRouter } from "./src/server/trpc";
 
 const app = express();
-const PORT = 4000;
 
 app.use(cors());
 
@@ -16,6 +16,8 @@ app.use(
   })
 );
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ tRPC server listening on http://0.0.0.0:${PORT}`);
+app.listen(TRPC_PORT, "0.0.0.0", () => {
+  console.log(
+    `tRPC server listening on http://0.0.0.0:${TRPC_PORT} [${CHECKOUT_NAME}]`
+  );
 });
