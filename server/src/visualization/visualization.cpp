@@ -1,4 +1,4 @@
-#include "visualization2/visualization2.h"
+#include "visualization/visualization.h"
 
 #include <unordered_map>
 

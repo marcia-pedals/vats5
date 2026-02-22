@@ -12,7 +12,7 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
-#include "visualization2/visualization2.h"
+#include "visualization/visualization.h"
 
 using namespace vats5;
 

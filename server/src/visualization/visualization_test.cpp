@@ -1,11 +1,11 @@
-#include "visualization2/visualization2.h"
+#include "visualization/visualization.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
 namespace vats5::viz {
 
-TEST(Visualization2Test, StopSerializesToJson) {
+TEST(VisualizationTest, StopSerializesToJson) {
   Stop stop{
       .stop_id = "12345",
       .stop_name = "Main Street Station",
@@ -21,7 +21,7 @@ TEST(Visualization2Test, StopSerializesToJson) {
   EXPECT_DOUBLE_EQ(j["lon"], -122.4194);
 }
 
-TEST(Visualization2Test, StopDeserializesFromJson) {
+TEST(VisualizationTest, StopDeserializesFromJson) {
   nlohmann::json j = {
       {"stop_id", "67890"},
       {"stop_name", "Airport Terminal"},
@@ -37,7 +37,7 @@ TEST(Visualization2Test, StopDeserializesFromJson) {
   EXPECT_DOUBLE_EQ(stop.lon, -74.0060);
 }
 
-TEST(Visualization2Test, StopRoundTrip) {
+TEST(VisualizationTest, StopRoundTrip) {
   Stop original{
       .stop_id = "abc123",
       .stop_name = "University Avenue",
