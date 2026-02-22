@@ -133,6 +133,11 @@ add_library(visualization STATIC src/visualization/visualization.cpp)
 target_link_libraries(visualization PUBLIC steps_shortest_path)
 target_include_directories(visualization PUBLIC src)
 
+# Create visualization2 library target
+add_library(visualization2 STATIC src/visualization2/visualization2.cpp)
+target_link_libraries(visualization2 PUBLIC nlohmann_json::nlohmann_json gtfs tarel_graph)
+target_include_directories(visualization2 PUBLIC src)
+
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
 
@@ -162,7 +167,7 @@ target_link_libraries(branch_and_bound_dev PUBLIC tarel_graph branch_and_bound)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
-target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter CLI11::CLI11)
+target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter visualization2 CLI11::CLI11)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
@@ -203,6 +208,11 @@ add_test(NAME gtfs_test COMMAND gtfs_test)
 add_executable(gtfs_filter_test src/gtfs/gtfs_filter_test.cpp)
 target_link_libraries(gtfs_filter_test PUBLIC gunit gtfs_filter)
 add_test(NAME gtfs_filter_test COMMAND gtfs_filter_test)
+
+# Add visualization2 test executable
+add_executable(visualization2_test src/visualization2/visualization2_test.cpp)
+target_link_libraries(visualization2_test PUBLIC gunit visualization2)
+add_test(NAME visualization2_test COMMAND visualization2_test)
 
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)

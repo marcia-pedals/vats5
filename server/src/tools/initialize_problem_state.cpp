@@ -12,6 +12,7 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
+#include "visualization2/visualization2.h"
 
 using namespace vats5;
 
@@ -118,6 +119,25 @@ int main(int argc, char* argv[]) {
   out << j.dump();
   out.close();
   std::cout << "Saved problem state to: " << output_path << "\n";
+
+  // Create visualization JSON with required stops
+  std::cout << "Creating visualization JSON...\n";
+  viz::Visualization visualization = viz::MakeVisualization(state, gtfs_day);
+  nlohmann::json viz_json = visualization;
+
+  // Determine visualization output path (e.g., "problem.json" -> "problem-viz.json")
+  std::string viz_output_path = output_path;
+  size_t dot_pos = viz_output_path.rfind('.');
+  if (dot_pos != std::string::npos) {
+    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz" + viz_output_path.substr(dot_pos);
+  } else {
+    viz_output_path += "-viz";
+  }
+
+  std::ofstream viz_out(viz_output_path);
+  viz_out << viz_json.dump(2);  // Pretty print with indent
+  viz_out.close();
+  std::cout << "Saved visualization to: " << viz_output_path << "\n";
 
   return 0;
 }
