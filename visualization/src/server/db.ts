@@ -52,16 +52,21 @@ const StopSchema = z.object({
 export type Stop = z.infer<typeof StopSchema>;
 
 const VizPathRowSchema = z.object({
+  path_id: z.number(),
   depart_time: z.number(),
   arrive_time: z.number(),
   is_flex: z.number(),
 });
+export type VizPath = z.infer<typeof VizPathRowSchema>;
 
-export interface VizPath {
-  depart_time: number;
-  arrive_time: number;
-  is_flex: boolean;
-}
+const PathStepRowSchema = z.object({
+  origin_stop_id: z.number(),
+  destination_stop_id: z.number(),
+  depart_time: z.number(),
+  arrive_time: z.number(),
+  is_flex: z.number(),
+});
+export type PathStep = z.infer<typeof PathStepRowSchema>;
 
 // --- Queries ---
 
@@ -92,13 +97,18 @@ export function getPaths(name: string, origin: number, destination: number): Viz
   const db = getDb(name);
   const rows = db
     .prepare(
-      "SELECT depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
+      "SELECT path_id, depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
     )
     .all(origin, destination);
-  const parsed = z.array(VizPathRowSchema).parse(rows);
-  return parsed.map((r) => ({
-    depart_time: r.depart_time,
-    arrive_time: r.arrive_time,
-    is_flex: r.is_flex === 1,
-  }));
+  return z.array(VizPathRowSchema).parse(rows);
+}
+
+export function getPathSteps(name: string, pathId: number): PathStep[] {
+  const db = getDb(name);
+  const rows = db
+    .prepare(
+      "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex FROM paths_steps WHERE path_id = ?"
+    )
+    .all(pathId);
+  return z.array(PathStepRowSchema).parse(rows);
 }
