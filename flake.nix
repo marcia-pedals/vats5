@@ -20,6 +20,11 @@
               types_or = [ "c" "c++" ];
               files = "\\.(c|cpp|h|hpp|cc)$";
             };
+            biome = {
+              enable = true;
+              entry = "${pkgs.biome}/bin/biome check --write --files-ignore-unknown=true --no-errors-on-unmatched";
+              types_or = [ "javascript" "jsx" "ts" "tsx" "json" ];
+            };
           };
         };
 
@@ -45,6 +50,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
+            biome
             clang
             clang-tools
             cmake
