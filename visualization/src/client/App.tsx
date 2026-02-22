@@ -1,127 +1,307 @@
-import { useState, useMemo } from "react";
+import { useMemo, useRef, useCallback, useState } from "react";
+import { Link, useParams } from "@tanstack/react-router";
+import { useGesture } from "@use-gesture/react";
 import { trpc } from "./trpc";
 
-interface Stop {
-  stop_id: string;
-  stop_name: string;
-  lat: number;
-  lon: number;
-}
-
-function App() {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-
+export function IndexPage() {
   const visualizationsQuery = trpc.listVisualizations.useQuery();
-  const visualizationQuery = trpc.getVisualization.useQuery(
-    { filename: selectedFile! },
-    { enabled: !!selectedFile }
-  );
-
-  // Compute SVG coordinates with automatic scaling
-  const svgData = useMemo(() => {
-    if (!visualizationQuery.data?.stops.length) return null;
-
-    const stops = visualizationQuery.data.stops;
-
-    // Find bounds
-    const lats = stops.map((s) => s.lat);
-    const lons = stops.map((s) => s.lon);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons);
-    const maxLon = Math.max(...lons);
-
-    // SVG dimensions
-    const width = 800;
-    const height = 600;
-    const padding = 40;
-
-    // Scale functions (note: latitude is flipped for SVG coordinates)
-    const latRange = maxLat - minLat || 1;
-    const lonRange = maxLon - minLon || 1;
-
-    const scaleX = (lon: number) =>
-      padding + ((lon - minLon) / lonRange) * (width - 2 * padding);
-    const scaleY = (lat: number) =>
-      padding + ((maxLat - lat) / latRange) * (height - 2 * padding);
-
-    return {
-      width,
-      height,
-      stops: stops.map((stop) => ({
-        ...stop,
-        x: scaleX(stop.lon),
-        y: scaleY(stop.lat),
-      })),
-    };
-  }, [visualizationQuery.data]);
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "system-ui" }}>
-      <h1>VATS5 Visualization Viewer</h1>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "3rem 1.5rem",
+      }}
+    >
+      <h1
+        style={{
+          fontSize: "1.5rem",
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          marginBottom: "2.5rem",
+        }}
+      >
+        Visualizations
+      </h1>
 
-      <div style={{ marginTop: "2rem" }}>
-        <h2>Select Visualization</h2>
-        {visualizationsQuery.isLoading && <p>Loading visualizations...</p>}
-        {visualizationsQuery.error && (
-          <p style={{ color: "red" }}>Error: {visualizationsQuery.error.message}</p>
-        )}
-        {visualizationsQuery.data && (
-          <select
-            value={selectedFile || ""}
-            onChange={(e) => setSelectedFile(e.target.value || null)}
-            style={{ padding: "0.5rem", fontSize: "1rem", minWidth: "300px" }}
-          >
-            <option value="">-- Select a visualization --</option>
-            {visualizationsQuery.data.map((vis) => (
-              <option key={vis.filename} value={vis.filename}>
-                {vis.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      {visualizationsQuery.isLoading && (
+        <p style={{ color: "#888" }}>Loading...</p>
+      )}
+      {visualizationsQuery.error && (
+        <p style={{ color: "#c00" }}>
+          Error: {visualizationsQuery.error.message}
+        </p>
+      )}
 
-      {selectedFile && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2>{selectedFile.replace("-vis.json", "")}</h2>
-          {visualizationQuery.isLoading && <p>Loading visualization...</p>}
-          {visualizationQuery.error && (
-            <p style={{ color: "red" }}>Error: {visualizationQuery.error.message}</p>
-          )}
-          {svgData && (
-            <div>
-              <p style={{ color: "#666", marginBottom: "1rem" }}>
-                Showing {svgData.stops.length} stops
-              </p>
-              <svg
-                width={svgData.width}
-                height={svgData.height}
-                style={{ border: "1px solid #ccc", background: "#f9f9f9" }}
-              >
-                {svgData.stops.map((stop) => (
-                  <g key={stop.stop_id}>
-                    <circle
-                      cx={stop.x}
-                      cy={stop.y}
-                      r={5}
-                      fill="#2563eb"
-                      stroke="#1e40af"
-                      strokeWidth={1}
-                    />
-                    <title>
-                      {stop.stop_name} ({stop.stop_id})
-                      {"\n"}Lat: {stop.lat.toFixed(5)}, Lon: {stop.lon.toFixed(5)}
-                    </title>
-                  </g>
-                ))}
-              </svg>
-            </div>
-          )}
+      {visualizationsQuery.data && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+            width: "100%",
+            maxWidth: "28rem",
+          }}
+        >
+          {visualizationsQuery.data.map((vis) => (
+            <Link
+              key={vis.filename}
+              to="/viz/$name"
+              params={{ name: vis.name }}
+              style={{
+                display: "block",
+                padding: "1rem 1.25rem",
+                borderRadius: "0.5rem",
+                border: "1px solid #e5e5e5",
+                textDecoration: "none",
+                color: "#1a1a1a",
+                transition: "border-color 0.15s, box-shadow 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "#999";
+                e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "#e5e5e5";
+                e.currentTarget.style.boxShadow = "none";
+              }}
+            >
+              {vis.name}
+            </Link>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-export default App;
+const DOT_R = 5;
+
+interface Transform {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+const DEFAULT_TRANSFORM: Transform = { x: 0, y: 0, scale: 1 };
+
+export function VizPage() {
+  const { name } = useParams({ from: "/viz/$name" });
+  const filename = `${name}-viz.json`;
+
+  const visualizationQuery = trpc.getVisualization.useQuery({ filename });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [transform, setTransform] = useState<Transform>(DEFAULT_TRANSFORM);
+
+  const svgStops = useMemo(() => {
+    if (!visualizationQuery.data?.stops.length) return null;
+
+    const stops = visualizationQuery.data.stops;
+    const lats = stops.map((s) => s.lat);
+    const lons = stops.map((s) => s.lon);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons);
+    const maxLon = Math.max(...lons);
+    const latRange = maxLat - minLat || 1;
+    const lonRange = maxLon - minLon || 1;
+
+    const container = containerRef.current;
+    const w = container?.clientWidth ?? 1000;
+    const h = container?.clientHeight ?? 800;
+    const pad = 50;
+
+    // Use uniform scale to preserve geographic aspect ratio
+    // cos(lat) corrects for longitude compression at higher latitudes
+    const midLat = (minLat + maxLat) / 2;
+    const cosLat = Math.cos((midLat * Math.PI) / 180);
+    const dataW = lonRange * cosLat;
+    const dataH = latRange;
+    const scalePerPixel = Math.min((w - 2 * pad) / dataW, (h - 2 * pad) / dataH);
+
+    const drawW = dataW * scalePerPixel;
+    const drawH = dataH * scalePerPixel;
+    const offsetX = pad + (w - 2 * pad - drawW) / 2;
+    const offsetY = pad + (h - 2 * pad - drawH) / 2;
+
+    return stops.map((stop) => ({
+      ...stop,
+      cx: offsetX + ((stop.lon - minLon) * cosLat / dataW) * drawW,
+      cy: offsetY + ((maxLat - stop.lat) / dataH) * drawH,
+    }));
+  }, [visualizationQuery.data]);
+
+  useGesture(
+    {
+      onDrag: ({ delta: [dx, dy] }) => {
+        setTransform((t) => ({ ...t, x: t.x + dx, y: t.y + dy }));
+      },
+      onWheel: ({ event }) => {
+        event.preventDefault();
+        const we = event as WheelEvent;
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        // Mouse position relative to container
+        const px = we.clientX - rect.left;
+        const py = we.clientY - rect.top;
+
+        setTransform((t) => {
+          const factor = we.deltaY > 0 ? 1 / 1.1 : 1.1;
+          const newScale = Math.min(Math.max(t.scale * factor, 0.1), 100);
+          // Adjust translation so the point under the cursor stays fixed:
+          // Before: screenPoint = point * oldScale + oldTranslate
+          // After:  screenPoint = point * newScale + newTranslate
+          // => newTranslate = screenPoint - (screenPoint - oldTranslate) * (newScale / oldScale)
+          return {
+            x: px - (px - t.x) * (newScale / t.scale),
+            y: py - (py - t.y) * (newScale / t.scale),
+            scale: newScale,
+          };
+        });
+      },
+    },
+    {
+      target: containerRef,
+      drag: { filterTaps: true },
+      eventOptions: { passive: false },
+    }
+  );
+
+  const resetView = useCallback(() => setTransform(DEFAULT_TRANSFORM), []);
+
+  const btnStyle: React.CSSProperties = {
+    background: "none",
+    border: "1px solid #ddd",
+    borderRadius: "0.25rem",
+    padding: "0.3rem 0.6rem",
+    fontSize: "0.75rem",
+    color: "#555",
+    cursor: "pointer",
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        position: "relative",
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden",
+        touchAction: "none",
+        cursor: "grab",
+      }}
+    >
+      {/* Control menu */}
+      <div
+        style={{
+          position: "absolute",
+          top: "0.75rem",
+          left: "0.75rem",
+          zIndex: 10,
+          display: "flex",
+          gap: "0.4rem",
+          alignItems: "center",
+          background: "rgba(255,255,255,0.9)",
+          padding: "0.35rem 0.5rem",
+          borderRadius: "0.375rem",
+          border: "1px solid #e5e5e5",
+        }}
+      >
+        <Link
+          to="/"
+          style={{
+            ...btnStyle,
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+        >
+          &larr; back
+        </Link>
+        <button style={btnStyle} onClick={resetView}>
+          Reset view
+        </button>
+      </div>
+
+      {visualizationQuery.isLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#888",
+          }}
+        >
+          Loading...
+        </div>
+      )}
+
+      {visualizationQuery.error && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#c00",
+          }}
+        >
+          Error: {visualizationQuery.error.message}
+        </div>
+      )}
+
+      {svgStops && (
+        <>
+          <span
+            style={{
+              position: "absolute",
+              bottom: "0.75rem",
+              right: "0.75rem",
+              zIndex: 10,
+              fontSize: "0.75rem",
+              color: "#999",
+              background: "rgba(255,255,255,0.85)",
+              padding: "0.2rem 0.5rem",
+              borderRadius: "0.25rem",
+            }}
+          >
+            {svgStops.length} stops
+          </span>
+
+          <svg
+            width="100%"
+            height="100%"
+            style={{ display: "block", pointerEvents: "none" }}
+          >
+            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+              {svgStops.map((stop) => (
+                <g key={stop.stop_id}>
+                  <circle
+                    cx={stop.cx}
+                    cy={stop.cy}
+                    r={DOT_R / transform.scale}
+                    fill="#2563eb"
+                    stroke="#1e40af"
+                    strokeWidth={1 / transform.scale}
+                  />
+                  <title>
+                    {stop.stop_name} ({stop.stop_id})
+                    {"\n"}Lat: {stop.lat.toFixed(5)}, Lon: {stop.lon.toFixed(5)}
+                  </title>
+                </g>
+              ))}
+            </g>
+          </svg>
+        </>
+      )}
+    </div>
+  );
+}
