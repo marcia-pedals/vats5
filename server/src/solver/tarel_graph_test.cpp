@@ -72,21 +72,21 @@ std::vector<std::string> ValidateMergedEdgePartitions(
 TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   std::vector<Step> steps;
   std::unordered_set<StopId> stops;
-  std::unordered_map<StopId, std::string> stop_names;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
 
   stops.insert(StopId{0});
   stops.insert(StopId{1});
-  stop_names[StopId{0}] = "a";
-  stop_names[StopId{1}] = "b";
+  stop_infos[StopId{0}] = ProblemStateStopInfo{GtfsStopId{""}, "a"};
+  stop_infos[StopId{1}] = ProblemStateStopInfo{GtfsStopId{""}, "b"};
 
   ProblemBoundary boundary{
       .start = StopId{2},
       .end = StopId{3},
   };
-  AddBoundary(steps, stops, stop_names, boundary);
+  AddBoundary(steps, stops, stop_infos, boundary);
 
   ProblemState state = MakeProblemState(
-      MakeAdjacencyList(steps), boundary, stops, stop_names, {}, {}
+      MakeAdjacencyList(steps), boundary, stops, stop_infos, {}, {}
   );
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
@@ -198,7 +198,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
       MakeAdjacencyList(steps),
       state.boundary,
       state.required_stops,
-      state.stop_names,
+      state.stop_infos,
       state.step_partition_names,
       state.original_edges
   );
@@ -230,7 +230,7 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
   RC_ASSERT(original.boundary.start == deserialized.boundary.start);
   RC_ASSERT(original.boundary.end == deserialized.boundary.end);
   RC_ASSERT(original.required_stops == deserialized.required_stops);
-  RC_ASSERT(original.stop_names == deserialized.stop_names);
+  RC_ASSERT(original.stop_infos == deserialized.stop_infos);
   RC_ASSERT(original.step_partition_names == deserialized.step_partition_names);
   RC_ASSERT(original.original_edges == deserialized.original_edges);
 

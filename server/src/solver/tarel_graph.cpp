@@ -24,7 +24,7 @@ ProblemState ProblemState::WithRequiredStops(
     const std::unordered_set<StopId>& stops
 ) const {
   return MakeProblemState(
-      minimal, boundary, stops, stop_names, step_partition_names, original_edges
+      minimal, boundary, stops, stop_infos, step_partition_names, original_edges
   );
 }
 
@@ -52,7 +52,7 @@ void showValue(const ProblemState& state, std::ostream& os) {
   });
 
   std::vector<StopId> all_stop_ids;
-  for (const auto& [id, name] : state.stop_names) {
+  for (const auto& [id, name] : state.stop_infos) {
     all_stop_ids.push_back(id);
   }
   std::sort(all_stop_ids.begin(), all_stop_ids.end(), [](StopId a, StopId b) {
@@ -69,22 +69,22 @@ void showValue(const ProblemState& state, std::ostream& os) {
   );
 
   os << "ProblemState{\n";
-  os << "  stop_names=[";
+  os << "  stop_infos=[";
   for (size_t i = 0; i < all_stop_ids.size(); ++i) {
     if (i > 0) os << ", ";
-    os << state.stop_names.at(all_stop_ids[i]);
+    os << state.stop_infos.at(all_stop_ids[i]).stop_name;
   }
   os << "]\n";
   os << "  required_stops=[";
   for (size_t i = 0; i < required_stop_ids.size(); ++i) {
     if (i > 0) os << ", ";
-    os << state.stop_names.at(required_stop_ids[i]);
+    os << state.stop_infos.at(required_stop_ids[i]).stop_name;
   }
   os << "]\n";
   os << "  steps=[\n";
   for (const auto& step : steps) {
-    os << "    " << state.stop_names.at(step.origin.stop) << " -> "
-       << state.stop_names.at(step.destination.stop);
+    os << "    " << state.stop_infos.at(step.origin.stop).stop_name << " -> "
+       << state.stop_infos.at(step.destination.stop).stop_name;
     if (step.is_flex) {
       os << " (flex "
          << TimeSinceServiceStart{step.FlexDurationSeconds()}.ToString() << ")";
@@ -120,13 +120,13 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "  completed_origins=[";
   for (size_t i = 0; i < origin_ids.size(); ++i) {
     if (i > 0) os << ", ";
-    os << state.stop_names.at(origin_ids[i]);
+    os << state.stop_infos.at(origin_ids[i]).stop_name;
   }
   os << "]\n";
   os << "  completed_destinations=[";
   for (size_t i = 0; i < dest_ids.size(); ++i) {
     if (i > 0) os << ", ";
-    os << state.stop_names.at(dest_ids[i]);
+    os << state.stop_infos.at(dest_ids[i]).stop_name;
   }
   os << "]\n";
 
@@ -137,7 +137,7 @@ ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
     std::unordered_set<StopId> stops,
-    std::unordered_map<StopId, std::string> stop_names,
+    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
@@ -152,7 +152,7 @@ ProblemState MakeProblemState(
       std::move(completed),
       boundary,
       std::move(stops),
-      std::move(stop_names),
+      std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
   };
@@ -161,7 +161,7 @@ ProblemState MakeProblemState(
 void AddBoundary(
     std::vector<Step>& steps,
     std::unordered_set<StopId>& stops,
-    std::unordered_map<StopId, std::string>& stop_names,
+    std::unordered_map<StopId, ProblemStateStopInfo>& stop_infos,
     ProblemBoundary bounday
 ) {
   // ... with 0-duration flex steps START->* and *->END.
@@ -172,9 +172,9 @@ void AddBoundary(
 
   // Add the "START" and "END" vertices.
   stops.insert(bounday.start);
-  stop_names[bounday.start] = "START";
+  stop_infos[bounday.start] = ProblemStateStopInfo{GtfsStopId{""}, "START"};
   stops.insert(bounday.end);
-  stop_names[bounday.end] = "END";
+  stop_infos[bounday.end] = ProblemStateStopInfo{GtfsStopId{""}, "END"};
 }
 
 struct XEdge {
@@ -344,16 +344,21 @@ ProblemState InitializeProblemState(
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
 
   std::unordered_set<StopId> required_stops;
-  std::unordered_map<StopId, std::string> stop_names;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
   for (int i = 0; i < minimal_compact.mapping.new_to_original.size(); ++i) {
     StopId stop = StopId{i};
     StopId original_stop = minimal_compact.mapping.new_to_original[i];
     if (system_stops.contains(original_stop)) {
       required_stops.insert(stop);
     }
-    auto it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
-    assert(it != steps_from_gtfs.mapping.stop_id_to_stop_name.end());
-    stop_names[stop] = it->second;
+    auto gtfs_stop_id_it = steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.find(original_stop);
+    assert(gtfs_stop_id_it != steps_from_gtfs.mapping.stop_id_to_gtfs_stop_id.end());
+    auto stop_name_it = steps_from_gtfs.mapping.stop_id_to_stop_name.find(original_stop);
+    assert(stop_name_it != steps_from_gtfs.mapping.stop_id_to_stop_name.end());
+    stop_infos[stop] = ProblemStateStopInfo{
+        gtfs_stop_id_it->second,
+        stop_name_it->second
+    };
   }
 
   int num_actual_stops = minimal_compact.list.NumStops();
@@ -362,13 +367,13 @@ ProblemState InitializeProblemState(
   };
 
   std::vector<Step> steps = minimal_compact.list.AllSteps();
-  AddBoundary(steps, required_stops, stop_names, boundary);
+  AddBoundary(steps, required_stops, stop_infos, boundary);
 
   return MakeProblemState(
       MakeAdjacencyList(steps),
       boundary,
       required_stops,
-      stop_names,
+      stop_infos,
       step_partition_to_route_desc,
       {}
   );

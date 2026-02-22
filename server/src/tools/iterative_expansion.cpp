@@ -140,7 +140,7 @@ std::optional<BestPathResult> FindBestPathBranchAndBound(
     MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, leaves_set).AllMergedSteps()),
     state.boundary,
     leaves_set,
-    state.stop_names,
+    state.stop_infos,
     state.step_partition_names,
     state.original_edges
   );

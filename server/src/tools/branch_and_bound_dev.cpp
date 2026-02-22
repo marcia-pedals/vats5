@@ -258,7 +258,7 @@ int main() {
                             .AllMergedSteps()),
       state.boundary,
       extreme_stops,
-      state.stop_names,
+      state.stop_infos,
       state.step_partition_names,
       state.original_edges
   );
