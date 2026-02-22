@@ -1,3 +1,4 @@
+import { skipToken } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
 import { ArrowUpDown, X } from "lucide-react";
@@ -86,6 +87,7 @@ function StopDropdown({
 }
 
 function StationPanel({
+  name,
   stops,
   origin,
   destination,
@@ -94,8 +96,8 @@ function StationPanel({
   onOriginClear,
   onDestClear,
   onSwap,
-  paths,
 }: {
+  name: string;
   stops: Stop[];
   origin: string | null;
   destination: string | null;
@@ -104,8 +106,12 @@ function StationPanel({
   onOriginClear: () => void;
   onDestClear: () => void;
   onSwap: () => void;
-  paths: VizPath[] | null;
 }) {
+  const pathsQuery = trpc.getPaths.useQuery(
+    origin && destination ? { name, origin, destination } : skipToken
+  );
+  const paths: VizPath[] | null = pathsQuery.data ?? null;
+
   return (
     <div className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
       {/* Station selectors */}
@@ -214,11 +220,6 @@ function VizPage() {
   const [origin, setOrigin] = useState<string | null>(null);
   const [destination, setDestination] = useState<string | null>(null);
 
-  const pathsQuery = trpc.getPaths.useQuery(
-    { name, origin: origin ?? "", destination: destination ?? "" },
-    { enabled: !!origin && !!destination }
-  );
-
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
     if (node) {
@@ -260,9 +261,6 @@ function VizPage() {
       cy: offsetY + ((maxLat - stop.lat) / dataH) * drawH,
     }));
   }, [stopsQuery.data, containerSize]);
-
-  // Paths from the on-demand query (null when no pair selected)
-  const selectedPaths: VizPath[] | null = origin && destination ? (pathsQuery.data ?? null) : null;
 
   const handleStopClick = useCallback(
     (stopId: string) => {
@@ -448,7 +446,7 @@ function VizPage() {
       {/* Map area — gesture target is scoped here so the panel is unaffected */}
       <div ref={mapRef} className="absolute inset-0 touch-none cursor-grab">
         {/* Loading */}
-        {stopsQuery.isLoading && (
+        {stopsQuery.isPending && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-tc-text-muted font-mono text-sm animate-pulse">
               Loading feed...
@@ -540,6 +538,7 @@ function VizPage() {
       {/* Station panel — outside the gesture-target div */}
       {stopsQuery.data && (
         <StationPanel
+          name={name}
           stops={stopsQuery.data}
           origin={origin}
           destination={destination}
@@ -551,7 +550,6 @@ function VizPage() {
             setOrigin(destination);
             setDestination(origin);
           }}
-          paths={selectedPaths}
         />
       )}
     </div>

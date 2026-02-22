@@ -11,16 +11,12 @@ function IndexPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
       <div className="w-full max-w-xs">
-        {visualizationsQuery.isLoading && (
-          <p className="text-tc-text-muted font-mono text-sm animate-pulse">
-            Loading...
-          </p>
+        {visualizationsQuery.isPending && (
+          <p className="text-tc-text-muted font-mono text-sm animate-pulse">Loading...</p>
         )}
 
         {visualizationsQuery.error && (
-          <p className="text-tc-red text-sm font-mono">
-            ERR: {visualizationsQuery.error.message}
-          </p>
+          <p className="text-tc-red text-sm font-mono">ERR: {visualizationsQuery.error.message}</p>
         )}
 
         {visualizationsQuery.data && (

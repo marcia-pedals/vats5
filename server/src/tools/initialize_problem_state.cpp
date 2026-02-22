@@ -124,7 +124,6 @@ int main(int argc, char* argv[]) {
 
   // Create visualization SQLite database with required stops
   std::cout << "Creating visualization SQLite database...\n";
-  viz::Visualization visualization = viz::MakeVisualization(state, gtfs_day);
 
   // Determine visualization output path (e.g., "problem.json" ->
   // "problem-viz.sqlite")
@@ -136,7 +135,7 @@ int main(int argc, char* argv[]) {
     viz_output_path += "-viz.sqlite";
   }
 
-  viz::WriteVisualizationSqlite(visualization, viz_output_path);
+  viz::WriteVisualizationSqlite(state, gtfs_day, viz_output_path);
   std::cout << "Saved visualization to: " << viz_output_path << "\n";
 
   return 0;

@@ -129,10 +129,17 @@ add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
 target_include_directories(tarel_graph PUBLIC src)
 
+# Embed SQL schema as a C++ header
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql" VIZ_SCHEMA_SQL)
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/visualization/viz_schema_sql.h"
+)
+
 # Create visualization library target
 add_library(visualization STATIC src/visualization/visualization.cpp)
 target_link_libraries(visualization PUBLIC nlohmann_json::nlohmann_json SQLite::SQLite3 gtfs tarel_graph)
-target_include_directories(visualization PUBLIC src)
+target_include_directories(visualization PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 add_executable(main_server main.cpp)
 target_link_libraries(main_server PUBLIC Crow::Crow gtfs)
