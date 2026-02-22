@@ -63,6 +63,7 @@
             nlohmann_json
             nodejs
             pre-commit
+            sqlite
           ] ++ [
             concorde
           ];

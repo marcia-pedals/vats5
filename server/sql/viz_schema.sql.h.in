@@ -1,0 +1,10 @@
+// Generated from sql/viz_schema.sql by CMake — do not edit.
+#pragma once
+
+namespace vats5::viz {
+
+inline constexpr const char* kSchemaSql = R"sql(
+@VIZ_SCHEMA_SQL@
+)sql";
+
+}  // namespace vats5::viz
