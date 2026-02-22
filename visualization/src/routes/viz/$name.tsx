@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
-import type { VizPath, VizPathGroup } from "../../server/schemas";
+import type { Stop, VizPath, VizPathGroup } from "../../server/schemas";
 
 export const Route = createFileRoute("/viz/$name")({
   component: VizPage,
@@ -39,79 +39,217 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
-function PathTable({
-  paths,
-  originName,
-  destName,
-  onClose,
-  panelRef,
+function StopDropdown({
+  label,
+  value,
+  stops,
+  onChange,
+  onClear,
 }: {
-  paths: VizPath[];
-  originName: string;
-  destName: string;
-  onClose: () => void;
-  panelRef: React.RefObject<HTMLDivElement | null>;
+  label: string;
+  value: string | null;
+  stops: Stop[];
+  onChange: (stopId: string) => void;
+  onClear: () => void;
 }) {
   return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] font-mono text-tc-text-dim w-8 shrink-0">{label}</span>
+      <select
+        value={value ?? ""}
+        onChange={(e) => {
+          if (e.target.value) onChange(e.target.value);
+        }}
+        className="flex-1 min-w-0 text-xs font-mono bg-tc-raised border border-tc-border rounded px-1.5 py-1 text-tc-text truncate cursor-pointer"
+      >
+        <option value="" disabled>
+          — select station —
+        </option>
+        {stops.map((s) => (
+          <option key={s.stop_id} value={s.stop_id}>
+            {s.stop_name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={!value}
+        className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-red/50 hover:text-tc-red transition-colors cursor-pointer disabled:opacity-0 disabled:cursor-default shrink-0"
+        aria-label={`Clear ${label.toLowerCase()}`}
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          role="img"
+          aria-hidden="true"
+        >
+          <path d="M2 2l6 6M8 2l-6 6" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function StationPanel({
+  stops,
+  origin,
+  destination,
+  onOriginChange,
+  onDestChange,
+  onOriginClear,
+  onDestClear,
+  onSwap,
+  paths,
+  panelRef,
+}: {
+  stops: Stop[];
+  origin: string | null;
+  destination: string | null;
+  onOriginChange: (stopId: string) => void;
+  onDestChange: (stopId: string) => void;
+  onOriginClear: () => void;
+  onDestClear: () => void;
+  onSwap: () => void;
+  paths: VizPath[] | null;
+  panelRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  // Native stopPropagation on <select> elements only, so useGesture
+  // (which uses native addEventListener) doesn't interfere with dropdowns.
+  // We target selects specifically so button clicks still reach React's root.
+  const localRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = localRef.current;
+    if (!el) return;
+    const stop = (e: Event) => {
+      if (e.target instanceof HTMLSelectElement) {
+        e.stopPropagation();
+      }
+    };
+    el.addEventListener("pointerdown", stop);
+    el.addEventListener("pointerup", stop);
+    el.addEventListener("pointermove", stop);
+    return () => {
+      el.removeEventListener("pointerdown", stop);
+      el.removeEventListener("pointerup", stop);
+      el.removeEventListener("pointermove", stop);
+    };
+  }, []);
+
+  return (
     <div
-      ref={panelRef}
-      className="absolute top-0 bottom-0 right-0 z-20 max-w-[480px] w-full flex flex-col panel-surface m-3 overflow-hidden"
+      ref={(node) => {
+        localRef.current = node;
+        if (typeof panelRef === "object" && panelRef) panelRef.current = node;
+      }}
+      className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden cursor-default select-auto"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-tc-border shrink-0">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-xs font-mono text-tc-cyan font-semibold truncate">
-            {originName}
-          </span>
-          <span className="text-xs font-mono text-tc-text-dim">&rarr;</span>
-          <span className="text-xs font-mono text-tc-cyan font-semibold truncate">{destName}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] font-mono text-tc-text-dim">{paths.length} paths</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-1.5 py-0.5 rounded text-[10px] font-mono text-tc-text-muted border border-tc-border bg-transparent hover:border-tc-red/50 hover:text-tc-red transition-colors cursor-pointer"
+      {/* Station selectors */}
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-tc-border shrink-0">
+        <button
+          type="button"
+          onClick={onSwap}
+          disabled={!origin && !destination}
+          className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default shrink-0 self-center"
+          aria-label="Swap origin and destination"
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            role="img"
+            aria-hidden="true"
           >
-            close
-          </button>
+            <path d="M3 0v10M3 10L0.5 7.5M3 10l2.5-2.5M7 10V0M7 0L4.5 2.5M7 0l2.5 2.5" />
+          </svg>
+        </button>
+        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <StopDropdown
+            label="From"
+            value={origin}
+            stops={stops}
+            onChange={onOriginChange}
+            onClear={onOriginClear}
+          />
+          <StopDropdown
+            label="To"
+            value={destination}
+            stops={stops}
+            onChange={onDestChange}
+            onClear={onDestClear}
+          />
         </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-y-auto flex-1">
-        <table className="w-full text-[11px] font-mono border-collapse">
-          <thead className="sticky top-0 bg-tc-surface">
-            <tr className="text-tc-text-dim border-b border-tc-border">
-              <th className="text-left px-2 py-1.5 font-normal">Depart</th>
-              <th className="text-left px-2 py-1.5 font-normal">Arrive</th>
-              <th className="text-right px-2 py-1.5 font-normal">Duration</th>
-              <th className="text-center px-2 py-1.5 font-normal">Flex</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paths.map((p) => (
-              <tr
-                key={`${p.depart_time}-${p.arrive_time}`}
-                className="border-b border-tc-border/50 hover:bg-tc-cyan-dim/40 transition-colors"
-              >
-                <td className="px-2 py-1.5 text-tc-text">{formatTime(p.depart_time)}</td>
-                <td className="px-2 py-1.5 text-tc-text">{formatTime(p.arrive_time)}</td>
-                <td className="px-2 py-1.5 text-right text-tc-text-muted">
-                  {formatDuration(p.duration_seconds)}
-                </td>
-                <td className="px-2 py-1.5 text-center">
-                  {p.is_flex ? (
-                    <span className="text-tc-amber">flex</span>
-                  ) : (
-                    <span className="text-tc-text-dim">--</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Path table */}
+      {paths && paths.length > 0 && (
+        <>
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-tc-border shrink-0">
+            <span className="text-[10px] font-mono text-tc-text-dim">
+              {paths.length} path{paths.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="overflow-y-auto flex-1">
+            <table className="w-full text-[11px] font-mono border-collapse">
+              <thead className="sticky top-0 bg-tc-surface">
+                <tr className="text-tc-text-dim border-b border-tc-border">
+                  <th className="text-left px-2 py-1.5 font-normal">Depart</th>
+                  <th className="text-left px-2 py-1.5 font-normal">Arrive</th>
+                  <th className="text-right px-2 py-1.5 font-normal">Duration</th>
+                  <th className="text-center px-2 py-1.5 font-normal">Flex</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paths.map((p) => (
+                  <tr
+                    key={`${p.depart_time}-${p.arrive_time}`}
+                    className="border-b border-tc-border/50 hover:bg-tc-cyan-dim/40 transition-colors"
+                  >
+                    <td className="px-2 py-1.5 text-tc-text">{formatTime(p.depart_time)}</td>
+                    <td className="px-2 py-1.5 text-tc-text">{formatTime(p.arrive_time)}</td>
+                    <td className="px-2 py-1.5 text-right text-tc-text-muted">
+                      {formatDuration(p.duration_seconds)}
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      {p.is_flex ? (
+                        <span className="text-tc-amber">flex</span>
+                      ) : (
+                        <span className="text-tc-text-dim">--</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* No paths message */}
+      {origin && destination && paths !== null && paths.length === 0 && (
+        <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
+          No paths found between these stops
+        </div>
+      )}
+
+      {/* Empty state */}
+      {(!origin || !destination) && (
+        <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
+          {!origin
+            ? "Click a station on the map to set origin"
+            : "Click a station on the map to set destination"}
+        </div>
+      )}
     </div>
   );
 }
@@ -128,7 +266,8 @@ function VizPage() {
     w: number;
     h: number;
   } | null>(null);
-  const [selectedStops, setSelectedStops] = useState<string[]>([]);
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [destination, setDestination] = useState<string | null>(null);
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -182,37 +321,25 @@ function VizPage() {
     return map;
   }, [visualizationQuery.data]);
 
-  // Get paths between selected stops (in both directions)
-  const selectedPaths = useMemo<{
-    paths: VizPath[];
-    originName: string;
-    destName: string;
-  } | null>(() => {
-    if (selectedStops.length !== 2 || !pathLookup || !svgStops) return null;
-    const [a, b] = selectedStops;
-    const key = `${a}:${b}`;
+  // Get paths between selected stops
+  const selectedPaths = useMemo<VizPath[] | null>(() => {
+    if (!origin || !destination || !pathLookup) return null;
+    const key = `${origin}:${destination}`;
     const pg = pathLookup.get(key);
-    const stopA = svgStops.find((s) => s.stop_id === a);
-    const stopB = svgStops.find((s) => s.stop_id === b);
-    if (!pg || !stopA || !stopB) return null;
-    return {
-      paths: pg.paths,
-      originName: stopA.stop_name,
-      destName: stopB.stop_name,
-    };
-  }, [selectedStops, pathLookup, svgStops]);
+    return pg ? pg.paths : [];
+  }, [origin, destination, pathLookup]);
 
-  const handleStopClick = useCallback((stopId: string) => {
-    setSelectedStops((prev) => {
-      if (prev.length === 0) return [stopId];
-      if (prev.length === 1) {
-        if (prev[0] === stopId) return [];
-        return [prev[0], stopId];
+  const handleStopClick = useCallback(
+    (stopId: string) => {
+      // Fill first blank slot; if both filled, change destination
+      if (origin === null) {
+        setOrigin(stopId);
+      } else {
+        setDestination(stopId);
       }
-      // Two already selected — start fresh with new selection
-      return [stopId];
-    });
-  }, []);
+    },
+    [origin]
+  );
 
   const isEventInPanel = useCallback((event: Event) => {
     const panel = panelRef.current;
@@ -329,7 +456,9 @@ function VizPage() {
         const py = we.clientY - rect.top;
 
         setTransform((t) => {
-          const factor = 1.005 ** -we.deltaY;
+          // Dampen mouse wheel (large deltaY) but leave trackpad (small deltaY) alone
+          const dy = Math.abs(we.deltaY) > 50 ? we.deltaY * 0.3 : we.deltaY;
+          const factor = 1.005 ** -dy;
           const newScale = Math.min(Math.max(t.scale * factor, 0.1), 100);
           return {
             x: px - (px - t.x) * (newScale / t.scale),
@@ -356,12 +485,19 @@ function VizPage() {
     }
   }, []);
 
-  const isSelected = (stopId: string) => selectedStops.includes(stopId);
+  const selectedStops = useMemo(() => {
+    const s = new Set<string>();
+    if (origin) s.add(origin);
+    if (destination) s.add(destination);
+    return s;
+  }, [origin, destination]);
+
+  const isSelected = (stopId: string) => selectedStops.has(stopId);
 
   return (
     <div
       ref={containerCallbackRef}
-      className="relative w-screen h-screen overflow-hidden touch-none cursor-grab bg-tc-void"
+      className="relative w-screen h-screen overflow-hidden touch-none cursor-grab bg-tc-void select-none"
     >
       {/* Control bar */}
       <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 panel-surface py-1.5 px-2.5">
@@ -379,28 +515,7 @@ function VizPage() {
           Reset view
         </button>
         <span className="text-xs font-mono text-tc-text-dim ml-2">{name}</span>
-        {selectedStops.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setSelectedStops([])}
-            className="px-2.5 py-1 rounded text-xs font-mono text-tc-text-muted border border-tc-border bg-transparent hover:border-tc-red/50 hover:text-tc-red transition-colors cursor-pointer ml-1"
-          >
-            Clear selection
-          </button>
-        )}
       </div>
-
-      {/* Selection hint */}
-      {selectedStops.length === 1 && svgStops && (
-        <div className="absolute top-3 right-3 z-10 panel-surface py-1.5 px-2.5">
-          <span className="text-xs font-mono text-tc-text-muted">
-            Select second stop to view paths from{" "}
-            <span className="text-tc-cyan font-semibold">
-              {svgStops.find((s) => s.stop_id === selectedStops[0])?.stop_name}
-            </span>
-          </span>
-        </div>
-      )}
 
       {/* Loading */}
       {visualizationQuery.isLoading && (
@@ -497,24 +612,23 @@ function VizPage() {
         </>
       )}
 
-      {/* Path table */}
-      {selectedPaths && (
-        <PathTable
-          paths={selectedPaths.paths}
-          originName={selectedPaths.originName}
-          destName={selectedPaths.destName}
-          onClose={() => setSelectedStops([])}
+      {/* Station panel */}
+      {visualizationQuery.data && (
+        <StationPanel
+          stops={visualizationQuery.data.stops}
+          origin={origin}
+          destination={destination}
+          onOriginChange={setOrigin}
+          onDestChange={setDestination}
+          onOriginClear={() => setOrigin(null)}
+          onDestClear={() => setDestination(null)}
+          onSwap={() => {
+            setOrigin(destination);
+            setDestination(origin);
+          }}
+          paths={selectedPaths}
           panelRef={panelRef}
         />
-      )}
-
-      {/* No paths found message */}
-      {selectedStops.length === 2 && !selectedPaths && (
-        <div className="absolute bottom-3 right-3 z-20 panel-surface py-1.5 px-2.5">
-          <span className="text-xs font-mono text-tc-text-dim">
-            No paths found between these stops
-          </span>
-        </div>
       )}
     </div>
   );
