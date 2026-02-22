@@ -129,15 +129,25 @@ add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
 target_include_directories(tarel_graph PUBLIC src)
 
-# Embed SQL schema as a C++ header
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql" VIZ_SCHEMA_SQL)
-configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql.h.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/visualization/viz_schema_sql.h"
+# Embed SQL schema as a C++ header, regenerated at build time when .sql changes
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/visualization/viz_schema_sql.h"
+  COMMAND ${CMAKE_COMMAND}
+    -DSQL_IN="${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql"
+    -DTEMPLATE_IN="${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql.h.in"
+    -DHEADER_OUT="${CMAKE_CURRENT_BINARY_DIR}/generated/visualization/viz_schema_sql.h"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/sql/generate_schema_header.cmake"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql"
+    "${CMAKE_CURRENT_SOURCE_DIR}/sql/viz_schema.sql.h.in"
+  COMMENT "Generating viz_schema_sql.h from viz_schema.sql"
 )
 
 # Create visualization library target
-add_library(visualization STATIC src/visualization/visualization.cpp)
+add_library(visualization STATIC
+  src/visualization/visualization.cpp
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/visualization/viz_schema_sql.h"
+)
 target_link_libraries(visualization PUBLIC nlohmann_json::nlohmann_json SQLite::SQLite3 gtfs tarel_graph)
 target_include_directories(visualization PUBLIC src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 

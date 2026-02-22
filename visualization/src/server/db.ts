@@ -42,7 +42,8 @@ function getDb(name: string): Database.Database {
 // --- Schemas ---
 
 const StopSchema = z.object({
-  stop_id: z.string(),
+  stop_id: z.number(),
+  gtfs_stop_id: z.string(),
   stop_name: z.string(),
   lat: z.number(),
   lon: z.number(),
@@ -53,14 +54,12 @@ export type Stop = z.infer<typeof StopSchema>;
 const VizPathRowSchema = z.object({
   depart_time: z.number(),
   arrive_time: z.number(),
-  duration_seconds: z.number(),
   is_flex: z.number(),
 });
 
 export interface VizPath {
   depart_time: number;
   arrive_time: number;
-  duration_seconds: number;
   is_flex: boolean;
 }
 
@@ -83,22 +82,23 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 
 export function getStops(name: string): Stop[] {
   const db = getDb(name);
-  const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, required FROM stops").all();
+  const rows = db
+    .prepare("SELECT stop_id, gtfs_stop_id, stop_name, lat, lon, required FROM stops")
+    .all();
   return z.array(StopSchema).parse(rows);
 }
 
-export function getPaths(name: string, origin: string, destination: string): VizPath[] {
+export function getPaths(name: string, origin: number, destination: number): VizPath[] {
   const db = getDb(name);
   const rows = db
     .prepare(
-      "SELECT depart_time, arrive_time, duration_seconds, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
+      "SELECT depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
     )
     .all(origin, destination);
   const parsed = z.array(VizPathRowSchema).parse(rows);
   return parsed.map((r) => ({
     depart_time: r.depart_time,
     arrive_time: r.arrive_time,
-    duration_seconds: r.duration_seconds,
     is_flex: r.is_flex === 1,
   }));
 }
