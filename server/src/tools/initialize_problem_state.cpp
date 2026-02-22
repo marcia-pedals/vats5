@@ -85,10 +85,12 @@ int main(int argc, char* argv[]) {
       throw std::runtime_error("Invalid stop_id in required stops config");
     }
     GtfsStopId gtfs_stop_id{*stop_id_str};
-    auto it = steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
+    auto it =
+        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
     if (it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
       throw std::runtime_error(
-          "Stop ID '" + *stop_id_str + "' from required stops config not found in GTFS data"
+          "Stop ID '" + *stop_id_str +
+          "' from required stops config not found in GTFS data"
       );
     }
     required_stops.insert(it->second);
@@ -125,17 +127,19 @@ int main(int argc, char* argv[]) {
   viz::Visualization visualization = viz::MakeVisualization(state, gtfs_day);
   nlohmann::json viz_json = visualization;
 
-  // Determine visualization output path (e.g., "problem.json" -> "problem-viz.json")
+  // Determine visualization output path (e.g., "problem.json" ->
+  // "problem-viz.json")
   std::string viz_output_path = output_path;
   size_t dot_pos = viz_output_path.rfind('.');
   if (dot_pos != std::string::npos) {
-    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz" + viz_output_path.substr(dot_pos);
+    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz" +
+                      viz_output_path.substr(dot_pos);
   } else {
     viz_output_path += "-viz";
   }
 
   std::ofstream viz_out(viz_output_path);
-  viz_out << viz_json.dump(2);  // Pretty print with indent
+  viz_out << viz_json.dump();  // Compact output
   viz_out.close();
   std::cout << "Saved visualization to: " << viz_output_path << "\n";
 

@@ -8,8 +8,7 @@
 namespace vats5::viz {
 
 Visualization MakeVisualization(
-    const ProblemState& state,
-    const GtfsDay& gtfs_day
+    const ProblemState& state, const GtfsDay& gtfs_day
 ) {
   // Build a map from GtfsStopId to GtfsStop for direct lookup
   std::unordered_map<GtfsStopId, GtfsStop> gtfs_stop_by_id;
@@ -43,12 +42,64 @@ Visualization MakeVisualization(
     const GtfsStop& gtfs_stop = gtfs_stop_it->second;
 
     // Create viz::Stop
-    viz.stops.push_back(Stop{
-        .stop_id = gtfs_stop.stop_id.v,
-        .stop_name = gtfs_stop.stop_name,
-        .lat = gtfs_stop.stop_lat,
-        .lon = gtfs_stop.stop_lon,
-    });
+    viz.stops.push_back(
+        Stop{
+            .stop_id = gtfs_stop.stop_id.v,
+            .stop_name = gtfs_stop.stop_name,
+            .lat = gtfs_stop.stop_lat,
+            .lon = gtfs_stop.stop_lon,
+        }
+    );
+  }
+
+  // Helper to get the GTFS stop_id string for a StopId
+  auto gtfs_id_for = [&](StopId sid) -> std::string {
+    auto it = state.stop_infos.find(sid);
+    if (it == state.stop_infos.end()) return "";
+    return it->second.gtfs_stop_id.v;
+  };
+
+  // Serialize paths from completed adjacency list
+  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+    // Skip boundary stops
+    if (origin_stop == state.boundary.start ||
+        origin_stop == state.boundary.end) {
+      continue;
+    }
+
+    std::string origin_gtfs_id = gtfs_id_for(origin_stop);
+    if (origin_gtfs_id.empty()) continue;
+
+    for (const auto& path_group : path_groups) {
+      if (path_group.empty()) continue;
+
+      StopId dest_stop = path_group[0].merged_step.destination.stop;
+      // Skip boundary stops
+      if (dest_stop == state.boundary.start ||
+          dest_stop == state.boundary.end) {
+        continue;
+      }
+
+      std::string dest_gtfs_id = gtfs_id_for(dest_stop);
+      if (dest_gtfs_id.empty()) continue;
+
+      VizPathGroup vpg;
+      vpg.origin_stop_id = origin_gtfs_id;
+      vpg.destination_stop_id = dest_gtfs_id;
+
+      for (const Path& path : path_group) {
+        vpg.paths.push_back(
+            VizPath{
+                .depart_time = path.merged_step.origin.time.seconds,
+                .arrive_time = path.merged_step.destination.time.seconds,
+                .duration_seconds = path.DurationSeconds(),
+                .is_flex = path.merged_step.is_flex,
+            }
+        );
+      }
+
+      viz.path_groups.push_back(std::move(vpg));
+    }
   }
 
   return viz;
