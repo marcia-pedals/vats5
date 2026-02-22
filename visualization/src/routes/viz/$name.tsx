@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback, useState } from "react";
+import { useMemo, useRef, useCallback, useState, useLayoutEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
 import { trpc } from "../../client/trpc";
@@ -24,9 +24,19 @@ function VizPage() {
   const visualizationQuery = trpc.getVisualization.useQuery({ filename });
   const containerRef = useRef<HTMLDivElement>(null);
   const [transform, setTransform] = useState<Transform>(DEFAULT_TRANSFORM);
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (containerRef.current) {
+      setContainerSize({
+        w: containerRef.current.clientWidth,
+        h: containerRef.current.clientHeight,
+      });
+    }
+  }, []);
 
   const svgStops = useMemo(() => {
-    if (!visualizationQuery.data?.stops.length) return null;
+    if (!visualizationQuery.data?.stops.length || !containerSize) return null;
 
     const stops = visualizationQuery.data.stops;
     const lats = stops.map((s) => s.lat);
@@ -38,9 +48,8 @@ function VizPage() {
     const latRange = maxLat - minLat || 1;
     const lonRange = maxLon - minLon || 1;
 
-    const container = containerRef.current;
-    const w = container?.clientWidth ?? 1000;
-    const h = container?.clientHeight ?? 800;
+    const w = containerSize.w;
+    const h = containerSize.h;
     const pad = 50;
 
     // Use uniform scale to preserve geographic aspect ratio
@@ -61,7 +70,7 @@ function VizPage() {
       cx: offsetX + ((stop.lon - minLon) * cosLat / dataW) * drawW,
       cy: offsetY + ((maxLat - stop.lat) / dataH) * drawH,
     }));
-  }, [visualizationQuery.data]);
+  }, [visualizationQuery.data, containerSize]);
 
   useGesture(
     {
@@ -100,7 +109,15 @@ function VizPage() {
     }
   );
 
-  const resetView = useCallback(() => setTransform(DEFAULT_TRANSFORM), []);
+  const resetView = useCallback(() => {
+    setTransform(DEFAULT_TRANSFORM);
+    if (containerRef.current) {
+      setContainerSize({
+        w: containerRef.current.clientWidth,
+        h: containerRef.current.clientHeight,
+      });
+    }
+  }, []);
 
   const btnStyle: React.CSSProperties = {
     background: "none",
