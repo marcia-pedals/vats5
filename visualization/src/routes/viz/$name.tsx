@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback, useState, useLayoutEffect } from "react";
+import { useMemo, useRef, useCallback, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
 import { trpc } from "../../client/trpc";
@@ -26,12 +26,10 @@ function VizPage() {
   const [transform, setTransform] = useState<Transform>(DEFAULT_TRANSFORM);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
 
-  useLayoutEffect(() => {
-    if (containerRef.current) {
-      setContainerSize({
-        w: containerRef.current.clientWidth,
-        h: containerRef.current.clientHeight,
-      });
+  const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (node) {
+      setContainerSize({ w: node.clientWidth, h: node.clientHeight });
     }
   }, []);
 
@@ -131,7 +129,7 @@ function VizPage() {
 
   return (
     <div
-      ref={containerRef}
+      ref={containerCallbackRef}
       style={{
         position: "relative",
         width: "100vw",
