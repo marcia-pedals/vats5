@@ -128,11 +128,6 @@ add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde graph_util)
 target_include_directories(tarel_graph PUBLIC src)
 
-# Create visualization library target
-add_library(visualization STATIC src/visualization/visualization.cpp)
-target_link_libraries(visualization PUBLIC steps_shortest_path)
-target_include_directories(visualization PUBLIC src)
-
 # Create visualization2 library target
 add_library(visualization2 STATIC src/visualization2/visualization2.cpp)
 target_link_libraries(visualization2 PUBLIC nlohmann_json::nlohmann_json gtfs tarel_graph)
@@ -156,10 +151,6 @@ target_link_libraries(benchmark_reduction PUBLIC steps_shortest_path CLI11::CLI1
 # Add reduction diff tool
 add_executable(reduction_diff src/tools/reduction_diff.cpp)
 target_link_libraries(reduction_diff PUBLIC steps_shortest_path CLI11::CLI11)
-
-# Add plain_viz tool (minimal paths only, no iteration)
-add_executable(plain_viz src/tools/plain_viz.cpp)
-target_link_libraries(plain_viz PUBLIC visualization)
 
 # Add branch_and_bound_dev tool
 add_executable(branch_and_bound_dev src/tools/branch_and_bound_dev.cpp)
