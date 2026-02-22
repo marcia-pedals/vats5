@@ -8,6 +8,7 @@
 #include <unordered_map>
 
 #include "gtfs/gtfs.h"
+#include "solver/data.h"
 #include "solver/tarel_graph.h"
 #include "visualization/viz_schema_sql.h"
 
@@ -87,7 +88,10 @@ class SqliteStmt {
 };
 
 void WriteVisualizationSqlite(
-    const ProblemState& state, const GtfsDay& gtfs_day, const std::string& path
+    const ProblemState& state,
+    const GtfsDay& gtfs_day,
+    const DataGtfsMapping& mapping,
+    const std::string& path
 ) {
   // Delete existing db file and associated WAL/shm files if present
   std::remove(path.c_str());
@@ -146,7 +150,7 @@ void WriteVisualizationSqlite(
       db,
       "INSERT INTO paths_steps (path_id, origin_stop_id, "
       "destination_stop_id, depart_time, arrive_time, "
-      "is_flex) VALUES (?, ?, ?, ?, ?, ?)"
+      "is_flex, route_name) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
   int next_path_id = 1;
@@ -177,13 +181,31 @@ void WriteVisualizationSqlite(
         path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
         path_stmt.step_and_reset();
 
-        for (const Step& s : p.steps) {
+        // Deduplicate: only emit the last step per consecutive
+        // destination trip (collapses multi-stop rides into one row).
+        for (size_t si = 0; si < p.steps.size(); ++si) {
+          const Step& s = p.steps[si];
+          // Skip if the next step has the same trip (and it's not NOOP).
+          if (si + 1 < p.steps.size() && s.destination.trip != TripId::NOOP &&
+              s.destination.trip == p.steps[si + 1].destination.trip) {
+            continue;
+          }
+
+          std::string route_name;
+          if (s.destination.trip != TripId::NOOP) {
+            auto it = mapping.trip_id_to_route_desc.find(s.destination.trip);
+            if (it != mapping.trip_id_to_route_desc.end()) {
+              route_name = it->second;
+            }
+          }
+
           step_stmt.bind_int(1, path_id);
           step_stmt.bind_int(2, s.origin.stop.v);
           step_stmt.bind_int(3, s.destination.stop.v);
           step_stmt.bind_int(4, s.origin.time.seconds);
           step_stmt.bind_int(5, s.destination.time.seconds);
           step_stmt.bind_int(6, s.is_flex ? 1 : 0);
+          step_stmt.bind_text(7, route_name.c_str());
           step_stmt.step_and_reset();
         }
       }

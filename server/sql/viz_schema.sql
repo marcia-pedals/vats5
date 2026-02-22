@@ -28,6 +28,7 @@ CREATE TABLE paths_steps (
   depart_time INTEGER NOT NULL,
   arrive_time INTEGER NOT NULL,
   is_flex INTEGER NOT NULL,
+  route_name TEXT NOT NULL DEFAULT '',
 
   FOREIGN KEY (path_id) REFERENCES paths(path_id),
   FOREIGN KEY (origin_stop_id) REFERENCES stops(stop_id),

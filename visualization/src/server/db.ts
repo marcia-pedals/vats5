@@ -65,6 +65,7 @@ const PathStepRowSchema = z.object({
   depart_time: z.number(),
   arrive_time: z.number(),
   is_flex: z.number(),
+  route_name: z.string(),
 });
 export type PathStep = z.infer<typeof PathStepRowSchema>;
 
@@ -107,7 +108,7 @@ export function getPathSteps(name: string, pathId: number): PathStep[] {
   const db = getDb(name);
   const rows = db
     .prepare(
-      "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex FROM paths_steps WHERE path_id = ?"
+      "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name FROM paths_steps WHERE path_id = ?"
     )
     .all(pathId);
   return z.array(PathStepRowSchema).parse(rows);

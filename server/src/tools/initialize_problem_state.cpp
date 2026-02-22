@@ -135,7 +135,9 @@ int main(int argc, char* argv[]) {
     viz_output_path += "-viz.sqlite";
   }
 
-  viz::WriteVisualizationSqlite(state, gtfs_day, viz_output_path);
+  viz::WriteVisualizationSqlite(
+      state, gtfs_day, steps_from_gtfs.mapping, viz_output_path
+  );
   std::cout << "Saved visualization to: " << viz_output_path << "\n";
 
   return 0;
