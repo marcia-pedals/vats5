@@ -1,6 +1,6 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
-import { getPaths, getStops, listVisualizations } from "./db";
+import { getPathSteps, getPaths, getStops, listVisualizations } from "./db";
 
 const t = initTRPC.create();
 
@@ -15,6 +15,12 @@ export const appRouter = t.router({
     .input(z.object({ name: z.string(), origin: z.number(), destination: z.number() }))
     .query(({ input }) => {
       return getPaths(input.name, input.origin, input.destination);
+    }),
+
+  getPathSteps: t.procedure
+    .input(z.object({ name: z.string(), pathId: z.number() }))
+    .query(({ input }) => {
+      return getPathSteps(input.name, input.pathId);
     }),
 });
 

@@ -1,8 +1,8 @@
 import { skipToken } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
-import { ArrowUpDown, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { ArrowUpDown, ChevronRight, X } from "lucide-react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
 import type { Stop, VizPath } from "../../server/db";
 
@@ -86,6 +86,50 @@ function StopDropdown({
   );
 }
 
+function PathStepsDetail({ name, pathId }: { name: string; pathId: number }) {
+  const stepsQuery = trpc.getPathSteps.useQuery({ name, pathId });
+
+  if (stepsQuery.isPending) {
+    return (
+      <tr>
+        <td colSpan={5} className="px-2 py-1.5 text-[10px] font-mono text-tc-text-dim">
+          Loading steps...
+        </td>
+      </tr>
+    );
+  }
+
+  if (!stepsQuery.data?.length) return null;
+
+  return (
+    <>
+      {stepsQuery.data.map((step) => (
+        <tr
+          key={`step-${pathId}-${step.depart_time}-${step.arrive_time}`}
+          className="bg-tc-raised/50 border-b border-tc-border/30"
+        >
+          <td className="pl-6 pr-2 py-1 text-[10px] text-tc-text-muted" colSpan={2}>
+            {step.origin_stop_name} → {step.destination_stop_name}
+          </td>
+          <td className="px-2 py-1 text-[10px] text-tc-text-dim">
+            {formatTime(step.depart_time)}–{formatTime(step.arrive_time)}
+          </td>
+          <td className="px-2 py-1 text-right text-[10px] text-tc-text-dim">
+            {formatDuration(step.arrive_time - step.depart_time)}
+          </td>
+          <td className="px-2 py-1 text-center text-[10px]">
+            {step.is_flex ? (
+              <span className="text-tc-amber">flex</span>
+            ) : (
+              <span className="text-tc-text-dim">--</span>
+            )}
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
 function StationPanel({
   name,
   stops,
@@ -111,6 +155,16 @@ function StationPanel({
     origin !== null && destination !== null ? { name, origin, destination } : skipToken
   );
   const paths: VizPath[] | null = pathsQuery.data ?? null;
+  const [expandedPaths, setExpandedPaths] = useState<Set<number>>(new Set());
+
+  const toggleExpanded = useCallback((pathId: number) => {
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(pathId)) next.delete(pathId);
+      else next.add(pathId);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
@@ -155,6 +209,7 @@ function StationPanel({
             <table className="w-full text-[11px] font-mono border-collapse">
               <thead className="sticky top-0 bg-tc-surface">
                 <tr className="text-tc-text-dim border-b border-tc-border">
+                  <th className="w-5 px-0 py-1.5" />
                   <th className="text-left px-2 py-1.5 font-normal">Depart</th>
                   <th className="text-left px-2 py-1.5 font-normal">Arrive</th>
                   <th className="text-right px-2 py-1.5 font-normal">Duration</th>
@@ -162,25 +217,37 @@ function StationPanel({
                 </tr>
               </thead>
               <tbody>
-                {paths.map((p) => (
-                  <tr
-                    key={`${p.depart_time}-${p.arrive_time}`}
-                    className="border-b border-tc-border/50 hover:bg-tc-cyan-dim/40 transition-colors"
-                  >
-                    <td className="px-2 py-1.5 text-tc-text">{formatTime(p.depart_time)}</td>
-                    <td className="px-2 py-1.5 text-tc-text">{formatTime(p.arrive_time)}</td>
-                    <td className="px-2 py-1.5 text-right text-tc-text-muted">
-                      {formatDuration(p.arrive_time - p.depart_time)}
-                    </td>
-                    <td className="px-2 py-1.5 text-center">
-                      {p.is_flex ? (
-                        <span className="text-tc-amber">flex</span>
-                      ) : (
-                        <span className="text-tc-text-dim">--</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {paths.map((p) => {
+                  const expanded = expandedPaths.has(p.path_id);
+                  return (
+                    <Fragment key={p.path_id}>
+                      <tr
+                        className="border-b border-tc-border/50 hover:bg-tc-cyan-dim/40 transition-colors cursor-pointer"
+                        onClick={() => toggleExpanded(p.path_id)}
+                      >
+                        <td className="pl-1.5 pr-0 py-1.5 text-tc-text-dim">
+                          <ChevronRight
+                            size={12}
+                            className={`transition-transform ${expanded ? "rotate-90" : ""}`}
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-tc-text">{formatTime(p.depart_time)}</td>
+                        <td className="px-2 py-1.5 text-tc-text">{formatTime(p.arrive_time)}</td>
+                        <td className="px-2 py-1.5 text-right text-tc-text-muted">
+                          {formatDuration(p.arrive_time - p.depart_time)}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          {p.is_flex ? (
+                            <span className="text-tc-amber">flex</span>
+                          ) : (
+                            <span className="text-tc-text-dim">--</span>
+                          )}
+                        </td>
+                      </tr>
+                      {expanded && <PathStepsDetail name={name} pathId={p.path_id} />}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
