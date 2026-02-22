@@ -8,7 +8,6 @@
 
 #include "gtfs/gtfs_filter.h"
 #include "solver/data.h"
-#include "solver/graph_util.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
@@ -99,20 +98,6 @@ int main(int argc, char* argv[]) {
   std::cout << "Initializing solution state...\n";
   ProblemState state = InitializeProblemState(
       steps_from_gtfs, required_stops, /*optimize_edges=*/true
-  );
-
-  auto extreme_stops = ComputeExtremeStops(
-      state.completed, state.required_stops, state.boundary.start
-  );
-  std::cout << "Final extreme stop count: " << extreme_stops.size() << "\n";
-  state = MakeProblemState(
-      MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, extreme_stops)
-                            .AllMergedSteps()),
-      state.boundary,
-      extreme_stops,
-      state.stop_infos,
-      state.step_partition_names,
-      state.original_edges
   );
 
   std::cout << "Serializing to JSON...\n";

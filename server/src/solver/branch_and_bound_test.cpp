@@ -12,7 +12,6 @@
 #include "rapidcheck/Log.h"
 #include "solver/concorde.h"
 #include "solver/data.h"
-#include "solver/graph_util.h"
 #include "solver/tarel_graph.h"
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
