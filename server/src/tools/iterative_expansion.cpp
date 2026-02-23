@@ -116,19 +116,6 @@ struct BestPathResult {
   int duration;
 };
 
-// Recursively expands a combined stop into its original constituent stops.
-void ExpandStop(
-    StopId stop,
-    const std::unordered_map<StopId, PlainEdge>& original_edges,
-    std::vector<StopId>& out) {
-  auto it = original_edges.find(stop);
-  if (it == original_edges.end()) {
-    out.push_back(stop);
-    return;
-  }
-  ExpandStop(it->second.a, original_edges, out);
-  ExpandStop(it->second.b, original_edges, out);
-}
 
 std::optional<BestPathResult> FindBestPathBranchAndBound(
   std::vector<StopId> leaves,

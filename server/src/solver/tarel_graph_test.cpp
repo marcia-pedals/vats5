@@ -67,6 +67,57 @@ std::vector<std::string> ValidateMergedEdgePartitions(
   return errors;
 }
 
+TEST(ExpandStopTest, PrimitiveStopReturnsSelf) {
+  std::unordered_map<StopId, PlainEdge> edges;
+  StopId a{1};
+
+  std::vector<StopId> out;
+  ExpandStop(a, edges, out);
+  ASSERT_EQ(out.size(), 1);
+  EXPECT_EQ(out[0], a);
+}
+
+TEST(ExpandStopTest, SingleLevelExpansion) {
+  StopId a{1}, b{2}, combined{3};
+  std::unordered_map<StopId, PlainEdge> edges;
+  edges[combined] = PlainEdge{a, b};
+
+  std::vector<StopId> out;
+  ExpandStop(combined, edges, out);
+  ASSERT_EQ(out.size(), 2);
+  EXPECT_EQ(out[0], a);
+  EXPECT_EQ(out[1], b);
+}
+
+TEST(ExpandStopTest, RecursiveExpansion) {
+  StopId a{1}, b{2}, c{3};
+  StopId ab{10}, abc{20};
+  std::unordered_map<StopId, PlainEdge> edges;
+  edges[ab] = PlainEdge{a, b};
+  edges[abc] = PlainEdge{ab, c};
+
+  std::vector<StopId> out;
+  ExpandStop(abc, edges, out);
+  ASSERT_EQ(out.size(), 3);
+  EXPECT_EQ(out[0], a);
+  EXPECT_EQ(out[1], b);
+  EXPECT_EQ(out[2], c);
+}
+
+TEST(ExpandStopTest, AccumulatesIntoExistingVector) {
+  StopId a{1}, b{2}, combined{3}, d{4};
+  std::unordered_map<StopId, PlainEdge> edges;
+  edges[combined] = PlainEdge{a, b};
+
+  std::vector<StopId> out;
+  out.push_back(d);
+  ExpandStop(combined, edges, out);
+  ASSERT_EQ(out.size(), 3);
+  EXPECT_EQ(out[0], d);
+  EXPECT_EQ(out[1], a);
+  EXPECT_EQ(out[2], b);
+}
+
 // A problem with two stops a, b, and no steps between them is infeasible and
 // the relaxation should have no solution.
 TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
