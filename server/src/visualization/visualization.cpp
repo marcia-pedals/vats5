@@ -296,7 +296,7 @@ void WriteVisualizationSqlite(
               all_expanded_steps[si].destination.trip
           );
 
-          merged_steps.push_back({merged, std::move(route_name)});
+          merged_steps.push_back({merged, route_name});
           si = group_end;
         }
 
