@@ -110,15 +110,7 @@ int main(int argc, char* argv[]) {
   // Create visualization SQLite database with required stops
   std::cout << "Creating visualization SQLite database...\n";
 
-  // Determine visualization output path (e.g., "problem.json" ->
-  // "problem-viz.sqlite")
-  std::string viz_output_path = output_path;
-  size_t dot_pos = viz_output_path.rfind('.');
-  if (dot_pos != std::string::npos) {
-    viz_output_path = viz_output_path.substr(0, dot_pos) + "-viz.sqlite";
-  } else {
-    viz_output_path += "-viz.sqlite";
-  }
+  std::string viz_output_path = viz::VizSqlitePath(output_path);
 
   viz::WriteVisualizationSqlite(
       init_result, gtfs_day, steps_from_gtfs.mapping, viz_output_path

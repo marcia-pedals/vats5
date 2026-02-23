@@ -1,9 +1,6 @@
 #include "visualization/visualization.h"
 
-#include <sqlite3.h>
-
 #include <cstdio>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -11,82 +8,18 @@
 #include "solver/data.h"
 #include "solver/step_merge.h"
 #include "solver/tarel_graph.h"  // InitializeProblemStateResult
+#include "visualization/sqlite_wrapper.h"
 #include "visualization/viz_schema_sql.h"
 
 namespace vats5::viz {
 
-// RAII wrapper for sqlite3 database handle.
-class SqliteDb {
- public:
-  explicit SqliteDb(const std::string& path) {
-    int rc = sqlite3_open(path.c_str(), &db_);
-    if (rc != SQLITE_OK) {
-      std::string err = sqlite3_errmsg(db_);
-      sqlite3_close(db_);
-      db_ = nullptr;
-      throw std::runtime_error("Failed to open SQLite database: " + err);
-    }
+std::string VizSqlitePath(const std::string& input_path) {
+  size_t dot_pos = input_path.rfind('.');
+  if (dot_pos != std::string::npos) {
+    return input_path.substr(0, dot_pos) + "-viz.sqlite";
   }
-
-  ~SqliteDb() {
-    if (db_) sqlite3_close(db_);
-  }
-
-  SqliteDb(const SqliteDb&) = delete;
-  SqliteDb& operator=(const SqliteDb&) = delete;
-
-  void exec(const char* sql) {
-    char* err_msg = nullptr;
-    int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-      std::string err = err_msg;
-      sqlite3_free(err_msg);
-      throw std::runtime_error("SQLite exec error: " + err);
-    }
-  }
-
-  sqlite3* handle() { return db_; }
-
- private:
-  sqlite3* db_ = nullptr;
-};
-
-// RAII wrapper for sqlite3 prepared statements.
-class SqliteStmt {
- public:
-  SqliteStmt(SqliteDb& db, const char* sql) {
-    int rc = sqlite3_prepare_v2(db.handle(), sql, -1, &stmt_, nullptr);
-    if (rc != SQLITE_OK) {
-      throw std::runtime_error(
-          std::string("Failed to prepare statement: ") +
-          sqlite3_errmsg(db.handle())
-      );
-    }
-  }
-
-  ~SqliteStmt() {
-    if (stmt_) sqlite3_finalize(stmt_);
-  }
-
-  SqliteStmt(const SqliteStmt&) = delete;
-  SqliteStmt& operator=(const SqliteStmt&) = delete;
-
-  void bind_text(int col, const char* val) {
-    sqlite3_bind_text(stmt_, col, val, -1, SQLITE_TRANSIENT);
-  }
-  void bind_double(int col, double val) {
-    sqlite3_bind_double(stmt_, col, val);
-  }
-  void bind_int(int col, int val) { sqlite3_bind_int(stmt_, col, val); }
-
-  void step_and_reset() {
-    sqlite3_step(stmt_);
-    sqlite3_reset(stmt_);
-  }
-
- private:
-  sqlite3_stmt* stmt_ = nullptr;
-};
+  return input_path + "-viz.sqlite";
+}
 
 void WriteVisualizationSqlite(
     const InitializeProblemStateResult& result,

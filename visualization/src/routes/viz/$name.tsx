@@ -274,6 +274,90 @@ function StationPanel({
   );
 }
 
+function StopDot({
+  stop,
+  scale,
+  isSelected,
+  isRequired,
+  isUnvisited,
+  isLeaf,
+  onClick,
+}: {
+  stop: { stop_id: string; cx: number; cy: number };
+  scale: number;
+  isSelected: boolean;
+  isRequired: boolean;
+  isUnvisited: boolean;
+  isLeaf: boolean;
+  onClick: (stopId: string) => void;
+}) {
+  if (!isRequired) {
+    return (
+      <circle
+        cx={stop.cx}
+        cy={stop.cy}
+        r={(DOT_R - 1.5) / scale}
+        fill="#7a8599"
+        stroke="#5c6378"
+        strokeWidth={1 / scale}
+        opacity={0.5}
+        style={{ pointerEvents: "none" }}
+      />
+    );
+  }
+
+  const fillColor = isSelected ? "#00c4e8" : isUnvisited ? "#b34a4a" : "#0094b3";
+  const strokeColor = isSelected ? "#0094b3" : isUnvisited ? "#803535" : "#006880";
+  const ringColor = isUnvisited ? "#b34a4a" : "#0094b3";
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
+    <g
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(stop.stop_id);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onClick(stop.stop_id);
+      }}
+      style={{ cursor: "pointer", pointerEvents: "all" }}
+    >
+      {isLeaf && (
+        <circle
+          cx={stop.cx}
+          cy={stop.cy}
+          r={(DOT_R + 4) / scale}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth={2 / scale}
+          opacity={0.8}
+        />
+      )}
+      {isSelected && (
+        <circle
+          cx={stop.cx}
+          cy={stop.cy}
+          r={(DOT_R + 4) / scale}
+          fill="none"
+          stroke={ringColor}
+          strokeWidth={2 / scale}
+          opacity={0.6}
+        />
+      )}
+      <circle
+        cx={stop.cx}
+        cy={stop.cy}
+        r={DOT_R / scale}
+        fill={fillColor}
+        stroke={strokeColor}
+        strokeWidth={1 / scale}
+        opacity={0.85}
+      />
+    </g>
+  );
+}
+
 function VizPage() {
   const { name } = Route.useParams();
 
@@ -534,93 +618,15 @@ function VizPage() {
   const pathArrows = useMemo(() => {
     if (!partialQuery.data || !stopCoords.size) return [];
     const steps = partialQuery.data.best_path.steps;
-    if (!steps.length) return [];
-
-    const headPull = (DOT_R + 5) / transform.scale;
-    const sideShift = (DOT_R - 1) / transform.scale;
-    const perpSpacing = 4 / transform.scale;
-
-    // Right-hand perpendicular in screen coords (Y down): direction (ux,uy) → (-uy, ux).
-    const rightPerp = (ux: number, uy: number) => ({ x: -uy, y: ux });
-
-    // Pre-count departures per origin stop.
-    const departureCount = new Map<string, number>();
-    for (const s of steps) {
-      departureCount.set(s.origin_stop_id, (departureCount.get(s.origin_stop_id) ?? 0) + 1);
-    }
-    const departureSeen = new Map<string, number>();
-
     const arrows: { x1: number; y1: number; x2: number; y2: number }[] = [];
-    let lastHead: { x: number; y: number } | null = null;
-
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
+    for (const step of steps) {
+      const orig = stopCoords.get(step.origin_stop_id);
       const dest = stopCoords.get(step.destination_stop_id);
-      if (!dest) continue;
-
-      // Determine tail position.
-      let tail: { x: number; y: number };
-      if (lastHead) {
-        tail = lastHead;
-      } else {
-        // First arrow: offset tail from origin center along departure direction.
-        const orig = stopCoords.get(step.origin_stop_id);
-        if (!orig) continue;
-        const dx = dest.cx - orig.cx;
-        const dy = dest.cy - orig.cy;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len > 0) {
-          const ux = dx / len, uy = dy / len;
-          const rp = rightPerp(ux, uy);
-          tail = {
-            x: orig.cx + ux * headPull + rp.x * sideShift,
-            y: orig.cy + uy * headPull + rp.y * sideShift,
-          };
-        } else {
-          tail = { x: orig.cx, y: orig.cy };
-        }
-      }
-
-      // Perpendicular offset for co-originating arrows.
-      const origId = step.origin_stop_id;
-      const n = departureCount.get(origId) ?? 1;
-      const k = departureSeen.get(origId) ?? 0;
-      departureSeen.set(origId, k + 1);
-
-      if (n > 1) {
-        const rawDx = dest.cx - tail.x;
-        const rawDy = dest.cy - tail.y;
-        const rawLen = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
-        if (rawLen > 0) {
-          const rp = rightPerp(rawDx / rawLen, rawDy / rawLen);
-          const offset = (k - (n - 1) / 2) * perpSpacing;
-          tail = { x: tail.x + rp.x * offset, y: tail.y + rp.y * offset };
-        }
-      }
-
-      // Head: pull back from destination center and shift to right side.
-      const dx = dest.cx - tail.x;
-      const dy = dest.cy - tail.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-
-      let head: { x: number; y: number };
-      if (len > headPull) {
-        const ux = dx / len, uy = dy / len;
-        const rp = rightPerp(ux, uy);
-        head = {
-          x: dest.cx - ux * headPull + rp.x * sideShift,
-          y: dest.cy - uy * headPull + rp.y * sideShift,
-        };
-      } else {
-        head = { x: dest.cx, y: dest.cy };
-      }
-
-      lastHead = head;
-      arrows.push({ x1: tail.x, y1: tail.y, x2: head.x, y2: head.y });
+      if (!orig || !dest) continue;
+      arrows.push({ x1: orig.cx, y1: orig.cy, x2: dest.cx, y2: dest.cy });
     }
-
     return arrows;
-  }, [partialQuery.data, stopCoords, transform.scale]);
+  }, [partialQuery.data, stopCoords]);
 
   return (
     <div
@@ -739,61 +745,18 @@ function VizPage() {
                 </marker>
               </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-                {svgStops.map((stop) => {
-                  const selected = isSelected(stop.stop_id);
-                  const required = stop.stop_type === "required";
-                  if (!required) {
-                    return (
-                      <circle
-                        key={stop.stop_id}
-                        cx={stop.cx}
-                        cy={stop.cy}
-                        r={(DOT_R - 1.5) / transform.scale}
-                        fill="#7a8599"
-                        stroke="#5c6378"
-                        strokeWidth={1 / transform.scale}
-                        opacity={0.5}
-                        style={{ pointerEvents: "none" }}
-                      />
-                    );
-                  }
-                  return (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
-                    <g
-                      key={stop.stop_id}
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStopClick(stop.stop_id);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") handleStopClick(stop.stop_id);
-                      }}
-                      style={{ cursor: "pointer", pointerEvents: "all" }}
-                    >
-                      {selected && (
-                        <circle
-                          cx={stop.cx}
-                          cy={stop.cy}
-                          r={(DOT_R + 4) / transform.scale}
-                          fill="none"
-                          stroke={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#b34a4a" : "#0094b3"}
-                          strokeWidth={2 / transform.scale}
-                          opacity={0.6}
-                        />
-                      )}
-                      <circle
-                        cx={stop.cx}
-                        cy={stop.cy}
-                        r={DOT_R / transform.scale}
-                        fill={selected ? "#00c4e8" : visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#b34a4a" : "#0094b3"}
-                        stroke={selected ? "#0094b3" : visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#803535" : "#006880"}
-                        strokeWidth={1 / transform.scale}
-                        opacity={0.85}
-                      />
-                    </g>
-                  );
-                })}
+                {svgStops.map((stop) => (
+                  <StopDot
+                    key={stop.stop_id}
+                    stop={stop}
+                    scale={transform.scale}
+                    isSelected={isSelected(stop.stop_id)}
+                    isRequired={stop.stop_type === "required"}
+                    isUnvisited={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id)}
+                    isLeaf={leafSet.has(stop.stop_id)}
+                    onClick={handleStopClick}
+                  />
+                ))}
                 {/* Station name labels — greedy collision-avoidance placement */}
                 {labelPlacements &&
                   svgStops.map((stop, i) => {
@@ -826,22 +789,6 @@ function VizPage() {
                     opacity={0.7}
                   />
                 ))}
-                {/* Partial solution: leaf highlights */}
-                {svgStops.map((stop) => {
-                  if (!leafSet.has(stop.stop_id)) return null;
-                  return (
-                    <circle
-                      key={`leaf-${stop.stop_id}`}
-                      cx={stop.cx}
-                      cy={stop.cy}
-                      r={(DOT_R + 4) / transform.scale}
-                      fill="none"
-                      stroke="#f59e0b"
-                      strokeWidth={2 / transform.scale}
-                      opacity={0.8}
-                    />
-                  );
-                })}
               </g>
             </svg>
           </>
