@@ -282,11 +282,11 @@ const STOP_COLORS = {
   required: { fill: "var(--color-tc-cyan)", stroke: "var(--color-tc-blue)" },
   // Unvisited required stop (partial solution active, stop not on path)
   unvisited: { fill: "var(--color-tc-red)", stroke: "var(--color-tc-red)" },
+  // Leaf stop
+  leaf: { fill: "var(--color-tc-amber)", stroke: "var(--color-tc-amber)" },
   // Ring colors
   ring: "var(--color-tc-cyan)",
   ringUnvisited: "var(--color-tc-red)",
-  // Leaf highlight ring
-  leaf: "var(--color-tc-amber)",
 } as const;
 
 function StopDot({
@@ -325,6 +325,9 @@ function StopDot({
     if (isUnvisited) {
       return STOP_COLORS.unvisited;
     }
+    if (isLeaf) {
+      return STOP_COLORS.leaf;
+    }
     return STOP_COLORS.required;
   })();
 
@@ -343,17 +346,6 @@ function StopDot({
       }}
       style={{ cursor: "pointer", pointerEvents: "all" }}
     >
-      {isLeaf && (
-        <circle
-          cx={stop.cx}
-          cy={stop.cy}
-          r={(DOT_R + 1) / scale}
-          fill="none"
-          stroke={STOP_COLORS.leaf}
-          strokeWidth={2 / scale}
-          opacity={0.8}
-        />
-      )}
       {isSelected && (
         <circle
           cx={stop.cx}
