@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCheckoutTitle } from "./__root";
 
 export const Route = createFileRoute("/styleguide")({
   component: StyleguidePage,
@@ -32,6 +33,7 @@ function Swatch({ name, className, hex }: { name: string; className: string; hex
 /* ── page ── */
 
 function StyleguidePage() {
+  useCheckoutTitle("Styleguide");
   return (
     <div className="min-h-screen bg-tc-void">
       {/* Header */}

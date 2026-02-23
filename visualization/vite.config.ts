@@ -5,15 +5,19 @@ import { defineConfig } from "vite";
 
 const VITE_PORT = Number(process.env.VITE_PORT);
 const TRPC_PORT = Number(process.env.TRPC_PORT);
+const CHECKOUT_NAME = process.env.CHECKOUT_NAME;
 
-if (!VITE_PORT || !TRPC_PORT) {
+if (!VITE_PORT || !TRPC_PORT || !CHECKOUT_NAME) {
   console.error(
-    "VITE_PORT / TRPC_PORT not set — use bin/viz to start the server"
+    "VITE_PORT / TRPC_PORT / CHECKOUT_NAME not set — use bin/viz to start the server"
   );
   process.exit(1);
 }
 
 export default defineConfig({
+  define: {
+    __CHECKOUT_NAME__: JSON.stringify(CHECKOUT_NAME),
+  },
   plugins: [
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     tailwindcss(),

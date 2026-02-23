@@ -5,6 +5,7 @@ import { ArrowUpDown, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
 import type { Stop, VizPath } from "../../server/db";
+import { useCheckoutTitle } from "../__root";
 
 export const Route = createFileRoute("/viz/$name")({
   component: VizPage,
@@ -276,6 +277,7 @@ function StationPanel({
 
 function VizPage() {
   const { name } = Route.useParams();
+  useCheckoutTitle(name);
 
   const stopsQuery = trpc.getStops.useQuery({ name });
   const containerRef = useRef<HTMLDivElement>(null);
