@@ -1,8 +1,15 @@
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import cors from "cors";
 import express from "express";
-import { CHECKOUT_NAME, TRPC_PORT } from "./ports";
 import { appRouter } from "./src/server/trpc";
+
+const TRPC_PORT = Number(process.env.TRPC_PORT);
+const CHECKOUT_NAME = process.env.CHECKOUT_NAME ?? "unknown";
+
+if (!TRPC_PORT) {
+  console.error("TRPC_PORT not set — use bin/viz to start the server");
+  process.exit(1);
+}
 
 const app = express();
 

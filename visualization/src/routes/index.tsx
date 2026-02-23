@@ -1,11 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { trpc } from "../client/trpc";
+import { useCheckoutTitle } from "./__root";
 
 export const Route = createFileRoute("/")({
   component: IndexPage,
 });
 
 function IndexPage() {
+  useCheckoutTitle("Visualizations");
   const visualizationsQuery = trpc.listVisualizations.useQuery();
 
   return (

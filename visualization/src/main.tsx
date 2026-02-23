@@ -4,7 +4,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { routeTree } from "./routeTree.gen";
 import { trpc, trpcClient } from "./client/trpc";
+import { setFavicon } from "./favicon";
 import "./index.css";
+
+setFavicon();
 
 const queryClient = new QueryClient();
 const router = createRouter({ routeTree });

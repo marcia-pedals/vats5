@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Manage the visualization dev server as a background service.
+# Usage: viz {start|stop|restart|status|url|logs}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+VIZ_DIR="$PROJECT_ROOT/visualization"
+
+STATE_DIR="$VIZ_DIR/.viz"
+PID_FILE="$STATE_DIR/pid"
+LOG_FILE="$STATE_DIR/log"
+
+# --- port derivation (single source of truth, passed to node via env) ---
+if command -v md5 &>/dev/null; then
+  hex=$(echo -n "$PROJECT_ROOT" | md5 | head -c 4)
+elif command -v md5sum &>/dev/null; then
+  hex=$(echo -n "$PROJECT_ROOT" | md5sum | head -c 4)
+else
+  echo "error: neither md5 nor md5sum found" >&2
+  exit 1
+fi
+uint16=$((16#$hex))
+offset=$((uint16 % 1000))
+export VITE_PORT=$((3000 + offset))
+export TRPC_PORT=$((4000 + offset))
+export CHECKOUT_NAME="$(basename "$PROJECT_ROOT")"
+
+# --- network address ---
+get_lan_ip() {
+  if command -v ipconfig &>/dev/null; then
+    # macOS
+    ipconfig getifaddr en0 2>/dev/null || echo "127.0.0.1"
+  else
+    # Linux
+    hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1"
+  fi
+}
+LAN_IP="$(get_lan_ip)"
+
+# --- helpers ---
+
+is_running() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid=$(<"$PID_FILE")
+    if kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    # Stale PID file
+    rm -f "$PID_FILE"
+  fi
+  return 1
+}
+
+print_urls() {
+  echo "  Local:   http://localhost:$VITE_PORT"
+  echo "  Network: http://$LAN_IP:$VITE_PORT"
+}
+
+print_status() {
+  if is_running; then
+    local pid=$(<"$PID_FILE")
+    echo "viz server is running  (pid $pid)"
+    echo "  checkout: $CHECKOUT_NAME"
+    print_urls
+    echo "  trpc:    http://localhost:$TRPC_PORT"
+    echo "  logs:    $LOG_FILE"
+  else
+    echo "viz server is stopped"
+  fi
+}
+
+do_start() {
+  if is_running; then
+    local pid=$(<"$PID_FILE")
+    echo "viz server is already running (pid $pid)"
+    print_urls
+    return 0
+  fi
+
+  mkdir -p "$STATE_DIR"
+
+  # Start in a new process group so we can cleanly kill the whole tree
+  # (concurrently + vite + tsx) later.  bash -m puts background jobs
+  # in their own process group, which works on both macOS and Linux.
+  cd "$VIZ_DIR"
+  set -m
+  npm run dev > "$LOG_FILE" 2>&1 &
+  local pid=$!
+  set +m
+  echo "$pid" > "$PID_FILE"
+
+  # Wait briefly and check it actually started
+  sleep 1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "error: server failed to start — check logs:" >&2
+    echo "  $LOG_FILE" >&2
+    rm -f "$PID_FILE"
+    return 1
+  fi
+
+  echo "viz server started (pid $pid)"
+  print_urls
+  echo "  logs: $LOG_FILE"
+}
+
+do_stop() {
+  if ! is_running; then
+    echo "viz server is not running"
+    return 0
+  fi
+
+  local pid=$(<"$PID_FILE")
+  echo "stopping viz server (pid $pid)..."
+
+  # Kill the entire process group (npm + concurrently + vite + tsx).
+  kill -- -"$pid" 2>/dev/null || true
+
+  # Wait for it to exit
+  local i
+  for i in $(seq 1 10); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.5
+  done
+
+  # Force kill if still alive
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 -- -"$pid" 2>/dev/null || true
+  fi
+
+  rm -f "$PID_FILE"
+  echo "stopped"
+}
+
+# --- main ---
+
+case "${1:-}" in
+  start)
+    do_start
+    ;;
+  stop)
+    do_stop
+    ;;
+  restart)
+    do_stop
+    do_start
+    ;;
+  status)
+    print_status
+    ;;
+  url)
+    print_urls
+    ;;
+  logs)
+    if [[ -f "$LOG_FILE" ]]; then
+      exec tail -f "$LOG_FILE"
+    else
+      echo "no log file yet — start the server first"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: viz {start|stop|restart|status|url|logs}"
+    exit 1
+    ;;
+esac
