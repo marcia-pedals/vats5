@@ -6,14 +6,19 @@ import { z } from "zod";
 
 const PROBLEMS_DIR = path.join(homedir(), "vats5-problems");
 
-function openDb(name: string): Database.Database {
+function withDb<T>(name: string, callback: (db: Database.Database) => T): T {
   const filePath = path.join(PROBLEMS_DIR, `${name}-viz.sqlite`);
   const resolvedPath = path.resolve(filePath);
   const resolvedProblemsDir = path.resolve(PROBLEMS_DIR);
   if (!resolvedPath.startsWith(resolvedProblemsDir)) {
     throw new Error("Invalid file path");
   }
-  return new Database(filePath, { readonly: true });
+  const db = new Database(filePath, { readonly: true });
+  try {
+    return callback(db);
+  } finally {
+    db.close();
+  }
 }
 
 // --- Schemas ---
@@ -63,39 +68,30 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 }
 
 export function getStops(name: string): Stop[] {
-  const db = openDb(name);
-  try {
+  return withDb(name, (db) => {
     const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, stop_type FROM stops").all();
     return z.array(StopSchema).parse(rows);
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function getPaths(name: string, origin: string, destination: string): VizPath[] {
-  const db = openDb(name);
-  try {
+  return withDb(name, (db) => {
     const rows = db
       .prepare(
         "SELECT path_id, depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
       )
       .all(origin, destination);
     return z.array(VizPathRowSchema).parse(rows);
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function getPathSteps(name: string, pathId: number): PathStep[] {
-  const db = openDb(name);
-  try {
+  return withDb(name, (db) => {
     const rows = db
       .prepare(
         "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name FROM paths_steps WHERE path_id = ?"
       )
       .all(pathId);
     return z.array(PathStepRowSchema).parse(rows);
-  } finally {
-    db.close();
-  }
+  });
 }
