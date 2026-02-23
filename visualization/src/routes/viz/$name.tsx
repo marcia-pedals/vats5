@@ -280,12 +280,8 @@ const STOP_COLORS = {
   nonRequired: { fill: "var(--color-tc-text-dim)", stroke: "var(--color-tc-text-muted)" },
   // Default required stop
   required: { fill: "var(--color-tc-cyan)", stroke: "var(--color-tc-blue)" },
-  // Selected stop (when not unvisited)
-  selected: { fill: "var(--color-tc-cyan-dim)", stroke: "var(--color-tc-cyan)" },
   // Unvisited required stop (partial solution active, stop not on path)
   unvisited: { fill: "var(--color-tc-red)", stroke: "var(--color-tc-red)" },
-  // Selected + unvisited
-  selectedUnvisited: { fill: "var(--color-tc-red-dim)", stroke: "var(--color-tc-red)" },
   // Ring colors
   ring: "var(--color-tc-cyan)",
   ringUnvisited: "var(--color-tc-red)",
@@ -326,12 +322,6 @@ function StopDot({
   }
 
   const colors = (() => {
-    if (isSelected && isUnvisited) {
-      return STOP_COLORS.selectedUnvisited;
-    }
-    if (isSelected) {
-      return STOP_COLORS.selected;
-    }
     if (isUnvisited) {
       return STOP_COLORS.unvisited;
     }
