@@ -95,13 +95,12 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
 }
 
 TEST(TarelGraphTest, TarelEdges_BART) {
-  const auto test_data = GetCachedFilteredTestData(
-      {"../data/raw_RG_202506", "20250718", {"BA:"}}
-  );
+  const auto test_data =
+      GetCachedFilteredTestData({"../data/raw_RG_202506", "20250718", {"BA:"}});
   std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
-  ProblemState state =
+  auto [state, _minimal_paths_sparse] =
       InitializeProblemState(test_data.steps_from_gtfs, bart_stops);
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
 

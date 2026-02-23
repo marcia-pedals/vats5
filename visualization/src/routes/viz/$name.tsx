@@ -49,9 +49,9 @@ function StopDropdown({
   onClear,
 }: {
   label: string;
-  value: number | null;
+  value: string | null;
   stops: Stop[];
-  onChange: (stopId: number) => void;
+  onChange: (stopId: string) => void;
   onClear: () => void;
 }) {
   return (
@@ -60,7 +60,7 @@ function StopDropdown({
       <select
         value={value ?? ""}
         onChange={(e) => {
-          if (e.target.value) onChange(Number(e.target.value));
+          if (e.target.value) onChange(e.target.value);
         }}
         className="flex-1 min-w-0 text-xs font-mono bg-tc-raised border border-tc-border rounded px-1.5 py-1 text-tc-text truncate cursor-pointer"
       >
@@ -93,7 +93,7 @@ function PathRow({
 }: {
   name: string;
   path: VizPath;
-  stopNames: Map<number, string>;
+  stopNames: Map<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const stepsQuery = trpc.getPathSteps.useQuery(
@@ -176,11 +176,11 @@ function StationPanel({
 }: {
   name: string;
   stops: Stop[];
-  stopNames: Map<number, string>;
-  origin: number | null;
-  destination: number | null;
-  onOriginChange: (stopId: number) => void;
-  onDestChange: (stopId: number) => void;
+  stopNames: Map<string, string>;
+  origin: string | null;
+  destination: string | null;
+  onOriginChange: (stopId: string) => void;
+  onDestChange: (stopId: string) => void;
   onOriginClear: () => void;
   onDestClear: () => void;
   onSwap: () => void;
@@ -279,8 +279,8 @@ function VizPage() {
     w: number;
     h: number;
   } | null>(null);
-  const [origin, setOrigin] = useState<number | null>(null);
-  const [destination, setDestination] = useState<number | null>(null);
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [destination, setDestination] = useState<string | null>(null);
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -292,7 +292,7 @@ function VizPage() {
   const svgStops = useMemo(() => {
     if (!stopsQuery.data?.length || !containerSize) return null;
 
-    const stops = stopsQuery.data;
+    const stops = stopsQuery.data.filter((s) => s.stop_type !== "original");
     const lats = stops.map((s) => s.lat);
     const lons = stops.map((s) => s.lon);
     const minLat = Math.min(...lats);
@@ -325,7 +325,7 @@ function VizPage() {
   }, [stopsQuery.data, containerSize]);
 
   const handleStopClick = useCallback(
-    (stopId: number) => {
+    (stopId: string) => {
       // Fill first blank slot; if both filled, change destination
       if (origin === null) {
         setOrigin(stopId);
@@ -474,7 +474,7 @@ function VizPage() {
   }, []);
 
   const stopNames = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<string, string>();
     if (stopsQuery.data) {
       for (const s of stopsQuery.data) m.set(s.stop_id, s.stop_name);
     }
@@ -482,13 +482,13 @@ function VizPage() {
   }, [stopsQuery.data]);
 
   const selectedStops = useMemo(() => {
-    const s = new Set<number>();
+    const s = new Set<string>();
     if (origin !== null) s.add(origin);
     if (destination !== null) s.add(destination);
     return s;
   }, [origin, destination]);
 
-  const isSelected = (stopId: number) => selectedStops.has(stopId);
+  const isSelected = (stopId: string) => selectedStops.has(stopId);
 
   return (
     <div
@@ -537,14 +537,15 @@ function VizPage() {
         {svgStops && (
           <>
             <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
-              {svgStops.filter((s) => s.required === 1).length} required / {svgStops.length} stops
+              {svgStops.filter((s) => s.stop_type === "required").length} required /{" "}
+              {svgStops.length} stops
             </span>
 
             <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
                 {svgStops.map((stop) => {
                   const selected = isSelected(stop.stop_id);
-                  const required = stop.required === 1;
+                  const required = stop.stop_type === "required";
                   if (!required) {
                     return (
                       <circle
@@ -625,7 +626,7 @@ function VizPage() {
       {stopsQuery.data && (
         <StationPanel
           name={name}
-          stops={stopsQuery.data.filter((s) => s.required === 1)}
+          stops={stopsQuery.data.filter((s) => s.stop_type === "required")}
           stopNames={stopNames}
           origin={origin}
           destination={destination}

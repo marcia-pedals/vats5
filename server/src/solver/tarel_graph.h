@@ -87,7 +87,9 @@ struct ProblemState {
   // original edge for (a->b) has endpoints a and b.
   std::unordered_map<StopId, PlainEdge> original_edges;
 
-  const std::string& StopName(StopId stop) const { return stop_infos.at(stop).stop_name; }
+  const std::string& StopName(StopId stop) const {
+    return stop_infos.at(stop).stop_name;
+  }
 
   StopId StopIdFromName(const std::string& stop_name) {
     auto it = std::find_if(
@@ -158,7 +160,8 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
   }
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
   for (const auto& [k, v] :
-       j.at("stop_infos").get<std::vector<std::pair<int, ProblemStateStopInfo>>>()) {
+       j.at("stop_infos")
+           .get<std::vector<std::pair<int, ProblemStateStopInfo>>>()) {
     stop_infos[StopId{k}] = v;
   }
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
@@ -321,7 +324,21 @@ void AddBoundary(
     ProblemBoundary bounday
 );
 
-ProblemState InitializeProblemState(
+struct InitializeProblemStateResult {
+  ProblemState problem_state;
+
+  // The full original-data paths corresponding to `problem_state.minimal`
+  // steps.
+  //
+  // Be warned that the StopIds in here are stop ids from the original data, not
+  // the "compacted" StopIds in `problem_state`, so you'll have to figure out
+  // their correspondence using other data if you need that.
+  // TODO: Maybe store the mapping in this struct or do something to make it
+  // easier to do the right thing and harder to make a mistake.
+  StepPathsAdjacencyList minimal_paths_sparse;
+};
+
+InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
     bool optimize_edges = false

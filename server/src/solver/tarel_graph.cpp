@@ -258,7 +258,7 @@ GoodnessResult ComputeStopGoodness(
   };
 }
 
-ProblemState InitializeProblemState(
+InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
     bool optimize_edges
@@ -353,14 +353,17 @@ ProblemState InitializeProblemState(
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, required_stops, stop_infos, boundary);
 
-  return MakeProblemState(
-      MakeAdjacencyList(steps),
-      boundary,
-      required_stops,
-      stop_infos,
-      step_partition_to_route_desc,
-      {}
-  );
+  return InitializeProblemStateResult{
+      .problem_state = MakeProblemState(
+          MakeAdjacencyList(steps),
+          boundary,
+          required_stops,
+          stop_infos,
+          step_partition_to_route_desc,
+          {}
+      ),
+      .minimal_paths_sparse = std::move(minimal_paths_sparse),
+  };
 }
 
 bool TarelState::operator<(const TarelState& other) const {

@@ -42,12 +42,11 @@ function getDb(name: string): Database.Database {
 // --- Schemas ---
 
 const StopSchema = z.object({
-  stop_id: z.number(),
-  gtfs_stop_id: z.string(),
+  stop_id: z.string(),
   stop_name: z.string(),
   lat: z.number(),
   lon: z.number(),
-  required: z.number(),
+  stop_type: z.enum(["required", "in_problem_state", "original"]),
 });
 export type Stop = z.infer<typeof StopSchema>;
 
@@ -60,8 +59,8 @@ const VizPathRowSchema = z.object({
 export type VizPath = z.infer<typeof VizPathRowSchema>;
 
 const PathStepRowSchema = z.object({
-  origin_stop_id: z.number(),
-  destination_stop_id: z.number(),
+  origin_stop_id: z.string(),
+  destination_stop_id: z.string(),
   depart_time: z.number(),
   arrive_time: z.number(),
   is_flex: z.number(),
@@ -88,13 +87,11 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 
 export function getStops(name: string): Stop[] {
   const db = getDb(name);
-  const rows = db
-    .prepare("SELECT stop_id, gtfs_stop_id, stop_name, lat, lon, required FROM stops")
-    .all();
+  const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, stop_type FROM stops").all();
   return z.array(StopSchema).parse(rows);
 }
 
-export function getPaths(name: string, origin: number, destination: number): VizPath[] {
+export function getPaths(name: string, origin: string, destination: string): VizPath[] {
   const db = getDb(name);
   const rows = db
     .prepare(
