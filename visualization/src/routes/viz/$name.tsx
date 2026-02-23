@@ -37,8 +37,11 @@ function formatTime(seconds: number): string {
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+  const s = seconds % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  if (h > 0) return `${h}:${mm}:${ss}`;
+  return `${mm}:${ss}`;
 }
 
 function StopDropdown({
@@ -134,8 +137,11 @@ function PathRow({
           <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
             {step.route_name && (
               <tr className="bg-tc-raised/50">
-                <td className="pl-6 pr-2 pt-1.5 pb-0 text-[10px] text-tc-cyan" colSpan={3}>
-                  {step.route_name}
+                <td className="pl-6 pr-2 pt-1.5 pb-0 text-[10px] text-tc-cyan" colSpan={2}>
+                  {step.is_flex ? "Walk" : step.route_name}
+                </td>
+                <td className="px-2 py-1 text-[10px] text-tc-text-dim">
+                  {path.is_flex ? "" : formatTime(step.depart_time)}
                 </td>
                 <td className="px-2 pt-1.5 pb-0 text-right text-[10px] text-tc-text-dim">
                   {formatDuration(step.arrive_time - step.depart_time)}
@@ -147,7 +153,7 @@ function PathRow({
                 {stopNames.get(step.destination_stop_id) ?? `stop ${step.destination_stop_id}`}
               </td>
               <td className="px-2 py-1 text-[10px] text-tc-text-dim">
-                {step.is_flex ? "**:**:**" : formatTime(step.arrive_time)}
+                {path.is_flex ? "" : formatTime(step.arrive_time)}
               </td>
               {!step.route_name && (
                 <td className="px-2 py-1 text-right text-[10px] text-tc-text-dim">
