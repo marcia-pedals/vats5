@@ -14,7 +14,7 @@ let
     };
     x86_64-linux = {
       url = "https://www.math.uwaterloo.ca/~bico/qsopt/downloads/codes/ubuntu/qsopt.a";
-      hash = "sha256:0wygq24f3v1mrcvhqjkcl3h0gv4k9qhiqjs31ady6gd4ms9hzxv3";
+      hash = "sha256-Xc8yPH/Ohei53nznmqvBe2cuIkt34qiTcMTjXaB0NO4=";
     };
   };
 
