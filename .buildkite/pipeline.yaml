@@ -1,0 +1,29 @@
+steps:
+  - label: ":hammer: Build and Test"
+    command: |
+      set -euo pipefail
+
+      apt-get update && apt-get install -y curl git xz-utils
+
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      nix develop --impure --command bash -c '
+        cd server
+        mkdir -p build-debug
+        cd build-debug
+        cmake -DCMAKE_BUILD_TYPE=Debug -G Ninja ..
+        ninja
+      '
+
+      nix develop --impure --command bash -c '
+        cd server/build-debug
+        ctest --output-on-failure -j$(nproc) --output-junit test-results.xml
+      '
+    plugins:
+      - docker#v5.12.0:
+          image: "ubuntu:22.04"
+          propagate-environment: true
+    timeout_in_minutes: 30
