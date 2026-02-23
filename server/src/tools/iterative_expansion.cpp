@@ -27,7 +27,10 @@ using namespace vats5;
 
 struct StopDistance {
   int distance;
+  StopId unvisited_stop;
   StopId nearest_path_stop;
+
+  bool operator<(const StopDistance& o) const { return distance < o.distance; }
 };
 
 struct VizStep {
@@ -271,7 +274,8 @@ std::optional<BestPathResult> FindBestPermutationPath(
 // min-duration path from x to p in state.completed, then count how many
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
-std::unordered_map<StopId, StopDistance> RequiredStopDistances(
+// Returns results sorted by distance (ascending).
+std::vector<StopDistance> RequiredStopDistances(
     const Path& path,
     const ProblemState& state) {
   std::unordered_set<StopId> visited;
@@ -279,7 +283,7 @@ std::unordered_map<StopId, StopDistance> RequiredStopDistances(
   path.VisitIntermediateStops([&](StopId s) { visited.insert(s); });
   visited.insert(path.steps.back().destination.stop);
 
-  std::unordered_map<StopId, StopDistance> distances;
+  std::vector<StopDistance> distances;
   for (StopId x : state.required_stops) {
     if (visited.contains(x)) {
       continue;
@@ -313,8 +317,9 @@ std::unordered_map<StopId, StopDistance> RequiredStopDistances(
         }
       }
     }
-    distances[x] = {min_dist, nearest_stop};
+    distances.push_back({min_dist, x, nearest_stop});
   }
+  std::sort(distances.begin(), distances.end());
   return distances;
 }
 
@@ -377,11 +382,11 @@ int main(int argc, char* argv[]) {
     const Path* best_path = &best->paths[0];
     auto distances = RequiredStopDistances(*best_path, state);
     int total_dist = 0;
-    for (const auto& [_, sd] : distances) total_dist += sd.distance;
+    for (const auto& sd : distances) total_dist += sd.distance;
     for (size_t i = 1; i < best->paths.size(); i++) {
       auto d = RequiredStopDistances(best->paths[i], state);
       int td = 0;
-      for (const auto& [_, sd] : d) td += sd.distance;
+      for (const auto& sd : d) td += sd.distance;
       if (td < total_dist) {
         best_path = &best->paths[i];
         distances = std::move(d);
@@ -421,27 +426,19 @@ int main(int argc, char* argv[]) {
                 << step.destination.time.ToString() << ")\n";
     }
 
-    // Collect unvisited required stops, sorted by distance (ascending).
-    // Each entry: {distance, unvisited_stop, nearest_path_stop}.
-    std::vector<std::tuple<int, StopId, StopId>> unvisited;
-    for (const auto& [s, sd] : distances) {
-      unvisited.emplace_back(sd.distance, s, sd.nearest_path_stop);
-    }
-
-    if (unvisited.empty()) {
+    if (distances.empty()) {
       std::cout << "\nAll required stops are visited.\n";
       break;
     }
 
-    std::sort(unvisited.begin(), unvisited.end());
-    std::cout << "\nRequired stops NOT visited (" << unvisited.size() << "):\n";
-    for (const auto& [d, s, nearest] : unvisited) {
-      std::cout << "  " << state.StopName(s) << " (distance: " << d
-                << ", nearest: " << state.StopName(nearest) << ")\n";
+    std::cout << "\nRequired stops NOT visited (" << distances.size() << "):\n";
+    for (const auto& sd : distances) {
+      std::cout << "  " << state.StopName(sd.unvisited_stop) << " (distance: " << sd.distance
+                << ", nearest: " << state.StopName(sd.nearest_path_stop) << ")\n";
     }
 
     // Add the farthest unvisited stop to leaves for the next iteration.
-    StopId farthest = std::get<1>(unvisited.back());
+    StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest) << "\n\n";
     leaves.push_back(farthest);
   }

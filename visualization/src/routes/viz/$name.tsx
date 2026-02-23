@@ -274,6 +274,25 @@ function StationPanel({
   );
 }
 
+// Stop dot colors — CSS variable values for SVG fill/stroke.
+const STOP_COLORS = {
+  // Non-required (in_problem_state) stops
+  nonRequired: { fill: "var(--color-tc-text-dim)", stroke: "var(--color-tc-text-muted)" },
+  // Default required stop
+  required: { fill: "var(--color-tc-cyan)", stroke: "var(--color-tc-blue)" },
+  // Selected stop (when not unvisited)
+  selected: { fill: "var(--color-tc-cyan-dim)", stroke: "var(--color-tc-cyan)" },
+  // Unvisited required stop (partial solution active, stop not on path)
+  unvisited: { fill: "var(--color-tc-red)", stroke: "var(--color-tc-red)" },
+  // Selected + unvisited
+  selectedUnvisited: { fill: "var(--color-tc-red-dim)", stroke: "var(--color-tc-red)" },
+  // Ring colors
+  ring: "var(--color-tc-cyan)",
+  ringUnvisited: "var(--color-tc-red)",
+  // Leaf highlight ring
+  leaf: "var(--color-tc-amber)",
+} as const;
+
 function StopDot({
   stop,
   scale,
@@ -297,8 +316,8 @@ function StopDot({
         cx={stop.cx}
         cy={stop.cy}
         r={(DOT_R - 1.5) / scale}
-        fill="#7a8599"
-        stroke="#5c6378"
+        fill={STOP_COLORS.nonRequired.fill}
+        stroke={STOP_COLORS.nonRequired.stroke}
         strokeWidth={1 / scale}
         opacity={0.5}
         style={{ pointerEvents: "none" }}
@@ -306,9 +325,20 @@ function StopDot({
     );
   }
 
-  const fillColor = isSelected ? "#00c4e8" : isUnvisited ? "#b34a4a" : "#0094b3";
-  const strokeColor = isSelected ? "#0094b3" : isUnvisited ? "#803535" : "#006880";
-  const ringColor = isUnvisited ? "#b34a4a" : "#0094b3";
+  const colors = (() => {
+    if (isSelected && isUnvisited) {
+      return STOP_COLORS.selectedUnvisited;
+    }
+    if (isSelected) {
+      return STOP_COLORS.selected;
+    }
+    if (isUnvisited) {
+      return STOP_COLORS.unvisited;
+    }
+    return STOP_COLORS.required;
+  })();
+
+  const ringColor = isUnvisited ? STOP_COLORS.ringUnvisited : STOP_COLORS.ring;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
@@ -329,7 +359,7 @@ function StopDot({
           cy={stop.cy}
           r={(DOT_R + 4) / scale}
           fill="none"
-          stroke="#f59e0b"
+          stroke={STOP_COLORS.leaf}
           strokeWidth={2 / scale}
           opacity={0.8}
         />
@@ -349,8 +379,8 @@ function StopDot({
         cx={stop.cx}
         cy={stop.cy}
         r={DOT_R / scale}
-        fill={fillColor}
-        stroke={strokeColor}
+        fill={colors.fill}
+        stroke={colors.stroke}
         strokeWidth={1 / scale}
         opacity={0.85}
       />
@@ -374,11 +404,12 @@ function VizPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [selectedIteration, setSelectedIteration] = useState(0);
 
-  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name });
+  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name }, { refetchInterval: 1000 });
   const partialQuery = trpc.getPartialSolution.useQuery(
     selectedRun !== null
       ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
-      : skipToken
+      : skipToken,
+    { refetchInterval: 1000 },
   );
   const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
   const maxIteration = selectedRunData?.max_iteration ?? 0;
