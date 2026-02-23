@@ -264,17 +264,8 @@ void WriteVisualizationSqlite(
             );
           }
 
-          // For flex steps, shift normalized times (starting at 0) to
-          // the actual travel time.
-          int time_offset = s.is_flex
-                                ? s.origin.time.seconds -
-                                      expanded->merged_step.origin.time.seconds
-                                : 0;
           for (const Step& es : expanded->steps) {
-            Step shifted = es;
-            shifted.origin.time.seconds += time_offset;
-            shifted.destination.time.seconds += time_offset;
-            all_expanded_steps.push_back(shifted);
+            all_expanded_steps.push_back(es);
           }
         }
 
@@ -289,12 +280,10 @@ void WriteVisualizationSqlite(
         size_t si = 0;
         while (si < all_expanded_steps.size()) {
           size_t group_end = si + 1;
-          if (all_expanded_steps[si].destination.trip != TripId::NOOP) {
-            while (group_end < all_expanded_steps.size() &&
-                   all_expanded_steps[group_end].destination.trip ==
-                       all_expanded_steps[si].destination.trip) {
-              group_end++;
-            }
+          while (group_end < all_expanded_steps.size() &&
+                 all_expanded_steps[group_end].destination.trip ==
+                     all_expanded_steps[si].destination.trip) {
+            group_end++;
           }
 
           std::vector<Step> group_steps(
@@ -303,21 +292,15 @@ void WriteVisualizationSqlite(
           );
           Step merged = ConsecutiveMergedSteps(group_steps);
 
-          std::string route_name;
-          if (all_expanded_steps[si].destination.trip != TripId::NOOP) {
-            auto it = mapping.trip_id_to_route_desc.find(
-                all_expanded_steps[si].destination.trip
-            );
-            if (it != mapping.trip_id_to_route_desc.end()) {
-              route_name = it->second;
-            }
-          }
+          const std::string& route_name = mapping.trip_id_to_route_desc.at(
+              all_expanded_steps[si].destination.trip
+          );
 
           merged_steps.push_back({merged, std::move(route_name)});
           si = group_end;
         }
 
-        // Normalize flex step times to be sequential.
+        // Normalize flex step times if necessary.
         {
           std::vector<Step> steps;
           steps.reserve(merged_steps.size());
