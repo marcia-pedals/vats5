@@ -791,6 +791,7 @@ function VizPage() {
                 {pathArrows.map((a, i) => (
                   <line
                     key={`arrow-${i}`}
+                    style={{ pointerEvents: "none" }}
                     x1={a.x1}
                     y1={a.y1}
                     x2={a.x2}
