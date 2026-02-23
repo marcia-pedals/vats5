@@ -1,12 +1,12 @@
 // Dynamic per-checkout favicons — each vats5-{suffix} gets a unique icon.
 
 /** Wrap an emoji character in an SVG <text> element. */
-function emojiSvg(emoji: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="16" fill="#2d2d2d"/><text y="82" x="10" font-size="75">${emoji}</text></svg>`;
+export function emojiSvg(emoji: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="16" fill="#4a4a4a"/><text y="82" x="10" font-size="75">${emoji}</text></svg>`;
 }
 
 /** Suffixes with an exact Unicode emoji match. */
-const emojiMap: Record<string, string> = {
+export const emojiMap: Record<string, string> = {
   apple: "🍎",
   avocado: "🥑",
   banana: "🍌",
@@ -49,9 +49,9 @@ const emojiMap: Record<string, string> = {
  * Each is a minimal SVG designed to be recognizable at 32×32.
  * All use viewBox="0 0 100 100".
  */
-const customSvgMap: Record<string, string> = {
+export const customSvgMap: Record<string, string> = {
   apricot: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="38" fill="#F4A233"/>
     <ellipse cx="50" cy="55" rx="38" ry="36" fill="#F0922B"/>
     <path d="M50 17 C50 17 48 8 42 5" stroke="#5B8C2A" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -60,7 +60,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   artichoke: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="58" rx="28" ry="35" fill="#7BA05B"/>
     <path d="M30 65 Q50 30 70 65" fill="#8DB86B"/>
     <path d="M33 55 Q50 25 67 55" fill="#9CC87B"/>
@@ -71,7 +71,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   arugula: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 90 L50 40" stroke="#5B8C2A" stroke-width="3" fill="none"/>
     <path d="M50 40 Q30 20 25 25 Q20 30 40 45 Z" fill="#4CAF50"/>
     <path d="M50 40 Q70 20 75 25 Q80 30 60 45 Z" fill="#4CAF50"/>
@@ -81,7 +81,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   asparagus: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <rect x="43" y="20" width="14" height="70" rx="7" fill="#6B9B3A"/>
     <path d="M50 20 Q50 10 50 8" stroke="#5B8B2A" stroke-width="4" stroke-linecap="round"/>
     <path d="M43 30 L38 25" stroke="#7BAB4A" stroke-width="2" stroke-linecap="round"/>
@@ -92,7 +92,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   basil: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="35" stroke="#3E7D1E" stroke-width="3"/>
     <ellipse cx="40" cy="30" rx="18" ry="12" fill="#4CAF50" transform="rotate(-15 40 30)"/>
     <ellipse cx="60" cy="30" rx="18" ry="12" fill="#4CAF50" transform="rotate(15 60 30)"/>
@@ -102,7 +102,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   beet: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="60" r="32" fill="#8B1A4A"/>
     <ellipse cx="50" cy="58" rx="32" ry="30" fill="#A0225A"/>
     <path d="M50 28 Q48 15 44 8" stroke="#4CAF50" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -112,7 +112,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   cabbage: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="38" fill="#7CB342"/>
     <circle cx="50" cy="55" r="30" fill="#8BC34A"/>
     <circle cx="50" cy="55" r="22" fill="#9CCC65"/>
@@ -121,7 +121,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   cauliflower: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="35" cy="72" rx="14" ry="8" fill="#4CAF50" transform="rotate(-20 35 72)"/>
     <ellipse cx="65" cy="72" rx="14" ry="8" fill="#4CAF50" transform="rotate(20 65 72)"/>
     <ellipse cx="25" cy="65" rx="12" ry="7" fill="#66BB6A" transform="rotate(-40 25 65)"/>
@@ -137,7 +137,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   celery: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M40 90 Q38 50 35 20" stroke="#8BC34A" stroke-width="8" fill="none" stroke-linecap="round"/>
     <path d="M50 90 Q50 50 50 20" stroke="#9CCC65" stroke-width="8" fill="none" stroke-linecap="round"/>
     <path d="M60 90 Q62 50 65 20" stroke="#8BC34A" stroke-width="8" fill="none" stroke-linecap="round"/>
@@ -147,7 +147,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   cilantro: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="45" stroke="#3E7D1E" stroke-width="2.5"/>
     <line x1="50" y1="55" x2="30" y2="35" stroke="#3E7D1E" stroke-width="2"/>
     <line x1="50" y1="55" x2="70" y2="35" stroke="#3E7D1E" stroke-width="2"/>
@@ -160,7 +160,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   cranberry: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="38" cy="55" rx="18" ry="15" fill="#C62828"/>
     <ellipse cx="62" cy="55" rx="18" ry="15" fill="#D32F2F"/>
     <ellipse cx="50" cy="45" rx="16" ry="14" fill="#E53935"/>
@@ -170,16 +170,18 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   date: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="55" rx="18" ry="30" fill="#5D4037"/>
-    <ellipse cx="50" cy="55" rx="16" ry="28" fill="#6D4C41"/>
-    <path d="M50 25 Q48 18 45 15" stroke="#4CAF50" stroke-width="2" fill="none" stroke-linecap="round"/>
-    <ellipse cx="43" cy="14" rx="6" ry="4" fill="#66BB6A"/>
-    <path d="M42 50 Q50 55 58 50" stroke="#4E342E" stroke-width="1" fill="none" opacity="0.5"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(35 50 50)">
+      <ellipse cx="50" cy="55" rx="20" ry="32" fill="#5D4037"/>
+      <ellipse cx="50" cy="55" rx="18" ry="30" fill="#6D4C41"/>
+      <path d="M50 23 Q48 16 45 13" stroke="#4CAF50" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <ellipse cx="43" cy="12" rx="6" ry="4" fill="#66BB6A"/>
+      <path d="M42 48 Q50 53 58 48" stroke="#4E342E" stroke-width="1" fill="none" opacity="0.5"/>
+    </g>
   </svg>`,
 
   dill: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="25" stroke="#558B2F" stroke-width="2.5"/>
     <g stroke="#7CB342" stroke-width="1.5" fill="none" stroke-linecap="round">
       <path d="M50 30 Q35 25 30 20"/><path d="M50 30 Q65 25 70 20"/>
@@ -194,7 +196,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   endive: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="55" rx="30" ry="38" fill="#AED581"/>
     <path d="M50 17 Q45 50 35 85" stroke="#9CCC65" stroke-width="2" fill="none"/>
     <path d="M50 17 Q55 50 65 85" stroke="#9CCC65" stroke-width="2" fill="none"/>
@@ -204,7 +206,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   fennel: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="70" rx="22" ry="25" fill="#F0F4C3"/>
     <ellipse cx="50" cy="68" rx="18" ry="20" fill="#F5F7DC"/>
     <path d="M42 45 Q40 25 35 10" stroke="#8BC34A" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -217,7 +219,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   fig: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 20 Q75 20 78 55 Q80 80 50 90 Q20 80 22 55 Q25 20 50 20Z" fill="#6A1B9A"/>
     <path d="M50 20 Q70 22 72 52 Q74 75 50 84 Q26 75 28 52 Q30 22 50 20Z" fill="#7B1FA2"/>
     <path d="M50 20 Q48 12 46 8" stroke="#5B8C2A" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -225,7 +227,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   grapefruit: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="52" r="38" fill="#FF8A65"/>
     <circle cx="50" cy="52" r="35" fill="#FFAB91"/>
     <circle cx="50" cy="52" r="10" fill="#FFCCBC"/>
@@ -237,7 +239,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   guava: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="35" fill="#8BC34A"/>
     <circle cx="50" cy="55" r="30" fill="#9CCC65"/>
     <circle cx="50" cy="55" r="18" fill="#F48FB1"/>
@@ -248,21 +250,21 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   jicama: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 15 Q80 20 85 55 Q88 85 50 90 Q12 85 15 55 Q20 20 50 15Z" fill="#D7C4A0"/>
     <path d="M50 18 Q75 22 80 53 Q83 80 50 85 Q17 80 20 53 Q25 22 50 18Z" fill="#E8DCBE"/>
     <path d="M50 15 Q48 8 50 5" stroke="#8D6E63" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   </svg>`,
 
   kale: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="40" stroke="#33691E" stroke-width="4"/>
     <path d="M50 40 Q20 30 15 40 Q10 50 25 55 Q15 60 20 70 Q25 80 40 75 Q35 85 50 85 Q65 85 60 75 Q75 80 80 70 Q85 60 75 55 Q90 50 85 40 Q80 30 50 40Z" fill="#2E7D32"/>
     <path d="M50 40 Q30 35 28 42 Q26 50 35 52 Q28 58 32 65 Q36 72 45 68 Q42 78 50 78 Q58 78 55 68 Q64 72 68 65 Q72 58 65 52 Q74 50 72 42 Q70 35 50 40Z" fill="#388E3C"/>
   </svg>`,
 
   kohlrabi: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="60" r="30" fill="#C5CAE9"/>
     <circle cx="50" cy="58" r="28" fill="#D1C4E9"/>
     <path d="M42 30 Q38 15 32 8" stroke="#66BB6A" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -274,15 +276,17 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   kumquat: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="55" rx="20" ry="28" fill="#FF9800"/>
-    <ellipse cx="50" cy="53" rx="18" ry="26" fill="#FFA726"/>
-    <path d="M50 27 Q48 18 45 14" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-    <ellipse cx="43" cy="13" rx="7" ry="4" fill="#66BB6A" transform="rotate(-20 43 13)"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(40 50 50)">
+      <ellipse cx="50" cy="55" rx="22" ry="32" fill="#FF9800"/>
+      <ellipse cx="50" cy="53" rx="20" ry="30" fill="#FFA726"/>
+      <path d="M50 23 Q48 14 45 10" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <ellipse cx="43" cy="9" rx="7" ry="4" fill="#66BB6A" transform="rotate(-20 43 9)"/>
+    </g>
   </svg>`,
 
   leek: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <rect x="44" y="40" width="12" height="50" rx="6" fill="#F5F5F5"/>
     <rect x="44" y="40" width="12" height="25" rx="3" fill="#E8F5E9"/>
     <path d="M44 40 Q30 20 25 5" stroke="#4CAF50" stroke-width="6" fill="none" stroke-linecap="round"/>
@@ -291,7 +295,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   lime: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="52" r="38" fill="#689F38"/>
     <circle cx="50" cy="52" r="35" fill="#7CB342"/>
     <circle cx="50" cy="52" r="8" fill="#C5E1A5"/>
@@ -303,7 +307,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   lychee: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="32" fill="#E91E63"/>
     <circle cx="50" cy="53" r="30" fill="#EC407A"/>
     <g fill="none" stroke="#C2185B" stroke-width="0.8" opacity="0.5">
@@ -316,7 +320,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   mint: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="30" stroke="#2E7D32" stroke-width="2.5"/>
     <ellipse cx="38" cy="35" rx="15" ry="10" fill="#4CAF50" transform="rotate(-20 38 35)"/>
     <ellipse cx="62" cy="35" rx="15" ry="10" fill="#4CAF50" transform="rotate(20 62 35)"/>
@@ -327,7 +331,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   nectarine: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="35" fill="#EF6C00"/>
     <circle cx="50" cy="53" r="33" fill="#F57C00"/>
     <path d="M50 20 Q48 12 45 8" stroke="#5B8C2A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
@@ -336,24 +340,28 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   nutmeg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="55" rx="22" ry="28" fill="#795548"/>
-    <ellipse cx="50" cy="53" rx="20" ry="26" fill="#8D6E63"/>
-    <path d="M50 27 Q42 30 38 55 Q36 75 50 80" stroke="#6D4C41" stroke-width="1.5" fill="none" opacity="0.5"/>
-    <path d="M50 27 Q58 30 62 55 Q64 75 50 80" stroke="#6D4C41" stroke-width="1.5" fill="none" opacity="0.5"/>
-    <path d="M50 27 Q50 55 50 80" stroke="#6D4C41" stroke-width="1" fill="none" opacity="0.4"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(35 50 50)">
+      <ellipse cx="50" cy="55" rx="24" ry="32" fill="#795548"/>
+      <ellipse cx="50" cy="53" rx="22" ry="30" fill="#8D6E63"/>
+      <path d="M50 23 Q42 26 38 55 Q36 79 50 84" stroke="#6D4C41" stroke-width="1.5" fill="none" opacity="0.5"/>
+      <path d="M50 23 Q58 26 62 55 Q64 79 50 84" stroke="#6D4C41" stroke-width="1.5" fill="none" opacity="0.5"/>
+      <path d="M50 23 Q50 55 50 84" stroke="#6D4C41" stroke-width="1" fill="none" opacity="0.4"/>
+    </g>
   </svg>`,
 
   okra: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <path d="M50 10 Q60 20 58 50 Q56 80 50 95 Q44 80 42 50 Q40 20 50 10Z" fill="#558B2F"/>
-    <path d="M50 10 Q56 22 55 50 Q54 78 50 90 Q46 78 45 50 Q44 22 50 10Z" fill="#689F38"/>
-    <path d="M50 10 Q48 5 46 3" stroke="#33691E" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-    <line x1="50" y1="15" x2="50" y2="85" stroke="#7CB342" stroke-width="1" opacity="0.4"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(40 50 50)">
+      <path d="M50 8 Q62 18 60 50 Q58 82 50 97 Q42 82 40 50 Q38 18 50 8Z" fill="#558B2F"/>
+      <path d="M50 8 Q58 20 57 50 Q56 80 50 92 Q44 80 43 50 Q42 20 50 8Z" fill="#689F38"/>
+      <path d="M50 8 Q48 3 46 1" stroke="#33691E" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <line x1="50" y1="13" x2="50" y2="87" stroke="#7CB342" stroke-width="1" opacity="0.4"/>
+    </g>
   </svg>`,
 
   oregano: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="30" stroke="#33691E" stroke-width="2.5"/>
     <line x1="50" y1="50" x2="30" y2="40" stroke="#33691E" stroke-width="2"/>
     <line x1="50" y1="50" x2="70" y2="40" stroke="#33691E" stroke-width="2"/>
@@ -367,20 +375,22 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   papaya: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="52" rx="28" ry="38" fill="#FF9800"/>
-    <ellipse cx="50" cy="52" rx="25" ry="35" fill="#FFB74D"/>
-    <ellipse cx="50" cy="52" rx="12" ry="22" fill="#FF7043"/>
-    <circle cx="47" cy="42" r="2.5" fill="#37474F"/>
-    <circle cx="53" cy="42" r="2.5" fill="#37474F"/>
-    <circle cx="50" cy="50" r="2.5" fill="#37474F"/>
-    <circle cx="47" cy="58" r="2.5" fill="#37474F"/>
-    <circle cx="53" cy="58" r="2.5" fill="#37474F"/>
-    <path d="M50 14 Q48 8 44 5" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(30 50 50)">
+      <ellipse cx="50" cy="52" rx="30" ry="40" fill="#FF9800"/>
+      <ellipse cx="50" cy="52" rx="27" ry="37" fill="#FFB74D"/>
+      <ellipse cx="50" cy="52" rx="13" ry="24" fill="#FF7043"/>
+      <circle cx="47" cy="42" r="2.5" fill="#37474F"/>
+      <circle cx="53" cy="42" r="2.5" fill="#37474F"/>
+      <circle cx="50" cy="50" r="2.5" fill="#37474F"/>
+      <circle cx="47" cy="58" r="2.5" fill="#37474F"/>
+      <circle cx="53" cy="58" r="2.5" fill="#37474F"/>
+      <path d="M50 12 Q48 6 44 3" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    </g>
   </svg>`,
 
   parsley: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="45" stroke="#2E7D32" stroke-width="2.5"/>
     <line x1="50" y1="55" x2="30" y2="30" stroke="#2E7D32" stroke-width="2"/>
     <line x1="50" y1="55" x2="70" y2="30" stroke="#2E7D32" stroke-width="2"/>
@@ -392,15 +402,17 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   parsnip: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <path d="M50 15 Q62 20 60 45 Q58 70 50 95 Q42 70 40 45 Q38 20 50 15Z" fill="#F5DEB3"/>
-    <path d="M50 15 Q58 22 57 45 Q55 68 50 90 Q45 68 43 45 Q42 22 50 15Z" fill="#FAEBD7"/>
-    <path d="M50 15 Q48 8 45 5" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-    <ellipse cx="43" cy="5" rx="7" ry="4" fill="#66BB6A" transform="rotate(-15 43 5)"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(45 50 50)">
+      <path d="M50 10 Q64 15 62 45 Q60 75 50 100 Q40 75 38 45 Q36 15 50 10Z" fill="#F5DEB3"/>
+      <path d="M50 10 Q60 17 58 45 Q56 73 50 95 Q44 73 42 45 Q40 17 50 10Z" fill="#FAEBD7"/>
+      <path d="M50 10 Q48 3 45 0" stroke="#4CAF50" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <ellipse cx="43" cy="0" rx="7" ry="4" fill="#66BB6A" transform="rotate(-15 43 0)"/>
+    </g>
   </svg>`,
 
   persimmon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="35" fill="#E65100"/>
     <ellipse cx="50" cy="53" rx="35" ry="33" fill="#EF6C00"/>
     <path d="M32 25 Q50 18 68 25" fill="#4CAF50"/>
@@ -410,7 +422,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   plum: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="34" fill="#6A1B9A"/>
     <circle cx="50" cy="53" r="32" fill="#7B1FA2"/>
     <path d="M50 21 Q48 12 46 8" stroke="#5B8C2A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
@@ -420,7 +432,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   pomegranate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="35" fill="#C62828"/>
     <circle cx="50" cy="53" r="33" fill="#D32F2F"/>
     <polygon points="42,18 50,8 58,18" fill="#E57373"/>
@@ -432,7 +444,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   pumpkin: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="60" rx="38" ry="32" fill="#E65100"/>
     <ellipse cx="35" cy="60" rx="18" ry="30" fill="#EF6C00" opacity="0.7"/>
     <ellipse cx="65" cy="60" rx="18" ry="30" fill="#EF6C00" opacity="0.7"/>
@@ -442,7 +454,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   quince: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="34" fill="#C8B400"/>
     <ellipse cx="50" cy="57" rx="34" ry="32" fill="#D4C200"/>
     <path d="M50 21 Q48 12 46 8" stroke="#5B8C2A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
@@ -451,7 +463,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   radish: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 35 Q68 38 65 60 Q62 82 50 92 Q38 82 35 60 Q32 38 50 35Z" fill="#E53935"/>
     <path d="M50 35 Q62 37 60 58 Q58 78 50 86 Q42 78 40 58 Q38 37 50 35Z" fill="#EF5350"/>
     <ellipse cx="50" cy="90" rx="4" ry="6" fill="#FFCCBC"/>
@@ -462,7 +474,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   raspberry: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <g fill="#C2185B">
       <circle cx="42" cy="40" r="8"/><circle cx="58" cy="40" r="8"/>
       <circle cx="35" cy="52" r="8"/><circle cx="50" cy="50" r="8"/><circle cx="65" cy="52" r="8"/>
@@ -478,7 +490,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   rhubarb: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <rect x="30" y="30" width="10" height="60" rx="5" fill="#C62828" transform="rotate(-5 35 60)"/>
     <rect x="45" y="28" width="10" height="62" rx="5" fill="#D32F2F"/>
     <rect x="60" y="30" width="10" height="60" rx="5" fill="#C62828" transform="rotate(5 65 60)"/>
@@ -488,7 +500,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   rosemary: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="10" stroke="#5D4037" stroke-width="2.5"/>
     <g fill="#2E7D32">
       <ellipse cx="44" cy="20" rx="8" ry="3" transform="rotate(-30 44 20)"/>
@@ -505,7 +517,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   rutabaga: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <circle cx="50" cy="55" r="32" fill="#E8C96A"/>
     <ellipse cx="50" cy="45" rx="32" ry="15" fill="#9C27B0" opacity="0.3"/>
     <ellipse cx="50" cy="88" rx="5" ry="8" fill="#D4B85A"/>
@@ -516,7 +528,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   sage: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <line x1="50" y1="90" x2="50" y2="30" stroke="#5D4037" stroke-width="2.5"/>
     <ellipse cx="38" cy="30" rx="16" ry="8" fill="#78909C" transform="rotate(-15 38 30)"/>
     <ellipse cx="62" cy="35" rx="16" ry="8" fill="#78909C" transform="rotate(15 62 35)"/>
@@ -527,16 +539,18 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   shallot: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="55" rx="22" ry="32" fill="#8D6E63"/>
-    <ellipse cx="50" cy="53" rx="20" ry="30" fill="#A1887F"/>
-    <path d="M50 23 Q48 12 50 5" stroke="#8BC34A" stroke-width="3" fill="none" stroke-linecap="round"/>
-    <ellipse cx="50" cy="87" rx="4" ry="5" fill="#795548"/>
-    <path d="M50 25 Q50 55 50 85" stroke="#6D4C41" stroke-width="1" fill="none" opacity="0.3"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(35 50 50)">
+      <ellipse cx="50" cy="55" rx="24" ry="36" fill="#8D6E63"/>
+      <ellipse cx="50" cy="53" rx="22" ry="34" fill="#A1887F"/>
+      <path d="M50 17 Q48 6 50 0" stroke="#8BC34A" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <ellipse cx="50" cy="91" rx="4" ry="5" fill="#795548"/>
+      <path d="M50 19 Q50 55 50 89" stroke="#6D4C41" stroke-width="1" fill="none" opacity="0.3"/>
+    </g>
   </svg>`,
 
   spinach: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="40" rx="32" ry="22" fill="#2E7D32"/>
     <ellipse cx="50" cy="40" rx="28" ry="18" fill="#388E3C"/>
     <path d="M50 62 L50 90" stroke="#33691E" stroke-width="3" stroke-linecap="round"/>
@@ -547,16 +561,18 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   squash: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
-    <ellipse cx="50" cy="55" rx="20" ry="35" fill="#F9A825"/>
-    <ellipse cx="50" cy="55" rx="16" ry="33" fill="#FBC02D"/>
-    <path d="M50 20 Q48 12 50 8" stroke="#4CAF50" stroke-width="3" fill="none" stroke-linecap="round"/>
-    <ellipse cx="50" cy="20" rx="10" ry="5" fill="#F57F17" opacity="0.5"/>
-    <line x1="50" y1="22" x2="50" y2="88" stroke="#F9A825" stroke-width="1.5" opacity="0.4"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
+    <g transform="rotate(40 50 50)">
+      <ellipse cx="50" cy="55" rx="22" ry="38" fill="#F9A825"/>
+      <ellipse cx="50" cy="55" rx="18" ry="36" fill="#FBC02D"/>
+      <path d="M50 17 Q48 9 50 5" stroke="#4CAF50" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <ellipse cx="50" cy="17" rx="10" ry="5" fill="#F57F17" opacity="0.5"/>
+      <line x1="50" y1="19" x2="50" y2="91" stroke="#F9A825" stroke-width="1.5" opacity="0.4"/>
+    </g>
   </svg>`,
 
   thyme: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 90 Q48 50 45 10" stroke="#5D4037" stroke-width="2"/>
     <g fill="#66BB6A">
       <ellipse cx="42" cy="18" rx="5" ry="3" transform="rotate(-20 42 18)"/>
@@ -573,7 +589,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   turnip: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <path d="M50 30 Q75 33 72 58 Q68 85 50 92 Q32 85 28 58 Q25 33 50 30Z" fill="#F5F5F5"/>
     <path d="M50 30 Q70 32 68 42 Q65 52 50 48 Q35 52 32 42 Q30 32 50 30Z" fill="#CE93D8" opacity="0.6"/>
     <ellipse cx="50" cy="90" rx="4" ry="6" fill="#EEEEEE"/>
@@ -584,7 +600,7 @@ const customSvgMap: Record<string, string> = {
   </svg>`,
 
   zucchini: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-    <rect width="100" height="100" rx="16" fill="#2d2d2d"/>
+    <rect width="100" height="100" rx="16" fill="#4a4a4a"/>
     <ellipse cx="50" cy="50" rx="16" ry="40" fill="#2E7D32" transform="rotate(-15 50 50)"/>
     <ellipse cx="50" cy="50" rx="13" ry="38" fill="#388E3C" transform="rotate(-15 50 50)"/>
     <ellipse cx="39" cy="84" rx="6" ry="4" fill="#FDD835" transform="rotate(-15 39 84)"/>

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCheckoutTitle } from "./__root";
+import { emojiMap, emojiSvg, customSvgMap } from "../favicon";
 
 export const Route = createFileRoute("/styleguide")({
   component: StyleguidePage,
@@ -358,6 +359,39 @@ function StyleguidePage() {
             <div className="mt-3 pt-2 border-t border-tc-border text-xs font-mono text-tc-text-dim">
               Last update 14:32:07 &mdash; Refresh 15s
             </div>
+          </div>
+        </Section>
+
+        {/* ─────────────── FAVICONS ─────────────── */}
+        <Section title="Favicons — Emoji">
+          <div className="grid grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16 gap-2">
+            {Object.entries(emojiMap).map(([name, emoji]) => (
+              <div key={name} className="flex flex-col items-center gap-1">
+                <img
+                  src={`data:image/svg+xml,${encodeURIComponent(emojiSvg(emoji))}`}
+                  alt={name}
+                  className="w-4 h-4 rounded"
+                  title={name}
+                />
+                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">{name}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Favicons — Custom SVG">
+          <div className="grid grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16 gap-2">
+            {Object.entries(customSvgMap).map(([name, svg]) => (
+              <div key={name} className="flex flex-col items-center gap-1">
+                <img
+                  src={`data:image/svg+xml,${encodeURIComponent(svg)}`}
+                  alt={name}
+                  className="w-4 h-4 rounded"
+                  title={name}
+                />
+                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">{name}</span>
+              </div>
+            ))}
           </div>
         </Section>
 
