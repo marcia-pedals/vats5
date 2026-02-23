@@ -280,6 +280,12 @@ void WriteVisualizationSqlite(
 
         // Group consecutive steps by trip and merge each group into a
         // single step using ConsecutiveMergedSteps.
+        struct MergedStepInfo {
+          Step step;
+          std::string route_name;
+        };
+        std::vector<MergedStepInfo> merged_steps;
+
         size_t si = 0;
         while (si < all_expanded_steps.size()) {
           size_t group_end = si + 1;
@@ -307,21 +313,37 @@ void WriteVisualizationSqlite(
             }
           }
 
+          merged_steps.push_back({merged, std::move(route_name)});
+          si = group_end;
+        }
+
+        // Normalize flex step times to be sequential.
+        {
+          std::vector<Step> steps;
+          steps.reserve(merged_steps.size());
+          for (const auto& ms : merged_steps) {
+            steps.push_back(ms.step);
+          }
+          NormalizeConsecutiveSteps(steps);
+          for (size_t i = 0; i < merged_steps.size(); ++i) {
+            merged_steps[i].step = steps[i];
+          }
+        }
+
+        for (const auto& ms : merged_steps) {
           const std::string& step_origin_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(merged.origin.stop).v;
+              mapping.stop_id_to_gtfs_stop_id.at(ms.step.origin.stop).v;
           const std::string& step_dest_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(merged.destination.stop).v;
+              mapping.stop_id_to_gtfs_stop_id.at(ms.step.destination.stop).v;
 
           step_stmt.bind_int(1, path_id);
           step_stmt.bind_text(2, step_origin_gtfs.c_str());
           step_stmt.bind_text(3, step_dest_gtfs.c_str());
-          step_stmt.bind_int(4, merged.origin.time.seconds);
-          step_stmt.bind_int(5, merged.destination.time.seconds);
-          step_stmt.bind_int(6, merged.is_flex ? 1 : 0);
-          step_stmt.bind_text(7, route_name.c_str());
+          step_stmt.bind_int(4, ms.step.origin.time.seconds);
+          step_stmt.bind_int(5, ms.step.destination.time.seconds);
+          step_stmt.bind_int(6, ms.step.is_flex ? 1 : 0);
+          step_stmt.bind_text(7, ms.route_name.c_str());
           step_stmt.step_and_reset();
-
-          si = group_end;
         }
       }
     }
