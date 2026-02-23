@@ -18,6 +18,16 @@ steps:
 
       nix develop --impure --command bash -c '
         cd server/build-debug
-        ctest --output-on-failure -j$(nproc)
+        ctest --output-on-failure -j$(nproc) --output-junit test-results.xml
       '
+    artifact_paths:
+      - "server/build-debug/test-results.xml"
     timeout_in_minutes: 30
+
+  - wait: ~
+    continue_on_failure: true
+
+  - label: ":junit: Annotate test results"
+    plugins:
+      - junit-annotate#v2.4.1:
+          artifacts: "server/build-debug/test-results.xml"
