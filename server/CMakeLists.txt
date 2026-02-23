@@ -6,7 +6,7 @@ project(vats5
     DESCRIPTION "Visit All The Stops!!!"
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -33,6 +33,7 @@ FetchContent_Declare(
   rapidcheck
   GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
   GIT_TAG        master
+  PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch-rapidcheck.cmake
 )
 set(RC_ENABLE_GTEST ON CACHE BOOL "Enable RapidCheck GTest integration")
 FetchContent_MakeAvailable(rapidcheck)
@@ -40,7 +41,7 @@ FetchContent_MakeAvailable(rapidcheck)
 FetchContent_Declare(
   cli11
   GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-  GIT_TAG        v2.4.2
+  GIT_TAG        v2.6.1
 )
 FetchContent_MakeAvailable(cli11)
 
