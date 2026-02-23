@@ -15,10 +15,7 @@ namespace vats5 {
 
 struct StopId {
   int v;
-
-  bool operator==(const StopId& other) const { return v == other.v; }
-  bool operator!=(const StopId& other) const { return v != other.v; }
-  bool operator<(const StopId& other) const { return v < other.v; }
+  auto operator<=>(const StopId&) const = default;
 };
 inline void to_json(nlohmann::json& j, const StopId& id) { j = id.v; }
 inline void from_json(const nlohmann::json& j, StopId& id) {

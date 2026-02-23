@@ -67,7 +67,7 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   std::erase_if(stops, [&](StopId s) {
     return s == state.boundary.start || s == state.boundary.end;
   });
-  std::sort(stops.begin(), stops.end());
+  std::ranges::sort(stops);
   int n = static_cast<int>(stops.size());
 
   // Build weighted undirected edges: for each pair of required stops, the
@@ -80,28 +80,16 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
 
   for (int i = 0; i < n; i++) {
     for (int k = i + 1; k < n; k++) {
-      int min_duration = INT_MAX;
-
-      auto paths_fw = state.completed.PathsBetween(stops[i], stops[k]);
-      for (const Path& p : paths_fw) {
-        min_duration = std::min(min_duration, p.DurationSeconds());
-      }
-
-      auto paths_bw = state.completed.PathsBetween(stops[k], stops[i]);
-      for (const Path& p : paths_bw) {
-        min_duration = std::min(min_duration, p.DurationSeconds());
-      }
-
-      if (min_duration < INT_MAX) {
-        edges.push_back({i, k, min_duration});
+      auto paths = state.completed.PathsBetweenBidirectional(stops[i], stops[k]);
+      auto it = std::ranges::min_element(paths, {}, [](const auto& path) { return path.DurationSeconds(); });
+      if (it != paths.end()) {
+        edges.push_back({i, k, it->DurationSeconds()});
       }
     }
   }
 
   // Kruskal's MST: sort edges by weight, greedily add via union-find.
-  std::sort(edges.begin(), edges.end(), [](const Edge& a, const Edge& b) {
-    return a.weight < b.weight;
-  });
+  std::ranges::sort(edges, {}, [](const Edge& edge) { return edge.weight; });
 
   UnionFind uf(n);
   std::vector<int> degree(n, 0);

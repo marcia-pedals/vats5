@@ -295,6 +295,18 @@ struct StepPathsAdjacencyList {
 
   // TODO: It is unfortunate that we have to materialize the steps into a new
   // vector.
+  std::vector<Path> PathsBetweenBidirectional(StopId a, StopId b) const {
+    auto fw = PathsBetween(a, b);
+    auto bw = PathsBetween(b, a);
+    std::vector<Path> result;
+    result.reserve(fw.size() + bw.size());
+    result.append_range(fw);
+    result.append_range(bw);
+    return result;
+  }
+
+  // TODO: It is unfortunate that we have to materialize the steps into a new
+  // vector.
   std::vector<Step> MergedStepsBetween(StopId a, StopId b) const {
     auto ps = PathsBetween(a, b);
     std::vector<Step> result;
