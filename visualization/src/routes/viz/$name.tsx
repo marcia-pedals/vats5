@@ -284,9 +284,8 @@ const STOP_COLORS = {
   unvisited: { fill: "var(--color-tc-red)", stroke: "var(--color-tc-red)" },
   // Leaf stop
   leaf: { fill: "var(--color-tc-amber)", stroke: "var(--color-tc-amber)" },
-  // Ring colors
-  ring: "var(--color-tc-cyan)",
-  ringUnvisited: "var(--color-tc-red)",
+  // Selection ring
+  ring: "var(--color-tc-blue)",
 } as const;
 
 function StopDot({
@@ -331,7 +330,7 @@ function StopDot({
     return STOP_COLORS.required;
   })();
 
-  const ringColor = isUnvisited ? STOP_COLORS.ringUnvisited : STOP_COLORS.ring;
+  const ringColor = STOP_COLORS.ring;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
