@@ -63,13 +63,13 @@ print_status() {
   if is_running; then
     local pid=$(<"$PID_FILE")
     echo "viz server is running  (pid $pid)"
+    echo "  checkout: $CHECKOUT_NAME"
+    print_urls
+    echo "  trpc:    http://localhost:$TRPC_PORT"
+    echo "  logs:    $LOG_FILE"
   else
     echo "viz server is stopped"
   fi
-  echo "  checkout: $CHECKOUT_NAME"
-  print_urls
-  echo "  trpc:    http://localhost:$TRPC_PORT"
-  echo "  logs:    $LOG_FILE"
 }
 
 do_start() {
