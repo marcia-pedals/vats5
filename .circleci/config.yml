@@ -1,0 +1,42 @@
+version: 2.1
+
+jobs:
+  build-and-test:
+    docker:
+      - image: cimg/base:current
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run:
+          name: Install Nix
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+            echo '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' >> "$BASH_ENV"
+      - run:
+          name: Build
+          command: |
+            export NIXPKGS_ALLOW_UNFREE=1
+            sudo -E "$(which nix)" develop --impure --command bash -c '
+              cd server
+              mkdir -p build-debug
+              cd build-debug
+              cmake -DCMAKE_BUILD_TYPE=Debug -G Ninja ..
+              ninja
+            '
+          no_output_timeout: 30m
+      - run:
+          name: Run all tests
+          command: |
+            export NIXPKGS_ALLOW_UNFREE=1
+            sudo -E "$(which nix)" develop --impure --command bash -c '
+              cd server/build-debug
+              ctest --output-on-failure -j$(nproc) --output-junit /tmp/test-results/results.xml
+            '
+          no_output_timeout: 30m
+      - store_test_results:
+          path: /tmp/test-results
+
+workflows:
+  build-and-test:
+    jobs:
+      - build-and-test

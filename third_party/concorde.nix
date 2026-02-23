@@ -1,6 +1,8 @@
-{ lib, stdenv, fetchurl, qsopt }:
+{ lib, clangStdenv, fetchurl, qsopt }:
 
-stdenv.mkDerivation rec {
+# Use clang to build Concorde - its old C code triggers hard errors in GCC 14+
+# (implicit-int, incompatible-pointer-types, missing h_addr macro).
+clangStdenv.mkDerivation rec {
   pname = "concorde";
   version = "03.12.19";
 
