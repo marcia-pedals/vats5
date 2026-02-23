@@ -22,12 +22,8 @@ steps:
       '
     artifact_paths:
       - "server/build-debug/test-results.xml"
-    timeout_in_minutes: 30
-
-  - wait: ~
-    continue_on_failure: true
-
-  - label: ":junit: Annotate test results"
     plugins:
-      - junit-annotate#v2.4.1:
-          artifacts: "server/build-debug/test-results.xml"
+      - test-collector#v1.10.2:
+          files: "server/build-debug/test-results.xml"
+          format: "junit"
+    timeout_in_minutes: 30
