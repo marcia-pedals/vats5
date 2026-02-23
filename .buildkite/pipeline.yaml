@@ -1,7 +1,11 @@
 steps:
   - label: ":hammer: Build and Test"
+    secrets:
+      - CPP_SUITE_TOKEN
     command: |
       set -euo pipefail
+
+      export CPP_SUITE_TOKEN=$(buildkite-agent secret get CPP_SUITE_TOKEN)
 
       curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
       . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
