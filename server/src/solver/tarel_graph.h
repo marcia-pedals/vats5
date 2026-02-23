@@ -327,6 +327,14 @@ void AddBoundary(
 struct InitializeProblemStateResult {
   ProblemState problem_state;
 
+  // The full original-data paths corresponding to `problem_state.minimal`
+  // steps.
+  //
+  // Be warned that the StopIds in here are stop ids from the original data, not
+  // the "compacted" StopIds in `problem_state`, so you'll have to figure out
+  // their correspondence using other data if you need that.
+  // TODO: Maybe store the mapping in this struct or do something to make it
+  // easier to do the right thing and harder to make a mistake.
   StepPathsAdjacencyList minimal_paths_sparse;
 };
 
