@@ -347,7 +347,7 @@ function StopDot({
         <circle
           cx={stop.cx}
           cy={stop.cy}
-          r={(DOT_R + 4) / scale}
+          r={(DOT_R + 1) / scale}
           fill="none"
           stroke={STOP_COLORS.leaf}
           strokeWidth={2 / scale}
