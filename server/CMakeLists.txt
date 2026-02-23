@@ -55,6 +55,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
 
+# Create union_find library target
+add_library(union_find STATIC src/algorithm/union_find.cpp)
+target_include_directories(union_find PUBLIC src)
+
 # Create date utility library target
 add_library(date STATIC src/util/date.cpp)
 target_include_directories(date PUBLIC src)
@@ -180,7 +184,7 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound CLI11::CLI11 visualization)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
