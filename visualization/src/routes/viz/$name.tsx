@@ -1,7 +1,7 @@
 import { skipToken } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
-import { ArrowUpDown, ChevronRight, X } from "lucide-react";
+import { ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
 import type { Stop, VizPath } from "../../server/db";
@@ -274,6 +274,101 @@ function StationPanel({
   );
 }
 
+// Stop dot colors — CSS variable values for SVG fill/stroke.
+const STOP_COLORS = {
+  // Non-required (in_problem_state) stops
+  nonRequired: { fill: "var(--color-tc-text-dim)", stroke: "var(--color-tc-text-muted)" },
+  // Default required stop
+  required: { fill: "var(--color-tc-cyan)", stroke: "var(--color-tc-blue)" },
+  // Unvisited required stop (partial solution active, stop not on path)
+  unvisited: { fill: "var(--color-tc-red)", stroke: "var(--color-tc-red)" },
+  // Leaf stop
+  leaf: { fill: "var(--color-tc-amber)", stroke: "var(--color-tc-amber)" },
+  // Selection ring
+  ring: "var(--color-tc-blue)",
+} as const;
+
+function StopDot({
+  stop,
+  scale,
+  isSelected,
+  isRequired,
+  isUnvisited,
+  isLeaf,
+  onClick,
+}: {
+  stop: { stop_id: string; cx: number; cy: number };
+  scale: number;
+  isSelected: boolean;
+  isRequired: boolean;
+  isUnvisited: boolean;
+  isLeaf: boolean;
+  onClick: (stopId: string) => void;
+}) {
+  if (!isRequired) {
+    return (
+      <circle
+        cx={stop.cx}
+        cy={stop.cy}
+        r={(DOT_R - 1.5) / scale}
+        fill={STOP_COLORS.nonRequired.fill}
+        stroke={STOP_COLORS.nonRequired.stroke}
+        strokeWidth={1 / scale}
+        opacity={0.5}
+        style={{ pointerEvents: "none" }}
+      />
+    );
+  }
+
+  const colors = (() => {
+    if (isUnvisited) {
+      return STOP_COLORS.unvisited;
+    }
+    if (isLeaf) {
+      return STOP_COLORS.leaf;
+    }
+    return STOP_COLORS.required;
+  })();
+
+  const ringColor = STOP_COLORS.ring;
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
+    <g
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(stop.stop_id);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onClick(stop.stop_id);
+      }}
+      style={{ cursor: "pointer", pointerEvents: "all" }}
+    >
+      {isSelected && (
+        <circle
+          cx={stop.cx}
+          cy={stop.cy}
+          r={(DOT_R + 4) / scale}
+          fill="none"
+          stroke={ringColor}
+          strokeWidth={2 / scale}
+          opacity={0.6}
+        />
+      )}
+      <circle
+        cx={stop.cx}
+        cy={stop.cy}
+        r={DOT_R / scale}
+        fill={colors.fill}
+        stroke={colors.stroke}
+        strokeWidth={1 / scale}
+        opacity={0.85}
+      />
+    </g>
+  );
+}
+
 function VizPage() {
   const { name } = Route.useParams();
 
@@ -287,6 +382,18 @@ function VizPage() {
   } | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
   const [destination, setDestination] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
+  const [selectedIteration, setSelectedIteration] = useState(0);
+
+  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name }, { refetchInterval: 1000 });
+  const partialQuery = trpc.getPartialSolution.useQuery(
+    selectedRun !== null
+      ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
+      : skipToken,
+    { refetchInterval: 1000 },
+  );
+  const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
+  const maxIteration = selectedRunData?.max_iteration ?? 0;
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -496,6 +603,43 @@ function VizPage() {
 
   const isSelected = (stopId: string) => selectedStops.has(stopId);
 
+  const stopCoords = useMemo(() => {
+    if (!svgStops) return new Map<string, { cx: number; cy: number }>();
+    const m = new Map<string, { cx: number; cy: number }>();
+    for (const s of svgStops) {
+      m.set(s.stop_id, { cx: s.cx, cy: s.cy });
+    }
+    return m;
+  }, [svgStops]);
+
+  const leafSet = useMemo(() => {
+    if (!partialQuery.data) return new Set<string>();
+    return new Set(partialQuery.data.leaves);
+  }, [partialQuery.data]);
+
+  const visitedStopSet = useMemo(() => {
+    if (!partialQuery.data) return new Set<string>();
+    const s = new Set<string>();
+    for (const step of partialQuery.data.best_path.steps) {
+      s.add(step.origin_stop_id);
+      s.add(step.destination_stop_id);
+    }
+    return s;
+  }, [partialQuery.data]);
+
+  const pathArrows = useMemo(() => {
+    if (!partialQuery.data || !stopCoords.size) return [];
+    const steps = partialQuery.data.best_path.steps;
+    const arrows: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    for (const step of steps) {
+      const orig = stopCoords.get(step.origin_stop_id);
+      const dest = stopCoords.get(step.destination_stop_id);
+      if (!orig || !dest) continue;
+      arrows.push({ x1: orig.cx, y1: orig.cy, x2: dest.cx, y2: dest.cy });
+    }
+    return arrows;
+  }, [partialQuery.data, stopCoords]);
+
   return (
     <div
       ref={containerCallbackRef}
@@ -518,6 +662,57 @@ function VizPage() {
         </button>
         <span className="text-xs font-mono text-tc-text-dim ml-2">{name}</span>
       </div>
+
+      {/* Partial solutions selector */}
+      {runsQuery.data && runsQuery.data.length > 0 && (
+        <div className="absolute top-[52px] left-3 z-10 flex items-center gap-1.5 panel-surface py-1.5 px-2.5">
+          <select
+            value={selectedRun ?? ""}
+            onChange={(e) => {
+              const v = e.target.value || null;
+              setSelectedRun(v);
+              setSelectedIteration(0);
+            }}
+            className="text-xs font-mono bg-tc-raised border border-tc-border rounded px-1.5 py-1 text-tc-text cursor-pointer"
+          >
+            <option value="">— no overlay —</option>
+            {runsQuery.data.map((run) => (
+              <option key={run.run_timestamp} value={run.run_timestamp}>
+                {run.run_timestamp}
+              </option>
+            ))}
+          </select>
+          {selectedRun !== null && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedIteration((i) => Math.max(0, i - 1))}
+                disabled={selectedIteration === 0}
+                className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              <span className="text-xs font-mono text-tc-text-muted min-w-[48px] text-center">
+                iter {selectedIteration}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIteration((i) => Math.min(maxIteration, i + 1))}
+                disabled={selectedIteration === maxIteration}
+                className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              >
+                <ChevronRight size={12} />
+              </button>
+              {partialQuery.data && (
+                <span className="text-[10px] font-mono text-tc-text-dim">
+                  {partialQuery.data.leaves.length} leaves &middot;{" "}
+                  {formatDuration(partialQuery.data.best_path.duration)}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Map area — gesture target is scoped here so the panel is unaffected */}
       <div ref={mapRef} className="absolute inset-0 touch-none cursor-grab">
@@ -548,62 +743,32 @@ function VizPage() {
             </span>
 
             <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
+              <defs>
+                <marker
+                  id="arrowhead"
+                  markerWidth="6"
+                  markerHeight="4"
+                  refX="5"
+                  refY="2"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <polygon points="0 0, 6 2, 0 4" fill="#22c55e" />
+                </marker>
+              </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-                {svgStops.map((stop) => {
-                  const selected = isSelected(stop.stop_id);
-                  const required = stop.stop_type === "required";
-                  if (!required) {
-                    return (
-                      <circle
-                        key={stop.stop_id}
-                        cx={stop.cx}
-                        cy={stop.cy}
-                        r={(DOT_R - 1.5) / transform.scale}
-                        fill="#7a8599"
-                        stroke="#5c6378"
-                        strokeWidth={1 / transform.scale}
-                        opacity={0.5}
-                        style={{ pointerEvents: "none" }}
-                      />
-                    );
-                  }
-                  return (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: SVG <g> cannot be a <button>
-                    <g
-                      key={stop.stop_id}
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleStopClick(stop.stop_id);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") handleStopClick(stop.stop_id);
-                      }}
-                      style={{ cursor: "pointer", pointerEvents: "all" }}
-                    >
-                      {selected && (
-                        <circle
-                          cx={stop.cx}
-                          cy={stop.cy}
-                          r={(DOT_R + 4) / transform.scale}
-                          fill="none"
-                          stroke="#0094b3"
-                          strokeWidth={2 / transform.scale}
-                          opacity={0.6}
-                        />
-                      )}
-                      <circle
-                        cx={stop.cx}
-                        cy={stop.cy}
-                        r={DOT_R / transform.scale}
-                        fill={selected ? "#00c4e8" : "#0094b3"}
-                        stroke={selected ? "#0094b3" : "#006880"}
-                        strokeWidth={1 / transform.scale}
-                        opacity={0.85}
-                      />
-                    </g>
-                  );
-                })}
+                {svgStops.map((stop) => (
+                  <StopDot
+                    key={stop.stop_id}
+                    stop={stop}
+                    scale={transform.scale}
+                    isSelected={isSelected(stop.stop_id)}
+                    isRequired={stop.stop_type === "required"}
+                    isUnvisited={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id)}
+                    isLeaf={leafSet.has(stop.stop_id)}
+                    onClick={handleStopClick}
+                  />
+                ))}
                 {/* Station name labels — greedy collision-avoidance placement */}
                 {labelPlacements &&
                   svgStops.map((stop, i) => {
@@ -622,6 +787,21 @@ function VizPage() {
                       </text>
                     );
                   })}
+                {/* Partial solution: path arrows */}
+                {pathArrows.map((a, i) => (
+                  <line
+                    key={`arrow-${i}`}
+                    style={{ pointerEvents: "none" }}
+                    x1={a.x1}
+                    y1={a.y1}
+                    x2={a.x2}
+                    y2={a.y2}
+                    stroke="#22c55e"
+                    strokeWidth={2 / transform.scale}
+                    markerEnd="url(#arrowhead)"
+                    opacity={0.7}
+                  />
+                ))}
               </g>
             </svg>
           </>

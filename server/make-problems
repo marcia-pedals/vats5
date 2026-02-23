@@ -11,7 +11,8 @@ mkdir -p ~/vats5-problems
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w1.json --walking-speed 1
-initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w5.json --walking-speed 5
+# initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w5.json --walking-speed 5
+initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/bart.toml" ~/vats5-problems/bart-w10.json --walking-speed 10
 
 initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/vtalr.toml" ~/vats5-problems/vtalr-w1.json --walking-speed 1
 initialize_problem_state "${SCRIPT_DIR}/configs/world/RG_20260108_all.toml" "${SCRIPT_DIR}/configs/required_stops/vtalr.toml" ~/vats5-problems/vtalr-w5.json --walking-speed 5

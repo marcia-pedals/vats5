@@ -1,12 +1,16 @@
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <chrono>
 #include <climits>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <numeric>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -16,8 +20,40 @@
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
+#include "visualization/sqlite_wrapper.h"
+#include "visualization/visualization.h"
 
 using namespace vats5;
+
+struct StopDistance {
+  int distance;
+  StopId unvisited_stop;
+  StopId nearest_path_stop;
+
+  bool operator<(const StopDistance& o) const { return distance < o.distance; }
+};
+
+struct VizStep {
+  std::string origin_stop_id;
+  std::string destination_stop_id;
+  int depart_time;
+  int arrive_time;
+  int is_flex;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex)
+
+struct VizPath {
+  std::vector<VizStep> steps;
+  int duration;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizPath, steps, duration)
+
+struct PartialSolutionData {
+  std::vector<std::string> leaves;
+  std::vector<VizPath> paths;
+  VizPath best_path;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PartialSolutionData, leaves, paths, best_path)
 
 struct UnionFind {
   std::vector<int> parent, rank;
@@ -238,7 +274,8 @@ std::optional<BestPathResult> FindBestPermutationPath(
 // min-duration path from x to p in state.completed, then count how many
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
-std::unordered_map<StopId, int> RequiredStopDistances(
+// Returns results sorted by distance (ascending).
+std::vector<StopDistance> RequiredStopDistances(
     const Path& path,
     const ProblemState& state) {
   std::unordered_set<StopId> visited;
@@ -246,13 +283,17 @@ std::unordered_map<StopId, int> RequiredStopDistances(
   path.VisitIntermediateStops([&](StopId s) { visited.insert(s); });
   visited.insert(path.steps.back().destination.stop);
 
-  std::unordered_map<StopId, int> distances;
+  std::vector<StopDistance> distances;
   for (StopId x : state.required_stops) {
     if (visited.contains(x)) {
       continue;
     }
     int min_dist = INT_MAX;
+    StopId nearest_stop{};
     for (StopId p : visited) {
+      if (p == state.boundary.start || p == state.boundary.end) {
+        continue;
+      }
       auto paths_xp = state.completed.PathsBetween(x, p);
       const Path* shortest = nullptr;
       for (const Path& candidate : paths_xp) {
@@ -270,11 +311,15 @@ std::unordered_map<StopId, int> RequiredStopDistances(
             count++;
           }
         });
-        min_dist = std::min(min_dist, count);
+        if (count < min_dist) {
+          min_dist = count;
+          nearest_stop = p;
+        }
       }
     }
-    distances[x] = min_dist;
+    distances.push_back({min_dist, x, nearest_stop});
   }
+  std::sort(distances.begin(), distances.end());
   return distances;
 }
 
@@ -287,6 +332,8 @@ int main(int argc, char* argv[]) {
 
   CLI11_PARSE(app, argc, argv);
 
+  std::string viz_sqlite_path = viz::VizSqlitePath(input_path);
+
   // Load problem state.
   std::ifstream in(input_path);
   if (!in.is_open()) {
@@ -298,6 +345,28 @@ int main(int argc, char* argv[]) {
   ProblemState state = j.get<ProblemState>();
 
   std::vector<StopId> leaves = MstLeaves(state);
+
+  // Generate run timestamp.
+  auto now = std::chrono::system_clock::now();
+  auto tt = std::chrono::system_clock::to_time_t(now);
+  std::ostringstream ts;
+  ts << std::put_time(std::localtime(&tt), "%Y-%m-%dT%H:%M:%S");
+  std::string run_timestamp = ts.str();
+
+  auto ToVizPath = [&state](const Path& path) -> VizPath {
+    VizPath vp;
+    vp.duration = path.DurationSeconds();
+    for (const Step& s : path.steps) {
+      vp.steps.push_back({
+        state.stop_infos.at(s.origin.stop).gtfs_stop_id.v,
+        state.stop_infos.at(s.destination.stop).gtfs_stop_id.v,
+        s.origin.time.seconds,
+        s.destination.time.seconds,
+        s.is_flex ? 1 : 0,
+      });
+    }
+    return vp;
+  };
 
   for (int iteration = 0; ; iteration++) {
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
@@ -313,16 +382,38 @@ int main(int argc, char* argv[]) {
     const Path* best_path = &best->paths[0];
     auto distances = RequiredStopDistances(*best_path, state);
     int total_dist = 0;
-    for (const auto& [_, d] : distances) total_dist += d;
+    for (const auto& sd : distances) total_dist += sd.distance;
     for (size_t i = 1; i < best->paths.size(); i++) {
       auto d = RequiredStopDistances(best->paths[i], state);
       int td = 0;
-      for (const auto& [_, v] : d) td += v;
+      for (const auto& sd : d) td += sd.distance;
       if (td < total_dist) {
         best_path = &best->paths[i];
         distances = std::move(d);
         total_dist = td;
       }
+    }
+
+    // Write partial solution to viz SQLite.
+    {
+      PartialSolutionData data;
+      for (StopId leaf : leaves) {
+        data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
+      }
+      for (const Path& p : best->paths) {
+        data.paths.push_back(ToVizPath(p));
+      }
+      data.best_path = ToVizPath(*best_path);
+
+      viz::SqliteDb db(viz_sqlite_path);
+      viz::SqliteStmt stmt(db,
+          "INSERT INTO partial_solutions (run_timestamp, iteration, data) "
+          "VALUES (?, ?, ?)");
+      stmt.bind_text(1, run_timestamp.c_str());
+      stmt.bind_int(2, iteration);
+      std::string data_str = nlohmann::json(data).dump();
+      stmt.bind_text(3, data_str.c_str());
+      stmt.step_and_reset();
     }
 
     std::cout << "\nBest duration: " << TimeSinceServiceStart{best->duration}.ToString() << "\n";
@@ -335,25 +426,19 @@ int main(int argc, char* argv[]) {
                 << step.destination.time.ToString() << ")\n";
     }
 
-    // Collect unvisited required stops, sorted by distance (descending).
-    std::vector<std::pair<int, StopId>> unvisited;
-    for (const auto& [s, d] : distances) {
-      unvisited.emplace_back(d, s);
-    }
-
-    if (unvisited.empty()) {
+    if (distances.empty()) {
       std::cout << "\nAll required stops are visited.\n";
       break;
     }
 
-    std::sort(unvisited.begin(), unvisited.end());
-    std::cout << "\nRequired stops NOT visited (" << unvisited.size() << "):\n";
-    for (const auto& [d, s] : unvisited) {
-      std::cout << "  " << state.StopName(s) << " (distance: " << d << ")\n";
+    std::cout << "\nRequired stops NOT visited (" << distances.size() << "):\n";
+    for (const auto& sd : distances) {
+      std::cout << "  " << state.StopName(sd.unvisited_stop) << " (distance: " << sd.distance
+                << ", nearest: " << state.StopName(sd.nearest_path_stop) << ")\n";
     }
 
     // Add the farthest unvisited stop to leaves for the next iteration.
-    StopId farthest = unvisited.back().second;
+    StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest) << "\n\n";
     leaves.push_back(farthest);
   }

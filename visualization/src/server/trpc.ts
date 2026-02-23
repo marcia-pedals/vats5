@@ -1,6 +1,13 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
-import { getPathSteps, getPaths, getStops, listVisualizations } from "./db";
+import {
+  getPartialSolution,
+  getPartialSolutionRuns,
+  getPathSteps,
+  getPaths,
+  getStops,
+  listVisualizations,
+} from "./db";
 
 const t = initTRPC.create();
 
@@ -21,6 +28,18 @@ export const appRouter = t.router({
     .input(z.object({ name: z.string(), pathId: z.number() }))
     .query(({ input }) => {
       return getPathSteps(input.name, input.pathId);
+    }),
+
+  getPartialSolutionRuns: t.procedure
+    .input(z.object({ name: z.string() }))
+    .query(({ input }) => {
+      return getPartialSolutionRuns(input.name);
+    }),
+
+  getPartialSolution: t.procedure
+    .input(z.object({ name: z.string(), runTimestamp: z.string(), iteration: z.number() }))
+    .query(({ input }) => {
+      return getPartialSolution(input.name, input.runTimestamp, input.iteration);
     }),
 });
 
