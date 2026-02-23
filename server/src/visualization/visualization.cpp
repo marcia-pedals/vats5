@@ -185,14 +185,6 @@ void WriteVisualizationSqlite(
       "is_flex, route_name) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
-  // Build GtfsStopId -> original StopId reverse map so we can look up
-  // completed path steps (which use compacted StopIds) in
-  // minimal_paths_sparse (which uses original StopIds).
-  std::unordered_map<GtfsStopId, StopId> gtfs_to_original;
-  for (const auto& [stop_id, gtfs_stop_id] : mapping.stop_id_to_gtfs_stop_id) {
-    gtfs_to_original[gtfs_stop_id] = stop_id;
-  }
-
   // Helper to emit a list of steps (from minimal_paths_sparse, using original
   // StopIds) into the paths_steps table with deduplication.
   auto EmitExpandedSteps =
@@ -270,8 +262,9 @@ void WriteVisualizationSqlite(
               state.stop_infos.at(s.origin.stop).gtfs_stop_id;
           const GtfsStopId& s_dest_gtfs =
               state.stop_infos.at(s.destination.stop).gtfs_stop_id;
-          StopId orig_origin = gtfs_to_original.at(s_origin_gtfs);
-          StopId orig_dest = gtfs_to_original.at(s_dest_gtfs);
+          StopId orig_origin =
+              mapping.gtfs_stop_id_to_stop_id.at(s_origin_gtfs);
+          StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
 
           // Find matching path in minimal_paths_sparse.
           auto sparse_paths =
@@ -295,36 +288,24 @@ void WriteVisualizationSqlite(
             }
           }
 
-          if (expanded) {
-            // For flex steps, shift normalized times (starting at 0) to
-            // the actual travel time.
-            int time_offset =
-                s.is_flex ? s.origin.time.seconds -
-                                expanded->merged_step.origin.time.seconds
-                          : 0;
-            EmitExpandedSteps(path_id, expanded->steps, time_offset);
-          } else {
-            // Fallback: emit the compacted step as-is.
-            std::string route_name;
-            if (s.destination.trip != TripId::NOOP) {
-              auto it = mapping.trip_id_to_route_desc.find(s.destination.trip);
-              if (it != mapping.trip_id_to_route_desc.end()) {
-                route_name = it->second;
-              }
-            }
-
-            const std::string& step_origin_gtfs_str = s_origin_gtfs.v;
-            const std::string& step_dest_gtfs_str = s_dest_gtfs.v;
-
-            step_stmt.bind_int(1, path_id);
-            step_stmt.bind_text(2, step_origin_gtfs_str.c_str());
-            step_stmt.bind_text(3, step_dest_gtfs_str.c_str());
-            step_stmt.bind_int(4, s.origin.time.seconds);
-            step_stmt.bind_int(5, s.destination.time.seconds);
-            step_stmt.bind_int(6, s.is_flex ? 1 : 0);
-            step_stmt.bind_text(7, route_name.c_str());
-            step_stmt.step_and_reset();
+          if (!expanded) {
+            throw std::runtime_error(
+                "No matching path in minimal_paths_sparse for step " +
+                s_origin_gtfs.v + " -> " + s_dest_gtfs.v +
+                " (is_flex=" + (s.is_flex ? "true" : "false") +
+                ", origin_time=" + std::to_string(s.origin.time.seconds) +
+                ", dest_time=" + std::to_string(s.destination.time.seconds) +
+                ")"
+            );
           }
+
+          // For flex steps, shift normalized times (starting at 0) to
+          // the actual travel time.
+          int time_offset = s.is_flex
+                                ? s.origin.time.seconds -
+                                      expanded->merged_step.origin.time.seconds
+                                : 0;
+          EmitExpandedSteps(path_id, expanded->steps, time_offset);
         }
       }
     }
