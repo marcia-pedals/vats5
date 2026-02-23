@@ -23,6 +23,9 @@ steps:
     artifact_paths:
       - "server/build-debug/test-results.xml"
     plugins:
+      - cluster-secrets#v1.0.1:
+          variables:
+            BUILDKITE_ANALYTICS_TOKEN: CPP_SUITE_TOKEN
       - test-collector#v1.10.2:
           files: "server/build-debug/test-results.xml"
           format: "junit"
