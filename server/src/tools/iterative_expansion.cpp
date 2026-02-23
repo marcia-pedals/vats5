@@ -59,7 +59,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PartialSolutionData, leaves, paths, best_path
 
 // Builds an MST over the required stops (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
-std::vector<StopId> MstLeaves(const ProblemState& state) {
+std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Collect required stops, excluding START and END.
   std::vector<StopId> stops(
       state.required_stops.begin(), state.required_stops.end()
@@ -102,43 +102,47 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   }
 
   // Collect leaves (degree 1 in the MST).
-  std::vector<StopId> leaves;
+  std::unordered_set<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
-      leaves.push_back(stops[i]);
+      leaves.insert(stops[i]);
     }
   }
   return leaves;
 }
 
-// The best paths in a partial solution.
-struct BestPathResult {
+// A "partial problem" is a problem where the paths are required to visit a
+// certain subset of the required stops. This is a solution to such a problem.
+struct PartialSolution {
+  // Paths that achieve the minimum duraiton in the partial problem.
+  //
+  // All original-problem stops that these paths pass through are included as
+  // intermediate stops.
+  //
+  // TODO: Specify more precisely which paths. Is it all of them? Or all of them
+  // satisfying some property?
   std::vector<Path> paths;
 };
 
 
-BestPathResult FindBestPathBranchAndBound(
-  std::vector<StopId> leaves,
+PartialSolution PartialSolveBranchAndBound(
+  std::unordered_set<StopId> required_subset,
   const ProblemState& state
 ) {
-  std::unordered_set<StopId> leaves_set;
-  for (StopId leaf : leaves) {
-    leaves_set.insert(leaf);
-  }
-  leaves_set.insert(state.boundary.start);
-  leaves_set.insert(state.boundary.end);
-  ProblemState state_on_leaves = MakeProblemState(
-    MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, leaves_set).AllMergedSteps()),
+  required_subset.insert(state.boundary.start);
+  required_subset.insert(state.boundary.end);
+  ProblemState partial_problem = MakeProblemState(
+    MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, required_subset).AllMergedSteps()),
     state.boundary,
-    leaves_set,
+    required_subset,
     state.stop_infos,
     state.step_partition_names,
     state.original_edges
   );
 
-  auto bb_result = BranchAndBoundSolve(state_on_leaves, &std::cout);
+  auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
   if (bb_result.best_paths.empty()) {
-    return BestPathResult{};
+    return PartialSolution{};
   }
 
   // Extract unique stop sequences from BB paths, expand combined stops back
@@ -179,25 +183,26 @@ BestPathResult FindBestPathBranchAndBound(
   }
 
   if (best_paths.empty()) {
-    return BestPathResult{};
+    return PartialSolution{};
   }
-  return BestPathResult{std::move(best_paths)};
+  return PartialSolution{std::move(best_paths)};
 }
 
-// Tries all permutations of `leaves` as intermediate stops between start and
+// Tries all permutations of `required_subset` as intermediate stops between start and
 // end, and returns the permutation yielding the shortest feasible path.
-BestPathResult FindBestPermutationPath(
-    std::vector<StopId> leaves,
+PartialSolution PartialSolveBruteForce(
+    std::unordered_set<StopId> required_subset,
     const ProblemState& state) {
-  std::sort(leaves.begin(), leaves.end());
+  std::vector<StopId> candidate_perm(required_subset.begin(), required_subset.end());
+  std::sort(candidate_perm.begin(), candidate_perm.end());
 
   int best_duration = INT_MAX;
-  BestPathResult best;
+  PartialSolution best;
 
   do {
     std::vector<StopId> sequence;
     sequence.push_back(state.boundary.start);
-    sequence.insert(sequence.end(), leaves.begin(), leaves.end());
+    sequence.insert(sequence.end(), candidate_perm.begin(), candidate_perm.end());
     sequence.push_back(state.boundary.end);
 
     std::vector<Path> paths =
@@ -215,7 +220,7 @@ BestPathResult FindBestPermutationPath(
       });
       best.paths = std::move(paths);
     }
-  } while (std::next_permutation(leaves.begin(), leaves.end()));
+  } while (std::next_permutation(candidate_perm.begin(), candidate_perm.end()));
 
   return best;
 }
@@ -295,7 +300,7 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  std::vector<StopId> leaves = MstLeaves(state);
+  std::unordered_set<StopId> required_subset = MstLeaves(state);
 
   // Generate run timestamp.
   auto now = std::chrono::system_clock::now();
@@ -321,8 +326,8 @@ int main(int argc, char* argv[]) {
 
   for (int iteration = 0; ; iteration++) {
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
-              << leaves.size() << " leaves ===\n";
-    auto best = FindBestPathBranchAndBound(leaves, state);
+              << required_subset.size() << " leaves ===\n";
+    auto best = PartialSolveBranchAndBound(required_subset, state);
 
     if (best.paths.empty()) {
       std::cout << "No feasible path found.\n";
@@ -348,7 +353,7 @@ int main(int argc, char* argv[]) {
     // Write partial solution to viz SQLite.
     {
       PartialSolutionData data;
-      for (StopId leaf : leaves) {
+      for (StopId leaf : required_subset) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
       for (const Path& p : best.paths) {
@@ -391,7 +396,7 @@ int main(int argc, char* argv[]) {
     // Add the farthest unvisited stop to leaves for the next iteration.
     StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest) << "\n\n";
-    leaves.push_back(farthest);
+    required_subset.insert(farthest);
   }
 
   return 0;
