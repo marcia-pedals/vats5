@@ -9,7 +9,7 @@
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
-#include "solver/tarel_graph.h"
+#include "solver/tarel_graph.h"  // InitializeProblemStateResult
 #include "visualization/viz_schema_sql.h"
 
 namespace vats5::viz {
@@ -88,11 +88,12 @@ class SqliteStmt {
 };
 
 void WriteVisualizationSqlite(
-    const ProblemState& state,
+    const InitializeProblemStateResult& result,
     const GtfsDay& gtfs_day,
     const DataGtfsMapping& mapping,
     const std::string& path
 ) {
+  const ProblemState& state = result.problem_state;
   // Delete existing db file and associated WAL/shm files if present
   std::remove(path.c_str());
   std::remove((path + "-wal").c_str());
@@ -109,34 +110,62 @@ void WriteVisualizationSqlite(
   db.exec("BEGIN TRANSACTION");
   db.exec(kSchemaSql);
 
-  // Insert stops (all stops from stop_infos, marking which are required)
-  SqliteStmt stop_stmt(
-      db,
-      "INSERT INTO stops (stop_id, gtfs_stop_id, stop_name, lat, lon, "
-      "required) VALUES (?, ?, ?, ?, ?, ?)"
-  );
+  // Build a map from compacted StopId to GtfsStopId string for path lookups.
+  std::unordered_map<StopId, std::string> stop_id_to_gtfs;
+  for (const auto& [stop_id, stop_info] : state.stop_infos) {
+    stop_id_to_gtfs[stop_id] = stop_info.gtfs_stop_id.v;
+  }
 
+  // Build sets of GTFS stop IDs that are in problem_state / required.
+  std::unordered_set<std::string> required_gtfs_ids;
+  std::unordered_set<std::string> in_problem_state_gtfs_ids;
   for (const auto& [stop_id, stop_info] : state.stop_infos) {
     if (stop_id == state.boundary.start || stop_id == state.boundary.end) {
       continue;
     }
-
-    auto gtfs_stop_it = gtfs_stop_by_id.find(stop_info.gtfs_stop_id);
-    if (gtfs_stop_it == gtfs_stop_by_id.end()) {
-      throw std::runtime_error(
-          "GtfsStopId '" + stop_info.gtfs_stop_id.v + "' not found in GTFS data"
-      );
+    in_problem_state_gtfs_ids.insert(stop_info.gtfs_stop_id.v);
+    if (state.required_stops.count(stop_id) > 0) {
+      required_gtfs_ids.insert(stop_info.gtfs_stop_id.v);
     }
+  }
+
+  // Collect all stops referenced by any step in minimal_paths_sparse.
+  std::unordered_set<StopId> all_sparse_stops;
+  for (const Path& p : result.minimal_paths_sparse.AllPaths()) {
+    for (const Step& s : p.steps) {
+      all_sparse_stops.insert(s.origin.stop);
+      all_sparse_stops.insert(s.destination.stop);
+    }
+  }
+
+  // Insert stops from minimal_paths_sparse with stop_type classification.
+  SqliteStmt stop_stmt(
+      db,
+      "INSERT OR IGNORE INTO stops (stop_id, stop_name, lat, lon, "
+      "stop_type) VALUES (?, ?, ?, ?, ?)"
+  );
+
+  for (StopId stop_id : all_sparse_stops) {
+    auto gtfs_id_it = mapping.stop_id_to_gtfs_stop_id.find(stop_id);
+    if (gtfs_id_it == mapping.stop_id_to_gtfs_stop_id.end()) continue;
+    const std::string& gtfs_id = gtfs_id_it->second.v;
+
+    auto gtfs_stop_it = gtfs_stop_by_id.find(gtfs_id_it->second);
+    if (gtfs_stop_it == gtfs_stop_by_id.end()) continue;
     const GtfsStop& gtfs_stop = gtfs_stop_it->second;
 
-    bool is_required = state.required_stops.count(stop_id) > 0;
+    const char* stop_type = "original";
+    if (required_gtfs_ids.count(gtfs_id) > 0) {
+      stop_type = "required";
+    } else if (in_problem_state_gtfs_ids.count(gtfs_id) > 0) {
+      stop_type = "in_problem_state";
+    }
 
-    stop_stmt.bind_int(1, stop_id.v);
-    stop_stmt.bind_text(2, gtfs_stop.stop_id.v.c_str());
-    stop_stmt.bind_text(3, gtfs_stop.stop_name.c_str());
-    stop_stmt.bind_double(4, gtfs_stop.stop_lat);
-    stop_stmt.bind_double(5, gtfs_stop.stop_lon);
-    stop_stmt.bind_int(6, is_required ? 1 : 0);
+    stop_stmt.bind_text(1, gtfs_id.c_str());
+    stop_stmt.bind_text(2, gtfs_stop.stop_name.c_str());
+    stop_stmt.bind_double(3, gtfs_stop.stop_lat);
+    stop_stmt.bind_double(4, gtfs_stop.stop_lon);
+    stop_stmt.bind_text(5, stop_type);
     stop_stmt.step_and_reset();
   }
 
@@ -173,9 +202,12 @@ void WriteVisualizationSqlite(
       for (const Path& p : path_group) {
         int path_id = next_path_id++;
 
+        const std::string& origin_gtfs = stop_id_to_gtfs.at(origin_stop);
+        const std::string& dest_gtfs = stop_id_to_gtfs.at(dest_stop);
+
         path_stmt.bind_int(1, path_id);
-        path_stmt.bind_int(2, origin_stop.v);
-        path_stmt.bind_int(3, dest_stop.v);
+        path_stmt.bind_text(2, origin_gtfs.c_str());
+        path_stmt.bind_text(3, dest_gtfs.c_str());
         path_stmt.bind_int(4, p.merged_step.origin.time.seconds);
         path_stmt.bind_int(5, p.merged_step.destination.time.seconds);
         path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
@@ -199,9 +231,14 @@ void WriteVisualizationSqlite(
             }
           }
 
+          const std::string& step_origin_gtfs =
+              stop_id_to_gtfs.at(s.origin.stop);
+          const std::string& step_dest_gtfs =
+              stop_id_to_gtfs.at(s.destination.stop);
+
           step_stmt.bind_int(1, path_id);
-          step_stmt.bind_int(2, s.origin.stop.v);
-          step_stmt.bind_int(3, s.destination.stop.v);
+          step_stmt.bind_text(2, step_origin_gtfs.c_str());
+          step_stmt.bind_text(3, step_dest_gtfs.c_str());
           step_stmt.bind_int(4, s.origin.time.seconds);
           step_stmt.bind_int(5, s.destination.time.seconds);
           step_stmt.bind_int(6, s.is_flex ? 1 : 0);

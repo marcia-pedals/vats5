@@ -96,12 +96,12 @@ int main(int argc, char* argv[]) {
   }
 
   std::cout << "Initializing solution state...\n";
-  ProblemState state = InitializeProblemState(
+  auto init_result = InitializeProblemState(
       steps_from_gtfs, required_stops, /*optimize_edges=*/true
   );
 
   std::cout << "Serializing to JSON...\n";
-  nlohmann::json j = state;
+  nlohmann::json j = init_result.problem_state;
   std::ofstream out(output_path);
   out << j.dump();
   out.close();
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
   }
 
   viz::WriteVisualizationSqlite(
-      state, gtfs_day, steps_from_gtfs.mapping, viz_output_path
+      init_result, gtfs_day, steps_from_gtfs.mapping, viz_output_path
   );
   std::cout << "Saved visualization to: " << viz_output_path << "\n";
 
