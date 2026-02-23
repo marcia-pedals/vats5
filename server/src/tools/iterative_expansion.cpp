@@ -153,18 +153,14 @@ PartialSolution PartialSolveBranchAndBound(
   std::vector<Path> best_paths;
 
   for (const Path& bb_path : bb_result.best_paths) {
-    // Extract raw stop sequence (may contain combined stop IDs).
-    std::vector<StopId> raw;
-    raw.push_back(bb_path.steps.front().origin.stop);
-    for (const Step& step : bb_path.steps) {
-      raw.push_back(step.destination.stop);
-    }
-
-    // Expand combined stops to original stop IDs.
     std::vector<StopId> sequence;
-    for (StopId s : raw) {
-      ExpandStop(s, bb_result.original_edges, sequence);
-    }
+    auto AppendStop = [&](StopId bb_result_stop) {
+      ExpandStop(bb_result_stop, bb_result.original_edges, sequence);
+    };
+    AppendStop(bb_path.merged_step.origin.stop);
+    bb_path.VisitIntermediateStops(AppendStop);
+    AppendStop(bb_path.merged_step.destination.stop);
+
     if (!seen_sequences.insert(sequence).second) {
       continue;
     }
