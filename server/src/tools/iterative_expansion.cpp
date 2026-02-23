@@ -111,13 +111,13 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   return leaves;
 }
 
+// The best paths in a partial solution.
 struct BestPathResult {
   std::vector<Path> paths;
-  int duration;
 };
 
 
-std::optional<BestPathResult> FindBestPathBranchAndBound(
+BestPathResult FindBestPathBranchAndBound(
   std::vector<StopId> leaves,
   const ProblemState& state
 ) {
@@ -138,7 +138,7 @@ std::optional<BestPathResult> FindBestPathBranchAndBound(
 
   auto bb_result = BranchAndBoundSolve(state_on_leaves, &std::cout);
   if (bb_result.best_paths.empty()) {
-    return std::nullopt;
+    return BestPathResult{};
   }
 
   // Extract unique stop sequences from BB paths, expand combined stops back
@@ -179,14 +179,14 @@ std::optional<BestPathResult> FindBestPathBranchAndBound(
   }
 
   if (best_paths.empty()) {
-    return std::nullopt;
+    return BestPathResult{};
   }
-  return BestPathResult{std::move(best_paths), best_duration};
+  return BestPathResult{std::move(best_paths)};
 }
 
 // Tries all permutations of `leaves` as intermediate stops between start and
 // end, and returns the permutation yielding the shortest feasible path.
-std::optional<BestPathResult> FindBestPermutationPath(
+BestPathResult FindBestPermutationPath(
     std::vector<StopId> leaves,
     const ProblemState& state) {
   std::sort(leaves.begin(), leaves.end());
@@ -214,13 +214,9 @@ std::optional<BestPathResult> FindBestPermutationPath(
         return p.DurationSeconds() != best_duration;
       });
       best.paths = std::move(paths);
-      best.duration = best_duration;
     }
   } while (std::next_permutation(leaves.begin(), leaves.end()));
 
-  if (best.paths.empty()) {
-    return std::nullopt;
-  }
   return best;
 }
 
@@ -328,22 +324,22 @@ int main(int argc, char* argv[]) {
               << leaves.size() << " leaves ===\n";
     auto best = FindBestPathBranchAndBound(leaves, state);
 
-    if (!best) {
+    if (best.paths.empty()) {
       std::cout << "No feasible path found.\n";
       return 1;
     }
 
     // Pick the path with the lowest total distance to unvisited required stops.
-    const Path* best_path = &best->paths[0];
+    const Path* best_path = &best.paths[0];
     auto distances = RequiredStopDistances(*best_path, state);
     int total_dist = 0;
     for (const auto& sd : distances) total_dist += sd.distance;
-    for (size_t i = 1; i < best->paths.size(); i++) {
-      auto d = RequiredStopDistances(best->paths[i], state);
+    for (size_t i = 1; i < best.paths.size(); i++) {
+      auto d = RequiredStopDistances(best.paths[i], state);
       int td = 0;
       for (const auto& sd : d) td += sd.distance;
       if (td < total_dist) {
-        best_path = &best->paths[i];
+        best_path = &best.paths[i];
         distances = std::move(d);
         total_dist = td;
       }
@@ -355,7 +351,7 @@ int main(int argc, char* argv[]) {
       for (StopId leaf : leaves) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
-      for (const Path& p : best->paths) {
+      for (const Path& p : best.paths) {
         data.paths.push_back(ToVizPath(p));
       }
       data.best_path = ToVizPath(*best_path);
@@ -371,7 +367,7 @@ int main(int argc, char* argv[]) {
       stmt.step_and_reset();
     }
 
-    std::cout << "\nBest duration: " << TimeSinceServiceStart{best->duration}.ToString() << "\n";
+    std::cout << "\nBest duration: " << TimeSinceServiceStart{best_path->DurationSeconds()}.ToString() << "\n";
 
     std::cout << "Path (" << best_path->steps.size() << " steps):\n";
     for (const Step& step : best_path->steps) {
