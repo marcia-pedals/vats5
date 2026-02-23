@@ -267,24 +267,31 @@ void WriteVisualizationSqlite(
           StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
 
           // Find matching path in minimal_paths_sparse.
-          auto sparse_paths =
-              result.minimal_paths_sparse.PathsBetween(orig_origin, orig_dest);
+          // We search all path groups for the origin (not just the first
+          // group matching the destination) because SplitPathsAtStop can
+          // create multiple single-path groups for the same dest.
           const Path* expanded = nullptr;
-          for (const Path& sp : sparse_paths) {
-            if (s.is_flex) {
-              // Flex paths are normalized to time 0; match by is_flex.
-              if (sp.merged_step.is_flex) {
-                expanded = &sp;
-                break;
+          auto sparse_it =
+              result.minimal_paths_sparse.adjacent.find(orig_origin);
+          if (sparse_it != result.minimal_paths_sparse.adjacent.end()) {
+            for (const auto& group : sparse_it->second) {
+              for (const Path& sp : group) {
+                if (sp.merged_step.destination.stop != orig_dest) continue;
+                if (s.is_flex) {
+                  if (sp.merged_step.is_flex) {
+                    expanded = &sp;
+                    break;
+                  }
+                } else {
+                  if (!sp.merged_step.is_flex &&
+                      sp.merged_step.origin.time == s.origin.time &&
+                      sp.merged_step.destination.time == s.destination.time) {
+                    expanded = &sp;
+                    break;
+                  }
+                }
               }
-            } else {
-              // Non-flex: times match exactly between compacted and original.
-              if (!sp.merged_step.is_flex &&
-                  sp.merged_step.origin.time == s.origin.time &&
-                  sp.merged_step.destination.time == s.destination.time) {
-                expanded = &sp;
-                break;
-              }
+              if (expanded) break;
             }
           }
 
