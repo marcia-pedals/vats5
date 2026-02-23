@@ -220,6 +220,19 @@ StepPathsAdjacencyList SplitPathsAtStop(
 ) {
   StepPathsAdjacencyList result;
 
+  // Add a path to the group matching its destination, or create a new group.
+  auto add_path = [&result](StopId origin, Path path) {
+    auto& groups = result.adjacent[origin];
+    StopId dest = path.merged_step.destination.stop;
+    for (auto& group : groups) {
+      if (!group.empty() && group[0].merged_step.destination.stop == dest) {
+        group.push_back(std::move(path));
+        return;
+      }
+    }
+    groups.push_back({std::move(path)});
+  };
+
   for (const Path& path : paths.AllPaths()) {
     StopId origin = path.merged_step.origin.stop;
     StopId destination = path.merged_step.destination.stop;
@@ -238,7 +251,7 @@ StepPathsAdjacencyList SplitPathsAtStop(
 
     if (split_index == -1) {
       // Path doesn't pass through split_stop internally, keep it unchanged
-      result.adjacent[origin].push_back({path});
+      add_path(origin, path);
     } else {
       // Split into two paths
       // First path: steps [0, split_index]
@@ -257,8 +270,8 @@ StepPathsAdjacencyList SplitPathsAtStop(
       second_path.steps = std::move(second_steps);
       second_path.merged_step = ConsecutiveMergedSteps(second_path.steps);
 
-      result.adjacent[origin].push_back({first_path});
-      result.adjacent[split_stop].push_back({second_path});
+      add_path(origin, std::move(first_path));
+      add_path(split_stop, std::move(second_path));
     }
   }
 

@@ -9,6 +9,7 @@
 
 #include "gtfs/gtfs.h"
 #include "solver/data.h"
+#include "solver/step_merge.h"
 #include "solver/tarel_graph.h"  // InitializeProblemStateResult
 #include "visualization/viz_schema_sql.h"
 
@@ -220,8 +221,7 @@ void WriteVisualizationSqlite(
 
         // Expand each step of the completed path using
         // minimal_paths_sparse to get the original GTFS-level detail.
-        // Collect all expanded steps first so we can deduplicate across
-        // expansion boundaries (consecutive rides on the same trip).
+        // Collect all expanded steps first so we can group by trip.
         std::vector<Step> all_expanded_steps;
         for (const Step& s : p.steps) {
           // Map compacted StopIds to original StopIds.
@@ -234,31 +234,22 @@ void WriteVisualizationSqlite(
           StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
 
           // Find matching path in minimal_paths_sparse.
-          // We search all path groups for the origin (not just the first
-          // group matching the destination) because SplitPathsAtStop can
-          // create multiple single-path groups for the same dest.
+          auto sparse_paths =
+              result.minimal_paths_sparse.PathsBetween(orig_origin, orig_dest);
           const Path* expanded = nullptr;
-          auto sparse_it =
-              result.minimal_paths_sparse.adjacent.find(orig_origin);
-          if (sparse_it != result.minimal_paths_sparse.adjacent.end()) {
-            for (const auto& group : sparse_it->second) {
-              for (const Path& sp : group) {
-                if (sp.merged_step.destination.stop != orig_dest) continue;
-                if (s.is_flex) {
-                  if (sp.merged_step.is_flex) {
-                    expanded = &sp;
-                    break;
-                  }
-                } else {
-                  if (!sp.merged_step.is_flex &&
-                      sp.merged_step.origin.time == s.origin.time &&
-                      sp.merged_step.destination.time == s.destination.time) {
-                    expanded = &sp;
-                    break;
-                  }
-                }
+          for (const Path& sp : sparse_paths) {
+            if (s.is_flex) {
+              if (sp.merged_step.is_flex) {
+                expanded = &sp;
+                break;
               }
-              if (expanded) break;
+            } else {
+              if (!sp.merged_step.is_flex &&
+                  sp.merged_step.origin.time == s.origin.time &&
+                  sp.merged_step.destination.time == s.destination.time) {
+                expanded = &sp;
+                break;
+              }
             }
           }
 
@@ -287,38 +278,50 @@ void WriteVisualizationSqlite(
           }
         }
 
-        // Deduplicate and emit: collapse consecutive steps on the same
-        // trip into one row (the last stop of each ride).
-        for (size_t si = 0; si < all_expanded_steps.size(); ++si) {
-          const Step& es = all_expanded_steps[si];
-          if (si + 1 < all_expanded_steps.size() &&
-              es.destination.trip != TripId::NOOP &&
-              es.destination.trip ==
-                  all_expanded_steps[si + 1].destination.trip) {
-            continue;
+        // Group consecutive steps by trip and merge each group into a
+        // single step using ConsecutiveMergedSteps.
+        size_t si = 0;
+        while (si < all_expanded_steps.size()) {
+          size_t group_end = si + 1;
+          if (all_expanded_steps[si].destination.trip != TripId::NOOP) {
+            while (group_end < all_expanded_steps.size() &&
+                   all_expanded_steps[group_end].destination.trip ==
+                       all_expanded_steps[si].destination.trip) {
+              group_end++;
+            }
           }
 
+          std::vector<Step> group_steps(
+              all_expanded_steps.begin() + si,
+              all_expanded_steps.begin() + group_end
+          );
+          Step merged = ConsecutiveMergedSteps(group_steps);
+
           std::string route_name;
-          if (es.destination.trip != TripId::NOOP) {
-            auto it = mapping.trip_id_to_route_desc.find(es.destination.trip);
+          if (all_expanded_steps[si].destination.trip != TripId::NOOP) {
+            auto it = mapping.trip_id_to_route_desc.find(
+                all_expanded_steps[si].destination.trip
+            );
             if (it != mapping.trip_id_to_route_desc.end()) {
               route_name = it->second;
             }
           }
 
           const std::string& step_origin_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(es.origin.stop).v;
+              mapping.stop_id_to_gtfs_stop_id.at(merged.origin.stop).v;
           const std::string& step_dest_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(es.destination.stop).v;
+              mapping.stop_id_to_gtfs_stop_id.at(merged.destination.stop).v;
 
           step_stmt.bind_int(1, path_id);
           step_stmt.bind_text(2, step_origin_gtfs.c_str());
           step_stmt.bind_text(3, step_dest_gtfs.c_str());
-          step_stmt.bind_int(4, es.origin.time.seconds);
-          step_stmt.bind_int(5, es.destination.time.seconds);
-          step_stmt.bind_int(6, es.is_flex ? 1 : 0);
+          step_stmt.bind_int(4, merged.origin.time.seconds);
+          step_stmt.bind_int(5, merged.destination.time.seconds);
+          step_stmt.bind_int(6, merged.is_flex ? 1 : 0);
           step_stmt.bind_text(7, route_name.c_str());
           step_stmt.step_and_reset();
+
+          si = group_end;
         }
       }
     }
