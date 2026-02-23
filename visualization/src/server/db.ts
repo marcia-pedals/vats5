@@ -6,37 +6,14 @@ import { z } from "zod";
 
 const PROBLEMS_DIR = path.join(homedir(), "vats5-problems");
 
-// LRU pool of open read-only database connections.
-const DB_POOL_MAX = 4;
-const dbPool = new Map<string, Database.Database>();
-
-function getDb(name: string): Database.Database {
-  const existing = dbPool.get(name);
-  if (existing) {
-    // Move to end (most recently used)
-    dbPool.delete(name);
-    dbPool.set(name, existing);
-    return existing;
-  }
-
+function openDb(name: string): Database.Database {
   const filePath = path.join(PROBLEMS_DIR, `${name}-viz.sqlite`);
   const resolvedPath = path.resolve(filePath);
   const resolvedProblemsDir = path.resolve(PROBLEMS_DIR);
   if (!resolvedPath.startsWith(resolvedProblemsDir)) {
     throw new Error("Invalid file path");
   }
-
-  const db = new Database(filePath, { readonly: true });
-
-  // Evict oldest if at capacity
-  if (dbPool.size >= DB_POOL_MAX) {
-    const oldest = dbPool.keys().next().value!;
-    dbPool.get(oldest)!.close();
-    dbPool.delete(oldest);
-  }
-
-  dbPool.set(name, db);
-  return db;
+  return new Database(filePath, { readonly: true });
 }
 
 // --- Schemas ---
@@ -86,27 +63,39 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 }
 
 export function getStops(name: string): Stop[] {
-  const db = getDb(name);
-  const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, stop_type FROM stops").all();
-  return z.array(StopSchema).parse(rows);
+  const db = openDb(name);
+  try {
+    const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, stop_type FROM stops").all();
+    return z.array(StopSchema).parse(rows);
+  } finally {
+    db.close();
+  }
 }
 
 export function getPaths(name: string, origin: string, destination: string): VizPath[] {
-  const db = getDb(name);
-  const rows = db
-    .prepare(
-      "SELECT path_id, depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
-    )
-    .all(origin, destination);
-  return z.array(VizPathRowSchema).parse(rows);
+  const db = openDb(name);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT path_id, depart_time, arrive_time, is_flex FROM paths WHERE origin_stop_id = ? AND destination_stop_id = ?"
+      )
+      .all(origin, destination);
+    return z.array(VizPathRowSchema).parse(rows);
+  } finally {
+    db.close();
+  }
 }
 
 export function getPathSteps(name: string, pathId: number): PathStep[] {
-  const db = getDb(name);
-  const rows = db
-    .prepare(
-      "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name FROM paths_steps WHERE path_id = ?"
-    )
-    .all(pathId);
-  return z.array(PathStepRowSchema).parse(rows);
+  const db = openDb(name);
+  try {
+    const rows = db
+      .prepare(
+        "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name FROM paths_steps WHERE path_id = ?"
+      )
+      .all(pathId);
+    return z.array(PathStepRowSchema).parse(rows);
+  } finally {
+    db.close();
+  }
 }
