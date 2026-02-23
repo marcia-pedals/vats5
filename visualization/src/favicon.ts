@@ -611,7 +611,7 @@ export function setFavicon(): void {
     svg = customSvgMap[suffix];
   }
 
-  if (!svg) return;
+  if (!svg) svg = emojiSvg("🤔");
 
   // Append a cache-busting fragment so browsers don't serve a stale favicon
   // after switching checkouts or restarting the dev server.
