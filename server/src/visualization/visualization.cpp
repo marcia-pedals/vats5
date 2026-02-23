@@ -185,42 +185,6 @@ void WriteVisualizationSqlite(
       "is_flex, route_name) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
-  // Helper to emit a list of steps (from minimal_paths_sparse, using original
-  // StopIds) into the paths_steps table with deduplication.
-  auto EmitExpandedSteps =
-      [&](int path_id, const std::vector<Step>& steps, int time_offset) {
-        for (size_t si = 0; si < steps.size(); ++si) {
-          const Step& es = steps[si];
-          // Deduplicate: skip if the next step has the same trip.
-          if (si + 1 < steps.size() && es.destination.trip != TripId::NOOP &&
-              es.destination.trip == steps[si + 1].destination.trip) {
-            continue;
-          }
-
-          std::string route_name;
-          if (es.destination.trip != TripId::NOOP) {
-            auto it = mapping.trip_id_to_route_desc.find(es.destination.trip);
-            if (it != mapping.trip_id_to_route_desc.end()) {
-              route_name = it->second;
-            }
-          }
-
-          const std::string& step_origin_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(es.origin.stop).v;
-          const std::string& step_dest_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(es.destination.stop).v;
-
-          step_stmt.bind_int(1, path_id);
-          step_stmt.bind_text(2, step_origin_gtfs.c_str());
-          step_stmt.bind_text(3, step_dest_gtfs.c_str());
-          step_stmt.bind_int(4, es.origin.time.seconds + time_offset);
-          step_stmt.bind_int(5, es.destination.time.seconds + time_offset);
-          step_stmt.bind_int(6, es.is_flex ? 1 : 0);
-          step_stmt.bind_text(7, route_name.c_str());
-          step_stmt.step_and_reset();
-        }
-      };
-
   int next_path_id = 1;
 
   for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
@@ -256,6 +220,9 @@ void WriteVisualizationSqlite(
 
         // Expand each step of the completed path using
         // minimal_paths_sparse to get the original GTFS-level detail.
+        // Collect all expanded steps first so we can deduplicate across
+        // expansion boundaries (consecutive rides on the same trip).
+        std::vector<Step> all_expanded_steps;
         for (const Step& s : p.steps) {
           // Map compacted StopIds to original StopIds.
           const GtfsStopId& s_origin_gtfs =
@@ -312,7 +279,46 @@ void WriteVisualizationSqlite(
                                 ? s.origin.time.seconds -
                                       expanded->merged_step.origin.time.seconds
                                 : 0;
-          EmitExpandedSteps(path_id, expanded->steps, time_offset);
+          for (const Step& es : expanded->steps) {
+            Step shifted = es;
+            shifted.origin.time.seconds += time_offset;
+            shifted.destination.time.seconds += time_offset;
+            all_expanded_steps.push_back(shifted);
+          }
+        }
+
+        // Deduplicate and emit: collapse consecutive steps on the same
+        // trip into one row (the last stop of each ride).
+        for (size_t si = 0; si < all_expanded_steps.size(); ++si) {
+          const Step& es = all_expanded_steps[si];
+          if (si + 1 < all_expanded_steps.size() &&
+              es.destination.trip != TripId::NOOP &&
+              es.destination.trip ==
+                  all_expanded_steps[si + 1].destination.trip) {
+            continue;
+          }
+
+          std::string route_name;
+          if (es.destination.trip != TripId::NOOP) {
+            auto it = mapping.trip_id_to_route_desc.find(es.destination.trip);
+            if (it != mapping.trip_id_to_route_desc.end()) {
+              route_name = it->second;
+            }
+          }
+
+          const std::string& step_origin_gtfs =
+              mapping.stop_id_to_gtfs_stop_id.at(es.origin.stop).v;
+          const std::string& step_dest_gtfs =
+              mapping.stop_id_to_gtfs_stop_id.at(es.destination.stop).v;
+
+          step_stmt.bind_int(1, path_id);
+          step_stmt.bind_text(2, step_origin_gtfs.c_str());
+          step_stmt.bind_text(3, step_dest_gtfs.c_str());
+          step_stmt.bind_int(4, es.origin.time.seconds);
+          step_stmt.bind_int(5, es.destination.time.seconds);
+          step_stmt.bind_int(6, es.is_flex ? 1 : 0);
+          step_stmt.bind_text(7, route_name.c_str());
+          step_stmt.step_and_reset();
         }
       }
     }
