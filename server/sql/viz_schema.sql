@@ -33,3 +33,10 @@ CREATE TABLE paths_steps (
   FOREIGN KEY (origin_stop_id) REFERENCES stops(stop_id),
   FOREIGN KEY (destination_stop_id) REFERENCES stops(stop_id)
 );
+
+CREATE TABLE partial_solutions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_timestamp TEXT NOT NULL,
+  iteration INTEGER NOT NULL,
+  data TEXT NOT NULL
+);

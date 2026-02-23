@@ -1,7 +1,7 @@
 import { skipToken } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGesture } from "@use-gesture/react";
-import { ArrowUpDown, ChevronRight, X } from "lucide-react";
+import { ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
 import type { Stop, VizPath } from "../../server/db";
@@ -287,6 +287,17 @@ function VizPage() {
   } | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
   const [destination, setDestination] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
+  const [selectedIteration, setSelectedIteration] = useState(0);
+
+  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name });
+  const partialQuery = trpc.getPartialSolution.useQuery(
+    selectedRun !== null
+      ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
+      : skipToken
+  );
+  const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
+  const maxIteration = selectedRunData?.max_iteration ?? 0;
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node;
@@ -496,6 +507,121 @@ function VizPage() {
 
   const isSelected = (stopId: string) => selectedStops.has(stopId);
 
+  const stopCoords = useMemo(() => {
+    if (!svgStops) return new Map<string, { cx: number; cy: number }>();
+    const m = new Map<string, { cx: number; cy: number }>();
+    for (const s of svgStops) {
+      m.set(s.stop_id, { cx: s.cx, cy: s.cy });
+    }
+    return m;
+  }, [svgStops]);
+
+  const leafSet = useMemo(() => {
+    if (!partialQuery.data) return new Set<string>();
+    return new Set(partialQuery.data.leaves);
+  }, [partialQuery.data]);
+
+  const visitedStopSet = useMemo(() => {
+    if (!partialQuery.data) return new Set<string>();
+    const s = new Set<string>();
+    for (const step of partialQuery.data.best_path.steps) {
+      s.add(step.origin_stop_id);
+      s.add(step.destination_stop_id);
+    }
+    return s;
+  }, [partialQuery.data]);
+
+  const pathArrows = useMemo(() => {
+    if (!partialQuery.data || !stopCoords.size) return [];
+    const steps = partialQuery.data.best_path.steps;
+    if (!steps.length) return [];
+
+    const headPull = (DOT_R + 5) / transform.scale;
+    const sideShift = (DOT_R - 1) / transform.scale;
+    const perpSpacing = 4 / transform.scale;
+
+    // Right-hand perpendicular in screen coords (Y down): direction (ux,uy) → (-uy, ux).
+    const rightPerp = (ux: number, uy: number) => ({ x: -uy, y: ux });
+
+    // Pre-count departures per origin stop.
+    const departureCount = new Map<string, number>();
+    for (const s of steps) {
+      departureCount.set(s.origin_stop_id, (departureCount.get(s.origin_stop_id) ?? 0) + 1);
+    }
+    const departureSeen = new Map<string, number>();
+
+    const arrows: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    let lastHead: { x: number; y: number } | null = null;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const dest = stopCoords.get(step.destination_stop_id);
+      if (!dest) continue;
+
+      // Determine tail position.
+      let tail: { x: number; y: number };
+      if (lastHead) {
+        tail = lastHead;
+      } else {
+        // First arrow: offset tail from origin center along departure direction.
+        const orig = stopCoords.get(step.origin_stop_id);
+        if (!orig) continue;
+        const dx = dest.cx - orig.cx;
+        const dy = dest.cy - orig.cy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len > 0) {
+          const ux = dx / len, uy = dy / len;
+          const rp = rightPerp(ux, uy);
+          tail = {
+            x: orig.cx + ux * headPull + rp.x * sideShift,
+            y: orig.cy + uy * headPull + rp.y * sideShift,
+          };
+        } else {
+          tail = { x: orig.cx, y: orig.cy };
+        }
+      }
+
+      // Perpendicular offset for co-originating arrows.
+      const origId = step.origin_stop_id;
+      const n = departureCount.get(origId) ?? 1;
+      const k = departureSeen.get(origId) ?? 0;
+      departureSeen.set(origId, k + 1);
+
+      if (n > 1) {
+        const rawDx = dest.cx - tail.x;
+        const rawDy = dest.cy - tail.y;
+        const rawLen = Math.sqrt(rawDx * rawDx + rawDy * rawDy);
+        if (rawLen > 0) {
+          const rp = rightPerp(rawDx / rawLen, rawDy / rawLen);
+          const offset = (k - (n - 1) / 2) * perpSpacing;
+          tail = { x: tail.x + rp.x * offset, y: tail.y + rp.y * offset };
+        }
+      }
+
+      // Head: pull back from destination center and shift to right side.
+      const dx = dest.cx - tail.x;
+      const dy = dest.cy - tail.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+
+      let head: { x: number; y: number };
+      if (len > headPull) {
+        const ux = dx / len, uy = dy / len;
+        const rp = rightPerp(ux, uy);
+        head = {
+          x: dest.cx - ux * headPull + rp.x * sideShift,
+          y: dest.cy - uy * headPull + rp.y * sideShift,
+        };
+      } else {
+        head = { x: dest.cx, y: dest.cy };
+      }
+
+      lastHead = head;
+      arrows.push({ x1: tail.x, y1: tail.y, x2: head.x, y2: head.y });
+    }
+
+    return arrows;
+  }, [partialQuery.data, stopCoords, transform.scale]);
+
   return (
     <div
       ref={containerCallbackRef}
@@ -518,6 +644,57 @@ function VizPage() {
         </button>
         <span className="text-xs font-mono text-tc-text-dim ml-2">{name}</span>
       </div>
+
+      {/* Partial solutions selector */}
+      {runsQuery.data && runsQuery.data.length > 0 && (
+        <div className="absolute top-[52px] left-3 z-10 flex items-center gap-1.5 panel-surface py-1.5 px-2.5">
+          <select
+            value={selectedRun ?? ""}
+            onChange={(e) => {
+              const v = e.target.value || null;
+              setSelectedRun(v);
+              setSelectedIteration(0);
+            }}
+            className="text-xs font-mono bg-tc-raised border border-tc-border rounded px-1.5 py-1 text-tc-text cursor-pointer"
+          >
+            <option value="">— no overlay —</option>
+            {runsQuery.data.map((run) => (
+              <option key={run.run_timestamp} value={run.run_timestamp}>
+                {run.run_timestamp}
+              </option>
+            ))}
+          </select>
+          {selectedRun !== null && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedIteration((i) => Math.max(0, i - 1))}
+                disabled={selectedIteration === 0}
+                className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              <span className="text-xs font-mono text-tc-text-muted min-w-[48px] text-center">
+                iter {selectedIteration}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIteration((i) => Math.min(maxIteration, i + 1))}
+                disabled={selectedIteration === maxIteration}
+                className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+              >
+                <ChevronRight size={12} />
+              </button>
+              {partialQuery.data && (
+                <span className="text-[10px] font-mono text-tc-text-dim">
+                  {partialQuery.data.leaves.length} leaves &middot;{" "}
+                  {formatDuration(partialQuery.data.best_path.duration)}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Map area — gesture target is scoped here so the panel is unaffected */}
       <div ref={mapRef} className="absolute inset-0 touch-none cursor-grab">
@@ -548,6 +725,19 @@ function VizPage() {
             </span>
 
             <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
+              <defs>
+                <marker
+                  id="arrowhead"
+                  markerWidth="6"
+                  markerHeight="4"
+                  refX="5"
+                  refY="2"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <polygon points="0 0, 6 2, 0 4" fill="#22c55e" />
+                </marker>
+              </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
                 {svgStops.map((stop) => {
                   const selected = isSelected(stop.stop_id);
@@ -587,7 +777,7 @@ function VizPage() {
                           cy={stop.cy}
                           r={(DOT_R + 4) / transform.scale}
                           fill="none"
-                          stroke="#0094b3"
+                          stroke={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#b34a4a" : "#0094b3"}
                           strokeWidth={2 / transform.scale}
                           opacity={0.6}
                         />
@@ -596,8 +786,8 @@ function VizPage() {
                         cx={stop.cx}
                         cy={stop.cy}
                         r={DOT_R / transform.scale}
-                        fill={selected ? "#00c4e8" : "#0094b3"}
-                        stroke={selected ? "#0094b3" : "#006880"}
+                        fill={selected ? "#00c4e8" : visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#b34a4a" : "#0094b3"}
+                        stroke={selected ? "#0094b3" : visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id) ? "#803535" : "#006880"}
                         strokeWidth={1 / transform.scale}
                         opacity={0.85}
                       />
@@ -622,6 +812,36 @@ function VizPage() {
                       </text>
                     );
                   })}
+                {/* Partial solution: path arrows */}
+                {pathArrows.map((a, i) => (
+                  <line
+                    key={`arrow-${i}`}
+                    x1={a.x1}
+                    y1={a.y1}
+                    x2={a.x2}
+                    y2={a.y2}
+                    stroke="#22c55e"
+                    strokeWidth={2 / transform.scale}
+                    markerEnd="url(#arrowhead)"
+                    opacity={0.7}
+                  />
+                ))}
+                {/* Partial solution: leaf highlights */}
+                {svgStops.map((stop) => {
+                  if (!leafSet.has(stop.stop_id)) return null;
+                  return (
+                    <circle
+                      key={`leaf-${stop.stop_id}`}
+                      cx={stop.cx}
+                      cy={stop.cy}
+                      r={(DOT_R + 4) / transform.scale}
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth={2 / transform.scale}
+                      opacity={0.8}
+                    />
+                  );
+                })}
               </g>
             </svg>
           </>

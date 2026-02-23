@@ -50,6 +50,32 @@ const PathStepRowSchema = z.object({
 });
 export type PathStep = z.infer<typeof PathStepRowSchema>;
 
+const PartialSolutionRunSchema = z.object({
+  run_timestamp: z.string(),
+  max_iteration: z.number(),
+});
+export type PartialSolutionRun = z.infer<typeof PartialSolutionRunSchema>;
+
+const PartialSolutionStepSchema = z.object({
+  origin_stop_id: z.string(),
+  destination_stop_id: z.string(),
+  depart_time: z.number(),
+  arrive_time: z.number(),
+  is_flex: z.number(),
+});
+
+const PartialSolutionPathSchema = z.object({
+  steps: z.array(PartialSolutionStepSchema),
+  duration: z.number(),
+});
+
+const PartialSolutionDataSchema = z.object({
+  leaves: z.array(z.string()),
+  paths: z.array(PartialSolutionPathSchema),
+  best_path: PartialSolutionPathSchema,
+});
+export type PartialSolutionData = z.infer<typeof PartialSolutionDataSchema>;
+
 // --- Queries ---
 
 export async function listVisualizations(): Promise<{ filename: string; name: string }[]> {
@@ -94,4 +120,31 @@ export function getPathSteps(name: string, pathId: number): PathStep[] {
       .all(pathId);
     return z.array(PathStepRowSchema).parse(rows);
   });
+}
+
+export function getPartialSolutionRuns(name: string): PartialSolutionRun[] {
+  const db = getDb(name);
+  const tableExists = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='partial_solutions'")
+    .get();
+  if (!tableExists) return [];
+  const rows = db
+    .prepare(
+      "SELECT run_timestamp, MAX(iteration) as max_iteration FROM partial_solutions GROUP BY run_timestamp ORDER BY run_timestamp DESC"
+    )
+    .all();
+  return z.array(PartialSolutionRunSchema).parse(rows);
+}
+
+export function getPartialSolution(
+  name: string,
+  runTimestamp: string,
+  iteration: number
+): PartialSolutionData | null {
+  const db = getDb(name);
+  const row = db
+    .prepare("SELECT data FROM partial_solutions WHERE run_timestamp = ? AND iteration = ?")
+    .get(runTimestamp, iteration) as { data: string } | undefined;
+  if (!row) return null;
+  return PartialSolutionDataSchema.parse(JSON.parse(row.data));
 }
