@@ -2,21 +2,22 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { CHECKOUT_NAME, TRPC_PORT, VITE_PORT } from "./ports";
+
+const VITE_PORT = Number(process.env.VITE_PORT);
+const TRPC_PORT = Number(process.env.TRPC_PORT);
+
+if (!VITE_PORT || !TRPC_PORT) {
+  console.error(
+    "VITE_PORT / TRPC_PORT not set — use bin/viz to start the server"
+  );
+  process.exit(1);
+}
 
 export default defineConfig({
   plugins: [
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     tailwindcss(),
     react(),
-    {
-      name: "log-checkout-ports",
-      configResolved() {
-        console.log(
-          `\n  checkout: ${CHECKOUT_NAME}\n  vite:    http://localhost:${VITE_PORT}\n  trpc:    http://localhost:${TRPC_PORT}\n`
-        );
-      },
-    },
   ],
   server: {
     host: "0.0.0.0",
