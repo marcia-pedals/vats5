@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "algorithm/union_find.h"
 #include "solver/branch_and_bound.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -55,27 +56,6 @@ struct PartialSolutionData {
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PartialSolutionData, leaves, paths, best_path)
 
-struct UnionFind {
-  std::vector<int> parent, rank;
-
-  UnionFind(int n) : parent(n), rank(n, 0) {
-    std::iota(parent.begin(), parent.end(), 0);
-  }
-
-  int Find(int x) {
-    if (parent[x] != x) parent[x] = Find(parent[x]);
-    return parent[x];
-  }
-
-  bool Unite(int x, int y) {
-    int px = Find(x), py = Find(y);
-    if (px == py) return false;
-    if (rank[px] < rank[py]) std::swap(px, py);
-    parent[py] = px;
-    if (rank[px] == rank[py]) rank[px]++;
-    return true;
-  }
-};
 
 // Builds an MST over the required stops (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
