@@ -1,0 +1,32 @@
+steps:
+  - label: ":hammer: Build and Test"
+    secrets:
+      - CPP_SUITE_TOKEN
+    command: |
+      set -euo pipefail
+
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      nix develop --impure --command bash -c '
+        cd server
+        mkdir -p build-debug
+        cd build-debug
+        cmake -DCMAKE_BUILD_TYPE=Debug -G Ninja ..
+        ninja
+      '
+
+      nix develop --impure --command bash -c '
+        cd server/build-debug
+        ctest --output-on-failure -j$(nproc) --output-junit test-results.xml
+      '
+    artifact_paths:
+      - "server/build-debug/test-results.xml"
+    plugins:
+      - test-collector#v1.10.2:
+          files: "server/build-debug/test-results.xml"
+          format: "junit"
+          api-token-env-name: "CPP_SUITE_TOKEN"
+    timeout_in_minutes: 30
