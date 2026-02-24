@@ -332,28 +332,26 @@ int main(int argc, char* argv[]) {
   for (int iteration = 0; ; iteration++) {
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
               << required_subset.size() << " leaves ===\n";
-    auto best = PartialSolveBranchAndBound(required_subset, state);
+    auto solution = PartialSolveBranchAndBound(required_subset, state);
 
-    if (best.paths.empty()) {
-      std::cout << "No feasible path found.\n";
+    // Choose the path that visits the most required stops.
+    auto best_path_it = std::ranges::max_element(solution.paths, {}, [&](const Path& path) {
+      int num_required_visited = 0;
+      path.VisitIntermediateStops([&](StopId stop) {
+        if (state.required_stops.contains(stop)) {
+          num_required_visited += 1;
+        }
+      });
+      return num_required_visited;
+    });
+
+    if (best_path_it == solution.paths.end()) {
+      std::cout << "No feasible paths found.\n";
       return 1;
     }
 
-    // Pick the path with the lowest total distance to unvisited required stops.
-    const Path* best_path = &best.paths[0];
-    auto distances = RequiredStopDistances(*best_path, state);
-    int total_dist = 0;
-    for (const auto& sd : distances) total_dist += sd.distance;
-    for (size_t i = 1; i < best.paths.size(); i++) {
-      auto d = RequiredStopDistances(best.paths[i], state);
-      int td = 0;
-      for (const auto& sd : d) td += sd.distance;
-      if (td < total_dist) {
-        best_path = &best.paths[i];
-        distances = std::move(d);
-        total_dist = td;
-      }
-    }
+    const Path& best_path = *best_path_it;
+    const std::vector<StopDistance> distances = RequiredStopDistances(best_path, state);
 
     // Write partial solution to viz SQLite.
     {
@@ -361,10 +359,10 @@ int main(int argc, char* argv[]) {
       for (StopId leaf : required_subset) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
-      for (const Path& p : best.paths) {
+      for (const Path& p : solution.paths) {
         data.paths.push_back(ToVizPath(p));
       }
-      data.best_path = ToVizPath(*best_path);
+      data.best_path = ToVizPath(best_path);
 
       viz::SqliteDb db(viz_sqlite_path);
       viz::SqliteStmt stmt(db,
@@ -377,10 +375,10 @@ int main(int argc, char* argv[]) {
       stmt.step_and_reset();
     }
 
-    std::cout << "\nBest duration: " << TimeSinceServiceStart{best_path->DurationSeconds()}.ToString() << "\n";
+    std::cout << "\nBest duration: " << TimeSinceServiceStart{best_path.DurationSeconds()}.ToString() << "\n";
 
-    std::cout << "Path (" << best_path->steps.size() << " steps):\n";
-    for (const Step& step : best_path->steps) {
+    std::cout << "Path (" << best_path.steps.size() << " steps):\n";
+    for (const Step& step : best_path.steps) {
       std::cout << "  " << state.StopName(step.origin.stop) << " ("
                 << step.origin.time.ToString() << ") -> "
                 << state.StopName(step.destination.stop) << " ("
