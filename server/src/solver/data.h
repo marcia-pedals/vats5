@@ -214,6 +214,16 @@ struct Path {
       visitor(steps[i].destination.stop);
     }
   }
+
+  template <typename Visitor>
+  void VisitAllStops(Visitor visitor) const {
+    if (steps.size() > 0) {
+      visitor(steps[0].origin.stop);
+    }
+    for (size_t i = 0; i < steps.size(); ++i) {
+      visitor(steps[i].destination.stop);
+    }
+  }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)
 
