@@ -112,20 +112,21 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   return leaves;
 }
 
+// A single path along with the tour of required stops that generated it.
+struct PartialSolutionPath {
+  // A path that achieves the minimum duration in the partial problem.
+  // Includes START and END. All original-problem stops that this path passes
+  // through are included as intermediate stops.
+  Path path;
+
+  // The tour of the required subset that generates `path`. Includes START and END.
+  std::vector<StopId> subset_tour;
+};
+
 // A "partial problem" is a problem where the paths are required to visit a
 // certain subset of the required stops. This is a solution to such a problem.
 struct PartialSolution {
-  // Paths that achieve the minimum duraiton in the partial problem. Include START and END.
-  //
-  // All original-problem stops that these paths pass through are included as
-  // intermediate stops.
-  //
-  // TODO: Specify more precisely which paths. Is it all of them? Or all of them
-  // satisfying some property?
-  std::vector<Path> paths;
-
-  // The tours of the required subset that generate `paths`. Include START and END.
-  std::vector<std::vector<StopId>> subset_tours;
+  std::vector<PartialSolutionPath> paths;
 };
 
 PartialSolution PartialSolveBranchAndBound(
@@ -149,7 +150,7 @@ PartialSolution PartialSolveBranchAndBound(
   }
 
   // Find the original problem paths corresponding to the partial problem paths.
-  std::vector<Path> original_problem_paths;
+  std::vector<PartialSolutionPath> paths;
   std::set<std::vector<StopId>> seen_tours;
   for (const Path& bb_path : bb_result.best_paths) {
     // Reconstruct the tour of partial problem stops.
@@ -190,18 +191,17 @@ PartialSolution PartialSolveBranchAndBound(
       assert(path.merged_step.origin.stop == original_problem.boundary.start);
       assert(path.merged_step.destination.stop == original_problem.boundary.end);
       assert(path.DurationSeconds() == bb_path.DurationSeconds());
+      paths.push_back(PartialSolutionPath{
+        .path = path,
+        .subset_tour = tour,
+      });
     }
-
-    original_problem_paths.append_range(more_original_paths);
   }
 
-  // TODO: Think about wither `original_problem_paths` could contain duplicate
+  // TODO: Think about wither `paths` could contain duplicate
   // paths or other non-minimality.
 
-  return PartialSolution{
-    .paths=std::move(original_problem_paths),
-    .subset_tours=std::vector<std::vector<StopId>>(seen_tours.begin(), seen_tours.end()),
-  };
+  return PartialSolution{.paths = std::move(paths)};
 }
 
 void NaivelyExtendPartialSolution(
@@ -384,9 +384,9 @@ int main(int argc, char* argv[]) {
     auto solution = PartialSolveBranchAndBound(required_subset, state);
 
     // Choose the path that visits the most required stops.
-    auto best_path_it = std::ranges::max_element(solution.paths, {}, [&](const Path& path) {
+    auto best_solution_path_it = std::ranges::max_element(solution.paths, {}, [&](const PartialSolutionPath& sol_path) {
       int num_required_visited = 0;
-      path.VisitIntermediateStops([&](StopId stop) {
+      sol_path.path.VisitIntermediateStops([&](StopId stop) {
         if (state.required_stops.contains(stop)) {
           num_required_visited += 1;
         }
@@ -394,12 +394,12 @@ int main(int argc, char* argv[]) {
       return num_required_visited;
     });
 
-    if (best_path_it == solution.paths.end()) {
+    if (best_solution_path_it == solution.paths.end()) {
       std::cout << "No feasible paths found.\n";
       return 1;
     }
 
-    const Path& best_path = *best_path_it;
+    const Path& best_path = best_solution_path_it->path;
     const std::vector<StopDistance> distances = RequiredStopDistances(best_path, state);
 
     // Write partial solution to viz SQLite.
@@ -408,8 +408,8 @@ int main(int argc, char* argv[]) {
       for (StopId leaf : required_subset) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
-      for (const Path& p : solution.paths) {
-        data.paths.push_back(ToVizPath(p));
+      for (const PartialSolutionPath& sol_path : solution.paths) {
+        data.paths.push_back(ToVizPath(sol_path.path));
       }
       data.best_path = ToVizPath(best_path);
 
