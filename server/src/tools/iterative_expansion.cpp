@@ -127,17 +127,17 @@ struct PartialSolution {
 
 PartialSolution PartialSolveBranchAndBound(
   std::unordered_set<StopId> required_subset,
-  const ProblemState& state
+  const ProblemState& original_problem
 ) {
-  required_subset.insert(state.boundary.start);
-  required_subset.insert(state.boundary.end);
+  required_subset.insert(original_problem.boundary.start);
+  required_subset.insert(original_problem.boundary.end);
   ProblemState partial_problem = MakeProblemState(
-    MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, required_subset).AllMergedSteps()),
-    state.boundary,
+    MakeAdjacencyList(ReduceToMinimalSystemPaths(original_problem.minimal, required_subset).AllMergedSteps()),
+    original_problem.boundary,
     required_subset,
-    state.stop_infos,
-    state.step_partition_names,
-    state.original_edges
+    original_problem.stop_infos,
+    original_problem.step_partition_names,
+    original_problem.original_edges
   );
 
   auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
@@ -145,14 +145,11 @@ PartialSolution PartialSolveBranchAndBound(
     return PartialSolution{};
   }
 
-  // Extract unique stop sequences from BB paths, expand combined stops back
-  // to original stop IDs, then expand through the original state's completed
-  // graph to recover all intermediate stops.
+  // Find the original problem paths corresponding to the partial problem paths.
+  std::vector<Path> original_problem_paths;
   std::set<std::vector<StopId>> seen_sequences;
-  int best_duration = INT_MAX;
-  std::vector<Path> best_paths;
-
   for (const Path& bb_path : bb_result.best_paths) {
+    // Reconstruct the sequence of partial problem stops.
     std::vector<StopId> sequence;
     auto AppendStop = [&](StopId bb_result_stop) {
       ExpandStop(bb_result_stop, bb_result.original_edges, sequence);
@@ -161,27 +158,39 @@ PartialSolution PartialSolveBranchAndBound(
     bb_path.VisitIntermediateStops(AppendStop);
     AppendStop(bb_path.merged_step.destination.stop);
 
+    // If we have already seen this sequence then we don't need to process it
+    // again.
     if (!seen_sequences.insert(sequence).second) {
       continue;
     }
 
-    std::vector<Path> expanded =
-        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
-    for (const Path& p : expanded) {
-      if (p.DurationSeconds() < best_duration) {
-        best_duration = p.DurationSeconds();
-        best_paths.clear();
-        best_paths.push_back(p);
-      } else if (p.DurationSeconds() == best_duration) {
-        best_paths.push_back(p);
-      }
+    // Reconstruct the paths through all original problem stops.
+    std::vector<Path> more_original_paths =
+        ComputeMinimalFeasiblePathsAlong(sequence, original_problem.completed);
+
+    // Some of these paths might have duration longer than the bb_path. Disregard these.
+    std::erase_if(more_original_paths, [&](const Path& path) {
+      return path.DurationSeconds() > bb_path.DurationSeconds();
+    });
+
+    // There must be paths left with duration <= the bb_result path because all
+    // paths in the partial problem are also paths in the full problem.
+    assert(more_original_paths.size() > 0);
+
+    // All original problem paths much have duration == the bb_result path
+    // because otherwise the bb_result path isn't the best path in the partial
+    // problem.
+    for (const Path& path : more_original_paths) {
+      assert(path.DurationSeconds() == bb_path.DurationSeconds());
     }
+
+    original_problem_paths.append_range(more_original_paths);
   }
 
-  if (best_paths.empty()) {
-    return PartialSolution{};
-  }
-  return PartialSolution{std::move(best_paths)};
+  // TODO: Think about wither `original_problem_paths` could contain duplicate
+  // paths or other non-minimality.
+
+  return PartialSolution{std::move(original_problem_paths)};
 }
 
 // Tries all permutations of `required_subset` as intermediate stops between start and
