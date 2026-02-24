@@ -158,17 +158,15 @@ ProblemState<> MakeProblemState(
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
   );
-  ProblemState<> result;
-  static_cast<ProblemStateBase&>(result) = ProblemStateBase{
-      std::move(minimal),
-      std::move(completed),
-      boundary,
-      std::move(stops),
-      std::move(stop_infos),
-      std::move(step_partition_names),
-      std::move(original_edges),
-  };
-  return result;
+  return ProblemState<>(ProblemStateBase{
+      .minimal = std::move(minimal),
+      .completed = std::move(completed),
+      .boundary = boundary,
+      .required_stops = std::move(stops),
+      .stop_infos = std::move(stop_infos),
+      .step_partition_names = std::move(step_partition_names),
+      .original_edges = std::move(original_edges),
+  });
 }
 
 void AddBoundary(

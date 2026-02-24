@@ -14,6 +14,7 @@
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/witness.h"
 
 namespace vats5 {
 
@@ -60,6 +61,8 @@ namespace vats5 {
 
 // Non-templated base class holding all ProblemState<> fields and methods.
 struct ProblemStateBase {
+  int space_id = -1;
+
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least
   // one tour impossible.
@@ -120,6 +123,50 @@ struct ProblemStateBase {
 template <typename Tag = Unwitnessed>
 struct ProblemState : ProblemStateBase {
   using ProblemStateBase::ProblemStateBase;
+  ProblemState() = default;
+  explicit ProblemState(ProblemStateBase&& base)
+      : ProblemStateBase(std::move(base)) {}
+
+  // Gated accessors: only available on witnessed (non-Unwitnessed) instances.
+
+  const StepsAdjacencyList<Tag>& Minimal() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return WitnessAs<Tag>(minimal);
+  }
+
+  const StepPathsAdjacencyList<Tag>& Completed() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return WitnessAs<Tag>(completed);
+  }
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  bool IsRequired(StopId<S> stop) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return required_stops.contains(StopId<>{stop.v});
+  }
+
+  using ProblemStateBase::StopName;
+  template <typename S> requires CompatibleWith<S, Tag>
+  const std::string& StopName(StopId<S> stop) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return ProblemStateBase::StopName(StopId<>{stop.v});
+  }
+
+  StopId<Tag> BoundaryStart() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StopId<Tag>{boundary.start.v};
+  }
+
+  StopId<Tag> BoundaryEnd() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StopId<Tag>{boundary.end.v};
+  }
 };
 
 // Recursively expands a combined stop into its original constituent stops.
