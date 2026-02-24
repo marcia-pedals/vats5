@@ -8,7 +8,7 @@
 namespace vats5 {
 
 struct ReductionOutput {
-  StepPathsAdjacencyList minimal;
+  StepPathsAdjacencyList<> minimal;
   DataGtfsMapping mapping;
 };
 

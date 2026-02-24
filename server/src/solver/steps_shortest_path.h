@@ -9,13 +9,13 @@ namespace vats5 {
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
-    const std::vector<Step>& search_result, StopId dest
+    const std::vector<Step>& search_result, StopId<> dest
 );
 
 struct StopIdVectorHash {
-  size_t operator()(const std::vector<StopId>& v) const {
+  size_t operator()(const std::vector<StopId<>>& v) const {
     size_t seed = v.size();
-    for (const StopId& s : v) {
+    for (const StopId<>& s : v) {
       seed ^= std::hash<int>{}(s.v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
     }
     return seed;
@@ -26,7 +26,7 @@ struct StopIdVectorHash {
 struct HeuristicCache {
   const RelaxedDistances* relaxed_distances = nullptr;
 
-  std::unordered_map<std::vector<StopId>, std::vector<int>, StopIdVectorHash>
+  std::unordered_map<std::vector<StopId<>>, std::vector<int>, StopIdVectorHash>
       cache;
 
   HeuristicCache() = default;
@@ -35,7 +35,7 @@ struct HeuristicCache {
   // Get or compute heuristic distances for a destination set.
   // Returns pointer to cached vector, or nullptr if no heuristic.
   const std::vector<int>* GetOrCompute(
-      const std::unordered_set<StopId>& destinations
+      const std::unordered_set<StopId<>>& destinations
   );
 };
 
@@ -50,7 +50,7 @@ struct HeuristicCache {
 // not rely on this to find the latest possible departure time (see the
 // SuboptimalDepartureTimeExposure test).
 //
-// Returns a vector indexed by StopId.v. Unvisited stops have
+// Returns a vector indexed by StopId<>.v. Unvisited stops have
 // destination_time.seconds == numeric_limits<int>::max().
 //
 // If `smallest_next_departure_gap_from_flex` is specified, it'll be set to the
@@ -64,10 +64,10 @@ struct HeuristicCache {
 //
 // If `heuristic_cache` is specified, enables A* optimization.
 std::vector<Step> FindShortestPathsAtTime(
-    const StepsAdjacencyList& adjacency_list,
+    const StepsAdjacencyList<>& adjacency_list,
     TimeSinceServiceStart time,
-    StopId origin,
-    const std::unordered_set<StopId>& destinations,
+    StopId<> origin,
+    const std::unordered_set<StopId<>>& destinations,
     int* smallest_next_departure_gap_from_flex = nullptr,
     HeuristicCache* heuristic_cache = nullptr
 );
@@ -80,10 +80,10 @@ std::vector<Step> FindShortestPathsAtTime(
 // (a) Any path in `adjacency_list` from `origin` to a destination can be
 // matched or beat by a path in the return. (b) If you remove any path from the
 // return value, (a) no longer holds.
-std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
-    const StepsAdjacencyList& adjacency_list,
-    StopId origin,
-    const std::unordered_set<StopId>& destinations,
+std::unordered_map<StopId<>, std::vector<Path>> FindMinimalPathSet(
+    const StepsAdjacencyList<>& adjacency_list,
+    StopId<> origin,
+    const std::unordered_set<StopId<>>& destinations,
     TimeSinceServiceStart origin_time_lb = TimeSinceServiceStart{0},
     TimeSinceServiceStart origin_time_ub = TimeSinceServiceStart{36 * 3600},
     const RelaxedDistances* relaxed_distances = nullptr,
@@ -102,17 +102,17 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.
-StepPathsAdjacencyList ReduceToMinimalSystemPaths(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+StepPathsAdjacencyList<> ReduceToMinimalSystemPaths(
+    const StepsAdjacencyList<>& adjacency_list,
+    const std::unordered_set<StopId<>>& system_stops
 );
 
 // Return a "completed" graph where the "steps" from a to b are a minimal cover
 // of all the paths from a to b on `adjacency_list`. ("Steps" used in the same
 // sense as in (b) above).
-StepPathsAdjacencyList CompleteShortestPathsGraph(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+StepPathsAdjacencyList<> CompleteShortestPathsGraph(
+    const StepsAdjacencyList<>& adjacency_list,
+    const std::unordered_set<StopId<>>& system_stops
 );
 
 }  // namespace vats5

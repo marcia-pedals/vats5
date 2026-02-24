@@ -7,8 +7,8 @@
 namespace vats5 {
 
 struct SolutionSpaceElement {
-  std::vector<StopId> generating_permutation;
-  std::vector<StopId> actual_path;
+  std::vector<StopId<>> generating_permutation;
+  std::vector<StopId<>> actual_path;
   Step merged_step;
 };
 
@@ -21,7 +21,7 @@ struct SolutionSpaceElement {
 // flex step plus an early scheduled step into a scheduled step that starts
 // before 00:00:00).
 std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
-    const ProblemState& state
+    const ProblemState<>& state
 );
 
 // Find the optimal tour by brute force enumerating the solution space.
@@ -29,6 +29,6 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
 // Only counts tours that start at or after 00:00:00. See above.
 //
 // Returns std::numeric_limits<int>::max() for infeasible problems.
-int BruteForceSolveOptimalDuration(const ProblemState& state);
+int BruteForceSolveOptimalDuration(const ProblemState<>& state);
 
 }  // namespace vats5

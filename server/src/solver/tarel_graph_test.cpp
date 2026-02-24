@@ -25,11 +25,11 @@ namespace {
 // (empty if validation passes).
 std::vector<std::string> ValidateMergedEdgePartitions(
     const std::vector<TarelEdge>& merged,
-    const std::unordered_set<StopId>& expected_stops
+    const std::unordered_set<StopId<>>& expected_stops
 ) {
   std::vector<std::string> errors;
 
-  std::unordered_map<StopId, std::unordered_set<int>> partitions_by_stop;
+  std::unordered_map<StopId<>, std::unordered_set<int>> partitions_by_stop;
   for (const TarelEdge& e : merged) {
     partitions_by_stop[e.origin.stop].insert(e.origin.partition.v);
     partitions_by_stop[e.destination.stop].insert(e.destination.partition.v);
@@ -55,7 +55,7 @@ std::vector<std::string> ValidateMergedEdgePartitions(
   }
 
   // All expected stops should be present.
-  for (StopId stop : expected_stops) {
+  for (StopId<> stop : expected_stops) {
     if (!partitions_by_stop.contains(stop)) {
       errors.push_back(
           "Expected stop " + std::to_string(stop.v) +
@@ -68,21 +68,21 @@ std::vector<std::string> ValidateMergedEdgePartitions(
 }
 
 TEST(ExpandStopTest, PrimitiveStopReturnsSelf) {
-  std::unordered_map<StopId, PlainEdge> edges;
-  StopId a{1};
+  std::unordered_map<StopId<>, PlainEdge> edges;
+  StopId<> a{1};
 
-  std::vector<StopId> out;
+  std::vector<StopId<>> out;
   ExpandStop(a, edges, out);
   ASSERT_EQ(out.size(), 1);
   EXPECT_EQ(out[0], a);
 }
 
 TEST(ExpandStopTest, SingleLevelExpansion) {
-  StopId a{1}, b{2}, combined{3};
-  std::unordered_map<StopId, PlainEdge> edges;
+  StopId<> a{1}, b{2}, combined{3};
+  std::unordered_map<StopId<>, PlainEdge> edges;
   edges[combined] = PlainEdge{a, b};
 
-  std::vector<StopId> out;
+  std::vector<StopId<>> out;
   ExpandStop(combined, edges, out);
   ASSERT_EQ(out.size(), 2);
   EXPECT_EQ(out[0], a);
@@ -90,13 +90,13 @@ TEST(ExpandStopTest, SingleLevelExpansion) {
 }
 
 TEST(ExpandStopTest, RecursiveExpansion) {
-  StopId a{1}, b{2}, c{3};
-  StopId ab{10}, abc{20};
-  std::unordered_map<StopId, PlainEdge> edges;
+  StopId<> a{1}, b{2}, c{3};
+  StopId<> ab{10}, abc{20};
+  std::unordered_map<StopId<>, PlainEdge> edges;
   edges[ab] = PlainEdge{a, b};
   edges[abc] = PlainEdge{ab, c};
 
-  std::vector<StopId> out;
+  std::vector<StopId<>> out;
   ExpandStop(abc, edges, out);
   ASSERT_EQ(out.size(), 3);
   EXPECT_EQ(out[0], a);
@@ -105,11 +105,11 @@ TEST(ExpandStopTest, RecursiveExpansion) {
 }
 
 TEST(ExpandStopTest, AccumulatesIntoExistingVector) {
-  StopId a{1}, b{2}, combined{3}, d{4};
-  std::unordered_map<StopId, PlainEdge> edges;
+  StopId<> a{1}, b{2}, combined{3}, d{4};
+  std::unordered_map<StopId<>, PlainEdge> edges;
   edges[combined] = PlainEdge{a, b};
 
-  std::vector<StopId> out;
+  std::vector<StopId<>> out;
   out.push_back(d);
   ExpandStop(combined, edges, out);
   ASSERT_EQ(out.size(), 3);
@@ -122,21 +122,21 @@ TEST(ExpandStopTest, AccumulatesIntoExistingVector) {
 // the relaxation should have no solution.
 TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   std::vector<Step> steps;
-  std::unordered_set<StopId> stops;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  std::unordered_set<StopId<>> stops;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos;
 
-  stops.insert(StopId{0});
-  stops.insert(StopId{1});
-  stop_infos[StopId{0}] = ProblemStateStopInfo{GtfsStopId{""}, "a"};
-  stop_infos[StopId{1}] = ProblemStateStopInfo{GtfsStopId{""}, "b"};
+  stops.insert(StopId<>{0});
+  stops.insert(StopId<>{1});
+  stop_infos[StopId<>{0}] = ProblemStateStopInfo{GtfsStopId{""}, "a"};
+  stop_infos[StopId<>{1}] = ProblemStateStopInfo{GtfsStopId{""}, "b"};
 
   ProblemBoundary boundary{
-      .start = StopId{2},
-      .end = StopId{3},
+      .start = StopId<>{2},
+      .end = StopId<>{3},
   };
   AddBoundary(steps, stops, stop_infos, boundary);
 
-  ProblemState state = MakeProblemState(
+  ProblemState<> state = MakeProblemState(
       MakeAdjacencyList(steps), boundary, stops, stop_infos, {}, {}
   );
 
@@ -148,15 +148,15 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
 TEST(TarelGraphTest, TarelEdges_BART) {
   const auto test_data =
       GetCachedFilteredTestData({"../data/raw_RG_202506", "20250718", {"BA:"}});
-  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+  std::unordered_set<StopId<>> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
   auto [state, _minimal_paths_sparse] =
       InitializeProblemState(test_data.steps_from_gtfs, bart_stops);
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
 
-  StopId warm_springs = state.StopIdFromName("Warm Springs South Fremont BART");
-  StopId berryessa = state.StopIdFromName("Berryessa / North San Jose");
+  StopId<> warm_springs = state.StopIdFromName("Warm Springs South Fremont BART");
+  StopId<> berryessa = state.StopIdFromName("Berryessa / North San Jose");
 
   struct ExpectedEdge {
     std::string arrival;
@@ -210,7 +210,7 @@ TEST(TarelGraphTest, TarelEdges_BART) {
 
 RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state = *GenProblemState(
+  ProblemState<> state = *GenProblemState(
       std::nullopt,
       rc::gen::construct<StepPartitionId>(
           rc::gen::inRange(0, num_partitions - 1)
@@ -234,7 +234,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundRandomPartition, ()) {
 // If there are no flex steps and if each step is in a different partition, then
 // the lower bound should reach the optimal value.
 RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
-  ProblemState state = *GenProblemState(
+  ProblemState<> state = *GenProblemState(
       rc::gen::just(CycleIsFlex::kNo), rc::gen::just(StepPartitionId::NONE)
   );
 
@@ -266,15 +266,15 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
 }
 
 // Serialization round-trip: serialize to JSON and deserialize back should
-// produce an equivalent ProblemState.
+// produce an equivalent ProblemState<>.
 RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
-  ProblemState original = *GenProblemState();
+  ProblemState<> original = *GenProblemState();
 
   // Serialize to JSON
   nlohmann::json j = original;
 
   // Deserialize back
-  ProblemState deserialized = j.get<ProblemState>();
+  ProblemState<> deserialized = j.get<ProblemState<>>();
 
   // Check that the deserialized state matches the original
   RC_ASSERT(original.boundary.start == deserialized.boundary.start);
@@ -382,10 +382,10 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
 TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
   // Create edges where state B only appears as a destination (never as an
   // origin). A -> B should still produce valid output after merging.
-  TarelState stateA0{StopId{0}, StepPartitionId{0}};
-  TarelState stateA1{StopId{0}, StepPartitionId{1}};
-  TarelState stateB0{StopId{1}, StepPartitionId{0}};  // destination-only
-  TarelState stateB1{StopId{1}, StepPartitionId{1}};  // destination-only
+  TarelState stateA0{StopId<>{0}, StepPartitionId{0}};
+  TarelState stateA1{StopId<>{0}, StepPartitionId{1}};
+  TarelState stateB0{StopId<>{1}, StepPartitionId{0}};  // destination-only
+  TarelState stateB1{StopId<>{1}, StepPartitionId{1}};  // destination-only
 
   std::vector<TarelEdge> edges = {
       {.origin = stateA0,
@@ -405,7 +405,7 @@ TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, {StopId{0}, StopId{1}});
+      ValidateMergedEdgePartitions(merged, {StopId<>{0}, StopId<>{1}});
   EXPECT_TRUE(errors.empty())
       << "Validation errors: " << (errors.empty() ? "" : errors[0]);
 }
@@ -416,7 +416,7 @@ RC_GTEST_PROP(
     TarelGraphTest, MergeEquivalentTarelStates_AllDestinationsValid, ()
 ) {
   int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state = *GenProblemState(
+  ProblemState<> state = *GenProblemState(
       std::nullopt,
       rc::gen::construct<StepPartitionId>(
           rc::gen::inRange(0, num_partitions - 1)

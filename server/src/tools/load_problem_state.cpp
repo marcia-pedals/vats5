@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
   }
 
   nlohmann::json j = nlohmann::json::parse(in);
-  ProblemState state = j.get<ProblemState>();
+  ProblemState<> state = j.get<ProblemState<>>();
 
   std::cout << "Loaded successfully.\n\n";
   std::cout << "Number of stops: " << state.minimal.NumStops() << "\n";

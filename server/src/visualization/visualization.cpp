@@ -27,7 +27,7 @@ void WriteVisualizationSqlite(
     const DataGtfsMapping& mapping,
     const std::string& path
 ) {
-  const ProblemState& state = result.problem_state;
+  const ProblemState<>& state = result.problem_state;
   // Delete existing db file and associated WAL/shm files if present
   std::remove(path.c_str());
   std::remove((path + "-wal").c_str());
@@ -58,7 +58,7 @@ void WriteVisualizationSqlite(
   }
 
   // Collect all stops referenced by any step in minimal_paths_sparse.
-  std::unordered_set<StopId> all_sparse_stops;
+  std::unordered_set<StopId<>> all_sparse_stops;
   for (const Path& p : result.minimal_paths_sparse.AllPaths()) {
     for (const Step& s : p.steps) {
       all_sparse_stops.insert(s.origin.stop);
@@ -73,11 +73,11 @@ void WriteVisualizationSqlite(
       "stop_type) VALUES (?, ?, ?, ?, ?)"
   );
 
-  for (StopId stop_id : all_sparse_stops) {
+  for (StopId<> stop_id : all_sparse_stops) {
     auto gtfs_id_it = mapping.stop_id_to_gtfs_stop_id.find(stop_id);
     if (gtfs_id_it == mapping.stop_id_to_gtfs_stop_id.end()) {
       throw std::runtime_error(
-          "StopId " + std::to_string(stop_id.v) +
+          "StopId<> " + std::to_string(stop_id.v) +
           " not found in stop_id_to_gtfs_stop_id mapping"
       );
     }
@@ -130,7 +130,7 @@ void WriteVisualizationSqlite(
     for (const auto& path_group : path_groups) {
       if (path_group.empty()) continue;
 
-      StopId dest_stop = path_group[0].merged_step.destination.stop;
+      StopId<> dest_stop = path_group[0].merged_step.destination.stop;
       if (dest_stop == state.boundary.start ||
           dest_stop == state.boundary.end) {
         continue;
@@ -162,9 +162,9 @@ void WriteVisualizationSqlite(
               state.stop_infos.at(s.origin.stop).gtfs_stop_id;
           const GtfsStopId& s_dest_gtfs =
               state.stop_infos.at(s.destination.stop).gtfs_stop_id;
-          StopId orig_origin =
+          StopId<> orig_origin =
               mapping.gtfs_stop_id_to_stop_id.at(s_origin_gtfs);
-          StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
+          StopId<> orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
 
           // Find matching path in minimal_paths_sparse.
           auto sparse_paths =

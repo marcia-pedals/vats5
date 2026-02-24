@@ -12,7 +12,7 @@ namespace vats5 {
 
 enum class CycleIsFlex { kNo, kYes };
 
-rc::Gen<ProblemState> GenProblemState(
+rc::Gen<ProblemState<>> GenProblemState(
     std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen = std::nullopt,
     std::optional<rc::Gen<StepPartitionId>> step_partition_gen = std::nullopt
 );
@@ -25,6 +25,6 @@ struct NamedBranchEdge {
 
 void showValue(const NamedBranchEdge& e, std::ostream& os);
 
-rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state);
+rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState<>& state);
 
 }  // namespace vats5

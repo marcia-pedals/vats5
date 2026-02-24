@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
             << "m, walking_speed=" << walking_speed << "m/s\n";
   StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day, options);
 
-  std::unordered_set<StopId> required_stops;
+  std::unordered_set<StopId<>> required_stops;
   for (const auto& stop_id_elem : *stop_ids_array) {
     auto stop_id_str = stop_id_elem.value<std::string>();
     if (!stop_id_str) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -24,7 +25,7 @@ struct AdjacencyListStep {
   bool destination_is_flex;
 
   // Convert to a full Step given the context.
-  Step ToStep(StopId origin_stop, StopId destination_stop, bool is_flex) const {
+  Step ToStep(StopId<> origin_stop, StopId<> destination_stop, bool is_flex) const {
     return Step{
         StepEndpoint{
             origin_stop,
@@ -98,18 +99,18 @@ inline void from_json(const nlohmann::json& j, AdjacencyListStep& s) {
 
 // A group of steps from one origin to one destination, sorted by origin time.
 // The fixed-schedule steps and their departure times are stored in the parent
-// StepsAdjacencyList; this struct holds indices into those arrays.
+// StepsAdjacencyList<>; this struct holds indices into those arrays.
 struct StepGroup {
   // The destination stop for all steps in this group.
   // The origin stop is determined by the position in the CSR structure.
-  StopId destination_stop;
+  StopId<> destination_stop;
 
   // Optional flex step for this origin-destination pair.
   // If present, this is a flex trip that can be taken at any time.
   // is_flex is implicitly true for this step.
   std::optional<AdjacencyListStep> flex_step;
 
-  // Index range [steps_start, steps_end) into StepsAdjacencyList.steps
+  // Index range [steps_start, steps_end) into StepsAdjacencyList<>.steps
   // for fixed-schedule steps, sorted by origin time.
   // is_flex is implicitly false for these steps.
   int steps_start = 0;
@@ -132,13 +133,16 @@ inline void to_json(nlohmann::json& j, const StepGroup& sg) {
 }
 
 inline void from_json(const nlohmann::json& j, StepGroup& sg) {
-  sg.destination_stop = j.at("destination_stop").get<StopId>();
+  sg.destination_stop = j.at("destination_stop").get<StopId<>>();
   sg.flex_step = j.at("flex_step").get<std::optional<AdjacencyListStep>>();
   sg.steps_start = j.at("steps_start").get<int>();
   sg.steps_end = j.at("steps_end").get<int>();
 }
 
-struct StepsAdjacencyList {
+// Non-templated base class holding all fields and real method implementations.
+struct StepsAdjacencyListBase {
+  int space_id = -1;
+
   // CSR (Compressed Sparse Row) representation of step groups per stop.
   // group_offsets[stop_id.v] is the start index into `groups` for that stop.
   // group_offsets has size NumStops().
@@ -156,15 +160,15 @@ struct StepsAdjacencyList {
 
   // Parallel array to steps: departure_times_div10[i] =
   // steps[i].origin_time.seconds / 10. Divided by 10 to fit in int16_t
-  // (max 32767 * 10 = 327670 seconds ≈ 91 hours).
+  // (max 32767 * 10 = 327670 seconds ~ 91 hours).
   std::vector<int16_t> departure_times_div10;
 
-  // Strict upper bound on all StopId values in this adjacency list.
+  // Strict upper bound on all StopId<> values in this adjacency list.
   // All stop IDs s satisfy s.v < NumStops().
   int NumStops() const { return static_cast<int>(group_offsets.size()); }
 
   // Get the step groups originating at the given stop.
-  std::span<const StepGroup> GetGroups(StopId stop) const {
+  std::span<const StepGroup> GetGroups(StopId<> stop) const {
     if (stop.v < 0 || stop.v >= NumStops()) {
       return {};
     }
@@ -193,7 +197,7 @@ struct StepsAdjacencyList {
   std::vector<Step> AllSteps() const {
     std::vector<Step> all_steps;
     for (int stop_v = 0; stop_v < NumStops(); ++stop_v) {
-      StopId origin_stop{stop_v};
+      StopId<> origin_stop{stop_v};
       for (const StepGroup& group : GetGroups(origin_stop)) {
         if (group.flex_step.has_value()) {
           all_steps.push_back(
@@ -210,15 +214,42 @@ struct StepsAdjacencyList {
     return all_steps;
   }
 
-  bool operator==(const StepsAdjacencyList& other) const {
+  bool operator==(const StepsAdjacencyListBase& other) const {
     return group_offsets == other.group_offsets && groups == other.groups &&
            steps == other.steps;
     // Note: departure_times_div10 is derived from steps, so we don't compare it
   }
 };
 
-// Custom JSON serialization for StepsAdjacencyList
-inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
+// Templated subclass. No new fields. Gated methods require Tag != Unwitnessed.
+template <typename Tag = Unwitnessed>
+struct StepsAdjacencyList : StepsAdjacencyListBase {
+  using StepsAdjacencyListBase::StepsAdjacencyListBase;
+  using StepsAdjacencyListBase::GetGroups;
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  std::span<const StepGroup> GetGroups(StopId<S> stop) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StepsAdjacencyListBase::GetGroups(StopId<>{stop.v});
+  }
+
+  StopId<Tag> MakeStopId(int v) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StopId<Tag>{v};
+  }
+
+  auto AllStopIds() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return std::views::iota(0, NumStops())
+         | std::views::transform([](int v) { return StopId<Tag>{v}; });
+  }
+};
+
+// Custom JSON serialization for StepsAdjacencyList<>
+inline void to_json(nlohmann::json& j, const StepsAdjacencyListBase& adj) {
   j = nlohmann::json{
       {"group_offsets", adj.group_offsets},
       {"groups", adj.groups},
@@ -226,7 +257,7 @@ inline void to_json(nlohmann::json& j, const StepsAdjacencyList& adj) {
   };
 }
 
-inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
+inline void from_json(nlohmann::json const& j, StepsAdjacencyListBase& adj) {
   adj.group_offsets = j.at("group_offsets").get<std::vector<int>>();
   adj.groups = j.at("groups").get<std::vector<StepGroup>>();
   adj.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
@@ -238,17 +269,28 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   }
 }
 
-// Group steps into an adjacency list.
-StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps);
+template <typename Tag>
+inline void to_json(nlohmann::json& j, const StepsAdjacencyList<Tag>& adj) {
+  to_json(j, static_cast<const StepsAdjacencyListBase&>(adj));
+}
 
-struct StepPathsAdjacencyList {
+template <typename Tag>
+inline void from_json(const nlohmann::json& j, StepsAdjacencyList<Tag>& adj) {
+  from_json(j, static_cast<StepsAdjacencyListBase&>(adj));
+}
+
+// Group steps into an adjacency list.
+StepsAdjacencyList<> MakeAdjacencyList(const std::vector<Step>& steps);
+
+// Non-templated base class for StepPathsAdjacencyList<>.
+struct StepPathsAdjacencyListBase {
+  int space_id = -1;
+
   // Mapping from stop to paths originating at that stop, grouped by destination
   // stop. Each group of paths is sorted by origin time and minimal.
-  std::unordered_map<StopId, std::vector<std::vector<Path>>> adjacent;
+  std::unordered_map<StopId<>, std::vector<std::vector<Path>>> adjacent;
 
   // Extract all merged steps from all paths.
-  // TODO: It is unfortunate that we have to materialize the steps into a new
-  // vector.
   std::vector<Step> AllMergedSteps() const {
     std::vector<Step> all_steps;
     for (const auto& [origin_stop, path_groups] : adjacent) {
@@ -273,7 +315,7 @@ struct StepPathsAdjacencyList {
     return all_paths;
   }
 
-  std::span<const Path> PathsBetween(StopId a, StopId b) const {
+  std::span<const Path> PathsBetween(StopId<> a, StopId<> b) const {
     auto path_groups_it = adjacent.find(a);
     if (path_groups_it == adjacent.end()) {
       return {};
@@ -293,9 +335,7 @@ struct StepPathsAdjacencyList {
     return std::span(*path_group_it);
   }
 
-  // TODO: It is unfortunate that we have to materialize the steps into a new
-  // vector.
-  std::vector<Path> PathsBetweenBidirectional(StopId a, StopId b) const {
+  std::vector<Path> PathsBetweenBidirectional(StopId<> a, StopId<> b) const {
     auto fw = PathsBetween(a, b);
     auto bw = PathsBetween(b, a);
     std::vector<Path> result;
@@ -305,9 +345,7 @@ struct StepPathsAdjacencyList {
     return result;
   }
 
-  // TODO: It is unfortunate that we have to materialize the steps into a new
-  // vector.
-  std::vector<Step> MergedStepsBetween(StopId a, StopId b) const {
+  std::vector<Step> MergedStepsBetween(StopId<> a, StopId<> b) const {
     auto ps = PathsBetween(a, b);
     std::vector<Step> result;
     result.reserve(ps.size());
@@ -318,9 +356,40 @@ struct StepPathsAdjacencyList {
   }
 };
 
-// Custom JSON serialization for StepPathsAdjacencyList
-// Convert the StopId-keyed map to int-keyed for JSON
-inline void to_json(nlohmann::json& j, const StepPathsAdjacencyList& adj) {
+// Templated subclass for StepPathsAdjacencyList<>.
+template <typename Tag = Unwitnessed>
+struct StepPathsAdjacencyList : StepPathsAdjacencyListBase {
+  using StepPathsAdjacencyListBase::StepPathsAdjacencyListBase;
+  using StepPathsAdjacencyListBase::PathsBetween;
+  using StepPathsAdjacencyListBase::PathsBetweenBidirectional;
+  using StepPathsAdjacencyListBase::MergedStepsBetween;
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  std::span<const Path> PathsBetween(StopId<S> a, StopId<S> b) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StepPathsAdjacencyListBase::PathsBetween(StopId<>{a.v}, StopId<>{b.v});
+  }
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  std::vector<Path> PathsBetweenBidirectional(StopId<S> a, StopId<S> b) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StepPathsAdjacencyListBase::PathsBetweenBidirectional(
+        StopId<>{a.v}, StopId<>{b.v});
+  }
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  std::vector<Step> MergedStepsBetween(StopId<S> a, StopId<S> b) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StepPathsAdjacencyListBase::MergedStepsBetween(
+        StopId<>{a.v}, StopId<>{b.v});
+  }
+};
+
+// Custom JSON serialization for StepPathsAdjacencyList<>
+inline void to_json(nlohmann::json& j, const StepPathsAdjacencyListBase& adj) {
   std::vector<std::pair<int, std::vector<std::vector<Path>>>> pairs;
   for (const auto& [k, v] : adj.adjacent) {
     pairs.emplace_back(k.v, v);
@@ -328,34 +397,44 @@ inline void to_json(nlohmann::json& j, const StepPathsAdjacencyList& adj) {
   j = nlohmann::json{{"adjacent", pairs}};
 }
 
-inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList& adj) {
+inline void from_json(const nlohmann::json& j, StepPathsAdjacencyListBase& adj) {
   auto pairs =
       j.at("adjacent")
           .get<std::vector<std::pair<int, std::vector<std::vector<Path>>>>>();
   for (const auto& [k, v] : pairs) {
-    adj.adjacent[StopId{k}] = v;
+    adj.adjacent[StopId<>{k}] = v;
   }
 }
 
+template <typename Tag>
+inline void to_json(nlohmann::json& j, const StepPathsAdjacencyList<Tag>& adj) {
+  to_json(j, static_cast<const StepPathsAdjacencyListBase&>(adj));
+}
+
+template <typename Tag>
+inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList<Tag>& adj) {
+  from_json(j, static_cast<StepPathsAdjacencyListBase&>(adj));
+}
+
 struct StopIdMapping {
-  std::vector<StopId> new_to_original;
-  std::vector<StopId> original_to_new;
+  std::vector<StopId<>> new_to_original;
+  std::vector<StopId<>> original_to_new;
 };
 
 struct CompactStopIdsResult {
-  StepsAdjacencyList list;
+  StepsAdjacencyList<> list;
   StopIdMapping mapping;
 };
 
-CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original);
+CompactStopIdsResult CompactStopIds(const StepsAdjacencyList<>& original);
 
 // Split all paths at the given stop.
 // - Paths that don't pass through split_stop are unchanged.
 // - Paths that pass through split_stop are split into two paths:
 //   one from origin to split_stop, and one from split_stop to destination.
 // Note: If a path's origin or destination IS split_stop, it is not split.
-StepPathsAdjacencyList SplitPathsAtStop(
-    const StepPathsAdjacencyList& paths, StopId split_stop
+StepPathsAdjacencyList<> SplitPathsAtStop(
+    const StepPathsAdjacencyList<>& paths, StopId<> split_stop
 );
 
 }  // namespace vats5

@@ -12,15 +12,15 @@
 namespace vats5 {
 
 std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
-    const ProblemState& state
+    const ProblemState<>& state
 ) {
   std::vector<SolutionSpaceElement> space;
 
   // Make the initial generating permutation, which is
   // START -> ... all non-boundary stops in order ... -> END.
-  std::vector<StopId> gen_perm;
+  std::vector<StopId<>> gen_perm;
   gen_perm.push_back(state.boundary.start);
-  for (StopId stop : state.required_stops) {
+  for (StopId<> stop : state.required_stops) {
     if (stop != state.boundary.start && stop != state.boundary.end) {
       gen_perm.push_back(stop);
     }
@@ -32,7 +32,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
   // cycle through permutations of all interior elements.
   do {
     std::vector<Step> accumulated_steps;
-    std::vector<std::vector<StopId>> accumulated_actual_paths;
+    std::vector<std::vector<StopId<>>> accumulated_actual_paths;
     for (size_t i = 0; i < gen_perm.size(); ++i) {
       std::span<const Path> edge_paths = state.completed.PathsBetween(
           gen_perm[i], gen_perm[(i + 1) % gen_perm.size()]
@@ -57,7 +57,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
         std::vector<StepProvenance> new_provenance;
         std::vector<Step> new_accumulated_steps =
             PairwiseMergedSteps(accumulated_steps, edge_steps, &new_provenance);
-        std::vector<std::vector<StopId>> new_accumulated_actual_paths;
+        std::vector<std::vector<StopId<>>> new_accumulated_actual_paths;
         for (const StepProvenance& step_provenance : new_provenance) {
           assert(step_provenance.ab_index < accumulated_actual_paths.size());
           assert(step_provenance.bc_index < edge_paths.size());
@@ -94,7 +94,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
   return space;
 }
 
-int BruteForceSolveOptimalDuration(const ProblemState& state) {
+int BruteForceSolveOptimalDuration(const ProblemState<>& state) {
   std::vector<SolutionSpaceElement> space = EnumerateSolutionSpace(state);
   auto it = std::min_element(
       space.begin(),

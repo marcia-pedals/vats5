@@ -11,7 +11,7 @@
 namespace vats5 {
 
 struct FrontierEntry {
-  StopId destination_stop;
+  StopId<> destination_stop;
   TimeSinceServiceStart arrival_time;
 
   // Number of destinations visited on the path so far (not including this
@@ -85,7 +85,7 @@ size_t FindDepartureAtOrAfter(
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
-    const std::vector<Step>& search_result, StopId dest
+    const std::vector<Step>& search_result, StopId<> dest
 ) {
   std::vector<Step> path;
   Step state = search_result[dest.v];
@@ -113,22 +113,22 @@ std::vector<Step> BacktrackPath(
 
 // Sentinel Step representing an unvisited stop.
 const Step kUnvisitedStep = Step::PrimitiveScheduled(
-    StopId{-1},
-    StopId{-1},
+    StopId<>{-1},
+    StopId<>{-1},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
     TimeSinceServiceStart{std::numeric_limits<int>::max()},
     TripId{-1}
 );
 
 const std::vector<int>* HeuristicCache::GetOrCompute(
-    const std::unordered_set<StopId>& destinations
+    const std::unordered_set<StopId<>>& destinations
 ) {
   if (relaxed_distances == nullptr || relaxed_distances->distance_to.empty()) {
     return nullptr;
   }
 
   // Create sorted key from destinations
-  std::vector<StopId> cache_key(destinations.begin(), destinations.end());
+  std::vector<StopId<>> cache_key(destinations.begin(), destinations.end());
   std::sort(cache_key.begin(), cache_key.end());
 
   auto cache_it = cache.find(cache_key);
@@ -142,7 +142,7 @@ const std::vector<int>* HeuristicCache::GetOrCompute(
       static_cast<int>(relaxed_distances->distance_to.begin()->second.size());
   std::vector<int> computed(num_stops, std::numeric_limits<int>::max());
 
-  for (const StopId dest : destinations) {
+  for (const StopId<> dest : destinations) {
     auto it = relaxed_distances->distance_to.find(dest);
     if (it != relaxed_distances->distance_to.end()) {
       const std::vector<int>& single_dists = it->second;
@@ -160,10 +160,10 @@ const std::vector<int>* HeuristicCache::GetOrCompute(
 }
 
 std::vector<Step> FindShortestPathsAtTime(
-    const StepsAdjacencyList& adjacency_list,
+    const StepsAdjacencyList<>& adjacency_list,
     TimeSinceServiceStart origin_time,
-    StopId origin_stop,
-    const std::unordered_set<StopId>& destinations,
+    StopId<> origin_stop,
+    const std::unordered_set<StopId<>>& destinations,
     int* smallest_next_departure_gap_from_flex,
     HeuristicCache* heuristic_cache
 ) {
@@ -177,7 +177,7 @@ std::vector<Step> FindShortestPathsAtTime(
                                  : nullptr;
 
   // Helper to get heuristic value for a stop (0 if no heuristic provided)
-  auto GetHeuristic = [&](StopId stop) -> int {
+  auto GetHeuristic = [&](StopId<> stop) -> int {
     if (heuristic_distances == nullptr || stop.v < 0 ||
         stop.v >= static_cast<int>(heuristic_distances->size())) {
       return 0;
@@ -187,7 +187,7 @@ std::vector<Step> FindShortestPathsAtTime(
     return (h == std::numeric_limits<int>::max()) ? 0 : h;
   };
 
-  std::unordered_set<StopId> remaining_destinations = destinations;
+  std::unordered_set<StopId<>> remaining_destinations = destinations;
   std::vector<bool> finalized(adjacency_list.NumStops(), false);
 
   // Compact priority queue storing only destination_stop and arrival_time.
@@ -226,7 +226,7 @@ std::vector<Step> FindShortestPathsAtTime(
   while (!frontier.empty()) {
     std::pop_heap(frontier.begin(), frontier.end(), frontier_cmp);
     const FrontierEntry current_entry = frontier.back();
-    const StopId current_stop = current_entry.destination_stop;
+    const StopId<> current_stop = current_entry.destination_stop;
     const TimeSinceServiceStart current_time = current_entry.arrival_time;
     frontier.pop_back();
 
@@ -263,7 +263,7 @@ std::vector<Step> FindShortestPathsAtTime(
         adjacency_list.GetGroups(current_stop);
 
     for (const StepGroup& step_group : step_groups) {
-      const StopId next_stop = step_group.destination_stop;
+      const StopId<> next_stop = step_group.destination_stop;
 
       // Handle flex trip if present
       if (step_group.flex_step.has_value()) {
@@ -386,10 +386,10 @@ std::vector<Step> FindShortestPathsAtTime(
   return best_arrival;
 }
 
-std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
-    const StepsAdjacencyList& adjacency_list,
-    StopId origin,
-    const std::unordered_set<StopId>& destinations,
+std::unordered_map<StopId<>, std::vector<Path>> FindMinimalPathSet(
+    const StepsAdjacencyList<>& adjacency_list,
+    StopId<> origin,
+    const std::unordered_set<StopId<>>& destinations,
     TimeSinceServiceStart origin_time_lb,
     TimeSinceServiceStart origin_time_ub,
     const RelaxedDistances* relaxed_distances,
@@ -399,9 +399,9 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
   const TimeSinceServiceStart big_time{origin_time_ub.seconds * 10};
 
-  std::unordered_map<StopId, std::vector<Step>> result;
-  std::unordered_map<StopId, TimeSinceServiceStart> current_origin_time;
-  for (const StopId dest : destinations) {
+  std::unordered_map<StopId<>, std::vector<Step>> result;
+  std::unordered_map<StopId<>, TimeSinceServiceStart> current_origin_time;
+  for (const StopId<> dest : destinations) {
     current_origin_time[dest] = origin_time_lb;
   }
 
@@ -415,7 +415,7 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
   while (true) {
     // Find the smallest `current_origin_time` and query from there. Include all
     // destinations with that `current_origin_time` in the query.
-    std::unordered_set<StopId> destinations_to_query;
+    std::unordered_set<StopId<>> destinations_to_query;
     TimeSinceServiceStart query_time = big_time;
     for (const auto& dest : destinations) {
       if (current_origin_time[dest] < query_time) {
@@ -498,9 +498,9 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
     }
   }
 
-  std::unordered_map<StopId, std::vector<Path>> result_with_paths;
+  std::unordered_map<StopId<>, std::vector<Path>> result_with_paths;
 
-  for (const StopId dest : destinations) {
+  for (const StopId<> dest : destinations) {
     auto& dest_result = result[dest];
     SortSteps(dest_result);
     MakeMinimalCover(dest_result);
@@ -538,13 +538,13 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 
 namespace {
 
-StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops,
+StepPathsAdjacencyList<> ReduceToMinimalSystemPathsImpl(
+    const StepsAdjacencyList<>& adjacency_list,
+    const std::unordered_set<StopId<>>& system_stops,
     bool keep_through_other_destination
 ) {
   // Convert to vector for indexed access
-  std::vector<StopId> origins(system_stops.begin(), system_stops.end());
+  std::vector<StopId<>> origins(system_stops.begin(), system_stops.end());
   const size_t num_origins = origins.size();
 
   RelaxedDistances relaxed_distances =
@@ -557,7 +557,7 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
   const size_t num_work_items = num_origins * kNumChunks;
 
   // Per-work-item results: map from destination to paths
-  std::vector<std::unordered_map<StopId, std::vector<Path>>> per_item_results(
+  std::vector<std::unordered_map<StopId<>, std::vector<Path>>> per_item_results(
       num_work_items
   );
 
@@ -589,9 +589,9 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
 
       const size_t origin_index = i / kNumChunks;
       const int chunk_index = i % kNumChunks;
-      const StopId origin = origins[origin_index];
+      const StopId<> origin = origins[origin_index];
 
-      std::unordered_set<StopId> destinations = system_stops;
+      std::unordered_set<StopId<>> destinations = system_stops;
       destinations.erase(origin);
 
       TimeSinceServiceStart lb{chunk_index * kChunkSeconds};
@@ -631,14 +631,14 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
   }
 
   // Combine results per origin
-  StepPathsAdjacencyList result;
+  StepPathsAdjacencyList<> result;
   result.adjacent.reserve(num_origins);
 
   for (size_t origin_idx = 0; origin_idx < num_origins; ++origin_idx) {
-    const StopId origin = origins[origin_idx];
+    const StopId<> origin = origins[origin_idx];
 
     // Collect all paths from all chunks for this origin, grouped by destination
-    std::unordered_map<StopId, std::vector<Path>> dest_to_paths;
+    std::unordered_map<StopId<>, std::vector<Path>> dest_to_paths;
 
     for (int c = 0; c < kNumChunks; ++c) {
       size_t item_idx = origin_idx * kNumChunks + c;
@@ -683,18 +683,18 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
 
 }  // namespace
 
-StepPathsAdjacencyList ReduceToMinimalSystemPaths(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+StepPathsAdjacencyList<> ReduceToMinimalSystemPaths(
+    const StepsAdjacencyList<>& adjacency_list,
+    const std::unordered_set<StopId<>>& system_stops
 ) {
   return ReduceToMinimalSystemPathsImpl(
       adjacency_list, system_stops, /*keep_through_other_destination=*/false
   );
 }
 
-StepPathsAdjacencyList CompleteShortestPathsGraph(
-    const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+StepPathsAdjacencyList<> CompleteShortestPathsGraph(
+    const StepsAdjacencyList<>& adjacency_list,
+    const std::unordered_set<StopId<>>& system_stops
 ) {
   return ReduceToMinimalSystemPathsImpl(
       adjacency_list, system_stops, /*keep_through_other_destination=*/true

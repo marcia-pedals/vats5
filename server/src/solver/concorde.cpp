@@ -26,10 +26,10 @@ constexpr int kInterVertexOffset = 11000;
 // Vertices: 2i = in(i), 2i+1 = out(i)
 class DoubledGraphWeights {
  public:
-  explicit DoubledGraphWeights(const RelaxedAdjacencyList& relaxed)
+  explicit DoubledGraphWeights(const RelaxedAdjacencyList<>& relaxed)
       : n_(relaxed.NumStops()), edge_weights_(n_ * n_, kForbiddenEdgeWeight) {
     for (int origin = 0; origin < n_; ++origin) {
-      for (const auto& edge : relaxed.GetEdges(StopId{origin})) {
+      for (const auto& edge : relaxed.GetEdges(StopId<>{origin})) {
         edge_weights_[origin * n_ + edge.destination_stop.v] =
             edge.weight_seconds;
       }
@@ -90,7 +90,7 @@ class DoubledGraphWeights {
   std::vector<int> edge_weights_;
 };
 
-// Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW
+// Output a RelaxedAdjacencyList<> as a Concorde TSP instance using UPPER_ROW
 // format.
 void OutputConcordeTsp(std::ostream& out, const DoubledGraphWeights& weights) {
   int doubled_n = weights.DoubledN();
@@ -156,7 +156,7 @@ bool DoubledTourUsesForbiddenEdge(
 }
 
 // Validate the doubled tour structure and extract the original tour.
-std::vector<StopId> ValidateAndExtractTour(
+std::vector<StopId<>> ValidateAndExtractTour(
     const std::vector<int>& doubled_tour
 ) {
   int doubled_n = static_cast<int>(doubled_tour.size());
@@ -188,7 +188,7 @@ std::vector<StopId> ValidateAndExtractTour(
 
   // Validate all pairs and extract tour in one pass.
   bool is_reversed = !is_in(doubled_tour[start_idx]);
-  std::vector<StopId> tour;
+  std::vector<StopId<>> tour;
   tour.reserve(n);
 
   for (int i = 0; i < n; ++i) {
@@ -208,7 +208,7 @@ std::vector<StopId> ValidateAndExtractTour(
           format_tour()
       );
     }
-    tour.push_back(StopId{orig(v1)});
+    tour.push_back(StopId<>{orig(v1)});
   }
 
   if (is_reversed) {
@@ -218,7 +218,7 @@ std::vector<StopId> ValidateAndExtractTour(
 }
 
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
-    const RelaxedAdjacencyList& relaxed,
+    const RelaxedAdjacencyList<>& relaxed,
     std::optional<int> ub,
     std::ostream* tsp_log
 ) {
@@ -314,7 +314,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   }
 
   // Validate structure and extract original tour
-  std::vector<StopId> tour = ValidateAndExtractTour(doubled_tour);
+  std::vector<StopId<>> tour = ValidateAndExtractTour(doubled_tour);
 
   // Subtract the inter-vertex offset that was added during graph construction.
   // The proper tour has exactly n inter-vertex edges, so we subtract n *
@@ -332,7 +332,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 }  // namespace
 
 std::optional<ConcordeSolution> SolveTspWithConcorde(
-    const RelaxedAdjacencyList& relaxed,
+    const RelaxedAdjacencyList<>& relaxed,
     std::optional<int> ub,
     std::ostream* tsp_log
 ) {

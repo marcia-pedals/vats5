@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Making adjacency list..." << std::endl;
   auto adjacency_start = std::chrono::high_resolution_clock::now();
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  StepsAdjacencyList<> adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
   auto adjacency_end = std::chrono::high_resolution_clock::now();
   auto adjacency_duration =
       std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -59,12 +59,12 @@ int main(int argc, char* argv[]) {
   std::cout << "Making adjacency list took " << adjacency_duration.count()
             << " ms" << std::endl;
 
-  std::unordered_set<StopId> bart_stops =
+  std::unordered_set<StopId<>> bart_stops =
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
   int num_origins_with_groups = 0;
   for (int i = 0; i < adjacency_list.NumStops(); ++i) {
-    if (!adjacency_list.GetGroups(StopId{i}).empty()) {
+    if (!adjacency_list.GetGroups(StopId<>{i}).empty()) {
       ++num_origins_with_groups;
     }
   }
@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Benchmarking ReduceToMinimalSystemPaths..." << std::endl;
 
   auto start = std::chrono::high_resolution_clock::now();
-  StepPathsAdjacencyList minimal =
+  StepPathsAdjacencyList<> minimal =
       ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
   auto end = std::chrono::high_resolution_clock::now();
 

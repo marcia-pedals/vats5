@@ -10,15 +10,15 @@
 namespace vats5 {
 
 void PrintPartitions(
-    const ProblemState& state,
-    const std::unordered_map<StepPartitionId, std::unordered_set<StopId>>&
+    const ProblemState<>& state,
+    const std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>&
         partitions
 );
 
-void PrintStopPartitions(const ProblemState& state, StopId s);
+void PrintStopPartitions(const ProblemState<>& state, StopId<> s);
 
 void MyDetailedPrintout(
-    const ProblemState& state, const std::vector<TarelEdge>& tour
+    const ProblemState<>& state, const std::vector<TarelEdge>& tour
 );
 
 }  // namespace vats5

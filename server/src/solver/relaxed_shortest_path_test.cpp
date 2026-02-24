@@ -18,18 +18,18 @@ TEST(RelaxedShortestPathTest, FindShortestRelaxedPathsBasic) {
   //   3 --------+
 
   std::vector<Step> steps = {
-      Step::PrimitiveFlex(StopId{1}, StopId{2}, 10, TripId{1}),
-      Step::PrimitiveFlex(StopId{1}, StopId{3}, 5, TripId{2}),
-      Step::PrimitiveFlex(StopId{3}, StopId{2}, 15, TripId{3}),
-      Step::PrimitiveFlex(StopId{2}, StopId{4}, 20, TripId{4}),
+      Step::PrimitiveFlex(StopId<>{1}, StopId<>{2}, 10, TripId{1}),
+      Step::PrimitiveFlex(StopId<>{1}, StopId<>{3}, 5, TripId{2}),
+      Step::PrimitiveFlex(StopId<>{3}, StopId<>{2}, 15, TripId{3}),
+      Step::PrimitiveFlex(StopId<>{2}, StopId<>{4}, 20, TripId{4}),
   };
 
-  StepsAdjacencyList steps_list = MakeAdjacencyList(steps);
+  StepsAdjacencyList<> steps_list = MakeAdjacencyList(steps);
   std::vector<WeightedEdge> relaxed_edges = MakeRelaxedEdges(steps_list);
-  RelaxedAdjacencyList relaxed =
+  RelaxedAdjacencyList<> relaxed =
       MakeRelaxedAdjacencyListFromEdges(relaxed_edges);
 
-  std::vector<int> distances = FindShortestRelaxedPaths(relaxed, StopId{1});
+  std::vector<int> distances = FindShortestRelaxedPaths(relaxed, StopId<>{1});
 
   EXPECT_EQ(distances[1], 0);   // origin
   EXPECT_EQ(distances[2], 10);  // 1 -> 2

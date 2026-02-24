@@ -6,11 +6,11 @@
 
 namespace vats5 {
 
-Step ZeroEdge(StopId a, StopId b) {
+Step ZeroEdge(StopId<> a, StopId<> b) {
   return Step::PrimitiveFlex(a, b, 0, TripId{-2});
 }
 
-Path ZeroPath(StopId a, StopId b) {
+Path ZeroPath(StopId<> a, StopId<> b) {
   Step step = ZeroEdge(a, b);
   return Path{step, {step}};
 }
@@ -26,7 +26,7 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
 
   // Create bidirectional mappings for stops and populate stop name mapping
   for (const auto& gtfs_stop : gtfs.stops) {
-    StopId stop_id{next_stop_id++};
+    StopId<> stop_id{next_stop_id++};
     result.mapping.gtfs_stop_id_to_stop_id[gtfs_stop.stop_id] = stop_id;
     result.mapping.stop_id_to_gtfs_stop_id[stop_id] = gtfs_stop.stop_id;
     result.mapping.stop_name_to_stop_ids[gtfs_stop.stop_name].push_back(
@@ -94,9 +94,9 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
 
     // Only create step if consecutive stops are from the same trip
     if (current_stop_time.trip_id == next_stop_time.trip_id) {
-      StopId origin_stop_id =
+      StopId<> origin_stop_id =
           result.mapping.gtfs_stop_id_to_stop_id[current_stop_time.stop_id];
-      StopId destination_stop_id =
+      StopId<> destination_stop_id =
           result.mapping.gtfs_stop_id_to_stop_id[next_stop_time.stop_id];
       TripId trip_id =
           result.mapping.gtfs_trip_id_to_trip_id[current_stop_time.trip_id];
@@ -237,12 +237,12 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   return result;
 }
 
-std::unordered_set<StopId> GetStopsForTripIdPrefix(
+std::unordered_set<StopId<>> GetStopsForTripIdPrefix(
     const GtfsDay& gtfs,
     const DataGtfsMapping& mapping,
     const std::string& trip_id_prefix
 ) {
-  std::unordered_set<StopId> result;
+  std::unordered_set<StopId<>> result;
 
   // Find all trip IDs that match the prefix
   std::unordered_set<GtfsTripId> matching_trip_ids;
