@@ -123,17 +123,18 @@ export function getPathSteps(name: string, pathId: number): PathStep[] {
 }
 
 export function getPartialSolutionRuns(name: string): PartialSolutionRun[] {
-  const db = getDb(name);
-  const tableExists = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='partial_solutions'")
-    .get();
-  if (!tableExists) return [];
-  const rows = db
-    .prepare(
-      "SELECT run_timestamp, MAX(iteration) as max_iteration FROM partial_solutions GROUP BY run_timestamp ORDER BY run_timestamp DESC"
-    )
-    .all();
-  return z.array(PartialSolutionRunSchema).parse(rows);
+  return withDb(name, (db) => {
+    const tableExists = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='partial_solutions'")
+      .get();
+    if (!tableExists) return [];
+    const rows = db
+      .prepare(
+        "SELECT run_timestamp, MAX(iteration) as max_iteration FROM partial_solutions GROUP BY run_timestamp ORDER BY run_timestamp DESC"
+      )
+      .all();
+    return z.array(PartialSolutionRunSchema).parse(rows);
+  });
 }
 
 export function getPartialSolution(
@@ -141,10 +142,11 @@ export function getPartialSolution(
   runTimestamp: string,
   iteration: number
 ): PartialSolutionData | null {
-  const db = getDb(name);
-  const row = db
-    .prepare("SELECT data FROM partial_solutions WHERE run_timestamp = ? AND iteration = ?")
-    .get(runTimestamp, iteration) as { data: string } | undefined;
-  if (!row) return null;
-  return PartialSolutionDataSchema.parse(JSON.parse(row.data));
+  return withDb(name, (db) => {
+    const row = db
+      .prepare("SELECT data FROM partial_solutions WHERE run_timestamp = ? AND iteration = ?")
+      .get(runTimestamp, iteration) as { data: string } | undefined;
+    if (!row) return null;
+    return PartialSolutionDataSchema.parse(JSON.parse(row.data));
+  });
 }

@@ -15,10 +15,7 @@ namespace vats5 {
 
 struct StopId {
   int v;
-
-  bool operator==(const StopId& other) const { return v == other.v; }
-  bool operator!=(const StopId& other) const { return v != other.v; }
-  bool operator<(const StopId& other) const { return v < other.v; }
+  auto operator<=>(const StopId&) const = default;
 };
 inline void to_json(nlohmann::json& j, const StopId& id) { j = id.v; }
 inline void from_json(const nlohmann::json& j, StopId& id) {
@@ -214,6 +211,16 @@ struct Path {
   template <typename Visitor>
   void VisitIntermediateStops(Visitor visitor) const {
     for (size_t i = 0; i + 1 < steps.size(); ++i) {
+      visitor(steps[i].destination.stop);
+    }
+  }
+
+  template <typename Visitor>
+  void VisitAllStops(Visitor visitor) const {
+    if (steps.size() > 0) {
+      visitor(steps[0].origin.stop);
+    }
+    for (size_t i = 0; i < steps.size(); ++i) {
       visitor(steps[i].destination.stop);
     }
   }

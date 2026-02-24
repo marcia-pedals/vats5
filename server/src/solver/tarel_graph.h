@@ -115,6 +115,14 @@ struct ProblemState {
   ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
 };
 
+// Recursively expands a combined stop into its original constituent stops.
+// If the stop is not in original_edges, it is appended as-is.
+void ExpandStop(
+    StopId stop,
+    const std::unordered_map<StopId, PlainEdge>& original_edges,
+    std::vector<StopId>& out
+);
+
 ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,

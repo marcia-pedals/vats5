@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <numeric>
 #include <optional>
@@ -59,7 +60,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PartialSolutionData, leaves, paths, best_path
 
 // Builds an MST over the required stops (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
-std::vector<StopId> MstLeaves(const ProblemState& state) {
+std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Collect required stops, excluding START and END.
   std::vector<StopId> stops(
       state.required_stops.begin(), state.required_stops.end()
@@ -67,7 +68,7 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   std::erase_if(stops, [&](StopId s) {
     return s == state.boundary.start || s == state.boundary.end;
   });
-  std::sort(stops.begin(), stops.end());
+  std::ranges::sort(stops);
   int n = static_cast<int>(stops.size());
 
   // Build weighted undirected edges: for each pair of required stops, the
@@ -80,28 +81,16 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
 
   for (int i = 0; i < n; i++) {
     for (int k = i + 1; k < n; k++) {
-      int min_duration = INT_MAX;
-
-      auto paths_fw = state.completed.PathsBetween(stops[i], stops[k]);
-      for (const Path& p : paths_fw) {
-        min_duration = std::min(min_duration, p.DurationSeconds());
-      }
-
-      auto paths_bw = state.completed.PathsBetween(stops[k], stops[i]);
-      for (const Path& p : paths_bw) {
-        min_duration = std::min(min_duration, p.DurationSeconds());
-      }
-
-      if (min_duration < INT_MAX) {
-        edges.push_back({i, k, min_duration});
+      auto paths = state.completed.PathsBetweenBidirectional(stops[i], stops[k]);
+      auto it = std::ranges::min_element(paths, {}, [](const auto& path) { return path.DurationSeconds(); });
+      if (it != paths.end()) {
+        edges.push_back({i, k, it->DurationSeconds()});
       }
     }
   }
 
   // Kruskal's MST: sort edges by weight, greedily add via union-find.
-  std::sort(edges.begin(), edges.end(), [](const Edge& a, const Edge& b) {
-    return a.weight < b.weight;
-  });
+  std::ranges::sort(edges, {}, [](const Edge& edge) { return edge.weight; });
 
   UnionFind uf(n);
   std::vector<int> degree(n, 0);
@@ -114,140 +103,247 @@ std::vector<StopId> MstLeaves(const ProblemState& state) {
   }
 
   // Collect leaves (degree 1 in the MST).
-  std::vector<StopId> leaves;
+  std::unordered_set<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
-      leaves.push_back(stops[i]);
+      leaves.insert(stops[i]);
     }
   }
   return leaves;
 }
 
-struct BestPathResult {
-  std::vector<Path> paths;
-  int duration;
+// A single path along with the tour of required stops that generated it.
+struct PartialSolutionPath {
+  // A path that achieves the minimum duration in the partial problem.
+  // Includes START and END. All original-problem stops that this path passes
+  // through are included as intermediate stops.
+  Path path;
+
+  // The tour of the required subset that generates `path`. Includes START and END.
+  std::vector<StopId> subset_tour;
 };
 
-// Recursively expands a combined stop into its original constituent stops.
-void ExpandStop(
-    StopId stop,
-    const std::unordered_map<StopId, PlainEdge>& original_edges,
-    std::vector<StopId>& out) {
-  auto it = original_edges.find(stop);
-  if (it == original_edges.end()) {
-    out.push_back(stop);
-    return;
-  }
-  ExpandStop(it->second.a, original_edges, out);
-  ExpandStop(it->second.b, original_edges, out);
+int CountRequiredStops(const Path& path, const std::unordered_set<StopId>& required_stops) {
+  std::unordered_set<StopId> required_visited;
+  path.VisitAllStops([&](StopId stop) {
+    if (required_stops.contains(stop)) {
+      required_visited.insert(stop);
+    }
+  });
+  return required_visited.size();
 }
 
-std::optional<BestPathResult> FindBestPathBranchAndBound(
-  std::vector<StopId> leaves,
-  const ProblemState& state
-) {
-  std::unordered_set<StopId> leaves_set;
-  for (StopId leaf : leaves) {
-    leaves_set.insert(leaf);
+// A "partial problem" is a problem where the paths are required to visit a
+// certain subset of the required stops. This is a solution to such a problem.
+struct PartialSolution {
+  std::vector<PartialSolutionPath> paths;
+
+  // Returns the path that visits the most required stops.
+  // Returns paths.end() if no paths are available.
+  std::vector<PartialSolutionPath>::const_iterator BestPathByRequiredStops(
+      const std::unordered_set<StopId>& required_stops) const {
+    return std::ranges::max_element(paths, {}, [&](const PartialSolutionPath& sol_path) {
+      return CountRequiredStops(sol_path.path, required_stops);
+    });
   }
-  leaves_set.insert(state.boundary.start);
-  leaves_set.insert(state.boundary.end);
-  ProblemState state_on_leaves = MakeProblemState(
-    MakeAdjacencyList(ReduceToMinimalSystemPaths(state.minimal, leaves_set).AllMergedSteps()),
-    state.boundary,
-    leaves_set,
-    state.stop_infos,
-    state.step_partition_names,
-    state.original_edges
+};
+
+PartialSolution PartialSolveBranchAndBound(
+  std::unordered_set<StopId> required_subset,
+  const ProblemState& original_problem
+) {
+  required_subset.insert(original_problem.boundary.start);
+  required_subset.insert(original_problem.boundary.end);
+  ProblemState partial_problem = MakeProblemState(
+    MakeAdjacencyList(ReduceToMinimalSystemPaths(original_problem.minimal, required_subset).AllMergedSteps()),
+    original_problem.boundary,
+    required_subset,
+    original_problem.stop_infos,
+    original_problem.step_partition_names,
+    original_problem.original_edges
   );
 
-  auto bb_result = BranchAndBoundSolve(state_on_leaves, &std::cout);
+  auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
   if (bb_result.best_paths.empty()) {
-    return std::nullopt;
+    return PartialSolution{};
   }
 
-  // Extract unique stop sequences from BB paths, expand combined stops back
-  // to original stop IDs, then expand through the original state's completed
-  // graph to recover all intermediate stops.
-  std::set<std::vector<StopId>> seen_sequences;
-  int best_duration = INT_MAX;
-  std::vector<Path> best_paths;
-
+  // Find the original problem paths corresponding to the partial problem paths.
+  std::vector<PartialSolutionPath> paths;
+  std::set<std::vector<StopId>> seen_tours;
   for (const Path& bb_path : bb_result.best_paths) {
-    // Extract raw stop sequence (may contain combined stop IDs).
-    std::vector<StopId> raw;
-    raw.push_back(bb_path.steps.front().origin.stop);
-    for (const Step& step : bb_path.steps) {
-      raw.push_back(step.destination.stop);
-    }
+    // Reconstruct the tour of partial problem stops.
+    std::vector<StopId> tour;
+    bb_path.VisitAllStops([&](StopId bb_result_stop) {
+      ExpandStop(bb_result_stop, bb_result.original_edges, tour);
+    });
 
-    // Expand combined stops to original stop IDs.
-    std::vector<StopId> sequence;
-    for (StopId s : raw) {
-      ExpandStop(s, bb_result.original_edges, sequence);
-    }
-    if (!seen_sequences.insert(sequence).second) {
+    assert(tour.size() >= 2);
+    assert(*(tour.begin()) == original_problem.boundary.start);
+    assert(*(tour.end() - 1) == original_problem.boundary.end);
+
+    // If we have already seen this tour then we don't need to process it again.
+    if (!seen_tours.insert(tour).second) {
       continue;
     }
 
-    std::vector<Path> expanded =
-        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
-    for (const Path& p : expanded) {
-      if (p.DurationSeconds() < best_duration) {
-        best_duration = p.DurationSeconds();
-        best_paths.clear();
-        best_paths.push_back(p);
-      } else if (p.DurationSeconds() == best_duration) {
-        best_paths.push_back(p);
+    // Reconstruct the paths through all original problem stops.
+    std::vector<Path> more_original_paths =
+        ComputeMinimalFeasiblePathsAlong(tour, original_problem.completed);
+
+    // Some of these paths might have duration longer than the bb_path. Disregard these.
+    std::erase_if(more_original_paths, [&](const Path& path) {
+      return path.DurationSeconds() > bb_path.DurationSeconds();
+    });
+
+    // There must be paths left with duration <= the bb_result path because all
+    // paths in the partial problem are also paths in the full problem.
+    assert(more_original_paths.size() > 0);
+
+    // All original problem paths much have duration == the bb_result path
+    // because otherwise the bb_result path isn't the best path in the partial
+    // problem.
+    for (const Path& path : more_original_paths) {
+      assert(path.merged_step.origin.stop == original_problem.boundary.start);
+      assert(path.merged_step.destination.stop == original_problem.boundary.end);
+      assert(path.DurationSeconds() == bb_path.DurationSeconds());
+      paths.push_back(PartialSolutionPath{
+        .path = path,
+        .subset_tour = tour,
+      });
+    }
+  }
+
+  // TODO: Think about wither `paths` could contain duplicate
+  // paths or other non-minimality.
+
+  return PartialSolution{.paths = std::move(paths)};
+}
+
+PartialSolution NaivelyExtendPartialSolution(
+  const ProblemState& original_problem,
+  const std::vector<StopId>& partial_solution_tour,
+  StopId new_stop
+) {
+  // Create an extended tour with the new stop inserted at index 0.
+  std::vector<StopId> extended_tour;
+  extended_tour.reserve(partial_solution_tour.size() + 1);
+  extended_tour.push_back(new_stop);
+  extended_tour.append_range(partial_solution_tour);
+
+  int best_duration = std::numeric_limits<int>::max();
+  std::vector<PartialSolutionPath> best_paths;
+
+  // Figure out the duration of the extended tour with the new stop in each
+  // position, by swapping it forwards. Intentionally don't try the new stop
+  // first or last because first and last should always be START and END.
+  for (int new_stop_index = 1; new_stop_index + 1 < extended_tour.size(); ++new_stop_index) {
+    // Swap forwards.
+    std::swap(extended_tour[new_stop_index - 1], extended_tour[new_stop_index]);
+    assert(extended_tour[new_stop_index] == new_stop);
+
+    std::vector<Path> paths =
+        ComputeMinimalFeasiblePathsAlong(extended_tour, original_problem.completed);
+    auto best_path_it = std::ranges::min_element(paths, {}, [](const Path& path) {
+      return path.DurationSeconds();
+    });
+    if (best_path_it == paths.end()) {
+      continue;
+    }
+    const Path& best_path = *best_path_it;
+    if (best_path.DurationSeconds() < best_duration) {
+      best_duration = best_path.DurationSeconds();
+      best_paths.clear();
+    }
+    if (best_path.DurationSeconds() == best_duration) {
+      // TODO: A lot of allocation and copying here, and this might be a pretty
+      // hot loop. And then we throw it all away if we find a better duration.
+      for (const Path& path : paths) {
+        if (path.DurationSeconds() > best_path.DurationSeconds()) {
+          continue;
+        }
+        best_paths.push_back({
+          .path=path,
+          .subset_tour=extended_tour,
+        });
       }
     }
   }
 
-  if (best_paths.empty()) {
-    return std::nullopt;
-  }
-  return BestPathResult{std::move(best_paths), best_duration};
+  return PartialSolution{.paths=best_paths};
 }
 
-// Tries all permutations of `leaves` as intermediate stops between start and
-// end, and returns the permutation yielding the shortest feasible path.
-std::optional<BestPathResult> FindBestPermutationPath(
-    std::vector<StopId> leaves,
-    const ProblemState& state) {
-  std::sort(leaves.begin(), leaves.end());
+PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(const ProblemState& original_problem, const PartialSolutionPath& partial_path) {
+  PartialSolutionPath result = partial_path;
 
-  int best_duration = INT_MAX;
-  BestPathResult best;
+  while (true) {
+    std::unordered_set<StopId> unvisited(original_problem.required_stops);
+    result.path.VisitAllStops([&](StopId stop) {
+      unvisited.erase(stop);
+    });
 
-  do {
-    std::vector<StopId> sequence;
-    sequence.push_back(state.boundary.start);
-    sequence.insert(sequence.end(), leaves.begin(), leaves.end());
-    sequence.push_back(state.boundary.end);
-
-    std::vector<Path> paths =
-        ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
-
-    auto min_it = std::min_element(
-        paths.begin(), paths.end(),
-        [](const Path& a, const Path& b) {
-          return a.DurationSeconds() < b.DurationSeconds();
-        });
-    if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
-      best_duration = min_it->DurationSeconds();
-      std::erase_if(paths, [&](const Path& p) {
-        return p.DurationSeconds() != best_duration;
-      });
-      best.paths = std::move(paths);
-      best.duration = best_duration;
+    std::vector<PartialSolutionPath> improved;
+    for (StopId new_stop : unvisited) {
+      PartialSolution extended = NaivelyExtendPartialSolution(original_problem, result.subset_tour, new_stop);
+      auto best_extended_it = extended.BestPathByRequiredStops(original_problem.required_stops);
+      if (
+        best_extended_it == extended.paths.end() ||
+        best_extended_it->path.DurationSeconds() > result.path.DurationSeconds()
+      ) {
+        continue;
+      }
+      improved.push_back(*best_extended_it);
     }
-  } while (std::next_permutation(leaves.begin(), leaves.end()));
 
-  if (best.paths.empty()) {
-    return std::nullopt;
+    auto best_improved_it = std::ranges::max_element(improved, {}, [&](const PartialSolutionPath& path) {
+      return CountRequiredStops(path.path, original_problem.required_stops);
+    });
+    if (best_improved_it == improved.end()) {
+      break;
+    }
+
+    result = *best_improved_it;
   }
-  return best;
+
+  return result;
 }
+
+// // Tries all permutations of `required_subset` as intermediate stops between start and
+// // end, and returns the permutation yielding the shortest feasible path.
+// PartialSolution PartialSolveBruteForce(
+//     std::unordered_set<StopId> required_subset,
+//     const ProblemState& state) {
+//   std::vector<StopId> candidate_perm(required_subset.begin(), required_subset.end());
+//   std::sort(candidate_perm.begin(), candidate_perm.end());
+
+//   int best_duration = INT_MAX;
+//   PartialSolution best;
+
+//   do {
+//     std::vector<StopId> sequence;
+//     sequence.push_back(state.boundary.start);
+//     sequence.insert(sequence.end(), candidate_perm.begin(), candidate_perm.end());
+//     sequence.push_back(state.boundary.end);
+
+//     std::vector<Path> paths =
+//         ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
+
+//     auto min_it = std::min_element(
+//         paths.begin(), paths.end(),
+//         [](const Path& a, const Path& b) {
+//           return a.DurationSeconds() < b.DurationSeconds();
+//         });
+//     if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
+//       best_duration = min_it->DurationSeconds();
+//       std::erase_if(paths, [&](const Path& p) {
+//         return p.DurationSeconds() != best_duration;
+//       });
+//       best.paths = std::move(paths);
+//     }
+//   } while (std::next_permutation(candidate_perm.begin(), candidate_perm.end()));
+
+//   return best;
+// }
 
 // For each required stop not on the path, computes its shortest "distance" to
 // the path. Distance from required stop x to path stop p: find the
@@ -259,9 +355,7 @@ std::vector<StopDistance> RequiredStopDistances(
     const Path& path,
     const ProblemState& state) {
   std::unordered_set<StopId> visited;
-  visited.insert(path.steps.front().origin.stop);
-  path.VisitIntermediateStops([&](StopId s) { visited.insert(s); });
-  visited.insert(path.steps.back().destination.stop);
+  path.VisitAllStops([&](StopId s) { visited.insert(s); });
 
   std::vector<StopDistance> distances;
   for (StopId x : state.required_stops) {
@@ -285,8 +379,7 @@ std::vector<StopDistance> RequiredStopDistances(
       if (shortest) {
         // Count required stops on the connecting path, including endpoints.
         int count = 0;
-        if (state.required_stops.contains(x)) count++;
-        shortest->VisitIntermediateStops([&](StopId s) {
+        shortest->VisitAllStops([&](StopId s) {
           if (state.required_stops.contains(s)) {
             count++;
           }
@@ -324,7 +417,7 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  std::vector<StopId> leaves = MstLeaves(state);
+  std::unordered_set<StopId> required_subset = MstLeaves(state);
 
   // Generate run timestamp.
   auto now = std::chrono::system_clock::now();
@@ -350,40 +443,34 @@ int main(int argc, char* argv[]) {
 
   for (int iteration = 0; ; iteration++) {
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
-              << leaves.size() << " leaves ===\n";
-    auto best = FindBestPathBranchAndBound(leaves, state);
+              << required_subset.size() << " leaves ===\n";
+    auto solution = PartialSolveBranchAndBound(required_subset, state);
 
-    if (!best) {
-      std::cout << "No feasible path found.\n";
+    // Choose the path that visits the most required stops.
+    auto best_solution_path_it = solution.BestPathByRequiredStops(state.required_stops);
+    if (best_solution_path_it == solution.paths.end()) {
+      std::cout << "No feasible paths found.\n";
       return 1;
     }
 
-    // Pick the path with the lowest total distance to unvisited required stops.
-    const Path* best_path = &best->paths[0];
-    auto distances = RequiredStopDistances(*best_path, state);
-    int total_dist = 0;
-    for (const auto& sd : distances) total_dist += sd.distance;
-    for (size_t i = 1; i < best->paths.size(); i++) {
-      auto d = RequiredStopDistances(best->paths[i], state);
-      int td = 0;
-      for (const auto& sd : d) td += sd.distance;
-      if (td < total_dist) {
-        best_path = &best->paths[i];
-        distances = std::move(d);
-        total_dist = td;
-      }
-    }
+    PartialSolutionPath best_solution_path = *best_solution_path_it;
+    std::cout << "Before greedy improve: " << best_solution_path.path.IntermediateStopCount() << "\n";
+    best_solution_path = GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(state, best_solution_path);
+    std::cout << "After greedy improve: " << best_solution_path.path.IntermediateStopCount() << "\n";
+
+    const Path& best_path = best_solution_path.path;
+    const std::vector<StopDistance> distances = RequiredStopDistances(best_path, state);
 
     // Write partial solution to viz SQLite.
     {
       PartialSolutionData data;
-      for (StopId leaf : leaves) {
+      for (StopId leaf : required_subset) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
-      for (const Path& p : best->paths) {
-        data.paths.push_back(ToVizPath(p));
+      for (const PartialSolutionPath& sol_path : solution.paths) {
+        data.paths.push_back(ToVizPath(sol_path.path));
       }
-      data.best_path = ToVizPath(*best_path);
+      data.best_path = ToVizPath(best_path);
 
       viz::SqliteDb db(viz_sqlite_path);
       viz::SqliteStmt stmt(db,
@@ -396,10 +483,10 @@ int main(int argc, char* argv[]) {
       stmt.step_and_reset();
     }
 
-    std::cout << "\nBest duration: " << TimeSinceServiceStart{best->duration}.ToString() << "\n";
+    std::cout << "\nBest duration: " << TimeSinceServiceStart{best_path.DurationSeconds()}.ToString() << "\n";
 
-    std::cout << "Path (" << best_path->steps.size() << " steps):\n";
-    for (const Step& step : best_path->steps) {
+    std::cout << "Path (" << best_path.steps.size() << " steps):\n";
+    for (const Step& step : best_path.steps) {
       std::cout << "  " << state.StopName(step.origin.stop) << " ("
                 << step.origin.time.ToString() << ") -> "
                 << state.StopName(step.destination.stop) << " ("
@@ -420,7 +507,7 @@ int main(int argc, char* argv[]) {
     // Add the farthest unvisited stop to leaves for the next iteration.
     StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest) << "\n\n";
-    leaves.push_back(farthest);
+    required_subset.insert(farthest);
   }
 
   return 0;
