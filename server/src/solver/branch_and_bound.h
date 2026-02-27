@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -82,10 +83,28 @@ struct BranchAndBoundResult {
   std::unordered_map<StopId, PlainEdge> original_edges;
 };
 
+enum class BnbLogTag {
+  kNode,        // iteration start: node taken from queue
+  kInfeasible,  // node is infeasible
+  kPruned,      // node pruned
+  kLowerBound,  // lower bound computed + edges
+  kUpperBound,  // upper bound path / new best found
+  kPrimitive,   // primitive step sequence
+  kQueuePrune,  // nodes pruned from queue
+  kTerminated,  // search terminated early
+  kConcorde,    // pass-through from TSP solver
+};
+
+using BnbLogger =
+    std::function<void(int iteration, BnbLogTag tag, std::string_view message)>;
+
+inline BnbLogger OstreamBnbLogger(std::ostream& os) {
+  return [&os](int, BnbLogTag, std::string_view msg) { os << msg << "\n"; };
+}
+
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
-    std::ostream* search_log,
-    std::optional<std::string> run_dir = std::nullopt,
+    const BnbLogger& logger,
     int max_iter = -1
 );
 

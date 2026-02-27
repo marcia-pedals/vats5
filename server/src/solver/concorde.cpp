@@ -8,12 +8,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <optional>
-#include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 namespace vats5 {
 namespace {
@@ -220,7 +221,7 @@ std::vector<StopId> ValidateAndExtractTour(
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    const TextLogger& tsp_log
 ) {
   DoubledGraphWeights weights(relaxed);
   int n = weights.NumStops();
@@ -270,9 +271,12 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   std::string concorde_output;
   char buffer[256];
   while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    if (tsp_log) {
-      *tsp_log << buffer << std::flush;
+    // Strip trailing newline for the logger (it adds its own).
+    std::string_view chunk(buffer);
+    if (!chunk.empty() && chunk.back() == '\n') {
+      chunk.remove_suffix(1);
     }
+    tsp_log(chunk);
     concorde_output += buffer;
   }
   pclose(pipe);
@@ -334,7 +338,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    const TextLogger& tsp_log
 ) {
   constexpr int kMaxRetries = 5;
   for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {

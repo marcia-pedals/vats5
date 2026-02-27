@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "log.h"
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
@@ -349,7 +350,8 @@ struct InitializeProblemStateResult {
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
-    bool optimize_edges = false
+    bool optimize_edges = false,
+    const TextLogger& log = NullLogger()
 );
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(
@@ -365,13 +367,13 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const TspGraphData& graph,
     const ProblemBoundary& boundary,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    const TextLogger& tsp_log = NullLogger()
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    const TextLogger& tsp_log = NullLogger()
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "gtfs/gtfs_filter.h"
+#include "log.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -55,7 +56,9 @@ int main(int argc, char* argv[]) {
   };
 
   GtfsFilterConfig filter_config = GtfsFilterConfigLoad(world_config_path);
-  GtfsDay gtfs_day = GtfsNormalizeStops(GtfsFilterFromConfig(filter_config));
+  GtfsDay gtfs_day = GtfsNormalizeStops(
+      GtfsFilterFromConfig(filter_config, OstreamLogger(std::cerr))
+  );
 
   toml::table required_stops_toml;
   try {
@@ -97,7 +100,10 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Initializing solution state...\n";
   auto init_result = InitializeProblemState(
-      steps_from_gtfs, required_stops, /*optimize_edges=*/true
+      steps_from_gtfs,
+      required_stops,
+      /*optimize_edges=*/true,
+      OstreamLogger(std::cout)
   );
 
   std::cout << "Serializing to JSON...\n";

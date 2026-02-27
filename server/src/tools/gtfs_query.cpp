@@ -10,6 +10,7 @@
 
 #include "gtfs/gtfs.h"
 #include "gtfs/gtfs_filter.h"
+#include "log.h"
 
 using namespace vats5;
 
@@ -203,7 +204,9 @@ int main(int argc, char* argv[]) {
 
   try {
     GtfsFilterConfig config = GtfsFilterConfigLoad(config_path);
-    GtfsDay data = GtfsNormalizeStops(GtfsFilterFromConfig(config));
+    GtfsDay data = GtfsNormalizeStops(
+        GtfsFilterFromConfig(config, OstreamLogger(std::cerr))
+    );
 
     if (!trip_id_prefix.empty()) {
       std::vector<std::string> prefixes;

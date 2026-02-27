@@ -1,13 +1,11 @@
 #include "solver/branch_and_bound.h"
 
-#include <sys/stat.h>
-
 #include <algorithm>
-#include <fstream>
-#include <iostream>
+#include <format>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -178,8 +176,7 @@ ProblemState ApplyConstraints(
 
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
-    std::ostream* search_log,
-    std::optional<std::string> run_dir,
+    const BnbLogger& logger,
     int max_iter
 ) {
   std::vector<SearchEdge> search_edges;
@@ -224,84 +221,78 @@ BranchAndBoundResult BranchAndBoundSolve(
     ProblemState& state = *cur_node.state;
     q.pop_back();
 
-    if (search_log != nullptr) {
-      *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take "
-                  << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
+    {
+      std::ostringstream msg;
+      msg << iter_num << " (" << q.size() + 1 << " active nodes) Take "
+          << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
       if (cur_node.edge_index != -1) {
         for (auto c : search_edges[cur_node.edge_index].constraints) {
           if (std::holds_alternative<ConstraintForbidEdge>(c)) {
             auto f = std::get<ConstraintForbidEdge>(c);
-            *search_log << " [forbid " << state.StopName(f.a) << " -> "
-                        << state.StopName(f.b) << "]";
+            msg << " [forbid " << state.StopName(f.a) << " -> "
+                << state.StopName(f.b) << "]";
           } else {
             auto r = std::get<ConstraintRequireEdge>(c);
-            *search_log << " [require " << state.StopName(r.a) << " -> "
-                        << state.StopName(r.b) << "]";
+            msg << " [require " << state.StopName(r.a) << " -> "
+                << state.StopName(r.b) << "]";
           }
         }
       }
-      *search_log << " {cur " << cur_node.edge_index;
+      msg << " {cur " << cur_node.edge_index;
       if (cur_node.edge_index != -1) {
-        *search_log << "; parent "
-                    << search_edges[cur_node.edge_index].parent_edge_index;
+        msg << "; parent "
+            << search_edges[cur_node.edge_index].parent_edge_index;
       }
-      *search_log << "}\n";
-      // TODO: Detailed log level so that we can print these out sometimes.
-      // showValue(state, *search_log);
-      // *search_log << "\n";
+      msg << "}";
+      logger(iter_num, BnbLogTag::kNode, msg.str());
     }
 
     if (cur_node.parent_lb >= best_ub) {
-      if (search_log != nullptr) {
-        *search_log << "Search terminated: LB >= UB\n";
-      }
+      logger(iter_num, BnbLogTag::kTerminated, "Search terminated: LB >= UB");
       return {best_ub, std::move(best_paths), std::move(best_original_edges)};
     }
 
     // Compute lower bound.
-    std::optional<std::ofstream> tsp_log_file;
-    if (run_dir.has_value()) {
-      std::string iter_dir =
-          run_dir.value() + "/iter" + std::to_string(iter_num);
-      mkdir(iter_dir.c_str(), 0755);
-      tsp_log_file.emplace(iter_dir + "/tsp_log");
-    }
+    TextLogger tsp_log = [&logger, iter_num](std::string_view msg) {
+      logger(iter_num, BnbLogTag::kConcorde, msg);
+    };
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
         state,
         best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
                                                   : std::nullopt,
-        tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
+        tsp_log
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
-      if (search_log != nullptr) {
-        *search_log << "  infeasible\n";
-      }
+      logger(iter_num, BnbLogTag::kInfeasible, "  infeasible");
       continue;
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
     if (lb_result.optimal_value >= best_ub) {
       // Pruned node!
-      if (search_log != nullptr) {
-        *search_log << "  pruned: LB ("
-                    << TimeSinceServiceStart{lb_result.optimal_value}.ToString()
-                    << ") >= UB (" << TimeSinceServiceStart{best_ub}.ToString()
-                    << ")\n";
-      }
+      logger(
+          iter_num,
+          BnbLogTag::kPruned,
+          std::format(
+              "  pruned: LB ({}) >= UB ({})",
+              TimeSinceServiceStart{lb_result.optimal_value}.ToString(),
+              TimeSinceServiceStart{best_ub}.ToString()
+          )
+      );
       continue;
     }
-    if (search_log != nullptr) {
-      *search_log << "  lb: "
-                  << TimeSinceServiceStart{lb_result.optimal_value}.ToString()
-                  << "\n";
-      *search_log << "  lb edges:\n";
+    {
+      std::ostringstream msg;
+      msg << "  lb: "
+          << TimeSinceServiceStart{lb_result.optimal_value}.ToString() << "\n";
+      msg << "  lb edges:";
       for (const TarelEdge& edge : lb_result.tour_edges) {
-        *search_log << "    " << state.StopName(edge.origin.stop) << " -> "
-                    << state.StopName(edge.destination.stop)
-                    << " w=" << TimeSinceServiceStart{edge.weight}.ToString()
-                    << "\n";
+        msg << "\n    " << state.StopName(edge.origin.stop) << " -> "
+            << state.StopName(edge.destination.stop)
+            << " w=" << TimeSinceServiceStart{edge.weight}.ToString();
       }
+      logger(iter_num, BnbLogTag::kLowerBound, msg.str());
     }
 
     // Make an upper bound by actually following the LB path.
@@ -318,19 +309,19 @@ BranchAndBoundResult BranchAndBoundSolve(
           [](const Path& a, const Path& b) {
             return a.DurationSeconds() < b.DurationSeconds();
           });
-      if (search_log != nullptr) {
-        *search_log
-            << "  ub path ("
+      {
+        std::ostringstream msg;
+        msg << "  ub path ("
             << TimeSinceServiceStart{feasible_path.DurationSeconds()}.ToString()
             << "): ";
         for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
           if (i > 0) {
-            *search_log << " -> ";
+            msg << " -> ";
           }
           TarelEdge& edge = lb_result.tour_edges[i];
-          *search_log << state.StopName(edge.destination.stop);
+          msg << state.StopName(edge.destination.stop);
         }
-        *search_log << "\n";
+        logger(iter_num, BnbLogTag::kUpperBound, msg.str());
       }
       if (feasible_path.DurationSeconds() < best_ub) {
         best_ub = feasible_path.DurationSeconds();
@@ -341,13 +332,16 @@ BranchAndBoundResult BranchAndBoundSolve(
           }
         }
         best_original_edges = state.original_edges;
-        if (search_log != nullptr) {
-          *search_log << "  found new ub "
-                      << TimeSinceServiceStart{best_ub}.ToString() << " "
-                      << feasible_path.merged_step.origin.time.ToString() << " "
-                      << feasible_path.merged_step.destination.time.ToString()
-                      << "\n";
-        }
+        logger(
+            iter_num,
+            BnbLogTag::kUpperBound,
+            std::format(
+                "  found new ub {} {} {}",
+                TimeSinceServiceStart{best_ub}.ToString(),
+                feasible_path.merged_step.origin.time.ToString(),
+                feasible_path.merged_step.destination.time.ToString()
+            )
+        );
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();
         std::erase_if(q, [best_ub](const SearchNode& node) {
@@ -356,9 +350,11 @@ BranchAndBoundResult BranchAndBoundSolve(
         size_t pruned_count = old_size - q.size();
         if (pruned_count > 0) {
           std::make_heap(q.begin(), q.end());
-          if (search_log != nullptr) {
-            *search_log << "  pruned " << pruned_count << " nodes from queue\n";
-          }
+          logger(
+              iter_num,
+              BnbLogTag::kQueuePrune,
+              std::format("  pruned {} nodes from queue", pruned_count)
+          );
         }
       }
     }
@@ -379,20 +375,23 @@ BranchAndBoundResult BranchAndBoundSolve(
       }
     }
 
-    if (search_log != nullptr && primitive_steps.size() > 0) {
-      *search_log << "  primitive: ";
-      *search_log << state.StopName(primitive_steps[0].origin.stop);
+    if (primitive_steps.size() > 0) {
+      std::ostringstream msg;
+      msg << "  primitive: ";
+      msg << state.StopName(primitive_steps[0].origin.stop);
       for (const Step& step : primitive_steps) {
-        *search_log << "->" << state.StopName(step.destination.stop);
+        msg << "->" << state.StopName(step.destination.stop);
       }
-      *search_log << "\n";
+      logger(iter_num, BnbLogTag::kPrimitive, msg.str());
     }
 
     if (primitive_steps.size() <= 2) {
       // TODO: Figure out what to do here.
-      if (search_log != nullptr) {
-        *search_log << "  pruned: 2 or fewer primitive steps\n";
-      }
+      logger(
+          iter_num,
+          BnbLogTag::kPruned,
+          "  pruned: 2 or fewer primitive steps"
+      );
       continue;
     }
 

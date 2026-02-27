@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <iostream>
+#include <format>
 #include <sstream>
 #include <stdexcept>
 #include <toml++/toml.hpp>
@@ -64,31 +64,32 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
   };
 }
 
-GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config) {
-  std::cerr << "Loading GTFS data from: " << config.input_dir << std::endl;
-  std::cerr << "Filtering for date: " << config.date << std::endl;
+GtfsDay GtfsFilterFromConfig(
+    const GtfsFilterConfig& config, const TextLogger& log
+) {
+  log(std::format("Loading GTFS data from: {}", config.input_dir));
+  log(std::format("Filtering for date: {}", config.date));
   if (config.prefixes.empty()) {
-    std::cerr << "Including all trips (no prefix filter)" << std::endl;
+    log("Including all trips (no prefix filter)");
   } else {
-    std::cerr << "Using prefix filter(s): ";
+    std::string prefixes_str;
     for (size_t i = 0; i < config.prefixes.size(); ++i) {
-      std::cerr << "\"" << config.prefixes[i] << "\"";
-      if (i < config.prefixes.size() - 1) std::cerr << ", ";
+      if (i > 0) prefixes_str += ", ";
+      prefixes_str += "\"" + config.prefixes[i] + "\"";
     }
-    std::cerr << std::endl;
+    log(std::format("Using prefix filter(s): {}", prefixes_str));
   }
 
   Gtfs gtfs = GtfsLoad(config.input_dir);
-  std::cerr << "Loaded: " << FormatGtfsSizes(gtfs) << std::endl;
+  log(std::format("Loaded: {}", FormatGtfsSizes(gtfs)));
 
   if (!config.prefixes.empty()) {
     gtfs = GtfsFilterByPrefixes(gtfs, config.prefixes);
-    std::cerr << "After filtering trips: " << FormatGtfsSizes(gtfs)
-              << std::endl;
+    log(std::format("After filtering trips: {}", FormatGtfsSizes(gtfs)));
   }
 
   GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, config.date);
-  std::cerr << "Combined result: " << FormatGtfsSizes(result) << std::endl;
+  log(std::format("Combined result: {}", FormatGtfsSizes(result)));
 
   return result;
 }
