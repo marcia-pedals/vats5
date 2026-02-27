@@ -1,7 +1,7 @@
 #include "solver/debug_printing.h"
 
 #include <algorithm>
-#include <iostream>
+#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,7 +11,8 @@ namespace vats5 {
 void PrintPartitions(
     const ProblemState& state,
     const std::unordered_map<StepPartitionId, std::unordered_set<StopId>>&
-        partitions
+        partitions,
+    const TextLogger& log
 ) {
   std::vector<std::pair<std::string, std::vector<std::string>>> entries;
   for (const auto& [partition, stops] : partitions) {
@@ -26,17 +27,20 @@ void PrintPartitions(
     return a.first < b.first;
   });
   for (const auto& [name, stop_names] : entries) {
-    std::cout << "    " << name << " [";
+    std::string line = "    " + name + " [";
     for (size_t i = 0; i < stop_names.size(); ++i) {
-      if (i > 0) std::cout << ", ";
-      std::cout << stop_names[i];
+      if (i > 0) line += ", ";
+      line += stop_names[i];
     }
-    std::cout << "]\n";
+    line += "]";
+    log(line);
   }
 }
 
 void MyDetailedPrintout(
-    const ProblemState& state, const std::vector<TarelEdge>& tour
+    const ProblemState& state,
+    const std::vector<TarelEdge>& tour,
+    const TextLogger& log
 ) {
   std::vector<StopId> tour_stops;
   for (const TarelEdge& edge : tour) {
@@ -47,12 +51,14 @@ void MyDetailedPrintout(
   }
 
   for (StopId s : tour_stops) {
-    PrintStopPartitions(state, s);
+    PrintStopPartitions(state, s, log);
   }
 }
 
-void PrintStopPartitions(const ProblemState& state, StopId s) {
-  std::cout << state.StopName(s) << "\n";
+void PrintStopPartitions(
+    const ProblemState& state, StopId s, const TextLogger& log
+) {
+  log(state.StopName(s));
 
   std::unordered_map<StepPartitionId, std::unordered_set<StopId>>
       arrive_partitions;
@@ -86,21 +92,21 @@ void PrintStopPartitions(const ProblemState& state, StopId s) {
   }
 
   if (arrive_partitions.size() > 0) {
-    std::cout << "  arrive partitions:\n";
-    PrintPartitions(state, arrive_partitions);
+    log("  arrive partitions:");
+    PrintPartitions(state, arrive_partitions, log);
   }
   if (arrive_partitions_flex.size() > 0) {
-    std::cout << "  arrive partitions flex:\n";
-    PrintPartitions(state, arrive_partitions_flex);
+    log("  arrive partitions flex:");
+    PrintPartitions(state, arrive_partitions_flex, log);
   }
 
   if (depart_partitions.size() > 0) {
-    std::cout << "  depart partitions:\n";
-    PrintPartitions(state, depart_partitions);
+    log("  depart partitions:");
+    PrintPartitions(state, depart_partitions, log);
   }
   if (depart_partitions_flex.size() > 0) {
-    std::cout << "  depart partitions flex:\n";
-    PrintPartitions(state, depart_partitions_flex);
+    log("  depart partitions flex:");
+    PrintPartitions(state, depart_partitions_flex, log);
   }
 }
 

@@ -2,10 +2,10 @@
 
 #include <exception>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <vector>
 
+#include "log.h"
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 
@@ -33,13 +33,13 @@ struct ConcordeSolution {
 
 // Solves TSP using Concorde and returns the tour.
 // The tour visits all stops in the relaxed adjacency list exactly once.
-// If tsp_log is non-null, Concorde's output is written to it.
+// If tsp_log is provided, Concorde's output is written to it.
 // Returns nullopt if the optimal tour uses a forbidden edge (no valid tour
 // exists).
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    const TextLogger& tsp_log = NullLogger()
 );
 
 }  // namespace vats5
