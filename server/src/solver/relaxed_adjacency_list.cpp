@@ -8,13 +8,13 @@
 namespace vats5 {
 
 std::vector<WeightedEdge> MakeRelaxedEdges(
-    const StepsAdjacencyList& steps_list
+    const StepsAdjacencyList<>& steps_list
 ) {
   const int num_stops = steps_list.NumStops();
   std::vector<WeightedEdge> edges;
 
   for (int origin_v = 0; origin_v < num_stops; ++origin_v) {
-    std::span<const StepGroup> groups = steps_list.GetGroups(StopId{origin_v});
+    std::span<const StepGroup> groups = steps_list.GetGroups(StopId<>{origin_v});
 
     for (const StepGroup& group : groups) {
       int min_duration = std::numeric_limits<int>::max();
@@ -34,7 +34,7 @@ std::vector<WeightedEdge> MakeRelaxedEdges(
 
       if (min_duration < std::numeric_limits<int>::max()) {
         edges.push_back(
-            WeightedEdge{StopId{origin_v}, group.destination_stop, min_duration}
+            WeightedEdge{StopId<>{origin_v}, group.destination_stop, min_duration}
         );
       }
     }
@@ -44,7 +44,7 @@ std::vector<WeightedEdge> MakeRelaxedEdges(
 }
 
 std::vector<WeightedEdge> MakeRelaxedEdges(
-    const StepPathsAdjacencyList& paths_list
+    const StepPathsAdjacencyList<>& paths_list
 ) {
   std::vector<WeightedEdge> edges;
 
@@ -55,7 +55,7 @@ std::vector<WeightedEdge> MakeRelaxedEdges(
       }
 
       // All paths in a group have the same destination
-      StopId destination = path_group[0].merged_step.destination.stop;
+      StopId<> destination = path_group[0].merged_step.destination.stop;
 
       // Find minimum duration across all paths in this group
       int min_duration = std::numeric_limits<int>::max();
@@ -72,11 +72,11 @@ std::vector<WeightedEdge> MakeRelaxedEdges(
   return edges;
 }
 
-RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(
+RelaxedAdjacencyList<> MakeRelaxedAdjacencyListFromEdges(
     const std::vector<WeightedEdge>& edges
 ) {
   if (edges.empty()) {
-    return RelaxedAdjacencyList{};
+    return RelaxedAdjacencyList<>{};
   }
 
   // Find the number of stops (max stop ID + 1)
@@ -95,7 +95,7 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(
   }
 
   // Build CSR format
-  RelaxedAdjacencyList result;
+  RelaxedAdjacencyList<> result;
   result.edge_offsets.resize(num_stops);
 
   int running_offset = 0;
@@ -114,8 +114,8 @@ RelaxedAdjacencyList MakeRelaxedAdjacencyListFromEdges(
   return result;
 }
 
-RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
-    const RelaxedAdjacencyList& adjacency_list
+RelaxedAdjacencyList<> ReverseRelaxedAdjacencyList(
+    const RelaxedAdjacencyList<>& adjacency_list
 ) {
   const int num_stops = adjacency_list.NumStops();
 
@@ -123,16 +123,16 @@ RelaxedAdjacencyList ReverseRelaxedAdjacencyList(
   std::vector<std::vector<RelaxedEdge>> per_origin_edges(num_stops);
 
   for (int origin_v = 0; origin_v < num_stops; ++origin_v) {
-    for (const RelaxedEdge& edge : adjacency_list.GetEdges(StopId{origin_v})) {
+    for (const RelaxedEdge& edge : adjacency_list.GetEdges(StopId<>{origin_v})) {
       // Reverse the edge: destination becomes origin
       per_origin_edges[edge.destination_stop.v].push_back(
-          RelaxedEdge{StopId{origin_v}, edge.weight_seconds}
+          RelaxedEdge{StopId<>{origin_v}, edge.weight_seconds}
       );
     }
   }
 
   // Build CSR format
-  RelaxedAdjacencyList result;
+  RelaxedAdjacencyList<> result;
   result.edge_offsets.resize(num_stops);
 
   int running_offset = 0;

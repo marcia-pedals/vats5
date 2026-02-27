@@ -20,7 +20,7 @@ namespace vats5 {
 
 RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state_orig = *GenProblemState(
+  ProblemState<> state_orig = *GenProblemState(
       std::nullopt,
       rc::gen::construct<StepPartitionId>(
           rc::gen::inRange(0, num_partitions - 1)
@@ -28,9 +28,9 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
   );
   NamedBranchEdge named_edge = *GenBranchEdge(state_orig);
 
-  ProblemState state_forbid =
+  ProblemState<> state_forbid =
       ApplyConstraints(state_orig, {named_edge.edge.Forbid()});
-  ProblemState state_require =
+  ProblemState<> state_require =
       ApplyConstraints(state_orig, {named_edge.edge.Require()});
 
   int opt_orig = BruteForceSolveOptimalDuration(state_orig);
@@ -52,7 +52,7 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
 
 RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state_orig = *GenProblemState(
+  ProblemState<> state_orig = *GenProblemState(
       std::nullopt,
       rc::gen::construct<StepPartitionId>(
           rc::gen::inRange(0, num_partitions - 1)
@@ -60,9 +60,9 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
   );
   NamedBranchEdge named_edge = *GenBranchEdge(state_orig);
 
-  ProblemState state_forbid =
+  ProblemState<> state_forbid =
       ApplyConstraints(state_orig, {named_edge.edge.Forbid()});
-  ProblemState state_require =
+  ProblemState<> state_require =
       ApplyConstraints(state_orig, {named_edge.edge.Require()});
   RC_LOG() << "state_forbid: " << rc::toString(state_forbid) << "\n\n";
   RC_LOG() << "state_require: " << rc::toString(state_require) << "\n\n";
@@ -76,7 +76,7 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
 
-  auto LogResult = [&](const ProblemState& state, const TspTourResult& result) {
+  auto LogResult = [&](const ProblemState<>& state, const TspTourResult& result) {
     RC_LOG() << result.optimal_value << " ";
     for (int i = 0; i < result.original_stop_tour.size(); ++i) {
       if (i > 0) {
@@ -125,7 +125,7 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
 
 RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
-  ProblemState state = *GenProblemState(
+  ProblemState<> state = *GenProblemState(
       std::nullopt,
       rc::gen::construct<StepPartitionId>(
           rc::gen::inRange(0, num_partitions - 1)

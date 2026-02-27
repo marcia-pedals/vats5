@@ -9,14 +9,14 @@ namespace vats5 {
 
 // Temporary structure for building StepGroups before flattening
 struct TempStepGroup {
-  StopId destination_stop;
+  StopId<> destination_stop;
   std::optional<AdjacencyListStep> flex_step;
   std::vector<AdjacencyListStep> fixed_steps;
 };
 
-StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
+StepsAdjacencyList<> MakeAdjacencyList(const std::vector<Step>& steps) {
   // Group steps by origin_stop and destination_stop
-  std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Step>>>
+  std::unordered_map<StopId<>, std::unordered_map<StopId<>, std::vector<Step>>>
       temp_groups;
 
   int max_stop_id = 0;
@@ -70,7 +70,7 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   }
 
   // Build CSR format for groups
-  StepsAdjacencyList adjacency_list;
+  StepsAdjacencyList<> adjacency_list;
   adjacency_list.group_offsets.resize(max_stop_id + 1, 0);
 
   // First pass: count groups per origin
@@ -122,13 +122,13 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
   return adjacency_list;
 }
 
-CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
+CompactStopIdsResult CompactStopIds(const StepsAdjacencyList<>& original) {
   // Collect all unique stop IDs actually used in the adjacency list
   std::vector<bool> used(original.NumStops(), false);
   int num_new_stops = 0;
 
   for (int origin_v = 0; origin_v < original.NumStops(); ++origin_v) {
-    auto groups = original.GetGroups(StopId{origin_v});
+    auto groups = original.GetGroups(StopId<>{origin_v});
     if (!groups.empty()) {
       if (!used[origin_v]) {
         num_new_stops += 1;
@@ -145,25 +145,25 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
 
   // Build mapping from original to new (dense) IDs
   StopIdMapping mapping;
-  mapping.original_to_new.resize(original.NumStops(), StopId{-1});
+  mapping.original_to_new.resize(original.NumStops(), StopId<>{-1});
   mapping.new_to_original.reserve(num_new_stops);
 
   int new_id = 0;
   for (int orig_v = 0; orig_v < original.NumStops(); ++orig_v) {
     if (used[orig_v]) {
-      mapping.original_to_new[orig_v] = StopId{new_id};
-      mapping.new_to_original.push_back(StopId{orig_v});
+      mapping.original_to_new[orig_v] = StopId<>{new_id};
+      mapping.new_to_original.push_back(StopId<>{orig_v});
       ++new_id;
     }
   }
 
   // Build the remapped adjacency list
-  StepsAdjacencyList remapped;
+  StepsAdjacencyList<> remapped;
   remapped.group_offsets.resize(num_new_stops, 0);
 
   // First pass: count groups per new origin
   for (int orig_v = 0; orig_v < original.NumStops(); ++orig_v) {
-    auto groups = original.GetGroups(StopId{orig_v});
+    auto groups = original.GetGroups(StopId<>{orig_v});
     if (!groups.empty()) {
       int new_origin = mapping.original_to_new[orig_v].v;
       remapped.group_offsets[new_origin] = static_cast<int>(groups.size());
@@ -185,7 +185,7 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
   // Process in new ID order for deterministic output
   for (int new_origin = 0; new_origin < num_new_stops; ++new_origin) {
     int orig_v = mapping.new_to_original[new_origin].v;
-    auto orig_groups = original.GetGroups(StopId{orig_v});
+    auto orig_groups = original.GetGroups(StopId<>{orig_v});
 
     int group_offset = remapped.group_offsets[new_origin];
     int steps_offset = static_cast<int>(remapped.steps.size());
@@ -215,15 +215,15 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
   return CompactStopIdsResult{std::move(remapped), std::move(mapping)};
 }
 
-StepPathsAdjacencyList SplitPathsAtStop(
-    const StepPathsAdjacencyList& paths, StopId split_stop
+StepPathsAdjacencyList<> SplitPathsAtStop(
+    const StepPathsAdjacencyList<>& paths, StopId<> split_stop
 ) {
-  StepPathsAdjacencyList result;
+  StepPathsAdjacencyList<> result;
 
   // Add a path to the group matching its destination, or create a new group.
-  auto add_path = [&result](StopId origin, Path path) {
+  auto add_path = [&result](StopId<> origin, Path path) {
     auto& groups = result.adjacent[origin];
-    StopId dest = path.merged_step.destination.stop;
+    StopId<> dest = path.merged_step.destination.stop;
     for (auto& group : groups) {
       if (!group.empty() && group[0].merged_step.destination.stop == dest) {
         group.push_back(std::move(path));
@@ -234,8 +234,8 @@ StepPathsAdjacencyList SplitPathsAtStop(
   };
 
   for (const Path& path : paths.AllPaths()) {
-    StopId origin = path.merged_step.origin.stop;
-    StopId destination = path.merged_step.destination.stop;
+    StopId<> origin = path.merged_step.origin.stop;
+    StopId<> destination = path.merged_step.destination.stop;
 
     // Find if split_stop appears as an intermediate stop in this path
     int split_index = -1;

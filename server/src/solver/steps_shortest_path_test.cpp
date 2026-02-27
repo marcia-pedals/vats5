@@ -50,7 +50,7 @@ void VerifyPathResult(
     const std::string& expected_destination_route_desc,
     const bool expected_is_flex
 ) {
-  StopId destination_stop =
+  StopId<> destination_stop =
       steps_from_gtfs.mapping.GetStopIdFromName(destination_stop_name);
 
   ASSERT_TRUE(
@@ -120,14 +120,14 @@ TEST_P(ShortestPathParameterizedTest, FindShortestPathsAtTime) {
     TimeSinceServiceStart query_time =
         TimeSinceServiceStart::Parse(test_case.origin_time);
 
-    std::unordered_set<StopId> destinations;
+    std::unordered_set<StopId<>> destinations;
     for (const auto& path : test_case.expected_paths) {
       destinations.insert(
           steps_from_gtfs.mapping.GetStopIdFromName(path.destination_stop_name)
       );
     }
 
-    StopId origin_stop =
+    StopId<> origin_stop =
         steps_from_gtfs.mapping.GetStopIdFromName(test_case.origin_stop_name);
     auto shortest_paths = FindShortestPathsAtTime(
         adjacency_list, query_time, origin_stop, destinations
@@ -250,8 +250,8 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
   std::vector<Step> steps = {
       // Regular scheduled trip from stop 1 to stop 2
       Step::PrimitiveScheduled(
-          StopId{1},
-          StopId{2},
+          StopId<>{1},
+          StopId<>{2},
           TimeSinceServiceStart{100},
           TimeSinceServiceStart{200},
           TripId{1}
@@ -259,19 +259,19 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
       // Flex trip (walking) from stop 1 to stop 2 - should be first in group to
       // trigger bug
       Step::PrimitiveFlex(
-          StopId{1}, StopId{2}, 300, TripId{2}
+          StopId<>{1}, StopId<>{2}, 300, TripId{2}
       )  // Duration of 300 seconds (5 minutes)
   };
 
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+  StepsAdjacencyList<> adjacency_list = MakeAdjacencyList(steps);
 
   // Query at time 50 - before the scheduled trip departs
   // With the bug: only considers flex trip, arrives at 50+300=350
   // Without the bug: should consider both, and take scheduled trip arriving at
   // 200
   TimeSinceServiceStart query_time{50};
-  StopId origin_stop{1};
-  std::unordered_set<StopId> destinations{StopId{2}};
+  StopId<> origin_stop{1};
+  std::unordered_set<StopId<>> destinations{StopId<>{2}};
 
   auto shortest_paths = FindShortestPathsAtTime(
       adjacency_list, query_time, origin_stop, destinations
@@ -386,15 +386,15 @@ TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
       GetCachedFilteredTestData(
       {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
-  StopId milpitas =
+  StopId<> milpitas =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:great-mall-milpitas-bart"}
       );
-  StopId berryessa =
+  StopId<> berryessa =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"PS_BERR"}
       );
-  std::unordered_map<StopId, std::vector<Path>> minimal_path_set =
+  std::unordered_map<StopId<>, std::vector<Path>> minimal_path_set =
       FindMinimalPathSet(test_data.adjacency_list, milpitas, {berryessa});
   auto B = [&](const char* origin_time, const char* destination_time) {
     return MergedStepIs(
@@ -564,28 +564,28 @@ TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
       GetCachedFilteredTestData(
       {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
-  StopId fruitvale =
+  StopId<> fruitvale =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:fruitvale"}
       );
-  StopId lake_merritt =
+  StopId<> lake_merritt =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"902109"}
       );
-  StopId coliseum =
+  StopId<> coliseum =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"mtc:oakland-coliseum-bart"}
       );
-  StopId san_leandro =
+  StopId<> san_leandro =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"902409"}
       );
-  StopId west_oakland =
+  StopId<> west_oakland =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
           GtfsStopId{"901109"}
       );
 
-  std::unordered_map<StopId, std::vector<Path>> minimal_path_set =
+  std::unordered_map<StopId<>, std::vector<Path>> minimal_path_set =
       FindMinimalPathSet(
           test_data.adjacency_list,
           fruitvale,
@@ -1185,24 +1185,24 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
       // Frequent trips from A (stop 1) to B (stop 2)
       // Trip 1: A->B departing at 100, arriving at 110
       Step::PrimitiveScheduled(
-          StopId{1},
-          StopId{2},
+          StopId<>{1},
+          StopId<>{2},
           TimeSinceServiceStart{100},
           TimeSinceServiceStart{110},
           TripId{1}
       ),
       // Trip 2: A->B departing at 120, arriving at 130
       Step::PrimitiveScheduled(
-          StopId{1},
-          StopId{2},
+          StopId<>{1},
+          StopId<>{2},
           TimeSinceServiceStart{120},
           TimeSinceServiceStart{130},
           TripId{2}
       ),
       // Trip 3: A->B departing at 180, arriving at 190
       Step::PrimitiveScheduled(
-          StopId{1},
-          StopId{2},
+          StopId<>{1},
+          StopId<>{2},
           TimeSinceServiceStart{180},
           TimeSinceServiceStart{190},
           TripId{3}
@@ -1211,26 +1211,26 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
       // Infrequent trips from B (stop 2) to C (stop 3)
       // Only one trip: B->C departing at 200, arriving at 210
       Step::PrimitiveScheduled(
-          StopId{2},
-          StopId{3},
+          StopId<>{2},
+          StopId<>{3},
           TimeSinceServiceStart{200},
           TimeSinceServiceStart{210},
           TripId{4}
       )
   };
 
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+  StepsAdjacencyList<> adjacency_list = MakeAdjacencyList(steps);
 
   // Query at time 90 (before any departures)
   TimeSinceServiceStart query_time{90};
-  StopId origin_stop{1};                               // Stop A
-  std::unordered_set<StopId> destinations{StopId{3}};  // Stop C
+  StopId<> origin_stop{1};                               // Stop A
+  std::unordered_set<StopId<>> destinations{StopId<>{3}};  // Stop C
 
   auto shortest_paths = FindShortestPathsAtTime(
       adjacency_list, query_time, origin_stop, destinations
   );
 
-  std::vector<Step> path_steps = BacktrackPath(shortest_paths, StopId{3});
+  std::vector<Step> path_steps = BacktrackPath(shortest_paths, StopId<>{3});
 
   // The algorithm will likely choose:
   // - Depart A at 100, arrive B at 110
@@ -1258,11 +1258,11 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       {"../data/raw_RG_202506", "20250718", {"BA:"}, false}
   );
 
-  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+  std::unordered_set<StopId<>> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  StepsAdjacencyList reduced = MakeAdjacencyList(
+  StepsAdjacencyList<> reduced = MakeAdjacencyList(
       ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops)
           .AllMergedSteps()
   );
@@ -1271,7 +1271,7 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   // stops) and rebuild the adjacency list.
   std::vector<Step> steps_without_self_loops;
   for (int stop_v = 0; stop_v < test_data.adjacency_list.NumStops(); ++stop_v) {
-    StopId origin_stop{stop_v};
+    StopId<> origin_stop{stop_v};
     for (const StepGroup& g : test_data.adjacency_list.GetGroups(origin_stop)) {
       if (g.destination_stop == origin_stop) {
         continue;  // Skip self-loops
@@ -1289,7 +1289,7 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
       }
     }
   }
-  StepsAdjacencyList original_without_self_loops =
+  StepsAdjacencyList<> original_without_self_loops =
       MakeAdjacencyList(steps_without_self_loops);
 
   EXPECT_EQ(original_without_self_loops, reduced);
@@ -1301,17 +1301,17 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
       {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
 
-  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+  std::unordered_set<StopId<>> bart_stops = GetStopsForTripIdPrefix(
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  StepPathsAdjacencyList reduced_paths =
+  StepPathsAdjacencyList<> reduced_paths =
       ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops);
-  StepsAdjacencyList reduced_adjacency_list =
+  StepsAdjacencyList<> reduced_adjacency_list =
       MakeAdjacencyList(reduced_paths.AllMergedSteps());
 
   // Convert bart_stops set to vector for random access
-  std::vector<StopId> bart_stops_vec(bart_stops.begin(), bart_stops.end());
+  std::vector<StopId<>> bart_stops_vec(bart_stops.begin(), bart_stops.end());
 
   std::mt19937 rng(42);  // Fixed seed for reproducibility
   std::uniform_int_distribution<size_t> stop_dist(0, bart_stops_vec.size() - 1);
@@ -1325,8 +1325,8 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
   std::uniform_int_distribution<int> time_dist(0, 24 * 60 * 60);
 
   for (int i = 0; i < 5000; ++i) {
-    StopId origin = bart_stops_vec[stop_dist(rng)];
-    StopId destination = bart_stops_vec[stop_dist(rng)];
+    StopId<> origin = bart_stops_vec[stop_dist(rng)];
+    StopId<> destination = bart_stops_vec[stop_dist(rng)];
     if (origin == destination) {
       continue;  // Skip self-loops
     }
@@ -1345,7 +1345,7 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
             << "  Query time: " << origin_time.ToString();
     SCOPED_TRACE(context.str());
 
-    std::unordered_set<StopId> destinations = {destination};
+    std::unordered_set<StopId<>> destinations = {destination};
 
     auto original_paths = FindShortestPathsAtTime(
         test_data.adjacency_list, origin_time, origin, destinations

@@ -21,16 +21,16 @@
 
 namespace vats5 {
 
-ProblemState ApplyConstraints(
-    const ProblemState& state, const std::vector<ProblemConstraint>& constraints
+ProblemState<> ApplyConstraints(
+    const ProblemState<>& state, const std::vector<ProblemConstraint>& constraints
 ) {
-  // Mutable copies of all the `ProblemState` fields we'll be mutating.
+  // Mutable copies of all the `ProblemState<>` fields we'll be mutating.
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
-  std::unordered_set<StopId> required_stops = state.required_stops;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
-  std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
-  StopId next_stop_id{state.minimal.NumStops()};
+  std::unordered_set<StopId<>> required_stops = state.required_stops;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos = state.stop_infos;
+  std::unordered_map<StopId<>, PlainEdge> original_edges = state.original_edges;
+  StopId<> next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.
   for (const ProblemConstraint& constraint : constraints) {
@@ -57,7 +57,7 @@ ProblemState ApplyConstraints(
       // might end up being the same amount of computation because we added a
       // bunch more steps to compensate. And it's more complicated and makes
       // interpreting the paths harder.
-      StopId ab = next_stop_id;
+      StopId<> ab = next_stop_id;
       next_stop_id.v += 1;
       stop_infos[ab] = ProblemStateStopInfo{
           GtfsStopId{""},
@@ -80,9 +80,9 @@ ProblemState ApplyConstraints(
       // from "ab". Steps from a to b.
       std::vector<Step> a_to_b;
       // Steps from * to a, grouped by *.
-      std::unordered_map<StopId, std::vector<Step>> star_to_a;
+      std::unordered_map<StopId<>, std::vector<Step>> star_to_a;
       // Steps from b to *, grouped by *.
-      std::unordered_map<StopId, std::vector<Step>> b_to_star;
+      std::unordered_map<StopId<>, std::vector<Step>> b_to_star;
       for (const Step& s : steps) {
         if (s.origin.stop == require.a && s.destination.stop == require.b) {
           a_to_b.push_back(s);
@@ -148,7 +148,7 @@ ProblemState ApplyConstraints(
         if (s.destination.stop != require.b) {
           return false;
         }
-        StopId erase_from = require.a;
+        StopId<> erase_from = require.a;
         while (true) {
           if (s.origin.stop == erase_from) {
             return true;
@@ -177,7 +177,7 @@ ProblemState ApplyConstraints(
 }
 
 BranchAndBoundResult BranchAndBoundSolve(
-    const ProblemState& initial_state,
+    const ProblemState<>& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
     int max_iter
@@ -188,18 +188,18 @@ BranchAndBoundResult BranchAndBoundSolve(
       SearchNode{
           .parent_lb = 0,
           .edge_index = -1,
-          .state = std::make_unique<ProblemState>(initial_state),
+          .state = std::make_unique<ProblemState<>>(initial_state),
       }
   );
 
   auto PushQ = [&search_edges, &q](
-                   const ProblemState& state, int new_lb, SearchEdge new_edge
+                   const ProblemState<>& state, int new_lb, SearchEdge new_edge
                ) {
     int new_edge_index = search_edges.size();
     search_edges.push_back(new_edge);
     // TODO: Figure out if passing ApplyConstraints to std::make_unique does the
     // smart thing or not.
-    std::unique_ptr<ProblemState> new_state = std::make_unique<ProblemState>(
+    std::unique_ptr<ProblemState<>> new_state = std::make_unique<ProblemState<>>(
         ApplyConstraints(state, new_edge.constraints)
     );
     q.push_back(
@@ -211,7 +211,7 @@ BranchAndBoundResult BranchAndBoundSolve(
   int iter_num = 0;
   int best_ub = std::numeric_limits<int>::max();
   std::vector<Path> best_paths;
-  std::unordered_map<StopId, PlainEdge> best_original_edges;
+  std::unordered_map<StopId<>, PlainEdge> best_original_edges;
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -221,7 +221,7 @@ BranchAndBoundResult BranchAndBoundSolve(
 
     std::pop_heap(q.begin(), q.end());
     SearchNode cur_node = std::move(q.back());
-    ProblemState& state = *cur_node.state;
+    ProblemState<>& state = *cur_node.state;
     q.pop_back();
 
     if (search_log != nullptr) {
@@ -305,7 +305,7 @@ BranchAndBoundResult BranchAndBoundSolve(
     }
 
     // Make an upper bound by actually following the LB path.
-    std::vector<StopId> stop_sequence;
+    std::vector<StopId<>> stop_sequence;
     stop_sequence.push_back(lb_result.tour_edges[0].origin.stop);
     for (const auto& edge : lb_result.tour_edges) {
       stop_sequence.push_back(edge.destination.stop);

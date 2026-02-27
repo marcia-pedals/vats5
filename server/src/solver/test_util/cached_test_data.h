@@ -15,7 +15,7 @@ namespace vats5 {
 struct CachedTestData {
   GtfsDay gtfs_day;
   StepsFromGtfs steps_from_gtfs;
-  StepsAdjacencyList adjacency_list;
+  StepsAdjacencyList<> adjacency_list;
 };
 
 struct FilterOptions {
@@ -29,7 +29,7 @@ inline CachedTestData MakeCachedTestData(GtfsDay gtfs_day) {
   gtfs_day = GtfsNormalizeStops(gtfs_day);
   StepsFromGtfs steps_from_gtfs =
       GetStepsFromGtfs(gtfs_day, GetStepsOptions{1000.0});
-  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
+  StepsAdjacencyList<> adjacency_list = MakeAdjacencyList(steps_from_gtfs.steps);
   return CachedTestData{
       std::move(gtfs_day), std::move(steps_from_gtfs), std::move(adjacency_list)
   };

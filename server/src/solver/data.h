@@ -10,21 +10,23 @@
 #include <vector>
 
 #include "gtfs/gtfs.h"
+#include "solver/witness_types.h"
 
 namespace vats5 {
 
+template <typename Tag = Unwitnessed>
 struct StopId {
   int v;
   auto operator<=>(const StopId&) const = default;
 };
-inline void to_json(nlohmann::json& j, const StopId& id) { j = id.v; }
-inline void from_json(const nlohmann::json& j, StopId& id) {
+inline void to_json(nlohmann::json& j, const StopId<>& id) { j = id.v; }
+inline void from_json(const nlohmann::json& j, StopId<>& id) {
   id.v = j.get<int>();
 }
 
 struct PlainEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
   bool operator==(const PlainEdge&) const = default;
 };
 inline void to_json(nlohmann::json& j, const PlainEdge& e) {
@@ -36,8 +38,8 @@ inline void from_json(const nlohmann::json& j, PlainEdge& e) {
 }
 
 struct PlainWeightedEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
   int weight;
 };
 
@@ -116,7 +118,7 @@ inline void from_json(const nlohmann::json& j, StepPartitionId& id) {
 }
 
 struct StepEndpoint {
-  StopId stop;
+  StopId<> stop;
   bool is_flex;
   StepPartitionId partition;
   TimeSinceServiceStart time;
@@ -150,8 +152,8 @@ struct Step {
   }
 
   static Step PrimitiveScheduled(
-      StopId origin_stop,
-      StopId destination_stop,
+      StopId<> origin_stop,
+      StopId<> destination_stop,
       TimeSinceServiceStart origin_time,
       TimeSinceServiceStart destination_time,
       TripId trip,
@@ -167,8 +169,8 @@ struct Step {
   }
 
   static Step PrimitiveFlex(
-      StopId origin_stop,
-      StopId destination_stop,
+      StopId<> origin_stop,
+      StopId<> destination_stop,
       int duration_seconds,
       TripId trip,
       StepPartitionId partition = StepPartitionId::NONE
@@ -228,7 +230,8 @@ struct Path {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)
 
 // Output operators for debugging/logging
-inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
+template <typename Tag>
+inline std::ostream& operator<<(std::ostream& os, const StopId<Tag>& value) {
   return os << "StopId{" << value.v << "}";
 }
 
@@ -252,22 +255,22 @@ inline std::ostream& operator<<(std::ostream& os, const Step& value) {
 }
 
 struct StopPosition {
-  StopId stop_id;
+  StopId<> stop_id;
   double x_meters;  // approximate x position in meters
   double y_meters;  // approximate y position in meters
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StopPosition, stop_id, x_meters, y_meters)
 
-Step ZeroEdge(StopId a, StopId b);
-Path ZeroPath(StopId a, StopId b);
+Step ZeroEdge(StopId<> a, StopId<> b);
+Path ZeroPath(StopId<> a, StopId<> b);
 
 }  // namespace vats5
 
 // Hash functions for solver Id structs to use in unordered_set/unordered_map
 namespace std {
-template <>
-struct hash<vats5::StopId> {
-  size_t operator()(const vats5::StopId& stop_id) const {
+template <typename Tag>
+struct hash<vats5::StopId<Tag>> {
+  size_t operator()(const vats5::StopId<Tag>& stop_id) const {
     return hash<int>()(stop_id.v);
   }
 };
@@ -275,8 +278,8 @@ struct hash<vats5::StopId> {
 template <>
 struct hash<vats5::PlainEdge> {
   size_t operator()(const vats5::PlainEdge& edge) const {
-    size_t h1 = hash<vats5::StopId>()(edge.a);
-    size_t h2 = hash<vats5::StopId>()(edge.b);
+    size_t h1 = hash<vats5::StopId<>>()(edge.a);
+    size_t h2 = hash<vats5::StopId<>>()(edge.b);
     return h1 ^ (h2 << 1);
   }
 };
@@ -298,7 +301,7 @@ struct hash<vats5::TimeSinceServiceStart> {
 template <>
 struct hash<vats5::StepEndpoint> {
   size_t operator()(const vats5::StepEndpoint& ep) const {
-    size_t h1 = hash<vats5::StopId>()(ep.stop);
+    size_t h1 = hash<vats5::StopId<>>()(ep.stop);
     size_t h2 = hash<vats5::TimeSinceServiceStart>()(ep.time);
     size_t h3 = hash<vats5::TripId>()(ep.trip);
     return h1 ^ (h2 << 1) ^ (h3 << 2);
@@ -327,8 +330,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
 )
 
 struct FlexTrip {
-  StopId origin;
-  StopId destination;
+  StopId<> origin;
+  StopId<> destination;
   int duration_seconds;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
@@ -355,13 +358,13 @@ inline void from_json(const nlohmann::json& j, TripInfo& info) {
   }
 }
 
-// Bidirectional mappings between GtfsStopId<->StopId, etc.
+// Bidirectional mappings between GtfsStopId<->StopId<>, etc.
 struct DataGtfsMapping {
-  // StopId mappings
-  std::unordered_map<GtfsStopId, StopId> gtfs_stop_id_to_stop_id;
-  std::unordered_map<StopId, GtfsStopId> stop_id_to_gtfs_stop_id;
-  std::unordered_map<std::string, std::vector<StopId>> stop_name_to_stop_ids;
-  std::unordered_map<StopId, std::string> stop_id_to_stop_name;
+  // StopId<> mappings
+  std::unordered_map<GtfsStopId, StopId<>> gtfs_stop_id_to_stop_id;
+  std::unordered_map<StopId<>, GtfsStopId> stop_id_to_gtfs_stop_id;
+  std::unordered_map<std::string, std::vector<StopId<>>> stop_name_to_stop_ids;
+  std::unordered_map<StopId<>, std::string> stop_id_to_stop_name;
 
   // TripId mappings
   std::unordered_map<GtfsTripId, TripId> gtfs_trip_id_to_trip_id;
@@ -371,7 +374,7 @@ struct DataGtfsMapping {
   // Position mappings (stop with id k is at index k)
   std::vector<StopPosition> stop_positions;
 
-  StopId GetStopIdFromName(const std::string& stop_name) const {
+  StopId<> GetStopIdFromName(const std::string& stop_name) const {
     auto it = stop_name_to_stop_ids.find(stop_name);
     if (it == stop_name_to_stop_ids.end() || it->second.empty()) {
       throw std::runtime_error("Stop name '" + stop_name + "' not found");
@@ -397,7 +400,7 @@ struct DataGtfsMapping {
 // We convert maps keyed by custom types to arrays of pairs
 inline void to_json(nlohmann::json& j, const DataGtfsMapping& m) {
   // Convert gtfs_stop_id_to_stop_id
-  std::vector<std::pair<GtfsStopId, StopId>> gtfs_stop_id_pairs(
+  std::vector<std::pair<GtfsStopId, StopId<>>> gtfs_stop_id_pairs(
       m.gtfs_stop_id_to_stop_id.begin(), m.gtfs_stop_id_to_stop_id.end()
   );
   // Convert stop_id_to_gtfs_stop_id
@@ -440,7 +443,7 @@ inline void from_json(const nlohmann::json& j, DataGtfsMapping& m) {
   // Convert gtfs_stop_id_to_stop_id
   auto gtfs_stop_id_pairs =
       j.at("gtfs_stop_id_to_stop_id")
-          .get<std::vector<std::pair<GtfsStopId, StopId>>>();
+          .get<std::vector<std::pair<GtfsStopId, StopId<>>>>();
   for (const auto& [k, v] : gtfs_stop_id_pairs) {
     m.gtfs_stop_id_to_stop_id[k] = v;
   }
@@ -448,18 +451,18 @@ inline void from_json(const nlohmann::json& j, DataGtfsMapping& m) {
   auto stop_id_pairs = j.at("stop_id_to_gtfs_stop_id")
                            .get<std::vector<std::pair<int, GtfsStopId>>>();
   for (const auto& [k, v] : stop_id_pairs) {
-    m.stop_id_to_gtfs_stop_id[StopId{k}] = v;
+    m.stop_id_to_gtfs_stop_id[StopId<>{k}] = v;
   }
   // stop_name_to_stop_ids
   m.stop_name_to_stop_ids =
       j.at("stop_name_to_stop_ids")
-          .get<std::unordered_map<std::string, std::vector<StopId>>>();
+          .get<std::unordered_map<std::string, std::vector<StopId<>>>>();
   // Convert stop_id_to_stop_name
   auto stop_id_name_pairs =
       j.at("stop_id_to_stop_name")
           .get<std::vector<std::pair<int, std::string>>>();
   for (const auto& [k, v] : stop_id_name_pairs) {
-    m.stop_id_to_stop_name[StopId{k}] = v;
+    m.stop_id_to_stop_name[StopId<>{k}] = v;
   }
   // Convert gtfs_trip_id_to_trip_id
   auto gtfs_trip_id_pairs =
@@ -500,7 +503,7 @@ StepsFromGtfs GetStepsFromGtfs(
 // This is useful for finding all the stops in a given system within the
 // regional GTFS, because the trip ids are prefixed by the system, e.g. BART
 // trips are "BA:...".
-std::unordered_set<StopId> GetStopsForTripIdPrefix(
+std::unordered_set<StopId<>> GetStopsForTripIdPrefix(
     const GtfsDay& gtfs,
     const DataGtfsMapping& mapping,
     const std::string& trip_id_prefix

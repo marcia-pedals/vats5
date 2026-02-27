@@ -11,21 +11,21 @@
 namespace vats5 {
 
 struct ConstraintRequireEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
 };
 
 struct ConstraintForbidEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
 };
 
 using ProblemConstraint =
     std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
 
 struct BranchEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
 
   bool operator==(const BranchEdge& other) const = default;
 
@@ -60,7 +60,7 @@ struct SearchNode {
   //
   // Not stored for finished nodes because it's big and we don't want to keep it
   // around after we're done with it.
-  std::unique_ptr<ProblemState> state;
+  std::unique_ptr<ProblemState<>> state;
 
   bool operator<(const SearchNode& other) const {
     if (parent_lb == other.parent_lb) {
@@ -70,8 +70,8 @@ struct SearchNode {
   }
 };
 
-ProblemState ApplyConstraints(
-    const ProblemState& state, const std::vector<ProblemConstraint>& constraints
+ProblemState<> ApplyConstraints(
+    const ProblemState<>& state, const std::vector<ProblemConstraint>& constraints
 );
 
 struct BranchAndBoundResult {
@@ -79,11 +79,11 @@ struct BranchAndBoundResult {
   std::vector<Path> best_paths;
   // original_edges from the state that produced best_paths, needed to expand
   // combined stops back to original stop IDs.
-  std::unordered_map<StopId, PlainEdge> original_edges;
+  std::unordered_map<StopId<>, PlainEdge> original_edges;
 };
 
 BranchAndBoundResult BranchAndBoundSolve(
-    const ProblemState& initial_state,
+    const ProblemState<>& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
     int max_iter = -1

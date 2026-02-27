@@ -20,9 +20,9 @@
 namespace vats5 {
 
 void ExpandStop(
-    StopId stop,
-    const std::unordered_map<StopId, PlainEdge>& original_edges,
-    std::vector<StopId>& out) {
+    StopId<> stop,
+    const std::unordered_map<StopId<>, PlainEdge>& original_edges,
+    std::vector<StopId<>>& out) {
   auto it = original_edges.find(stop);
   if (it == original_edges.end()) {
     out.push_back(stop);
@@ -32,18 +32,18 @@ void ExpandStop(
   ExpandStop(it->second.b, original_edges, out);
 }
 
-ProblemState ProblemState::WithRequiredStops(
-    const std::unordered_set<StopId>& stops
+ProblemStateBase ProblemStateBase::WithRequiredStops(
+    const std::unordered_set<StopId<>>& stops
 ) const {
   return MakeProblemState(
       minimal, boundary, stops, stop_infos, step_partition_names, original_edges
   );
 }
 
-void showValue(const ProblemState& state, std::ostream& os) {
+void showValue(const ProblemStateBase& state, std::ostream& os) {
   std::vector<Step> steps = state.minimal.AllSteps();
-  StopId start = state.boundary.start;
-  StopId end = state.boundary.end;
+  StopId<> start = state.boundary.start;
+  StopId<> end = state.boundary.end;
 
   auto sort_key = [&](const Step& s) {
     bool adj_start = (s.origin.stop == start || s.destination.stop == start);
@@ -63,24 +63,24 @@ void showValue(const ProblemState& state, std::ostream& os) {
     return sort_key(a) < sort_key(b);
   });
 
-  std::vector<StopId> all_stop_ids;
+  std::vector<StopId<>> all_stop_ids;
   for (const auto& [id, name] : state.stop_infos) {
     all_stop_ids.push_back(id);
   }
-  std::sort(all_stop_ids.begin(), all_stop_ids.end(), [](StopId a, StopId b) {
+  std::sort(all_stop_ids.begin(), all_stop_ids.end(), [](StopId<> a, StopId<> b) {
     return a.v < b.v;
   });
 
-  std::vector<StopId> required_stop_ids(
+  std::vector<StopId<>> required_stop_ids(
       state.required_stops.begin(), state.required_stops.end()
   );
   std::sort(
       required_stop_ids.begin(),
       required_stop_ids.end(),
-      [](StopId a, StopId b) { return a.v < b.v; }
+      [](StopId<> a, StopId<> b) { return a.v < b.v; }
   );
 
-  os << "ProblemState{\n";
+  os << "ProblemState<>{\n";
   os << "  stop_infos=[";
   for (size_t i = 0; i < all_stop_ids.size(); ++i) {
     if (i > 0) os << ", ";
@@ -109,23 +109,23 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "  ]\n";
 
   std::vector<Step> merged_steps = state.completed.AllMergedSteps();
-  std::unordered_set<StopId> completed_origins;
-  std::unordered_set<StopId> completed_destinations;
+  std::unordered_set<StopId<>> completed_origins;
+  std::unordered_set<StopId<>> completed_destinations;
   for (const Step& step : merged_steps) {
     completed_origins.insert(step.origin.stop);
     completed_destinations.insert(step.destination.stop);
   }
 
-  std::vector<StopId> origin_ids(
+  std::vector<StopId<>> origin_ids(
       completed_origins.begin(), completed_origins.end()
   );
-  std::sort(origin_ids.begin(), origin_ids.end(), [](StopId a, StopId b) {
+  std::sort(origin_ids.begin(), origin_ids.end(), [](StopId<> a, StopId<> b) {
     return a.v < b.v;
   });
-  std::vector<StopId> dest_ids(
+  std::vector<StopId<>> dest_ids(
       completed_destinations.begin(), completed_destinations.end()
   );
-  std::sort(dest_ids.begin(), dest_ids.end(), [](StopId a, StopId b) {
+  std::sort(dest_ids.begin(), dest_ids.end(), [](StopId<> a, StopId<> b) {
     return a.v < b.v;
   });
 
@@ -145,38 +145,38 @@ void showValue(const ProblemState& state, std::ostream& os) {
   os << "}";
 }
 
-ProblemState MakeProblemState(
-    StepsAdjacencyList minimal,
+ProblemState<> MakeProblemState(
+    StepsAdjacencyList<> minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
-    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
+    std::unordered_set<StopId<>> stops,
+    std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges
+    std::unordered_map<StopId<>, PlainEdge> original_edges
 ) {
-  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
+  StepPathsAdjacencyList<> completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
   );
-  return ProblemState{
-      std::move(minimal),
-      std::move(completed),
-      boundary,
-      std::move(stops),
-      std::move(stop_infos),
-      std::move(step_partition_names),
-      std::move(original_edges),
-  };
+  return ProblemState<>(ProblemStateBase{
+      .minimal = std::move(minimal),
+      .completed = std::move(completed),
+      .boundary = boundary,
+      .required_stops = std::move(stops),
+      .stop_infos = std::move(stop_infos),
+      .step_partition_names = std::move(step_partition_names),
+      .original_edges = std::move(original_edges),
+  });
 }
 
 void AddBoundary(
     std::vector<Step>& steps,
-    std::unordered_set<StopId>& stops,
-    std::unordered_map<StopId, ProblemStateStopInfo>& stop_infos,
+    std::unordered_set<StopId<>>& stops,
+    std::unordered_map<StopId<>, ProblemStateStopInfo>& stop_infos,
     ProblemBoundary bounday
 ) {
   // ... with 0-duration flex steps START->* and *->END.
-  for (StopId stop : stops) {
+  for (StopId<> stop : stops) {
     steps.push_back(ZeroEdge(bounday.start, stop));
     steps.push_back(ZeroEdge(stop, bounday.end));
   }
@@ -189,8 +189,8 @@ void AddBoundary(
 }
 
 struct XEdge {
-  StopId a;
-  StopId b;
+  StopId<> a;
+  StopId<> b;
 
   bool operator==(const XEdge& other) const {
     return a == other.a && b == other.b;
@@ -201,8 +201,8 @@ struct XEdge {
 template <>
 struct std::hash<vats5::XEdge> {
   std::size_t operator()(const vats5::XEdge& e) const {
-    std::size_t h1 = std::hash<vats5::StopId>{}(e.a);
-    std::size_t h2 = std::hash<vats5::StopId>{}(e.b);
+    std::size_t h1 = std::hash<vats5::StopId<>>{}(e.a);
+    std::size_t h2 = std::hash<vats5::StopId<>>{}(e.b);
     return h1 ^ (h2 << 1);
   }
 };
@@ -210,7 +210,7 @@ struct std::hash<vats5::XEdge> {
 namespace vats5 {
 
 struct StopGoodness {
-  StopId stop;
+  StopId<> stop;
   int goodness;
 };
 
@@ -220,21 +220,21 @@ struct GoodnessResult {
 };
 
 GoodnessResult ComputeStopGoodness(
-    const StepPathsAdjacencyList& minimal_paths_sparse
+    const StepPathsAdjacencyList<>& minimal_paths_sparse
 ) {
-  std::unordered_set<StopId> all_stops;
+  std::unordered_set<StopId<>> all_stops;
   std::unordered_set<XEdge> all_edges;
-  std::unordered_map<StopId, std::unordered_set<StopId>> origins_thru;
-  std::unordered_map<StopId, std::unordered_set<StopId>> destinations_thru;
-  std::unordered_map<StopId, std::unordered_set<XEdge>> edges_thru;
+  std::unordered_map<StopId<>, std::unordered_set<StopId<>>> origins_thru;
+  std::unordered_map<StopId<>, std::unordered_set<StopId<>>> destinations_thru;
+  std::unordered_map<StopId<>, std::unordered_set<XEdge>> edges_thru;
   for (const Path& path : minimal_paths_sparse.AllPaths()) {
-    std::vector<StopId> path_stops;
+    std::vector<StopId<>> path_stops;
     assert(path.steps.size() > 0);
     path_stops.push_back(path.steps[0].origin.stop);
     for (const Step& step : path.steps) {
       path_stops.push_back(step.destination.stop);
     }
-    for (StopId stop : path_stops) {
+    for (StopId<> stop : path_stops) {
       XEdge edge{
           path.merged_step.origin.stop, path.merged_step.destination.stop
       };
@@ -253,7 +253,7 @@ GoodnessResult ComputeStopGoodness(
   std::cout << "Num edges: " << all_edges.size() << "\n";
 
   std::vector<StopGoodness> goodness;
-  for (StopId stop : all_stops) {
+  for (StopId<> stop : all_stops) {
     int new_edges = static_cast<int>(origins_thru[stop].size()) +
                     static_cast<int>(destinations_thru[stop].size());
     goodness.push_back(
@@ -273,7 +273,7 @@ GoodnessResult ComputeStopGoodness(
 
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
-    const std::unordered_set<StopId> system_stops,
+    const std::unordered_set<StopId<>> system_stops,
     bool optimize_edges
 ) {
   // Assign partitions to steps based on their trips.
@@ -297,7 +297,7 @@ InitializeProblemStateResult InitializeProblemState(
   }
 
   // Compute minimal adj list.
-  StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(
+  StepPathsAdjacencyList<> minimal_paths_sparse = ReduceToMinimalSystemPaths(
       MakeAdjacencyList(steps_with_partitions), system_stops
   );
 
@@ -325,24 +325,24 @@ InitializeProblemStateResult InitializeProblemState(
                    )
                 << ": " << result.goodness[0].goodness << "\n";
 
-      StopId split_stop = result.goodness[0].stop;
+      StopId<> split_stop = result.goodness[0].stop;
       minimal_paths_sparse = SplitPathsAtStop(minimal_paths_sparse, split_stop);
       prev_num_edges = result.num_edges;
       iteration++;
     }
   }
 
-  StepsAdjacencyList minimal_steps_sparse =
+  StepsAdjacencyList<> minimal_steps_sparse =
       MakeAdjacencyList(minimal_paths_sparse.AllMergedSteps());
 
   // Compact minimal adj list and remap stop names.
   CompactStopIdsResult minimal_compact = CompactStopIds(minimal_steps_sparse);
 
-  std::unordered_set<StopId> required_stops;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  std::unordered_set<StopId<>> required_stops;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos;
   for (int i = 0; i < minimal_compact.mapping.new_to_original.size(); ++i) {
-    StopId stop = StopId{i};
-    StopId original_stop = minimal_compact.mapping.new_to_original[i];
+    StopId<> stop = StopId<>{i};
+    StopId<> original_stop = minimal_compact.mapping.new_to_original[i];
     if (system_stops.contains(original_stop)) {
       required_stops.insert(stop);
     }
@@ -360,7 +360,7 @@ InitializeProblemStateResult InitializeProblemState(
 
   int num_actual_stops = minimal_compact.list.NumStops();
   ProblemBoundary boundary{
-      .start = StopId{num_actual_stops}, .end = StopId{num_actual_stops + 1}
+      .start = StopId<>{num_actual_stops}, .end = StopId<>{num_actual_stops + 1}
   };
 
   std::vector<Step> steps = minimal_compact.list.AllSteps();
@@ -490,7 +490,7 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
   return edges;
 }
 
-std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj) {
+std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList<>& adj) {
   TarelEdgeIntermediateData data =
       ComputeTarelIntermediateData(adj.AllMergedSteps());
   return BuildTarelEdgesFromIntermediateData(data);
@@ -533,7 +533,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
   // canonical one.
   std::unordered_map<TarelState, TarelState> canonical_state;
 
-  std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
+  std::unordered_map<StopId<>, std::vector<TarelState>> states_by_stop;
   for (const auto& [state, _] : signatures) {
     states_by_stop[state.stop].push_back(state);
   }
@@ -556,7 +556,7 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
   }
 
   // Group canonical states by stop and assign contiguous IDs.
-  std::unordered_map<StopId, std::vector<TarelState>> canonical_by_stop;
+  std::unordered_map<StopId<>, std::vector<TarelState>> canonical_by_stop;
   for (const TarelState& ts : all_canonical_states) {
     canonical_by_stop[ts.stop].push_back(ts);
   }
@@ -653,7 +653,7 @@ TspGraphData MakeTspGraphEdges(
   // Assign contiguous ids to all TarelStates.
   auto insert_state_if_new = [&](const TarelState& state) {
     auto [_, inserted] = result.id_by_state.try_emplace(
-        state, StopId{static_cast<int>(result.state_by_id.size())}
+        state, StopId<>{static_cast<int>(result.state_by_id.size())}
     );
     if (inserted) {
       result.state_by_id.push_back(state);
@@ -836,7 +836,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 }
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
+    const ProblemStateBase& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `state.completed`.
@@ -844,8 +844,8 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   // This is necessary for correctness because `MakeTarelEdges` only produces
   // states for stops that appear as origins and destinations, and if it misses
   // any stops, then the TSP will simply not visit those stops.
-  std::unordered_set<StopId> origins;
-  std::unordered_set<StopId> destinations;
+  std::unordered_set<StopId<>> origins;
+  std::unordered_set<StopId<>> destinations;
   for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
     for (const auto& path_group : path_groups) {
       if (!path_group.empty()) {
@@ -854,13 +854,13 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
       }
     }
   }
-  for (StopId stop : state.required_stops) {
+  for (StopId<> stop : state.required_stops) {
     if (!origins.contains(stop) || !destinations.contains(stop)) {
       return std::nullopt;
     }
   }
 
-  ProblemState reduced_state = state;
+  ProblemStateBase reduced_state = state;
   auto edges = MakeTarelEdges(reduced_state.completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
@@ -870,7 +870,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
 }
 
 void WriteTarelSummary(
-    const ProblemState& state,
+    const ProblemStateBase& state,
     const std::string& dir,
     const std::vector<TarelEdge>& edges,
     const std::unordered_map<StepPartitionId, std::string>& state_descriptions

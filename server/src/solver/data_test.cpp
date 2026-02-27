@@ -63,21 +63,21 @@ TEST(DataTest, GetStepsFromGtfs) {
   const GtfsStopId sf_4th_king{"mtc:caltrain-4th-&-king"};
 
   // Look up the mapped stop IDs
-  StopId san_jose_diridon_id =
+  StopId<> san_jose_diridon_id =
       result.mapping.gtfs_stop_id_to_stop_id.at(san_jose_diridon);
-  StopId sunnyvale_id = result.mapping.gtfs_stop_id_to_stop_id.at(sunnyvale);
-  StopId mountain_view_id =
+  StopId<> sunnyvale_id = result.mapping.gtfs_stop_id_to_stop_id.at(sunnyvale);
+  StopId<> mountain_view_id =
       result.mapping.gtfs_stop_id_to_stop_id.at(mountain_view);
-  StopId palo_alto_id = result.mapping.gtfs_stop_id_to_stop_id.at(palo_alto);
-  StopId redwood_city_id =
+  StopId<> palo_alto_id = result.mapping.gtfs_stop_id_to_stop_id.at(palo_alto);
+  StopId<> redwood_city_id =
       result.mapping.gtfs_stop_id_to_stop_id.at(redwood_city);
-  StopId hillsdale_id = result.mapping.gtfs_stop_id_to_stop_id.at(hillsdale);
-  StopId san_mateo_id = result.mapping.gtfs_stop_id_to_stop_id.at(san_mateo);
-  StopId millbrae_id = result.mapping.gtfs_stop_id_to_stop_id.at(millbrae);
-  StopId south_sf_id = result.mapping.gtfs_stop_id_to_stop_id.at(south_sf);
-  StopId sf_22nd_street_id =
+  StopId<> hillsdale_id = result.mapping.gtfs_stop_id_to_stop_id.at(hillsdale);
+  StopId<> san_mateo_id = result.mapping.gtfs_stop_id_to_stop_id.at(san_mateo);
+  StopId<> millbrae_id = result.mapping.gtfs_stop_id_to_stop_id.at(millbrae);
+  StopId<> south_sf_id = result.mapping.gtfs_stop_id_to_stop_id.at(south_sf);
+  StopId<> sf_22nd_street_id =
       result.mapping.gtfs_stop_id_to_stop_id.at(sf_22nd_street);
-  StopId sf_4th_king_id =
+  StopId<> sf_4th_king_id =
       result.mapping.gtfs_stop_id_to_stop_id.at(sf_4th_king);
 
   // Look up the mapped trip ID
@@ -285,11 +285,11 @@ TEST(DataTest, GetStopsForTripIdPrefix_BART) {
 
   StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day);
 
-  std::unordered_set<StopId> bart_stops =
+  std::unordered_set<StopId<>> bart_stops =
       GetStopsForTripIdPrefix(gtfs_day, steps_from_gtfs.mapping, "BA:");
 
   std::vector<std::string> bart_stop_names;
-  for (const StopId& stop_id : bart_stops) {
+  for (const StopId<>& stop_id : bart_stops) {
     bart_stop_names.push_back(
         steps_from_gtfs.mapping.stop_id_to_stop_name.at(stop_id)
     );

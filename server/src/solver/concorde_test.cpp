@@ -33,21 +33,21 @@ namespace vats5 {
 // Best is 0->1->2->3->0 = 45
 TEST(ConcordeTest, Simple4NodeATSP) {
   std::vector<WeightedEdge> edges = {
-      {StopId{0}, StopId{1}, 10},
-      {StopId{0}, StopId{2}, 15},
-      {StopId{0}, StopId{3}, 20},
-      {StopId{1}, StopId{0}, 12},
-      {StopId{1}, StopId{2}, 8},
-      {StopId{1}, StopId{3}, 25},
-      {StopId{2}, StopId{0}, 18},
-      {StopId{2}, StopId{1}, 9},
-      {StopId{2}, StopId{3}, 5},
-      {StopId{3}, StopId{0}, 22},
-      {StopId{3}, StopId{1}, 14},
-      {StopId{3}, StopId{2}, 6},
+      {StopId<>{0}, StopId<>{1}, 10},
+      {StopId<>{0}, StopId<>{2}, 15},
+      {StopId<>{0}, StopId<>{3}, 20},
+      {StopId<>{1}, StopId<>{0}, 12},
+      {StopId<>{1}, StopId<>{2}, 8},
+      {StopId<>{1}, StopId<>{3}, 25},
+      {StopId<>{2}, StopId<>{0}, 18},
+      {StopId<>{2}, StopId<>{1}, 9},
+      {StopId<>{2}, StopId<>{3}, 5},
+      {StopId<>{3}, StopId<>{0}, 22},
+      {StopId<>{3}, StopId<>{1}, 14},
+      {StopId<>{3}, StopId<>{2}, 6},
   };
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  RelaxedAdjacencyList<> relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
   ASSERT_TRUE(solution.has_value());
@@ -72,15 +72,15 @@ TEST(ConcordeTest, Simple4NodeATSP) {
 // Any tour should be optimal.
 TEST(ConcordeTest, Simple3NodeSymmetric) {
   std::vector<WeightedEdge> edges = {
-      {StopId{0}, StopId{1}, 10},
-      {StopId{0}, StopId{2}, 10},
-      {StopId{1}, StopId{0}, 10},
-      {StopId{1}, StopId{2}, 10},
-      {StopId{2}, StopId{0}, 10},
-      {StopId{2}, StopId{1}, 10},
+      {StopId<>{0}, StopId<>{1}, 10},
+      {StopId<>{0}, StopId<>{2}, 10},
+      {StopId<>{1}, StopId<>{0}, 10},
+      {StopId<>{1}, StopId<>{2}, 10},
+      {StopId<>{2}, StopId<>{0}, 10},
+      {StopId<>{2}, StopId<>{1}, 10},
   };
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  RelaxedAdjacencyList<> relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
   ASSERT_TRUE(solution.has_value());
@@ -110,12 +110,12 @@ RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue, ()) {
     for (int to = 0; to < num_stops; ++to) {
       if (from != to) {
         int weight = *rc::gen::inRange(1, 1000);
-        edges.push_back(WeightedEdge{StopId{from}, StopId{to}, weight});
+        edges.push_back(WeightedEdge{StopId<>{from}, StopId<>{to}, weight});
       }
     }
   }
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  RelaxedAdjacencyList<> relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
   // Solve with Concorde.
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
@@ -132,8 +132,8 @@ RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue, ()) {
   // Compute the sum of edge weights along the tour.
   int tour_cost = 0;
   for (int i = 0; i < num_stops; ++i) {
-    StopId from = solution->tour[i];
-    StopId to = solution->tour[(i + 1) % num_stops];
+    StopId<> from = solution->tour[i];
+    StopId<> to = solution->tour[(i + 1) % num_stops];
     tour_cost += relaxed.GetWeight(from, to).value();
   }
 
@@ -150,12 +150,12 @@ RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue, ()) {
 // Concorde will use forbidden edges to complete the tour, so we return nullopt.
 TEST(ConcordeTest, NoValidTour) {
   std::vector<WeightedEdge> edges = {
-      {StopId{0}, StopId{1}, 10},
-      {StopId{1}, StopId{2}, 10},
-      {StopId{2}, StopId{1}, 10},
+      {StopId<>{0}, StopId<>{1}, 10},
+      {StopId<>{1}, StopId<>{2}, 10},
+      {StopId<>{2}, StopId<>{1}, 10},
   };
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  RelaxedAdjacencyList<> relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
 
@@ -185,10 +185,10 @@ RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
   for (int i = 0; i < num_stops; ++i) {
     int from = perm[i];
     int to = perm[(i + 1) % num_stops];
-    edges.push_back(WeightedEdge{StopId{from}, StopId{to}, 1});
+    edges.push_back(WeightedEdge{StopId<>{from}, StopId<>{to}, 1});
   }
 
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  RelaxedAdjacencyList<> relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
   // Solve with Concorde.
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);

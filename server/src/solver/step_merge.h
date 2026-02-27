@@ -97,7 +97,7 @@ void MakeMinimalCover(
     return;
   }
 
-  const StopId deletion_marker = StopId{std::numeric_limits<int>::min()};
+  const StopId<> deletion_marker = StopId<>{std::numeric_limits<int>::min()};
 
   // Forward sweep through all the flex steps to find the shortest duration
   // and keep only the last one with that duration.

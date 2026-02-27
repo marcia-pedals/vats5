@@ -25,7 +25,7 @@ class InvalidTourStructure : public std::exception {
 
 // Result of solving TSP with Concorde.
 struct ConcordeSolution {
-  std::vector<StopId> tour;
+  std::vector<StopId<>> tour;
 
   // Optimal tour cost as reported by Concorde (rounded to int).
   int optimal_value;
@@ -37,7 +37,7 @@ struct ConcordeSolution {
 // Returns nullopt if the optimal tour uses a forbidden edge (no valid tour
 // exists).
 std::optional<ConcordeSolution> SolveTspWithConcorde(
-    const RelaxedAdjacencyList& relaxed,
+    const RelaxedAdjacencyList<>& relaxed,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr
 );

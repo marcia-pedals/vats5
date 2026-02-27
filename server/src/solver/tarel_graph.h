@@ -14,6 +14,7 @@
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/witness.h"
 
 namespace vats5 {
 
@@ -35,16 +36,16 @@ inline void from_json(const nlohmann::json& j, ProblemStateStopInfo& info) {
 }
 
 struct ProblemBoundary {
-  StopId start;
-  StopId end;
+  StopId<> start;
+  StopId<> end;
 };
 
 inline void to_json(nlohmann::json& j, const ProblemBoundary& b) {
   j = nlohmann::json{{"start", b.start}, {"end", b.end}};
 }
 inline void from_json(const nlohmann::json& j, ProblemBoundary& b) {
-  b.start = j.at("start").get<StopId>();
-  b.end = j.at("end").get<StopId>();
+  b.start = j.at("start").get<StopId<>>();
+  b.end = j.at("end").get<StopId<>>();
 }
 
 }  // namespace vats5
@@ -58,25 +59,28 @@ struct std::hash<vats5::StepPartitionId> {
 
 namespace vats5 {
 
-struct ProblemState {
+// Non-templated base class holding all ProblemState<> fields and methods.
+struct ProblemStateBase {
+  int space_id = -1;
+
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least
   // one tour impossible.
-  StepsAdjacencyList minimal;
+  StepsAdjacencyList<> minimal;
 
   // The completion of `minimal`, i.e. every possible route between elements of
   // `required_stops` is a path. Also includes a zero-duration END->START edge
   // to complete the cycle for TSP formulation.
-  StepPathsAdjacencyList completed;
+  StepPathsAdjacencyList<> completed;
 
   // Which stops in `minimal`/`completed` are the START and END.
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
-  std::unordered_set<StopId> required_stops;
+  std::unordered_set<StopId<>> required_stops;
 
   // Information about all stops (GTFS ID and name) for display and lookup.
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos;
 
   // Names of step partitions for display purposes.
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
@@ -85,13 +89,13 @@ struct ProblemState {
   // edge. This can be recursive, e.g. if we combine a->b and then (a->b)->c,
   // then the original edge for (a->b)->c has endpoints (a->b) and c, and the
   // original edge for (a->b) has endpoints a and b.
-  std::unordered_map<StopId, PlainEdge> original_edges;
+  std::unordered_map<StopId<>, PlainEdge> original_edges;
 
-  const std::string& StopName(StopId stop) const {
+  const std::string& StopName(StopId<> stop) const {
     return stop_infos.at(stop).stop_name;
   }
 
-  StopId StopIdFromName(const std::string& stop_name) {
+  StopId<> StopIdFromName(const std::string& stop_name) {
     auto it = std::find_if(
         stop_infos.begin(), stop_infos.end(), [&stop_name](const auto& pair) {
           return pair.second.stop_name == stop_name;
@@ -112,29 +116,79 @@ struct ProblemState {
   }
 
   // Return a copy of this state with the required stops replaced by `stops`.
-  ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
+  ProblemStateBase WithRequiredStops(const std::unordered_set<StopId<>>& stops) const;
+};
+
+// Templated subclass for ProblemState<>.
+template <typename Tag = Unwitnessed>
+struct ProblemState : ProblemStateBase {
+  using ProblemStateBase::ProblemStateBase;
+  ProblemState() = default;
+  explicit ProblemState(ProblemStateBase&& base)
+      : ProblemStateBase(std::move(base)) {}
+
+  // Gated accessors: only available on witnessed (non-Unwitnessed) instances.
+
+  const StepsAdjacencyList<Tag>& Minimal() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return WitnessAs<Tag>(minimal);
+  }
+
+  const StepPathsAdjacencyList<Tag>& Completed() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return WitnessAs<Tag>(completed);
+  }
+
+  template <typename S> requires CompatibleWith<S, Tag>
+  bool IsRequired(StopId<S> stop) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return required_stops.contains(StopId<>{stop.v});
+  }
+
+  using ProblemStateBase::StopName;
+  template <typename S> requires CompatibleWith<S, Tag>
+  const std::string& StopName(StopId<S> stop) const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return ProblemStateBase::StopName(StopId<>{stop.v});
+  }
+
+  StopId<Tag> BoundaryStart() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StopId<Tag>{boundary.start.v};
+  }
+
+  StopId<Tag> BoundaryEnd() const
+    requires (!std::same_as<Tag, Unwitnessed>)
+  {
+    return StopId<Tag>{boundary.end.v};
+  }
 };
 
 // Recursively expands a combined stop into its original constituent stops.
 // If the stop is not in original_edges, it is appended as-is.
 void ExpandStop(
-    StopId stop,
-    const std::unordered_map<StopId, PlainEdge>& original_edges,
-    std::vector<StopId>& out
+    StopId<> stop,
+    const std::unordered_map<StopId<>, PlainEdge>& original_edges,
+    std::vector<StopId<>>& out
 );
 
-ProblemState MakeProblemState(
-    StepsAdjacencyList minimal,
+ProblemState<> MakeProblemState(
+    StepsAdjacencyList<> minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
-    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
+    std::unordered_set<StopId<>> stops,
+    std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges
+    std::unordered_map<StopId<>, PlainEdge> original_edges
 );
 
-inline void to_json(nlohmann::json& j, const ProblemState& s) {
+inline void to_json(nlohmann::json& j, const ProblemStateBase& s) {
   std::vector<int> required_stops_vec;
-  for (StopId stop : s.required_stops) {
+  for (StopId<> stop : s.required_stops) {
     required_stops_vec.push_back(stop.v);
   }
   std::vector<std::pair<int, ProblemStateStopInfo>> stop_infos_vec;
@@ -159,18 +213,18 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   };
 }
 
-inline void from_json(const nlohmann::json& j, ProblemState& s) {
-  auto minimal = j.at("minimal").get<StepsAdjacencyList>();
+inline void from_json(const nlohmann::json& j, ProblemStateBase& s) {
+  auto minimal = j.at("minimal").get<StepsAdjacencyList<>>();
   auto boundary = j.at("boundary").get<ProblemBoundary>();
-  std::unordered_set<StopId> required_stops;
+  std::unordered_set<StopId<>> required_stops;
   for (int v : j.at("required_stops").get<std::vector<int>>()) {
-    required_stops.insert(StopId{v});
+    required_stops.insert(StopId<>{v});
   }
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos;
   for (const auto& [k, v] :
        j.at("stop_infos")
            .get<std::vector<std::pair<int, ProblemStateStopInfo>>>()) {
-    stop_infos[StopId{k}] = v;
+    stop_infos[StopId<>{k}] = v;
   }
   std::unordered_map<StepPartitionId, std::string> step_partition_names;
   for (const auto& [k, v] :
@@ -178,10 +232,10 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
            .get<std::vector<std::pair<int, std::string>>>()) {
     step_partition_names[StepPartitionId{k}] = v;
   }
-  std::unordered_map<StopId, PlainEdge> original_edges;
+  std::unordered_map<StopId<>, PlainEdge> original_edges;
   for (const auto& [k, v] :
        j.at("original_edges").get<std::vector<std::pair<int, PlainEdge>>>()) {
-    original_edges[StopId{k}] = v;
+    original_edges[StopId<>{k}] = v;
   }
   s = MakeProblemState(
       std::move(minimal),
@@ -193,10 +247,19 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
   );
 }
 
-void showValue(const ProblemState& state, std::ostream& os);
+template <typename Tag>
+inline void to_json(nlohmann::json& j, const ProblemState<Tag>& s) {
+  to_json(j, static_cast<const ProblemStateBase&>(s));
+}
+template <typename Tag>
+inline void from_json(const nlohmann::json& j, ProblemState<Tag>& s) {
+  from_json(j, static_cast<ProblemStateBase&>(s));
+}
+
+void showValue(const ProblemStateBase& state, std::ostream& os);
 
 struct TarelState {
-  StopId stop;
+  StopId<> stop;
   StepPartitionId partition;
 
   bool operator==(const TarelState&) const = default;
@@ -218,7 +281,7 @@ inline std::ostream& operator<<(std::ostream& os, const TarelState& value) {
 template <>
 struct std::hash<vats5::TarelState> {
   std::size_t operator()(const vats5::TarelState& v) const {
-    std::size_t seed = std::hash<vats5::StopId>{}(v.stop);
+    std::size_t seed = std::hash<vats5::StopId<>>{}(v.stop);
     seed ^= std::hash<vats5::StepPartitionId>{}(v.partition) + 0x9e3779b9 +
             (seed << 6) + (seed >> 2);
     return seed;
@@ -226,9 +289,9 @@ struct std::hash<vats5::TarelState> {
 };
 
 template <>
-struct std::hash<std::pair<vats5::StopId, bool>> {
-  std::size_t operator()(const std::pair<vats5::StopId, bool>& v) const {
-    std::size_t seed = std::hash<vats5::StopId>{}(v.first);
+struct std::hash<std::pair<vats5::StopId<>, bool>> {
+  std::size_t operator()(const std::pair<vats5::StopId<>, bool>& v) const {
+    std::size_t seed = std::hash<vats5::StopId<>>{}(v.first);
     seed ^=
         std::hash<bool>{}(v.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
     return seed;
@@ -236,9 +299,9 @@ struct std::hash<std::pair<vats5::StopId, bool>> {
 };
 
 template <typename T>
-struct std::hash<std::pair<vats5::StopId, T>> {
-  std::size_t operator()(const std::pair<vats5::StopId, T>& v) const {
-    std::size_t seed = std::hash<vats5::StopId>{}(v.first);
+struct std::hash<std::pair<vats5::StopId<>, T>> {
+  std::size_t operator()(const std::pair<vats5::StopId<>, T>& v) const {
+    std::size_t seed = std::hash<vats5::StopId<>>{}(v.first);
     seed ^= std::hash<T>{}(v.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
     return seed;
   }
@@ -257,7 +320,7 @@ struct ArrivalTimes {
 struct TarelEdgeIntermediateData {
   // steps_from[x] is all steps from stop x.
   // Within each group, the steps are sorted and minimal.
-  std::unordered_map<StopId, std::unordered_map<TarelState, std::vector<Step>>>
+  std::unordered_map<StopId<>, std::unordered_map<TarelState, std::vector<Step>>>
       steps_from;
 
   // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
@@ -309,15 +372,15 @@ constexpr int kCycleEdgeWeight = -1000;
 // Return type for MakeTspGraphEdges.
 struct TspGraphData {
   std::vector<TarelState> state_by_id;
-  std::unordered_map<TarelState, StopId> id_by_state;
-  std::unordered_map<StopId, int> num_states_by_stop;
+  std::unordered_map<TarelState, StopId<>> id_by_state;
+  std::unordered_map<StopId<>, int> num_states_by_stop;
   std::vector<WeightedEdge> tsp_edges;
   int expected_num_cycle_edges;
 };
 
 // Return type for SolveTspAndExtractTour.
 struct TspTourResult {
-  std::vector<StopId> original_stop_tour;
+  std::vector<StopId<>> original_stop_tour;
   std::vector<TimeSinceServiceStart> cumulative_weights;
   std::vector<TarelEdge> tour_edges;
   int optimal_value;
@@ -327,13 +390,13 @@ struct TspTourResult {
 // START->* and *->END zero-duration flex steps to `steps`.
 void AddBoundary(
     std::vector<Step>& steps,
-    std::unordered_set<StopId>& stops,
-    std::unordered_map<StopId, ProblemStateStopInfo>& stop_infos,
+    std::unordered_set<StopId<>>& stops,
+    std::unordered_map<StopId<>, ProblemStateStopInfo>& stop_infos,
     ProblemBoundary bounday
 );
 
 struct InitializeProblemStateResult {
-  ProblemState problem_state;
+  ProblemState<> problem_state;
 
   // The full original-data paths corresponding to `problem_state.minimal`
   // steps.
@@ -343,12 +406,12 @@ struct InitializeProblemStateResult {
   // their correspondence using other data if you need that.
   // TODO: Maybe store the mapping in this struct or do something to make it
   // easier to do the right thing and harder to make a mistake.
-  StepPathsAdjacencyList minimal_paths_sparse;
+  StepPathsAdjacencyList<> minimal_paths_sparse;
 };
 
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
-    const std::unordered_set<StopId> system_stops,
+    const std::unordered_set<StopId<>> system_stops,
     bool optimize_edges = false
 );
 
@@ -369,15 +432,15 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state,
+    const ProblemStateBase& state,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr
 );
 
-std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);
+std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList<>& adj);
 
 void WriteTarelSummary(
-    const ProblemState& state,
+    const ProblemStateBase& state,
     const std::string& dir,
     const std::vector<TarelEdge>& edges,
     const std::unordered_map<StepPartitionId, std::string>& state_descriptions

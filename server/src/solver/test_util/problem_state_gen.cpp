@@ -16,7 +16,7 @@
 
 namespace vats5 {
 
-rc::Gen<ProblemState> GenProblemState(
+rc::Gen<ProblemState<>> GenProblemState(
     std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen,
     std::optional<rc::Gen<StepPartitionId>> step_partition_gen
 ) {
@@ -29,13 +29,13 @@ rc::Gen<ProblemState> GenProblemState(
   return rc::gen::mapcat(
       std::move(cycle_is_flex_gen_defaulted),
       [step_partition_gen_defaulted](CycleIsFlex cycle_is_flex)
-          -> rc::Gen<ProblemState> {
+          -> rc::Gen<ProblemState<>> {
         rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
 
         return rc::gen::mapcat(
             num_actual_stops_gen,
             [cycle_is_flex, step_partition_gen_defaulted](int num_actual_stops)
-                -> rc::Gen<ProblemState> {
+                -> rc::Gen<ProblemState<>> {
               auto step_gen = rc::gen::apply(
                   [num_actual_stops](
                       int origin,
@@ -47,8 +47,8 @@ rc::Gen<ProblemState> GenProblemState(
                     int destination =
                         (origin + 1 + dest_offset) % num_actual_stops;
                     return Step::PrimitiveScheduled(
-                        StopId{origin},
-                        StopId{destination},
+                        StopId<>{origin},
+                        StopId<>{destination},
                         TimeSinceServiceStart{origin_time},
                         TimeSinceServiceStart{origin_time + duration},
                         TripId::NOOP
@@ -81,14 +81,14 @@ rc::Gen<ProblemState> GenProblemState(
                   ),
                   [num_actual_stops,
                    cycle_is_flex,
-                   step_partition_gen_defaulted](auto arg) -> ProblemState {
+                   step_partition_gen_defaulted](auto arg) -> ProblemState<> {
                     auto [steps, cycle_step_partitions] = arg;
 
                     // Set up all the stops.
-                    std::unordered_set<StopId> stops;
-                    std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+                    std::unordered_set<StopId<>> stops;
+                    std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos;
                     for (int i = 0; i < num_actual_stops; ++i) {
-                      StopId stop{i};
+                      StopId<> stop{i};
                       stops.insert(stop);
                       stop_infos[stop] = ProblemStateStopInfo{
                           GtfsStopId{std::string(1, 'a' + i)},
@@ -111,15 +111,15 @@ rc::Gen<ProblemState> GenProblemState(
                       next_trip_id.v += 1;
                       steps.push_back(
                           flex ? Step::PrimitiveFlex(
-                                     StopId{i},
-                                     StopId{(i + 1) % num_actual_stops},
+                                     StopId<>{i},
+                                     StopId<>{(i + 1) % num_actual_stops},
                                      1200,
                                      trip_id,
                                      cycle_step_partitions[i]
                                  )
                                : Step::PrimitiveScheduled(
-                                     StopId{i},
-                                     StopId{(i + 1) % num_actual_stops},
+                                     StopId<>{i},
+                                     StopId<>{(i + 1) % num_actual_stops},
                                      TimeSinceServiceStart{1200 * i},
                                      TimeSinceServiceStart{1200 * (i + 1)},
                                      trip_id,
@@ -130,8 +130,8 @@ rc::Gen<ProblemState> GenProblemState(
 
                     // Add the boundary.
                     ProblemBoundary boundary{
-                        .start = StopId{num_actual_stops},
-                        .end = StopId{num_actual_stops + 1},
+                        .start = StopId<>{num_actual_stops},
+                        .end = StopId<>{num_actual_stops + 1},
                     };
                     AddBoundary(steps, stops, stop_infos, boundary);
 
@@ -155,12 +155,12 @@ void showValue(const NamedBranchEdge& e, std::ostream& os) {
   os << "BranchEdge{" << e.a_name << " -> " << e.b_name << "}";
 }
 
-rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
-  std::vector<StopId> stops(
+rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState<>& state) {
+  std::vector<StopId<>> stops(
       state.required_stops.begin(), state.required_stops.end()
   );
   ProblemBoundary boundary = state.boundary;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
+  std::unordered_map<StopId<>, ProblemStateStopInfo> stop_infos = state.stop_infos;
   int n = static_cast<int>(stops.size());
   return rc::gen::suchThat(
       rc::gen::apply(

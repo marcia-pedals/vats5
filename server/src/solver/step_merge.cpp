@@ -99,7 +99,7 @@ std::vector<Step> PairwiseMergedSteps(
   }
 
   {
-    StopId expected_b = ab[0].destination.stop;
+    StopId<> expected_b = ab[0].destination.stop;
     for (const Step& step : ab) {
       assert(step.destination.stop == expected_b);
     }
@@ -170,8 +170,8 @@ std::vector<Step> PairwiseMergedSteps(
   MakeNonFlexValidMinimal();
 
   Step BAD_STEP = Step::PrimitiveScheduled(
-      StopId{0},
-      StopId{0},
+      StopId<>{0},
+      StopId<>{0},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
       TimeSinceServiceStart{std::numeric_limits<int>::max()},
       TripId{0}

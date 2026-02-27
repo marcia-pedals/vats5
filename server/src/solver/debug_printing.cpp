@@ -9,14 +9,14 @@
 namespace vats5 {
 
 void PrintPartitions(
-    const ProblemState& state,
-    const std::unordered_map<StepPartitionId, std::unordered_set<StopId>>&
+    const ProblemState<>& state,
+    const std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>&
         partitions
 ) {
   std::vector<std::pair<std::string, std::vector<std::string>>> entries;
   for (const auto& [partition, stops] : partitions) {
     std::vector<std::string> stop_names;
-    for (StopId stop : stops) {
+    for (StopId<> stop : stops) {
       stop_names.push_back(state.StopName(stop));
     }
     std::ranges::sort(stop_names);
@@ -36,9 +36,9 @@ void PrintPartitions(
 }
 
 void MyDetailedPrintout(
-    const ProblemState& state, const std::vector<TarelEdge>& tour
+    const ProblemState<>& state, const std::vector<TarelEdge>& tour
 ) {
-  std::vector<StopId> tour_stops;
+  std::vector<StopId<>> tour_stops;
   for (const TarelEdge& edge : tour) {
     tour_stops.push_back(edge.origin.stop);
   }
@@ -46,21 +46,21 @@ void MyDetailedPrintout(
     tour_stops.push_back(tour.back().destination.stop);
   }
 
-  for (StopId s : tour_stops) {
+  for (StopId<> s : tour_stops) {
     PrintStopPartitions(state, s);
   }
 }
 
-void PrintStopPartitions(const ProblemState& state, StopId s) {
+void PrintStopPartitions(const ProblemState<>& state, StopId<> s) {
   std::cout << state.StopName(s) << "\n";
 
-  std::unordered_map<StepPartitionId, std::unordered_set<StopId>>
+  std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>
       arrive_partitions;
-  std::unordered_map<StepPartitionId, std::unordered_set<StopId>>
+  std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>
       depart_partitions;
-  std::unordered_map<StepPartitionId, std::unordered_set<StopId>>
+  std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>
       arrive_partitions_flex;
-  std::unordered_map<StepPartitionId, std::unordered_set<StopId>>
+  std::unordered_map<StepPartitionId, std::unordered_set<StopId<>>>
       depart_partitions_flex;
   for (const Step& step : state.minimal.AllSteps()) {
     if (step.destination.stop == s) {
