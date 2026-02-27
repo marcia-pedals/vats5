@@ -5,6 +5,7 @@ import {
   getPartialSolutionRuns,
   getPathSteps,
   getPaths,
+  getRoutes,
   getStops,
   listVisualizations,
 } from "./db";
@@ -30,11 +31,13 @@ export const appRouter = t.router({
       return getPathSteps(input.name, input.pathId);
     }),
 
-  getPartialSolutionRuns: t.procedure
-    .input(z.object({ name: z.string() }))
-    .query(({ input }) => {
-      return getPartialSolutionRuns(input.name);
-    }),
+  getRoutes: t.procedure.input(z.object({ name: z.string() })).query(({ input }) => {
+    return getRoutes(input.name);
+  }),
+
+  getPartialSolutionRuns: t.procedure.input(z.object({ name: z.string() })).query(({ input }) => {
+    return getPartialSolutionRuns(input.name);
+  }),
 
   getPartialSolution: t.procedure
     .input(z.object({ name: z.string(), runTimestamp: z.string(), iteration: z.number() }))

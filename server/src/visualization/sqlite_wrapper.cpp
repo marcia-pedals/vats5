@@ -56,6 +56,8 @@ void SqliteStmt::bind_int(int col, int val) {
   sqlite3_bind_int(stmt_, col, val);
 }
 
+void SqliteStmt::bind_null(int col) { sqlite3_bind_null(stmt_, col); }
+
 void SqliteStmt::step_and_reset() {
   sqlite3_step(stmt_);
   sqlite3_reset(stmt_);

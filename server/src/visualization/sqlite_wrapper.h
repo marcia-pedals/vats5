@@ -34,6 +34,7 @@ class SqliteStmt {
   void bind_text(int col, const char* val);
   void bind_double(int col, double val);
   void bind_int(int col, int val);
+  void bind_null(int col);
   void step_and_reset();
 
  private:
