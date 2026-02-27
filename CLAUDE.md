@@ -5,6 +5,10 @@
 - To run all tests, run `ctest --label-exclude slow` in server/build-debug
 - Some tests are labeled "slow". Only run these when explicitly needed.
 
+## Code Style
+
+- Never skip or return defaults for entries that cannot be processed. Instead, encode the possibility of failure in types (e.g. use optionals), or fail (e.g. throw exception).
+
 ## Visualization Server
 
 - Use `bin/viz` to manage the visualization dev server. Do NOT run `npm run dev` directly.
