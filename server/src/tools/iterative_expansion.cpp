@@ -188,7 +188,8 @@ PartialSolution PartialSolveBranchAndBound(
       original_problem.original_edges
   );
 
-  auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
+  auto bb_result =
+      BranchAndBoundSolve(partial_problem, OstreamBnbLogger(std::cout));
   if (bb_result.best_paths.empty()) {
     return PartialSolution{};
   }

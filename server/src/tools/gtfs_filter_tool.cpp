@@ -4,6 +4,7 @@
 
 #include "gtfs/gtfs.h"
 #include "gtfs/gtfs_filter.h"
+#include "log.h"
 
 using namespace vats5;
 
@@ -18,7 +19,7 @@ int main(int argc, char* argv[]) {
 
   try {
     GtfsFilterConfig config = GtfsFilterConfigLoad(argv[1]);
-    GtfsDay result = GtfsFilterFromConfig(config);
+    GtfsDay result = GtfsFilterFromConfig(config, OstreamLogger(std::cerr));
 
     std::cout << "Saving filtered data to: " << output_dir << "..."
               << std::endl;

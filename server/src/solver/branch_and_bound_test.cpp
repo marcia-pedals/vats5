@@ -3,7 +3,6 @@
 #include <gtest/gtest.h>
 #include <rapidcheck.h>
 #include <rapidcheck/gtest.h>
-#include <sys/stat.h>
 
 #include <optional>
 #include <vector>
@@ -146,7 +145,7 @@ RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
     // steps.
     RC_ASSERT(
         BruteForceSolveOptimalDuration(state) ==
-        BranchAndBoundSolve(state, &RC_LOG(), std::nullopt, 4096).best_ub
+        BranchAndBoundSolve(state, OstreamBnbLogger(RC_LOG()), 4096).best_ub
     );
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");

@@ -1,6 +1,7 @@
 #include "solver/tarel_graph.h"
 
 #include <algorithm>
+#include <format>
 #include <fstream>
 #include <ios>
 #include <iostream>
@@ -221,7 +222,7 @@ struct GoodnessResult {
 };
 
 GoodnessResult ComputeStopGoodness(
-    const StepPathsAdjacencyList& minimal_paths_sparse
+    const StepPathsAdjacencyList& minimal_paths_sparse, const TextLogger& log
 ) {
   std::unordered_set<StopId> all_stops;
   std::unordered_set<XEdge> all_edges;
@@ -250,8 +251,8 @@ GoodnessResult ComputeStopGoodness(
     }
   }
 
-  std::cout << "Num stops: " << all_stops.size() << "\n";
-  std::cout << "Num edges: " << all_edges.size() << "\n";
+  log(std::format("Num stops: {}", all_stops.size()));
+  log(std::format("Num edges: {}", all_edges.size()));
 
   std::vector<StopGoodness> goodness;
   for (StopId stop : all_stops) {
@@ -275,7 +276,8 @@ GoodnessResult ComputeStopGoodness(
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
-    bool optimize_edges
+    bool optimize_edges,
+    const TextLogger& log
 ) {
   // Assign partitions to steps based on their trips.
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
@@ -306,25 +308,26 @@ InitializeProblemStateResult InitializeProblemState(
     int prev_num_edges = std::numeric_limits<int>::max();
     int iteration = 0;
     while (true) {
-      GoodnessResult result = ComputeStopGoodness(minimal_paths_sparse);
+      GoodnessResult result = ComputeStopGoodness(minimal_paths_sparse, log);
 
-      std::cout << "Iteration " << iteration << ": " << result.num_edges
-                << " edges\n";
+      log(std::format("Iteration {}: {} edges", iteration, result.num_edges));
       if (result.num_edges >= prev_num_edges) {
-        std::cout << "Edges stopped decreasing, stopping.\n";
+        log("Edges stopped decreasing, stopping.");
         break;
       }
 
       if (result.goodness.empty() || result.goodness[0].goodness <= 0) {
-        std::cout << "No positive goodness stops, stopping.\n";
+        log("No positive goodness stops, stopping.");
         break;
       }
 
-      std::cout << "Top goodness: "
-                << steps_from_gtfs.mapping.stop_id_to_stop_name.at(
-                       result.goodness[0].stop
-                   )
-                << ": " << result.goodness[0].goodness << "\n";
+      log(std::format(
+          "Top goodness: {}: {}",
+          steps_from_gtfs.mapping.stop_id_to_stop_name.at(
+              result.goodness[0].stop
+          ),
+          result.goodness[0].goodness
+      ));
 
       StopId split_stop = result.goodness[0].stop;
       minimal_paths_sparse = SplitPathsAtStop(minimal_paths_sparse, split_stop);
@@ -715,13 +718,16 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const TspGraphData& graph,
     const ProblemBoundary& boundary,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    const TextLogger& tsp_log
 ) {
   // Solve TSP!!!!
-  if (tsp_log) {
-    *tsp_log << "Solving TSP with " << graph.state_by_id.size()
-             << " vertices and " << graph.tsp_edges.size() << " edges...\n";
-  }
+  tsp_log(
+      std::format(
+          "Solving TSP with {} vertices and {} edges...",
+          graph.state_by_id.size(),
+          graph.tsp_edges.size()
+      )
+  );
 
   std::optional<int> atsp_ub;
   if (ub.has_value()) {
@@ -748,11 +754,12 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
       *(solution->tour.end() - 1) ==
       graph.id_by_state.at(TarelState{boundary.end, 0})
   );
-  if (tsp_log) {
-    *tsp_log << "Tarel TSP optimal value: "
-             << TimeSinceServiceStart{solution->optimal_value}.ToString()
-             << "\n";
-  }
+  tsp_log(
+      std::format(
+          "Tarel TSP optimal value: {}",
+          TimeSinceServiceStart{solution->optimal_value}.ToString()
+      )
+  );
 
   // Build lookup for tarel edge weights: (origin, destination) -> weight
   auto FindTarelEdge =
@@ -837,7 +844,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 }
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
+    const ProblemState& state, std::optional<int> ub, const TextLogger& tsp_log
 ) {
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `state.completed`.

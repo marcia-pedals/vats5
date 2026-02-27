@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "gtfs/gtfs.h"
+#include "log.h"
 
 namespace vats5 {
 
@@ -17,7 +18,9 @@ struct GtfsFilterConfig {
 GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path);
 
 // Load GTFS data, apply prefix and date filters, and return the result.
-GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config);
+GtfsDay GtfsFilterFromConfig(
+    const GtfsFilterConfig& config, const TextLogger& log
+);
 
 // Removes trips not referenced by stop_times, then removes routes and
 // directions not referenced by remaining trips.

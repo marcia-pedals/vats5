@@ -1,5 +1,6 @@
 #pragma once
 
+#include <format>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -7,6 +8,7 @@
 
 #include "gtfs/gtfs.h"
 #include "gtfs/gtfs_filter.h"
+#include "log.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 
@@ -35,7 +37,10 @@ inline CachedTestData MakeCachedTestData(GtfsDay gtfs_day) {
   };
 }
 
-inline CachedTestData GetCachedFilteredTestData(const FilterOptions& options) {
+inline CachedTestData GetCachedFilteredTestData(
+    const FilterOptions& options,
+    const TextLogger& log = OstreamLogger(std::cout)
+) {
   static std::unordered_map<std::string, CachedTestData> cache;
 
   std::string cache_key = options.raw_gtfs_path + "|" + options.date + "|" +
@@ -49,21 +54,23 @@ inline CachedTestData GetCachedFilteredTestData(const FilterOptions& options) {
     return it->second;
   }
 
-  std::cout << "Loading raw GTFS for test: " << options.raw_gtfs_path << "\n";
+  log(std::format("Loading raw GTFS for test: {}", options.raw_gtfs_path));
   Gtfs gtfs = GtfsLoad(options.raw_gtfs_path);
   if (!options.prefixes.empty()) {
-    std::cout << "Filtering by prefixes...\n";
+    log("Filtering by prefixes...");
     gtfs = GtfsFilterByPrefixes(gtfs, options.prefixes);
   }
-  std::cout << "Filtering by date: " << options.date
-            << (options.combine_service_days ? " (with service days)" : "")
-            << "\n";
+  log(std::format(
+      "Filtering by date: {}{}",
+      options.date,
+      options.combine_service_days ? " (with service days)" : ""
+  ));
   GtfsDay gtfs_day = options.combine_service_days
                          ? GtfsFilterDateWithServiceDays(gtfs, options.date)
                          : GtfsFilterByDate(gtfs, options.date);
-  std::cout << "Computing test data...\n";
+  log("Computing test data...");
   CachedTestData data = MakeCachedTestData(std::move(gtfs_day));
-  std::cout << "Done computing test data.\n";
+  log("Done computing test data.");
 
   cache[cache_key] = data;
   return data;
