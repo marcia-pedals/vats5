@@ -9,6 +9,7 @@ import type {
   PathStep,
   Stop,
   VizPath,
+  Route as VizRoute,
 } from "../../server/db";
 import { useCheckoutTitle } from "../__root";
 
@@ -101,43 +102,60 @@ function PathSteps({
   steps,
   path,
   stopNames,
+  routeMap,
   startCol = 1,
 }: {
   steps: PathStep[];
   path: VizPath;
   stopNames: Map<string, string>;
+  routeMap: Map<string, VizRoute>;
   startCol?: number;
 }) {
   return (
     <>
-      {steps.map((step, i) => (
-        <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
-          {step.route_name && (
-            <tr className="bg-tc-raised/50">
+      {steps.map((step, i) => {
+        const route = step.route_id ? routeMap.get(step.route_id) : undefined;
+        return (
+          <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
+            {(route || step.is_flex) && (
+              <tr className="bg-tc-raised/50">
+                {startCol > 0 && <td />}
+                <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
+                  {path.is_flex ? "" : formatTime(step.depart_time)}
+                </td>
+                <td className="px-2 py-1 text-[11px]" colSpan={2}>
+                  {step.is_flex ? (
+                    <span className="text-tc-cyan">Walk</span>
+                  ) : route ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      {route.route_color && (
+                        <span
+                          className="inline-block w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: `#${route.route_color}` }}
+                        />
+                      )}
+                      <span className="text-tc-cyan">{route.route_name}</span>
+                    </span>
+                  ) : null}
+                </td>
+              </tr>
+            )}
+            <tr className="bg-tc-raised/50 border-b border-tc-border/30">
               {startCol > 0 && <td />}
               <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
-                {path.is_flex ? "" : formatTime(step.depart_time)}
+                {path.is_flex ? "" : formatTime(step.arrive_time)}
               </td>
-              <td className="px-2 py-1 text-[11px] text-tc-cyan" colSpan={2}>
-                {step.is_flex ? "Walk" : step.route_name}
+              <td
+                className="px-2 py-1 text-[11px] text-tc-text-muted"
+                colSpan={2}
+              >
+                {stopNames.get(step.destination_stop_id) ??
+                  `stop ${step.destination_stop_id}`}
               </td>
             </tr>
-          )}
-          <tr className="bg-tc-raised/50 border-b border-tc-border/30">
-            {startCol > 0 && <td />}
-            <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
-              {path.is_flex ? "" : formatTime(step.arrive_time)}
-            </td>
-            <td
-              className="px-2 py-1 text-[11px] text-tc-text-muted"
-              colSpan={2}
-            >
-              {stopNames.get(step.destination_stop_id) ??
-                `stop ${step.destination_stop_id}`}
-            </td>
-          </tr>
-        </React.Fragment>
-      ))}
+          </React.Fragment>
+        );
+      })}
     </>
   );
 }
@@ -146,10 +164,12 @@ function PathRow({
   name,
   path,
   stopNames,
+  routeMap,
 }: {
   name: string;
   path: VizPath;
   stopNames: Map<string, string>;
+  routeMap: Map<string, VizRoute>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const stepsQuery = trpc.getPathSteps.useQuery(
@@ -189,7 +209,7 @@ function PathRow({
         </tr>
       )}
       {expanded && stepsQuery.data && (
-        <PathSteps steps={stepsQuery.data} path={path} stopNames={stopNames} />
+        <PathSteps steps={stepsQuery.data} path={path} stopNames={stopNames} routeMap={routeMap} />
       )}
     </>
   );
@@ -197,9 +217,11 @@ function PathRow({
 
 function OverlayPathPanel({
   stopNames,
+  routeMap,
   partialData,
 }: {
   stopNames: Map<string, string>;
+  routeMap: Map<string, VizRoute>;
   partialData: PartialSolutionData;
 }) {
   const pathSteps = partialData.best_path.steps;
@@ -234,6 +256,7 @@ function OverlayPathPanel({
               steps={middleSteps}
               path={pseudoPath}
               stopNames={stopNames}
+              routeMap={routeMap}
               startCol={0}
             />
           </tbody>
@@ -255,6 +278,7 @@ function StationPanel({
   name,
   stops,
   stopNames,
+  routeMap,
   origin,
   destination,
   onOriginChange,
@@ -266,6 +290,7 @@ function StationPanel({
   name: string;
   stops: Stop[];
   stopNames: Map<string, string>;
+  routeMap: Map<string, VizRoute>;
   origin: string | null;
   destination: string | null;
   onOriginChange: (stopId: string) => void;
@@ -343,6 +368,7 @@ function StationPanel({
                     name={name}
                     path={p}
                     stopNames={stopNames}
+                    routeMap={routeMap}
                   />
                 ))}
               </tbody>
@@ -488,6 +514,13 @@ function VizPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [selectedIteration, setSelectedIteration] = useState(0);
 
+  const routesQuery = trpc.getRoutes.useQuery({ name });
+  const routeMap = useMemo(() => {
+    const m = new Map<string, VizRoute>();
+    for (const r of routesQuery.data ?? []) m.set(r.route_id, r);
+    return m;
+  }, [routesQuery.data]);
+
   const runsQuery = trpc.getPartialSolutionRuns.useQuery(
     { name },
     { refetchInterval: 1000 },
@@ -496,7 +529,7 @@ function VizPage() {
     selectedRun !== null
       ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
       : skipToken,
-    { refetchInterval: 1000 },
+    { refetchInterval: 1000 }
   );
   const selectedRunData = runsQuery.data?.find(
     (r) => r.run_timestamp === selectedRun,
@@ -919,9 +952,9 @@ function VizPage() {
                     );
                   })}
                 {/* Partial solution: path arrows */}
-                {pathArrows.map((a, i) => (
+                {pathArrows.map((a) => (
                   <line
-                    key={`arrow-${i}`}
+                    key={`arrow-${a.x1}-${a.y1}-${a.x2}-${a.y2}`}
                     style={{ pointerEvents: "none" }}
                     x1={a.x1}
                     y1={a.y1}
@@ -943,6 +976,7 @@ function VizPage() {
       {partialQuery.data && (
         <OverlayPathPanel
           stopNames={stopNames}
+          routeMap={routeMap}
           partialData={partialQuery.data}
         />
       )}
@@ -953,6 +987,7 @@ function VizPage() {
           name={name}
           stops={stopsQuery.data.filter((s) => s.stop_type === "required")}
           stopNames={stopNames}
+          routeMap={routeMap}
           origin={origin}
           destination={destination}
           onOriginChange={setOrigin}

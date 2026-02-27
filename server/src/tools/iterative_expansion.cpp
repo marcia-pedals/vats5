@@ -42,9 +42,9 @@ struct VizStep {
   int depart_time;
   int arrive_time;
   int is_flex;
-  std::string route_name;
+  std::string route_id;
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_id)
 
 struct VizPath {
   std::vector<VizStep> steps;  // Collapsed steps (grouped by trip)
@@ -429,29 +429,48 @@ int main(int argc, char* argv[]) {
   ts << std::put_time(std::localtime(&tt), "%Y-%m-%dT%H:%M:%S");
   std::string run_timestamp = ts.str();
 
-  auto ToVizPath = [&state](const Path& path) -> VizPath {
+  // Build trip_id -> route_id mapping from the viz SQLite trips table.
+  std::unordered_map<int, std::string> trip_to_route;
+  {
+    viz::SqliteDb db(viz_sqlite_path);
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db.handle(), "SELECT trip_id, route_id FROM trips", -1, &stmt, nullptr);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      int trip_id = sqlite3_column_int(stmt, 0);
+      const char* route_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+      trip_to_route[trip_id] = route_id;
+    }
+    sqlite3_finalize(stmt);
+  }
+
+  auto LookupRouteId = [&trip_to_route](TripId trip) -> std::string {
+    auto it = trip_to_route.find(trip.v);
+    if (it != trip_to_route.end()) return it->second;
+    return "";
+  };
+
+  auto StepToVizStep = [&state, &LookupRouteId](const Step& s) -> VizStep {
+    return {
+      state.stop_infos.at(s.origin.stop).gtfs_stop_id.v,
+      state.stop_infos.at(s.destination.stop).gtfs_stop_id.v,
+      s.origin.time.seconds,
+      s.destination.time.seconds,
+      s.is_flex ? 1 : 0,
+      LookupRouteId(s.destination.trip),
+    };
+  };
+
+  auto ToVizPath = [&StepToVizStep](const Path& path) -> VizPath {
     VizPath vp;
     vp.duration = path.DurationSeconds();
 
     // First, store the original steps (uncollapsed)
     for (const Step& s : path.steps) {
-      const std::string& route_name = state.PartitionName(s.destination.partition);
-      vp.original_steps.push_back({
-        state.stop_infos.at(s.origin.stop).gtfs_stop_id.v,
-        state.stop_infos.at(s.destination.stop).gtfs_stop_id.v,
-        s.origin.time.seconds,
-        s.destination.time.seconds,
-        s.is_flex ? 1 : 0,
-        route_name,
-      });
+      vp.original_steps.push_back(StepToVizStep(s));
     }
 
     // Then, group consecutive steps by trip and merge each group
-    struct MergedStepInfo {
-      Step step;
-      std::string route_name;
-    };
-    std::vector<MergedStepInfo> merged_steps;
+    std::vector<Step> merged_steps;
 
     size_t si = 0;
     while (si < path.steps.size()) {
@@ -465,37 +484,16 @@ int main(int argc, char* argv[]) {
           path.steps.begin() + si,
           path.steps.begin() + group_end
       );
-      Step merged = ConsecutiveMergedSteps(group_steps);
-
-      const std::string& route_name = state.PartitionName(path.steps[si].destination.partition);
-
-      merged_steps.push_back({merged, route_name});
+      merged_steps.push_back(ConsecutiveMergedSteps(group_steps));
       si = group_end;
     }
 
     // Normalize flex step times if necessary
-    {
-      std::vector<Step> steps;
-      steps.reserve(merged_steps.size());
-      for (const auto& ms : merged_steps) {
-        steps.push_back(ms.step);
-      }
-      NormalizeConsecutiveSteps(steps);
-      for (size_t i = 0; i < merged_steps.size(); ++i) {
-        merged_steps[i].step = steps[i];
-      }
-    }
+    NormalizeConsecutiveSteps(merged_steps);
 
     // Store the collapsed steps
-    for (const auto& ms : merged_steps) {
-      vp.steps.push_back({
-        state.stop_infos.at(ms.step.origin.stop).gtfs_stop_id.v,
-        state.stop_infos.at(ms.step.destination.stop).gtfs_stop_id.v,
-        ms.step.origin.time.seconds,
-        ms.step.destination.time.seconds,
-        ms.step.is_flex ? 1 : 0,
-        ms.route_name,
-      });
+    for (const Step& s : merged_steps) {
+      vp.steps.push_back(StepToVizStep(s));
     }
     return vp;
   };

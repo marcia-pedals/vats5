@@ -418,7 +418,9 @@ GTEST("GtfsFilterByTrips should filter by specific trip") {
   EXPECT_EQ(filtered.trips, expected_trips);
 
   // Check routes
-  std::vector<GtfsRoute> expected_routes = {GtfsRoute{route_id, "Express", ""}};
+  std::vector<GtfsRoute> expected_routes = {
+      GtfsRoute{route_id, "Express", "", "ce202f", "ffffff"}
+  };
   EXPECT_EQ(filtered.routes, expected_routes);
 
   // Check directions

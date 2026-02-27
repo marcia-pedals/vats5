@@ -163,15 +163,24 @@ struct GtfsRoute {
   GtfsRouteId route_id;
   std::string route_short_name;
   std::string route_long_name;
+  std::string route_color;
+  std::string route_text_color;
 
   bool operator==(const GtfsRoute& other) const {
     return route_id == other.route_id &&
            route_short_name == other.route_short_name &&
-           route_long_name == other.route_long_name;
+           route_long_name == other.route_long_name &&
+           route_color == other.route_color &&
+           route_text_color == other.route_text_color;
   }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    GtfsRoute, route_id, route_short_name, route_long_name
+    GtfsRoute,
+    route_id,
+    route_short_name,
+    route_long_name,
+    route_color,
+    route_text_color
 )
 
 struct GtfsDirection {
@@ -317,6 +326,7 @@ inline void PrintTo(const GtfsRoute& route, std::ostream* os) {
   *os << "GtfsRoute{";
   PrintTo(route.route_id, os);
   *os << ", \"" << route.route_short_name << "\", \"" << route.route_long_name
+      << "\", \"" << route.route_color << "\", \"" << route.route_text_color
       << "\"}";
 }
 
