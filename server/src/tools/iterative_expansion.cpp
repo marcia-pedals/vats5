@@ -42,7 +42,8 @@ struct VizStep {
   int depart_time;
   int arrive_time;
   int is_flex;
-  std::string route_id;
+  // Flex/walking trips have no GTFS route.
+  std::optional<std::string> route_id;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_id)
 
@@ -443,10 +444,10 @@ int main(int argc, char* argv[]) {
     sqlite3_finalize(stmt);
   }
 
-  auto LookupRouteId = [&trip_to_route](TripId trip) -> std::string {
+  auto LookupRouteId = [&trip_to_route](TripId trip) -> std::optional<std::string> {
     auto it = trip_to_route.find(trip.v);
     if (it != trip_to_route.end()) return it->second;
-    return "";
+    return std::nullopt;
   };
 
   auto StepToVizStep = [&state, &LookupRouteId](const Step& s) -> VizStep {
