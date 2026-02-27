@@ -183,11 +183,25 @@ static std::vector<GtfsRoute> GtfsLoadRoutes(
     auto file_size = std::filesystem::file_size(routes_file_path);
     routes.reserve(file_size / 120);  // Rough estimate: ~120 bytes per record
 
+    auto col_names = reader.get_col_names();
+    bool has_route_color =
+        std::find(col_names.begin(), col_names.end(), "route_color") !=
+        col_names.end();
+    bool has_route_text_color =
+        std::find(col_names.begin(), col_names.end(), "route_text_color") !=
+        col_names.end();
+
     for (csv::CSVRow& row : reader) {
       GtfsRoute& route = routes.emplace_back();
       route.route_id = GtfsRouteId{row["route_id"].get<std::string>()};
       route.route_short_name = row["route_short_name"].get<std::string>();
       route.route_long_name = row["route_long_name"].get<std::string>();
+      if (has_route_color) {
+        route.route_color = row["route_color"].get<std::string>();
+      }
+      if (has_route_text_color) {
+        route.route_text_color = row["route_text_color"].get<std::string>();
+      }
     }
   } catch (const std::exception& e) {
     throw std::runtime_error(
@@ -533,11 +547,13 @@ void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path) {
   // Save routes.txt
   if (!gtfs_day.routes.empty()) {
     std::ofstream routes_file(gtfs_directory_path + "/routes.txt");
-    routes_file << "route_id,route_short_name,route_long_name\n";
+    routes_file << "route_id,route_short_name,route_long_name,route_color,"
+                   "route_text_color\n";
     for (const auto& route : gtfs_day.routes) {
       routes_file << route.route_id.v << ","
                   << "\"" << route.route_short_name << "\","
-                  << "\"" << route.route_long_name << "\"\n";
+                  << "\"" << route.route_long_name << "\"," << route.route_color
+                  << "," << route.route_text_color << "\n";
     }
   }
 

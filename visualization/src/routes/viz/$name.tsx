@@ -4,7 +4,7 @@ import { useGesture } from "@use-gesture/react";
 import { ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
-import type { Stop, VizPath } from "../../server/db";
+import type { Stop, VizPath, Route as VizRoute } from "../../server/db";
 import { useCheckoutTitle } from "../__root";
 
 export const Route = createFileRoute("/viz/$name")({
@@ -94,10 +94,12 @@ function PathRow({
   name,
   path,
   stopNames,
+  routeMap,
 }: {
   name: string;
   path: VizPath;
   stopNames: Map<string, string>;
+  routeMap: Map<string, VizRoute>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const stepsQuery = trpc.getPathSteps.useQuery(
@@ -134,37 +136,52 @@ function PathRow({
         </tr>
       )}
       {expanded &&
-        stepsQuery.data?.map((step, i) => (
-          <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
-            {step.route_name && (
-              <tr className="bg-tc-raised/50">
-                <td className="pl-6 pr-2 pt-1.5 pb-0 text-[10px] text-tc-cyan" colSpan={2}>
-                  {step.is_flex ? "Walk" : step.route_name}
+        stepsQuery.data?.map((step, i) => {
+          const route = step.route_id ? routeMap.get(step.route_id) : undefined;
+          return (
+            <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
+              {(route || step.is_flex) && (
+                <tr className="bg-tc-raised/50">
+                  <td className="pl-6 pr-2 pt-1.5 pb-0 text-[10px]" colSpan={2}>
+                    {step.is_flex ? (
+                      <span className="text-tc-cyan">Walk</span>
+                    ) : route ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        {route.route_color && (
+                          <span
+                            className="inline-block w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: `#${route.route_color}` }}
+                          />
+                        )}
+                        <span className="text-tc-cyan">{route.route_name}</span>
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="px-2 py-1 text-[10px] text-tc-text-dim">
+                    {path.is_flex ? "" : formatTime(step.depart_time)}
+                  </td>
+                  <td className="px-2 pt-1.5 pb-0 text-right text-[10px] text-tc-text-dim">
+                    {formatDuration(step.arrive_time - step.depart_time)}
+                  </td>
+                </tr>
+              )}
+              <tr className="bg-tc-raised/50 border-b border-tc-border/30">
+                <td className="pl-6 pr-2 py-1 text-[10px] text-tc-text-muted" colSpan={2}>
+                  {stopNames.get(step.destination_stop_id) ?? `stop ${step.destination_stop_id}`}
                 </td>
                 <td className="px-2 py-1 text-[10px] text-tc-text-dim">
-                  {path.is_flex ? "" : formatTime(step.depart_time)}
+                  {path.is_flex ? "" : formatTime(step.arrive_time)}
                 </td>
-                <td className="px-2 pt-1.5 pb-0 text-right text-[10px] text-tc-text-dim">
-                  {formatDuration(step.arrive_time - step.depart_time)}
-                </td>
+                {!route && !step.is_flex && (
+                  <td className="px-2 py-1 text-right text-[10px] text-tc-text-dim">
+                    {formatDuration(step.arrive_time - step.depart_time)}
+                  </td>
+                )}
+                {(route || step.is_flex) && <td />}
               </tr>
-            )}
-            <tr className="bg-tc-raised/50 border-b border-tc-border/30">
-              <td className="pl-6 pr-2 py-1 text-[10px] text-tc-text-muted" colSpan={2}>
-                {stopNames.get(step.destination_stop_id) ?? `stop ${step.destination_stop_id}`}
-              </td>
-              <td className="px-2 py-1 text-[10px] text-tc-text-dim">
-                {path.is_flex ? "" : formatTime(step.arrive_time)}
-              </td>
-              {!step.route_name && (
-                <td className="px-2 py-1 text-right text-[10px] text-tc-text-dim">
-                  {formatDuration(step.arrive_time - step.depart_time)}
-                </td>
-              )}
-              {step.route_name && <td />}
-            </tr>
-          </React.Fragment>
-        ))}
+            </React.Fragment>
+          );
+        })}
     </>
   );
 }
@@ -196,6 +213,12 @@ function StationPanel({
     origin !== null && destination !== null ? { name, origin, destination } : skipToken
   );
   const paths: VizPath[] | null = pathsQuery.data ?? null;
+  const routesQuery = trpc.getRoutes.useQuery({ name });
+  const routeMap = useMemo(() => {
+    const m = new Map<string, VizRoute>();
+    for (const r of routesQuery.data ?? []) m.set(r.route_id, r);
+    return m;
+  }, [routesQuery.data]);
 
   return (
     <div className="absolute top-0 bottom-0 right-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
@@ -248,7 +271,13 @@ function StationPanel({
               </thead>
               <tbody>
                 {paths.map((p) => (
-                  <PathRow key={p.path_id} name={name} path={p} stopNames={stopNames} />
+                  <PathRow
+                    key={p.path_id}
+                    name={name}
+                    path={p}
+                    stopNames={stopNames}
+                    routeMap={routeMap}
+                  />
                 ))}
               </tbody>
             </table>
@@ -392,7 +421,7 @@ function VizPage() {
     selectedRun !== null
       ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
       : skipToken,
-    { refetchInterval: 1000 },
+    { refetchInterval: 1000 }
   );
   const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
   const maxIteration = selectedRunData?.max_iteration ?? 0;
@@ -790,9 +819,9 @@ function VizPage() {
                     );
                   })}
                 {/* Partial solution: path arrows */}
-                {pathArrows.map((a, i) => (
+                {pathArrows.map((a) => (
                   <line
-                    key={`arrow-${i}`}
+                    key={`arrow-${a.x1}-${a.y1}-${a.x2}-${a.y2}`}
                     style={{ pointerEvents: "none" }}
                     x1={a.x1}
                     y1={a.y1}
