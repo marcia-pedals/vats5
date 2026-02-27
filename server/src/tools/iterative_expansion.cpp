@@ -18,6 +18,7 @@
 
 #include "algorithm/union_find.h"
 #include "solver/branch_and_bound.h"
+#include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
@@ -41,14 +42,16 @@ struct VizStep {
   int depart_time;
   int arrive_time;
   int is_flex;
+  std::string route_name;
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizStep, origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_name)
 
 struct VizPath {
-  std::vector<VizStep> steps;
+  std::vector<VizStep> steps;  // Collapsed steps (grouped by trip)
+  std::vector<VizStep> original_steps;  // Original uncollapsed steps
   int duration;
 };
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizPath, steps, duration)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(VizPath, steps, original_steps, duration)
 
 struct PartialSolutionData {
   std::vector<std::string> leaves;
@@ -429,13 +432,69 @@ int main(int argc, char* argv[]) {
   auto ToVizPath = [&state](const Path& path) -> VizPath {
     VizPath vp;
     vp.duration = path.DurationSeconds();
+
+    // First, store the original steps (uncollapsed)
     for (const Step& s : path.steps) {
-      vp.steps.push_back({
+      const std::string& route_name = state.PartitionName(s.destination.partition);
+      vp.original_steps.push_back({
         state.stop_infos.at(s.origin.stop).gtfs_stop_id.v,
         state.stop_infos.at(s.destination.stop).gtfs_stop_id.v,
         s.origin.time.seconds,
         s.destination.time.seconds,
         s.is_flex ? 1 : 0,
+        route_name,
+      });
+    }
+
+    // Then, group consecutive steps by trip and merge each group
+    struct MergedStepInfo {
+      Step step;
+      std::string route_name;
+    };
+    std::vector<MergedStepInfo> merged_steps;
+
+    size_t si = 0;
+    while (si < path.steps.size()) {
+      size_t group_end = si + 1;
+      while (group_end < path.steps.size() &&
+             path.steps[group_end].destination.trip == path.steps[si].destination.trip) {
+        group_end++;
+      }
+
+      std::vector<Step> group_steps(
+          path.steps.begin() + si,
+          path.steps.begin() + group_end
+      );
+      Step merged = ConsecutiveMergedSteps(group_steps);
+
+      const std::string& route_name = state.PartitionName(path.steps[si].destination.partition);
+
+      merged_steps.push_back({merged, route_name});
+      si = group_end;
+    }
+
+    // Normalize flex step times if necessary
+    {
+      std::vector<Step> steps;
+      steps.reserve(merged_steps.size());
+      for (const auto& ms : merged_steps) {
+        steps.push_back(ms.step);
+      }
+      NormalizeConsecutiveSteps(steps);
+      for (size_t i = 0; i < merged_steps.size(); ++i) {
+        merged_steps[i].step = steps[i];
+      }
+    }
+
+    // Store the collapsed steps
+    for (const auto& ms : merged_steps) {
+      vp.steps.push_back({
+        state.stop_infos.at(ms.step.origin.stop).gtfs_stop_id.v,
+        state.stop_infos.at(ms.step.destination.stop).gtfs_stop_id.v,
+        ms.step.origin.time.seconds,
+        ms.step.destination.time.seconds,
+        ms.step.is_flex ? 1 : 0,
+        ms.route_name,
       });
     }
     return vp;

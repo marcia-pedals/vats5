@@ -4,7 +4,12 @@ import { useGesture } from "@use-gesture/react";
 import { ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { trpc } from "../../client/trpc";
-import type { Stop, VizPath } from "../../server/db";
+import type {
+  PartialSolutionData,
+  PathStep,
+  Stop,
+  VizPath,
+} from "../../server/db";
 import { useCheckoutTitle } from "../__root";
 
 export const Route = createFileRoute("/viz/$name")({
@@ -60,7 +65,9 @@ function StopDropdown({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-[10px] font-mono text-tc-text-dim w-8 shrink-0">{label}</span>
+      <span className="text-[10px] font-mono text-tc-text-dim w-8 shrink-0">
+        {label}
+      </span>
       <select
         value={value ?? ""}
         onChange={(e) => {
@@ -90,6 +97,51 @@ function StopDropdown({
   );
 }
 
+function PathSteps({
+  steps,
+  path,
+  stopNames,
+  startCol = 1,
+}: {
+  steps: PathStep[];
+  path: VizPath;
+  stopNames: Map<string, string>;
+  startCol?: number;
+}) {
+  return (
+    <>
+      {steps.map((step, i) => (
+        <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
+          {step.route_name && (
+            <tr className="bg-tc-raised/50">
+              {startCol > 0 && <td />}
+              <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
+                {path.is_flex ? "" : formatTime(step.depart_time)}
+              </td>
+              <td className="px-2 py-1 text-[11px] text-tc-cyan" colSpan={2}>
+                {step.is_flex ? "Walk" : step.route_name}
+              </td>
+            </tr>
+          )}
+          <tr className="bg-tc-raised/50 border-b border-tc-border/30">
+            {startCol > 0 && <td />}
+            <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
+              {path.is_flex ? "" : formatTime(step.arrive_time)}
+            </td>
+            <td
+              className="px-2 py-1 text-[11px] text-tc-text-muted"
+              colSpan={2}
+            >
+              {stopNames.get(step.destination_stop_id) ??
+                `stop ${step.destination_stop_id}`}
+            </td>
+          </tr>
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
 function PathRow({
   name,
   path,
@@ -101,7 +153,7 @@ function PathRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const stepsQuery = trpc.getPathSteps.useQuery(
-    expanded ? { name, pathId: path.path_id } : skipToken
+    expanded ? { name, pathId: path.path_id } : skipToken,
   );
 
   return (
@@ -116,10 +168,10 @@ function PathRow({
             className={`transition-transform ${expanded ? "rotate-90" : ""}`}
           />
         </td>
-        <td className="px-2 py-1.5 text-tc-text">
+        <td className="w-[70px] px-2 py-1.5 text-tc-text whitespace-nowrap">
           {path.is_flex ? "**:**:**" : formatTime(path.depart_time)}
         </td>
-        <td className="px-2 py-1.5 text-tc-text">
+        <td className="w-[70px] px-2 py-1.5 text-tc-text whitespace-nowrap">
           {path.is_flex ? "**:**:**" : formatTime(path.arrive_time)}
         </td>
         <td className="px-2 py-1.5 text-right text-tc-text-muted">
@@ -128,44 +180,74 @@ function PathRow({
       </tr>
       {expanded && stepsQuery.isPending && (
         <tr>
-          <td colSpan={4} className="px-2 py-1.5 text-[10px] font-mono text-tc-text-dim">
+          <td
+            colSpan={4}
+            className="px-2 py-1.5 text-[10px] font-mono text-tc-text-dim"
+          >
             Loading steps...
           </td>
         </tr>
       )}
-      {expanded &&
-        stepsQuery.data?.map((step, i) => (
-          <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
-            {step.route_name && (
-              <tr className="bg-tc-raised/50">
-                <td className="pl-6 pr-2 pt-1.5 pb-0 text-[10px] text-tc-cyan" colSpan={2}>
-                  {step.is_flex ? "Walk" : step.route_name}
-                </td>
-                <td className="px-2 py-1 text-[10px] text-tc-text-dim">
-                  {path.is_flex ? "" : formatTime(step.depart_time)}
-                </td>
-                <td className="px-2 pt-1.5 pb-0 text-right text-[10px] text-tc-text-dim">
-                  {formatDuration(step.arrive_time - step.depart_time)}
-                </td>
-              </tr>
-            )}
-            <tr className="bg-tc-raised/50 border-b border-tc-border/30">
-              <td className="pl-6 pr-2 py-1 text-[10px] text-tc-text-muted" colSpan={2}>
-                {stopNames.get(step.destination_stop_id) ?? `stop ${step.destination_stop_id}`}
-              </td>
-              <td className="px-2 py-1 text-[10px] text-tc-text-dim">
-                {path.is_flex ? "" : formatTime(step.arrive_time)}
-              </td>
-              {!step.route_name && (
-                <td className="px-2 py-1 text-right text-[10px] text-tc-text-dim">
-                  {formatDuration(step.arrive_time - step.depart_time)}
-                </td>
-              )}
-              {step.route_name && <td />}
-            </tr>
-          </React.Fragment>
-        ))}
+      {expanded && stepsQuery.data && (
+        <PathSteps steps={stepsQuery.data} path={path} stopNames={stopNames} />
+      )}
     </>
+  );
+}
+
+function OverlayPathPanel({
+  stopNames,
+  partialData,
+}: {
+  stopNames: Map<string, string>;
+  partialData: PartialSolutionData;
+}) {
+  const pathSteps = partialData.best_path.steps;
+  const totalDuration = partialData.best_path.duration;
+
+  // Exclude first and last steps
+  const middleSteps = pathSteps.slice(1, -1);
+
+  // Create a pseudo-path for the PathSteps component
+  const pseudoPath: VizPath = {
+    path_id: 0,
+    depart_time: pathSteps[0]?.depart_time ?? 0,
+    arrive_time: pathSteps[pathSteps.length - 1]?.arrive_time ?? 0,
+    is_flex: 0,
+  };
+
+  return (
+    <div className="absolute top-[104px] bottom-0 left-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-tc-border shrink-0">
+        <span className="text-xs font-mono text-tc-text">Overlay Path</span>
+        <span className="text-[10px] font-mono text-tc-text-dim">
+          {formatDuration(totalDuration)} total
+        </span>
+      </div>
+
+      {/* Path steps */}
+      <div className="overflow-y-auto flex-1">
+        <table className="w-full text-[11px] font-mono border-collapse">
+          <tbody>
+            <PathSteps
+              steps={middleSteps}
+              path={pseudoPath}
+              stopNames={stopNames}
+              startCol={0}
+            />
+          </tbody>
+        </table>
+      </div>
+
+      {/* Summary */}
+      <div className="px-3 py-2 border-t border-tc-border shrink-0">
+        <span className="text-[10px] font-mono text-tc-text-dim">
+          {middleSteps.length} segment{middleSteps.length !== 1 ? "s" : ""} ·{" "}
+          {partialData.leaves.length} leaves
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -193,7 +275,9 @@ function StationPanel({
   onSwap: () => void;
 }) {
   const pathsQuery = trpc.getPaths.useQuery(
-    origin !== null && destination !== null ? { name, origin, destination } : skipToken
+    origin !== null && destination !== null
+      ? { name, origin, destination }
+      : skipToken,
   );
   const paths: VizPath[] | null = pathsQuery.data ?? null;
 
@@ -241,14 +325,25 @@ function StationPanel({
               <thead className="sticky top-0 bg-tc-surface">
                 <tr className="text-tc-text-dim border-b border-tc-border">
                   <th className="w-5 px-0 py-1.5" />
-                  <th className="text-left px-2 py-1.5 font-normal">Depart</th>
-                  <th className="text-left px-2 py-1.5 font-normal">Arrive</th>
-                  <th className="text-right px-2 py-1.5 font-normal">Duration</th>
+                  <th className="w-[70px] text-left px-2 py-1.5 font-normal whitespace-nowrap">
+                    Depart
+                  </th>
+                  <th className="w-[70px] text-left px-2 py-1.5 font-normal whitespace-nowrap">
+                    Arrive
+                  </th>
+                  <th className="text-right px-2 py-1.5 font-normal">
+                    Duration
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {paths.map((p) => (
-                  <PathRow key={p.path_id} name={name} path={p} stopNames={stopNames} />
+                  <PathRow
+                    key={p.path_id}
+                    name={name}
+                    path={p}
+                    stopNames={stopNames}
+                  />
                 ))}
               </tbody>
             </table>
@@ -257,11 +352,14 @@ function StationPanel({
       )}
 
       {/* No paths message */}
-      {origin !== null && destination !== null && paths !== null && paths.length === 0 && (
-        <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
-          No paths found between these stops
-        </div>
-      )}
+      {origin !== null &&
+        destination !== null &&
+        paths !== null &&
+        paths.length === 0 && (
+          <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
+            No paths found between these stops
+          </div>
+        )}
 
       {/* Empty state */}
       {(origin === null || destination === null) && (
@@ -278,7 +376,10 @@ function StationPanel({
 // Stop dot colors — CSS variable values for SVG fill/stroke.
 const STOP_COLORS = {
   // Non-required (in_problem_state) stops
-  nonRequired: { fill: "var(--color-tc-text-dim)", stroke: "var(--color-tc-text-muted)" },
+  nonRequired: {
+    fill: "var(--color-tc-text-dim)",
+    stroke: "var(--color-tc-text-muted)",
+  },
   // Default required stop
   required: { fill: "var(--color-tc-cyan)", stroke: "var(--color-tc-blue)" },
   // Unvisited required stop (partial solution active, stop not on path)
@@ -387,14 +488,19 @@ function VizPage() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [selectedIteration, setSelectedIteration] = useState(0);
 
-  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name }, { refetchInterval: 1000 });
+  const runsQuery = trpc.getPartialSolutionRuns.useQuery(
+    { name },
+    { refetchInterval: 1000 },
+  );
   const partialQuery = trpc.getPartialSolution.useQuery(
     selectedRun !== null
       ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
       : skipToken,
     { refetchInterval: 1000 },
   );
-  const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
+  const selectedRunData = runsQuery.data?.find(
+    (r) => r.run_timestamp === selectedRun,
+  );
   const maxIteration = selectedRunData?.max_iteration ?? 0;
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
@@ -425,7 +531,10 @@ function VizPage() {
     const cosLat = Math.cos((midLat * Math.PI) / 180);
     const dataW = lonRange * cosLat;
     const dataH = latRange;
-    const scalePerPixel = Math.min((w - 2 * pad) / dataW, (h - 2 * pad) / dataH);
+    const scalePerPixel = Math.min(
+      (w - 2 * pad) / dataW,
+      (h - 2 * pad) / dataH,
+    );
 
     const drawW = dataW * scalePerPixel;
     const drawH = dataH * scalePerPixel;
@@ -448,7 +557,7 @@ function VizPage() {
         setDestination(stopId);
       }
     },
-    [origin]
+    [origin],
   );
 
   // Greedy label placement: right or left, suppress in dense clusters
@@ -476,10 +585,14 @@ function VizPage() {
     });
 
     // Place most-isolated labels first (they anchor the layout)
-    const order = sp.map((_, i) => i).sort((a, b) => nbrDistSq[b] - nbrDistSq[a]);
+    const order = sp
+      .map((_, i) => i)
+      .sort((a, b) => nbrDistSq[b] - nbrDistSq[a]);
 
     const boxes: [number, number, number, number][] = []; // placed bboxes
-    const out: { dataX: number; dataY: number; visible: boolean }[] = new Array(svgStops.length);
+    const out: { dataX: number; dataY: number; visible: boolean }[] = new Array(
+      svgStops.length,
+    );
 
     for (const i of order) {
       // Suppress label entirely if too close to any neighbor
@@ -575,7 +688,7 @@ function VizPage() {
       target: mapRef,
       drag: { filterTaps: true },
       eventOptions: { passive: false },
-    }
+    },
   );
 
   const resetView = useCallback(() => {
@@ -621,8 +734,9 @@ function VizPage() {
 
   const visitedStopSet = useMemo(() => {
     if (!partialQuery.data) return new Set<string>();
+    console.log(partialQuery.data);
     const s = new Set<string>();
-    for (const step of partialQuery.data.best_path.steps) {
+    for (const step of partialQuery.data.best_path.original_steps) {
       s.add(step.origin_stop_id);
       s.add(step.destination_stop_id);
     }
@@ -631,7 +745,7 @@ function VizPage() {
 
   const pathArrows = useMemo(() => {
     if (!partialQuery.data || !stopCoords.size) return [];
-    const steps = partialQuery.data.best_path.steps;
+    const steps = partialQuery.data.best_path.original_steps;
     const arrows: { x1: number; y1: number; x2: number; y2: number }[] = [];
     for (const step of steps) {
       const orig = stopCoords.get(step.origin_stop_id);
@@ -699,7 +813,9 @@ function VizPage() {
               </span>
               <button
                 type="button"
-                onClick={() => setSelectedIteration((i) => Math.min(maxIteration, i + 1))}
+                onClick={() =>
+                  setSelectedIteration((i) => Math.min(maxIteration, i + 1))
+                }
                 disabled={selectedIteration === maxIteration}
                 className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
               >
@@ -731,7 +847,9 @@ function VizPage() {
         {stopsQuery.error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="panel border-tc-red/40 bg-tc-red-dim">
-              <span className="text-tc-red text-sm font-mono">ERR: {stopsQuery.error.message}</span>
+              <span className="text-tc-red text-sm font-mono">
+                ERR: {stopsQuery.error.message}
+              </span>
             </div>
           </div>
         )}
@@ -740,11 +858,17 @@ function VizPage() {
         {svgStops && (
           <>
             <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
-              {svgStops.filter((s) => s.stop_type === "required").length} required /{" "}
-              {svgStops.length} stops
+              {svgStops.filter((s) => s.stop_type === "required").length}{" "}
+              required / {svgStops.length} stops
             </span>
 
-            <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
+            <svg
+              width="100%"
+              height="100%"
+              className="block"
+              role="img"
+              aria-label="Station map"
+            >
               <defs>
                 <marker
                   id="arrowhead"
@@ -758,7 +882,9 @@ function VizPage() {
                   <polygon points="0 0, 6 2, 0 4" fill="#22c55e" />
                 </marker>
               </defs>
-              <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+              <g
+                transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}
+              >
                 {svgStops.map((stop) => (
                   <StopDot
                     key={stop.stop_id}
@@ -766,7 +892,10 @@ function VizPage() {
                     scale={transform.scale}
                     isSelected={isSelected(stop.stop_id)}
                     isRequired={stop.stop_type === "required"}
-                    isUnvisited={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id)}
+                    isUnvisited={
+                      visitedStopSet.size > 0 &&
+                      !visitedStopSet.has(stop.stop_id)
+                    }
                     isLeaf={leafSet.has(stop.stop_id)}
                     onClick={handleStopClick}
                   />
@@ -809,6 +938,14 @@ function VizPage() {
           </>
         )}
       </div>
+
+      {/* Overlay path panel — show when overlay is selected */}
+      {partialQuery.data && (
+        <OverlayPathPanel
+          stopNames={stopNames}
+          partialData={partialQuery.data}
+        />
+      )}
 
       {/* Station panel — outside the gesture-target div */}
       {stopsQuery.data && (
