@@ -681,6 +681,169 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
   return result;
 }
 
+struct EarliestArrival {
+  int time_seconds = std::numeric_limits<int>::max();
+  const Path* path = nullptr;
+};
+
+EarliestArrival FindEarliestArrival(
+    const StepPathsAdjacencyList& graph,
+    StopId from,
+    StopId to,
+    int depart_after
+) {
+  auto paths = graph.PathsBetween(from, to);
+  if (paths.empty()) return {};
+
+  EarliestArrival best;
+
+  // Flex paths (origin time 0, always available).
+  for (const auto& p : paths) {
+    if (!p.merged_step.is_flex) break;
+    int arrival = depart_after + p.DurationSeconds();
+    if (arrival < best.time_seconds) {
+      best = {arrival, &p};
+    }
+  }
+
+  // Scheduled paths: first departing at or after depart_after.
+  auto it = std::lower_bound(
+      paths.begin(), paths.end(), depart_after,
+      [](const Path& p, int t) {
+        return p.merged_step.origin.time.seconds < t;
+      }
+  );
+  if (it != paths.end() && !it->merged_step.is_flex &&
+      it->merged_step.destination.time.seconds < best.time_seconds) {
+    best = {it->merged_step.destination.time.seconds, &*it};
+  }
+
+  return best;
+}
+
+// Try to insert additional system stops into a single path's steps by
+// splicing in sub-paths from the complete graph. Returns true if the path
+// was modified.
+void MaximizeSystemStopsInPath(
+    Path& path,
+    const StepPathsAdjacencyList& graph,
+    const std::unordered_set<StopId>& system_stops
+) {
+  // TODO: Consider whether flex paths need to be maximized in any way.
+  if (path.merged_step.is_flex) return;
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+
+    // Extract system stops visited, in order, with step indices.
+    struct Visit {
+      StopId stop;
+      int time_seconds;
+      size_t step_index;  // SIZE_MAX for origin (no arriving step)
+    };
+    std::vector<Visit> system_visits;
+    std::unordered_set<StopId> visited;
+
+    path.VisitAllStops([&](StopId stop) { visited.insert(stop); });
+
+    if (!path.steps.empty() &&
+        system_stops.count(path.steps[0].origin.stop)) {
+      system_visits.push_back(
+          {path.steps[0].origin.stop,
+           path.steps[0].origin.time.seconds,
+           SIZE_MAX}
+      );
+    }
+    for (size_t i = 0; i < path.steps.size(); ++i) {
+      if (system_stops.count(path.steps[i].destination.stop)) {
+        system_visits.push_back(
+            {path.steps[i].destination.stop,
+             path.steps[i].destination.time.seconds,
+             i}
+        );
+      }
+    }
+
+    for (size_t g = 0; g + 1 < system_visits.size(); ++g) {
+      StopId gap_start = system_visits[g].stop;
+      int gap_start_time = system_visits[g].time_seconds;
+      StopId gap_end = system_visits[g + 1].stop;
+      int gap_end_time = system_visits[g + 1].time_seconds;
+
+      for (StopId candidate : system_stops) {
+        if (visited.count(candidate)) continue;
+
+        auto to_d =
+            FindEarliestArrival(graph, gap_start, candidate, gap_start_time);
+        if (to_d.time_seconds >= gap_end_time) continue;
+
+        auto from_d =
+            FindEarliestArrival(graph, candidate, gap_end, to_d.time_seconds);
+        if (from_d.time_seconds > gap_end_time) continue;
+
+        // Splice the sub-paths into the path.
+        size_t splice_start =
+            (system_visits[g].step_index == SIZE_MAX)
+                ? 0
+                : system_visits[g].step_index + 1;
+        size_t splice_end = system_visits[g + 1].step_index;
+
+        size_t steps_before = splice_start;
+        size_t steps_after = path.steps.size() - splice_end - 1;
+        size_t new_size = steps_before + to_d.path->steps.size() +
+                          from_d.path->steps.size() + steps_after;
+
+        std::vector<Step> new_steps;
+        new_steps.reserve(new_size);
+
+        // Steps before the gap.
+        for (size_t i = 0; i < splice_start; ++i) {
+          new_steps.push_back(path.steps[i]);
+        }
+
+        // Sub-path: gap_start -> candidate, then candidate -> gap_end.
+        // Concat raw steps and let NormalizeConsecutiveSteps fix flex times.
+        for (const auto& s : to_d.path->steps) {
+          new_steps.push_back(s);
+        }
+        for (const auto& s : from_d.path->steps) {
+          new_steps.push_back(s);
+        }
+
+        // Steps after the gap.
+        for (size_t i = splice_end + 1; i < path.steps.size(); ++i) {
+          new_steps.push_back(path.steps[i]);
+        }
+
+        NormalizeConsecutiveSteps(new_steps);
+        path.steps = std::move(new_steps);
+        path.merged_step = ConsecutiveMergedSteps(path.steps);
+        changed = true;
+        break;
+      }
+      if (changed) break;
+    }
+  }
+}
+
+// Post-process a complete graph so that every path visits a maximal set of
+// system stops. For each path, greedily insert any system stop that fits in a
+// gap between two consecutive visited system stops, splicing in the sub-paths
+// from the graph itself.
+void MaximizeSystemStopsInPaths(
+    StepPathsAdjacencyList& graph,
+    const std::unordered_set<StopId>& system_stops
+) {
+  for (auto& [origin, path_groups] : graph.adjacent) {
+    for (auto& path_group : path_groups) {
+      for (Path& path : path_group) {
+        MaximizeSystemStopsInPath(path, graph, system_stops);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
@@ -696,9 +859,11 @@ StepPathsAdjacencyList CompleteShortestPathsGraph(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
-  return ReduceToMinimalSystemPathsImpl(
+  StepPathsAdjacencyList result = ReduceToMinimalSystemPathsImpl(
       adjacency_list, system_stops, /*keep_through_other_destination=*/true
   );
+  MaximizeSystemStopsInPaths(result, system_stops);
+  return result;
 }
 
 }  // namespace vats5

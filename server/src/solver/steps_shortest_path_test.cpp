@@ -1420,4 +1420,104 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
   }
 }
 
+// Test that CompleteShortestPathsGraph's post-processing maximizes system stops.
+//
+// Five stops: S1, S2, S3 are system stops. X and W are non-system stops.
+//
+// Two routes from S1 to S3, both going through W:
+//
+//   Fast route (skips system stops):
+//     S1 -trip1-> X @100-110,  X -trip1-> W @110-120
+//
+//   Slow route (visits system stop S2):
+//     S1 -trip2-> S2 @100-130,  S2 -trip2-> W @130-140
+//
+//   Shared last leg:
+//     W -trip3-> S3 @200-210
+//
+// Dijkstra settles W at time 120 via the fast route (S1→X→W). The slow
+// route arrives at W at 140, but W is already settled so it's discarded.
+// Both routes would catch the same W→S3 departure at 200, so the final
+// arrival at S3 is 210 either way. The fast route produces S1→X→W→S3
+// which doesn't visit system stop S2.
+//
+// Post-processing should splice in S2, producing S1→S2→W→S3 instead.
+// This also tests that merged_step is fully recomputed after splicing
+// (trip and partition change from trip1/part_a to trip2/part_b).
+TEST(ShortestPathTest, CompleteShortestPathsGraph_MaximizeSystemStops) {
+  StopId S1{1}, S2{2}, S3{3}, X{4}, W{5};
+  TripId trip1{1}, trip2{2}, trip3{3};
+  StepPartitionId part_a{10}, part_b{20};
+
+  std::vector<Step> steps = {
+      // Route through non-system stop X (faster to W, but skips S2)
+      Step::PrimitiveScheduled(
+          S1, X, TimeSinceServiceStart{100}, TimeSinceServiceStart{110}, trip1,
+          part_a
+      ),
+      Step::PrimitiveScheduled(
+          X, W, TimeSinceServiceStart{110}, TimeSinceServiceStart{120}, trip1,
+          part_a
+      ),
+      // Route through system stop S2 (slower to W, but visits S2)
+      Step::PrimitiveScheduled(
+          S1, S2, TimeSinceServiceStart{100}, TimeSinceServiceStart{130}, trip2,
+          part_b
+      ),
+      Step::PrimitiveScheduled(
+          S2, W, TimeSinceServiceStart{130}, TimeSinceServiceStart{140}, trip2,
+          part_b
+      ),
+      // Single connection from W to S3 (both routes converge here)
+      Step::PrimitiveScheduled(
+          W, S3, TimeSinceServiceStart{200}, TimeSinceServiceStart{210}, trip3,
+          part_b
+      ),
+  };
+
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+  std::unordered_set<StopId> system_stops = {S1, S2, S3};
+
+  StepPathsAdjacencyList graph =
+      CompleteShortestPathsGraph(adjacency_list, system_stops);
+
+  // Find the path from S1 to S3.
+  auto s1_s3_paths = graph.PathsBetween(S1, S3);
+  ASSERT_FALSE(s1_s3_paths.empty());
+
+  // Find the scheduled (non-flex) path.
+  const Path* s1_s3_path = nullptr;
+  for (const auto& p : s1_s3_paths) {
+    if (!p.merged_step.is_flex) {
+      s1_s3_path = &p;
+      break;
+    }
+  }
+  ASSERT_NE(s1_s3_path, nullptr) << "Expected a scheduled path from S1 to S3";
+
+  // The path should visit S2 (maximized), not go through X.
+  std::unordered_set<StopId> visited;
+  s1_s3_path->VisitAllStops([&](StopId stop) { visited.insert(stop); });
+  EXPECT_TRUE(visited.count(S2))
+      << "Post-processing should have inserted S2 into the S1->S3 path";
+  EXPECT_FALSE(visited.count(X))
+      << "Path should go through S2, not X";
+
+  // Verify merged_step trip and partition were updated (edge splice case:
+  // the original path started with trip1/part_a but now starts with
+  // trip2/part_b).
+  EXPECT_EQ(s1_s3_path->merged_step.origin.trip, trip2)
+      << "merged_step origin trip should reflect the new first step";
+  EXPECT_EQ(s1_s3_path->merged_step.origin.partition, part_b)
+      << "merged_step origin partition should reflect the new first step";
+  EXPECT_EQ(s1_s3_path->merged_step.destination.trip, trip3)
+      << "merged_step destination trip should reflect the last step";
+  EXPECT_EQ(s1_s3_path->merged_step.destination.partition, part_b)
+      << "merged_step destination partition should reflect the last step";
+
+  // Verify the path timing is unchanged.
+  EXPECT_EQ(s1_s3_path->merged_step.origin.time.seconds, 100);
+  EXPECT_EQ(s1_s3_path->merged_step.destination.time.seconds, 210);
+}
+
 }  // namespace vats5

@@ -515,27 +515,8 @@ int main(int argc, char* argv[]) {
       vp.original_steps.push_back(StepToVizStep(s));
     }
 
-    // Then, group consecutive steps by trip and merge each group
-    std::vector<Step> merged_steps;
-
-    size_t si = 0;
-    while (si < path.steps.size()) {
-      size_t group_end = si + 1;
-      while (group_end < path.steps.size() &&
-             path.steps[group_end].destination.trip ==
-                 path.steps[si].destination.trip) {
-        group_end++;
-      }
-
-      std::vector<Step> group_steps(
-          path.steps.begin() + si, path.steps.begin() + group_end
-      );
-      merged_steps.push_back(ConsecutiveMergedSteps(group_steps));
-      si = group_end;
-    }
-
-    // Normalize flex step times if necessary
-    NormalizeConsecutiveSteps(merged_steps);
+    // Group consecutive steps by trip and merge each group.
+    std::vector<Step> merged_steps = CollapseStepsByTrip(path.steps);
 
     // Store the collapsed steps
     for (const Step& s : merged_steps) {

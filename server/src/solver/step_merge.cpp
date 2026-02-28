@@ -239,7 +239,7 @@ std::vector<Step> PairwiseMergedSteps(
   return result;
 }
 
-Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
+Step ConsecutiveMergedSteps(std::span<const Step> path) {
   if (path.empty()) {
     return Step{};
   }
@@ -305,6 +305,25 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
       },
       is_flex
   };
+}
+
+std::vector<Step> CollapseStepsByTrip(const std::vector<Step>& steps) {
+  std::vector<Step> collapsed;
+  size_t si = 0;
+  while (si < steps.size()) {
+    size_t group_end = si + 1;
+    while (group_end < steps.size() &&
+           steps[group_end].destination.trip ==
+               steps[si].destination.trip) {
+      group_end++;
+    }
+    collapsed.push_back(
+        ConsecutiveMergedSteps({steps.data() + si, group_end - si})
+    );
+    si = group_end;
+  }
+  NormalizeConsecutiveSteps(collapsed);
+  return collapsed;
 }
 
 void NormalizeConsecutiveSteps(std::vector<Step>& steps) {

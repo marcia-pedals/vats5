@@ -285,6 +285,7 @@ void WriteVisualizationSqlite(
 
         // Group consecutive steps by trip and merge each group into a
         // single step using ConsecutiveMergedSteps.
+        // TODO: Try using CollapseStepsByTrip here.
         struct MergedStepInfo {
           Step step;
           std::string route_direction_id;  // empty for flex/walk
