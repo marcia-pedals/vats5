@@ -681,6 +681,167 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
   return result;
 }
 
+struct EarliestArrival {
+  int time_seconds = std::numeric_limits<int>::max();
+  const Path* path = nullptr;
+};
+
+EarliestArrival FindEarliestArrival(
+    const StepPathsAdjacencyList& graph,
+    StopId from,
+    StopId to,
+    int depart_after
+) {
+  auto paths = graph.PathsBetween(from, to);
+  if (paths.empty()) return {};
+
+  EarliestArrival best;
+
+  // Flex paths (origin time 0, always available).
+  for (const auto& p : paths) {
+    if (!p.merged_step.is_flex) break;
+    int arrival = depart_after + p.DurationSeconds();
+    if (arrival < best.time_seconds) {
+      best = {arrival, &p};
+    }
+  }
+
+  // Scheduled paths: first departing at or after depart_after.
+  auto it = std::lower_bound(
+      paths.begin(), paths.end(), depart_after,
+      [](const Path& p, int t) {
+        return p.merged_step.origin.time.seconds < t;
+      }
+  );
+  if (it != paths.end() && !it->merged_step.is_flex &&
+      it->merged_step.destination.time.seconds < best.time_seconds) {
+    best = {it->merged_step.destination.time.seconds, &*it};
+  }
+
+  return best;
+}
+
+// Try to insert additional system stops into a single path's steps by
+// splicing in sub-paths from the complete graph. Returns true if the path
+// was modified.
+void MaximizeSystemStopsInPath(
+    Path& path,
+    const StepPathsAdjacencyList& graph,
+    const std::unordered_set<StopId>& system_stops,
+    const std::vector<StopId>& system_stops_vec
+) {
+  // TODO: Consider whether flex paths need to be maximized in any way.
+  if (path.merged_step.is_flex) return;
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+
+    // Extract system stops visited, in order, with step indices.
+    struct Visit {
+      StopId stop;
+      int time_seconds;
+      size_t step_index;  // SIZE_MAX for origin (no arriving step)
+    };
+    std::vector<Visit> system_visits;
+    std::unordered_set<StopId> visited;
+
+    path.VisitAllStops([&](StopId stop) { visited.insert(stop); });
+
+    if (!path.steps.empty() &&
+        system_stops.count(path.steps[0].origin.stop)) {
+      system_visits.push_back(
+          {path.steps[0].origin.stop,
+           path.steps[0].origin.time.seconds,
+           SIZE_MAX}
+      );
+    }
+    for (size_t i = 0; i < path.steps.size(); ++i) {
+      if (system_stops.count(path.steps[i].destination.stop)) {
+        system_visits.push_back(
+            {path.steps[i].destination.stop,
+             path.steps[i].destination.time.seconds,
+             i}
+        );
+      }
+    }
+
+    for (size_t g = 0; g + 1 < system_visits.size(); ++g) {
+      StopId gap_start = system_visits[g].stop;
+      int gap_start_time = system_visits[g].time_seconds;
+      StopId gap_end = system_visits[g + 1].stop;
+      int gap_end_time = system_visits[g + 1].time_seconds;
+
+      for (StopId candidate : system_stops_vec) {
+        if (visited.count(candidate)) continue;
+
+        auto to_d =
+            FindEarliestArrival(graph, gap_start, candidate, gap_start_time);
+        if (to_d.time_seconds >= gap_end_time) continue;
+
+        auto from_d =
+            FindEarliestArrival(graph, candidate, gap_end, to_d.time_seconds);
+        if (from_d.time_seconds > gap_end_time) continue;
+
+        // Splice the sub-paths into the path.
+        size_t splice_start =
+            (system_visits[g].step_index == SIZE_MAX)
+                ? 0
+                : system_visits[g].step_index + 1;
+        size_t splice_end = system_visits[g + 1].step_index;
+
+        size_t steps_before = splice_start;
+        size_t steps_after = path.steps.size() - splice_end - 1;
+        size_t new_size = steps_before + to_d.path->steps.size() +
+                          from_d.path->steps.size() + steps_after;
+
+        std::vector<Step> new_steps;
+        new_steps.reserve(new_size);
+
+        // Steps before the gap.
+        for (size_t i = 0; i < splice_start; ++i) {
+          new_steps.push_back(path.steps[i]);
+        }
+
+        // Sub-path: gap_start -> candidate, then candidate -> gap_end.
+        // Concat raw steps and let NormalizeConsecutiveSteps fix flex times.
+        for (const auto& s : to_d.path->steps) {
+          new_steps.push_back(s);
+        }
+        for (const auto& s : from_d.path->steps) {
+          new_steps.push_back(s);
+        }
+
+        // Steps after the gap.
+        for (size_t i = splice_end + 1; i < path.steps.size(); ++i) {
+          new_steps.push_back(path.steps[i]);
+        }
+
+        NormalizeConsecutiveSteps(new_steps);
+
+        // Update merged_step origin/destination trip and partition if we
+        // spliced at the very beginning or end of the path.
+        if (splice_start == 0) {
+          path.merged_step.origin.trip = new_steps.front().origin.trip;
+          path.merged_step.origin.partition =
+              new_steps.front().origin.partition;
+        }
+        if (splice_end + 1 == path.steps.size()) {
+          path.merged_step.destination.trip =
+              new_steps.back().destination.trip;
+          path.merged_step.destination.partition =
+              new_steps.back().destination.partition;
+        }
+
+        path.steps = std::move(new_steps);
+        changed = true;
+        break;
+      }
+      if (changed) break;
+    }
+  }
+}
+
 // Post-process a complete graph so that every path visits a maximal set of
 // system stops. For each path, greedily insert any system stop that fits in a
 // gap between two consecutive visited system stops, splicing in the sub-paths
@@ -693,144 +854,10 @@ void MaximizeSystemStopsInPaths(
       system_stops.begin(), system_stops.end()
   );
 
-  struct ArrivalResult {
-    int time_seconds = std::numeric_limits<int>::max();
-    const Path* path = nullptr;
-  };
-
-  auto earliest_arrival = [&](StopId from, StopId to,
-                              int depart_after) -> ArrivalResult {
-    auto paths = graph.PathsBetween(from, to);
-    if (paths.empty()) return {};
-
-    ArrivalResult best;
-
-    // Flex paths (origin time 0, always available).
-    for (const auto& p : paths) {
-      if (!p.merged_step.is_flex) break;
-      int arrival = depart_after + p.DurationSeconds();
-      if (arrival < best.time_seconds) {
-        best = {arrival, &p};
-      }
-    }
-
-    // Scheduled paths: first departing at or after depart_after.
-    auto it = std::lower_bound(
-        paths.begin(), paths.end(), depart_after,
-        [](const Path& p, int t) {
-          return p.merged_step.origin.time.seconds < t;
-        }
-    );
-    if (it != paths.end() && !it->merged_step.is_flex &&
-        it->merged_step.destination.time.seconds < best.time_seconds) {
-      best = {it->merged_step.destination.time.seconds, &*it};
-    }
-
-    return best;
-  };
-
   for (auto& [origin, path_groups] : graph.adjacent) {
     for (auto& path_group : path_groups) {
       for (Path& path : path_group) {
-        if (path.merged_step.is_flex) continue;
-
-        bool changed = true;
-        while (changed) {
-          changed = false;
-
-          // Extract system stops visited, in order, with step indices.
-          struct Visit {
-            StopId stop;
-            int time_seconds;
-            size_t step_index;  // SIZE_MAX for origin (no arriving step)
-          };
-          std::vector<Visit> system_visits;
-
-          if (!path.steps.empty() &&
-              system_stops.count(path.steps[0].origin.stop)) {
-            system_visits.push_back(
-                {path.steps[0].origin.stop,
-                 path.steps[0].origin.time.seconds,
-                 SIZE_MAX}
-            );
-          }
-          for (size_t i = 0; i < path.steps.size(); ++i) {
-            if (system_stops.count(path.steps[i].destination.stop)) {
-              system_visits.push_back(
-                  {path.steps[i].destination.stop,
-                   path.steps[i].destination.time.seconds,
-                   i}
-              );
-            }
-          }
-
-          std::unordered_set<StopId> visited;
-          for (const auto& v : system_visits) visited.insert(v.stop);
-
-          for (size_t g = 0; g + 1 < system_visits.size(); ++g) {
-            StopId gap_start = system_visits[g].stop;
-            int gap_start_time = system_visits[g].time_seconds;
-            StopId gap_end = system_visits[g + 1].stop;
-            int gap_end_time = system_visits[g + 1].time_seconds;
-
-            for (StopId candidate : system_stops_vec) {
-              if (visited.count(candidate)) continue;
-
-              auto to_d =
-                  earliest_arrival(gap_start, candidate, gap_start_time);
-              if (to_d.time_seconds >= gap_end_time) continue;
-
-              auto from_d =
-                  earliest_arrival(candidate, gap_end, to_d.time_seconds);
-              if (from_d.time_seconds > gap_end_time) continue;
-
-              // Splice the sub-paths into the path.
-              size_t splice_start =
-                  (system_visits[g].step_index == SIZE_MAX)
-                      ? 0
-                      : system_visits[g].step_index + 1;
-              size_t splice_end = system_visits[g + 1].step_index;
-
-              std::vector<Step> new_steps;
-              new_steps.reserve(path.steps.size() + 20);
-
-              // Steps before the gap.
-              for (size_t i = 0; i < splice_start; ++i) {
-                new_steps.push_back(path.steps[i]);
-              }
-
-              // Sub-path: gap_start -> candidate.
-              int to_d_offset =
-                  to_d.path->merged_step.is_flex ? gap_start_time : 0;
-              for (const auto& s : to_d.path->steps) {
-                Step adjusted = s;
-                adjusted.origin.time.seconds += to_d_offset;
-                adjusted.destination.time.seconds += to_d_offset;
-                new_steps.push_back(adjusted);
-              }
-
-              // Sub-path: candidate -> gap_end.
-              int from_d_offset =
-                  from_d.path->merged_step.is_flex ? to_d.time_seconds : 0;
-              for (const auto& s : from_d.path->steps) {
-                Step adjusted = s;
-                adjusted.origin.time.seconds += from_d_offset;
-                adjusted.destination.time.seconds += from_d_offset;
-                new_steps.push_back(adjusted);
-              }
-
-              // Steps after the gap.
-              for (size_t i = splice_end + 1; i < path.steps.size(); ++i) {
-                new_steps.push_back(path.steps[i]);
-              }
-
-              path.steps = std::move(new_steps);
-              changed = true;
-              break;
-            }
-            if (changed) break;
-          }
-        }
+        MaximizeSystemStopsInPath(path, graph, system_stops, system_stops_vec);
       }
     }
   }

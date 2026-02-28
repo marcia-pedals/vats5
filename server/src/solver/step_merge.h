@@ -1,6 +1,7 @@
 #pragma once
 
 #include <limits>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -174,7 +175,7 @@ Step MergedStep(Step ab, Step bc);
 // Compute the merged step for a path of consecutive steps, with proper origin
 // time calculation. The origin time adjustment handles flex paths that
 // transition to fixed trips.
-Step ConsecutiveMergedSteps(const std::vector<Step>& path);
+Step ConsecutiveMergedSteps(std::span<const Step> path);
 
 // Collapse a path's steps by grouping consecutive steps with the same trip,
 // merging each group into a single step, and normalizing flex times.
