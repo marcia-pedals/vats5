@@ -42,8 +42,8 @@ struct VizStep {
   int depart_time;
   int arrive_time;
   int is_flex;
-  // Flex/walking trips have no GTFS route.
-  std::optional<std::string> route_id;
+  // Flex/walking trips have no GTFS route+direction.
+  std::optional<std::string> route_direction_id;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     VizStep,
@@ -52,7 +52,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     depart_time,
     arrive_time,
     is_flex,
-    route_id
+    route_direction_id
 )
 
 struct VizPath {
@@ -466,19 +466,24 @@ int main(int argc, char* argv[]) {
   ts << std::put_time(std::localtime(&tt), "%Y-%m-%dT%H:%M:%S");
   std::string run_timestamp = ts.str();
 
-  // Build trip_id -> route_id mapping from the viz SQLite trips table.
+  // Build trip_id -> route_direction_id mapping from the viz SQLite trips
+  // table.
   std::unordered_map<int, std::string> trip_to_route;
   {
     viz::SqliteDb db(viz_sqlite_path);
     sqlite3_stmt* stmt = nullptr;
     sqlite3_prepare_v2(
-        db.handle(), "SELECT trip_id, route_id FROM trips", -1, &stmt, nullptr
+        db.handle(),
+        "SELECT trip_id, route_direction_id FROM trips",
+        -1,
+        &stmt,
+        nullptr
     );
     while (sqlite3_step(stmt) == SQLITE_ROW) {
       int trip_id = sqlite3_column_int(stmt, 0);
-      const char* route_id =
+      const char* route_direction_id =
           reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-      trip_to_route[trip_id] = route_id;
+      trip_to_route[trip_id] = route_direction_id;
     }
     sqlite3_finalize(stmt);
   }
