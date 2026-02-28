@@ -1,4 +1,21 @@
 steps:
+  - label: ":lint-roller: Pre-commit"
+    command: |
+      set -euo pipefail
+
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      nix develop --impure --command bash -c '
+        pre-commit run --all-files
+      '
+    notify:
+      - github_commit_status:
+          context: "buildkite/pre-commit"
+    timeout_in_minutes: 10
+
   - label: ":hammer: Build and Test"
     secrets:
       - CPP_SUITE_TOKEN
@@ -29,4 +46,7 @@ steps:
           files: "server/build-debug/test-results.xml"
           format: "junit"
           api-token-env-name: "CPP_SUITE_TOKEN"
+    notify:
+      - github_commit_status:
+          context: "buildkite/build-and-test"
     timeout_in_minutes: 30
