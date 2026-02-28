@@ -727,8 +727,7 @@ EarliestArrival FindEarliestArrival(
 void MaximizeSystemStopsInPath(
     Path& path,
     const StepPathsAdjacencyList& graph,
-    const std::unordered_set<StopId>& system_stops,
-    const std::vector<StopId>& system_stops_vec
+    const std::unordered_set<StopId>& system_stops
 ) {
   // TODO: Consider whether flex paths need to be maximized in any way.
   if (path.merged_step.is_flex) return;
@@ -772,7 +771,7 @@ void MaximizeSystemStopsInPath(
       StopId gap_end = system_visits[g + 1].stop;
       int gap_end_time = system_visits[g + 1].time_seconds;
 
-      for (StopId candidate : system_stops_vec) {
+      for (StopId candidate : system_stops) {
         if (visited.count(candidate)) continue;
 
         auto to_d =
@@ -818,22 +817,8 @@ void MaximizeSystemStopsInPath(
         }
 
         NormalizeConsecutiveSteps(new_steps);
-
-        // Update merged_step origin/destination trip and partition if we
-        // spliced at the very beginning or end of the path.
-        if (splice_start == 0) {
-          path.merged_step.origin.trip = new_steps.front().origin.trip;
-          path.merged_step.origin.partition =
-              new_steps.front().origin.partition;
-        }
-        if (splice_end + 1 == path.steps.size()) {
-          path.merged_step.destination.trip =
-              new_steps.back().destination.trip;
-          path.merged_step.destination.partition =
-              new_steps.back().destination.partition;
-        }
-
         path.steps = std::move(new_steps);
+        path.merged_step = ConsecutiveMergedSteps(path.steps);
         changed = true;
         break;
       }
@@ -850,14 +835,10 @@ void MaximizeSystemStopsInPaths(
     StepPathsAdjacencyList& graph,
     const std::unordered_set<StopId>& system_stops
 ) {
-  std::vector<StopId> system_stops_vec(
-      system_stops.begin(), system_stops.end()
-  );
-
   for (auto& [origin, path_groups] : graph.adjacent) {
     for (auto& path_group : path_groups) {
       for (Path& path : path_group) {
-        MaximizeSystemStopsInPath(path, graph, system_stops, system_stops_vec);
+        MaximizeSystemStopsInPath(path, graph, system_stops);
       }
     }
   }

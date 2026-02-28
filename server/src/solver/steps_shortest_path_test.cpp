@@ -1422,20 +1422,28 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
 
 // Test that CompleteShortestPathsGraph's post-processing maximizes system stops.
 //
-// Graph topology:
-//   System stops: S1(1), S2(2), S3(3)
-//   Non-system stop: X(4)
+// Five stops: S1, S2, S3 are system stops. X and W are non-system stops.
 //
-//   S1 --trip1--> X --trip1--> W(5) --trip3--> S3
-//   S1 --trip2--> S2 --trip2--> W(5) --trip3--> S3
+// Two routes from S1 to S3, both going through W:
 //
-// The path S1→X→W→S3 arrives at W earlier (120 vs 140), but both catch the
-// same trip3 departure at 200. Plain Dijkstra picks S1→X→W→S3 because it
-// settles W first. Post-processing should splice in S2 to produce
-// S1→S2→W→S3 instead.
+//   Fast route (skips system stops):
+//     S1 -trip1-> X @100-110,  X -trip1-> W @110-120
 //
-// This also tests the edge splice case: the entire path is replaced, so
-// merged_step origin/destination trip and partition must be updated.
+//   Slow route (visits system stop S2):
+//     S1 -trip2-> S2 @100-130,  S2 -trip2-> W @130-140
+//
+//   Shared last leg:
+//     W -trip3-> S3 @200-210
+//
+// Dijkstra settles W at time 120 via the fast route (S1→X→W). The slow
+// route arrives at W at 140, but W is already settled so it's discarded.
+// Both routes would catch the same W→S3 departure at 200, so the final
+// arrival at S3 is 210 either way. The fast route produces S1→X→W→S3
+// which doesn't visit system stop S2.
+//
+// Post-processing should splice in S2, producing S1→S2→W→S3 instead.
+// This also tests that merged_step is fully recomputed after splicing
+// (trip and partition change from trip1/part_a to trip2/part_b).
 TEST(ShortestPathTest, CompleteShortestPathsGraph_MaximizeSystemStops) {
   StopId S1{1}, S2{2}, S3{3}, X{4}, W{5};
   TripId trip1{1}, trip2{2}, trip3{3};
