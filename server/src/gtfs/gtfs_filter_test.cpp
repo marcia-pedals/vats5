@@ -38,18 +38,39 @@ static Gtfs MakeSyntheticGtfs() {
   gtfs.calendar = {
       GtfsCalendar{
           GtfsServiceId{"weekday"},
-          true, true, true, true, true, false, false,
-          "20250701", "20250731"
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          "20250701",
+          "20250731"
       },
       GtfsCalendar{
           GtfsServiceId{"weekend"},
-          false, false, false, false, false, true, true,
-          "20250701", "20250731"
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          true,
+          "20250701",
+          "20250731"
       },
       GtfsCalendar{
           GtfsServiceId{"latenight"},
-          true, true, true, true, true, false, false,
-          "20250701", "20250731"
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          "20250701",
+          "20250731"
       },
   };
 
@@ -63,27 +84,33 @@ static Gtfs MakeSyntheticGtfs() {
   gtfs.trips = {
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T1"}, GtfsServiceId{"weekday"}
+          GtfsTripId{"T1"},
+          GtfsServiceId{"weekday"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 1},
-          GtfsTripId{"T2"}, GtfsServiceId{"weekday"}
+          GtfsTripId{"T2"},
+          GtfsServiceId{"weekday"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R2"}, 0},
-          GtfsTripId{"T3"}, GtfsServiceId{"weekend"}
+          GtfsTripId{"T3"},
+          GtfsServiceId{"weekend"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T4"}, GtfsServiceId{"latenight"}
+          GtfsTripId{"T4"},
+          GtfsServiceId{"latenight"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R2"}, 0},
-          GtfsTripId{"T5"}, GtfsServiceId{"weekday"}
+          GtfsTripId{"T5"},
+          GtfsServiceId{"weekday"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"PREFIX:T6"}, GtfsServiceId{"weekday"}
+          GtfsTripId{"PREFIX:T6"},
+          GtfsServiceId{"weekday"}
       },
   };
 
@@ -96,62 +123,86 @@ static Gtfs MakeSyntheticGtfs() {
   // PREFIX:T6: S1 12:00 -> S2 12:30
   gtfs.stop_times = {
       GtfsStopTime{
-          GtfsTripId{"T1"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"T1"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{8 * 3600},
           GtfsTimeSinceServiceStart{8 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"T1"}, GtfsStopId{"S2"}, 2,
+          GtfsTripId{"T1"},
+          GtfsStopId{"S2"},
+          2,
           GtfsTimeSinceServiceStart{8 * 3600 + 1800},
           GtfsTimeSinceServiceStart{8 * 3600 + 1800}
       },
       GtfsStopTime{
-          GtfsTripId{"T2"}, GtfsStopId{"S2"}, 1,
+          GtfsTripId{"T2"},
+          GtfsStopId{"S2"},
+          1,
           GtfsTimeSinceServiceStart{9 * 3600},
           GtfsTimeSinceServiceStart{9 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"T2"}, GtfsStopId{"S1"}, 2,
+          GtfsTripId{"T2"},
+          GtfsStopId{"S1"},
+          2,
           GtfsTimeSinceServiceStart{9 * 3600 + 1800},
           GtfsTimeSinceServiceStart{9 * 3600 + 1800}
       },
       GtfsStopTime{
-          GtfsTripId{"T3"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"T3"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{10 * 3600},
           GtfsTimeSinceServiceStart{10 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"T3"}, GtfsStopId{"S3"}, 2,
+          GtfsTripId{"T3"},
+          GtfsStopId{"S3"},
+          2,
           GtfsTimeSinceServiceStart{10 * 3600 + 2700},
           GtfsTimeSinceServiceStart{10 * 3600 + 2700}
       },
       GtfsStopTime{
-          GtfsTripId{"T4"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"T4"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{25 * 3600},
           GtfsTimeSinceServiceStart{25 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"T4"}, GtfsStopId{"S2"}, 2,
+          GtfsTripId{"T4"},
+          GtfsStopId{"S2"},
+          2,
           GtfsTimeSinceServiceStart{25 * 3600 + 1800},
           GtfsTimeSinceServiceStart{25 * 3600 + 1800}
       },
       GtfsStopTime{
-          GtfsTripId{"T5"}, GtfsStopId{"S2"}, 1,
+          GtfsTripId{"T5"},
+          GtfsStopId{"S2"},
+          1,
           GtfsTimeSinceServiceStart{6 * 3600},
           GtfsTimeSinceServiceStart{6 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"T5"}, GtfsStopId{"S3"}, 2,
+          GtfsTripId{"T5"},
+          GtfsStopId{"S3"},
+          2,
           GtfsTimeSinceServiceStart{6 * 3600 + 1800},
           GtfsTimeSinceServiceStart{6 * 3600 + 1800}
       },
       GtfsStopTime{
-          GtfsTripId{"PREFIX:T6"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"PREFIX:T6"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{12 * 3600},
           GtfsTimeSinceServiceStart{12 * 3600}
       },
       GtfsStopTime{
-          GtfsTripId{"PREFIX:T6"}, GtfsStopId{"S2"}, 2,
+          GtfsTripId{"PREFIX:T6"},
+          GtfsStopId{"S2"},
+          2,
           GtfsTimeSinceServiceStart{12 * 3600 + 1800},
           GtfsTimeSinceServiceStart{12 * 3600 + 1800}
       },
@@ -180,17 +231,21 @@ GTEST("RemoveUnreferencedTripsRoutesAndDirections removes orphaned trips") {
   day.trips = {
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T1"}, GtfsServiceId{"svc"}
+          GtfsTripId{"T1"},
+          GtfsServiceId{"svc"}
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R2"}, 0},
-          GtfsTripId{"T2"}, GtfsServiceId{"svc"}
+          GtfsTripId{"T2"},
+          GtfsServiceId{"svc"}
       },
   };
   // Only T1 has stop_times; T2 is orphaned.
   day.stop_times = {
       GtfsStopTime{
-          GtfsTripId{"T1"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"T1"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{3600},
           GtfsTimeSinceServiceStart{3600}
       },
@@ -206,7 +261,8 @@ GTEST("RemoveUnreferencedTripsRoutesAndDirections removes orphaned trips") {
   EXPECT_EQ(day.directions[0].route_direction_id.route_id.v, "R1");
 }
 
-GTEST("RemoveUnreferencedTripsRoutesAndDirections keeps all when all referenced"
+GTEST(
+    "RemoveUnreferencedTripsRoutesAndDirections keeps all when all referenced"
 ) {
   GtfsDay day;
   day.routes = {GtfsRoute{GtfsRouteId{"R1"}, "R1", ""}};
@@ -216,12 +272,15 @@ GTEST("RemoveUnreferencedTripsRoutesAndDirections keeps all when all referenced"
   day.trips = {
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T1"}, GtfsServiceId{"s"}
+          GtfsTripId{"T1"},
+          GtfsServiceId{"s"}
       },
   };
   day.stop_times = {
       GtfsStopTime{
-          GtfsTripId{"T1"}, GtfsStopId{"S1"}, 1,
+          GtfsTripId{"T1"},
+          GtfsStopId{"S1"},
+          1,
           GtfsTimeSinceServiceStart{0},
           GtfsTimeSinceServiceStart{0}
       },
@@ -416,9 +475,7 @@ GTEST("GtfsFilterByPrefixes on real data filters multiple prefixes") {
   EXPECT_EQ(both.trips.size(), ct_only.trips.size() + sr_only.trips.size());
 }
 
-GTEST(
-    "GtfsFilterDateWithServiceDays on real data includes target day CT:507"
-) {
+GTEST("GtfsFilterDateWithServiceDays on real data includes target day CT:507") {
   const Gtfs& gtfs = *getGlobalGtfs();
 
   // Tuesday 2025-07-08. CT:507 is an Express northbound trip on weekday
@@ -432,10 +489,13 @@ GTEST(
       trip_507_times.push_back(st);
     }
   }
-  std::sort(trip_507_times.begin(), trip_507_times.end(),
+  std::sort(
+      trip_507_times.begin(),
+      trip_507_times.end(),
       [](const GtfsStopTime& a, const GtfsStopTime& b) {
         return a.stop_sequence < b.stop_sequence;
-      });
+      }
+  );
 
   ASSERT_EQ(trip_507_times.size(), 11);
 
@@ -455,9 +515,7 @@ GTEST(
   EXPECT_EQ(trip_507_times[10].arrival_time.seconds, 30120);
 }
 
-GTEST(
-    "GtfsFilterDateWithServiceDays on real data includes next-sd CT:101"
-) {
+GTEST("GtfsFilterDateWithServiceDays on real data includes next-sd CT:101") {
   const Gtfs& gtfs = *getGlobalGtfs();
 
   // Tuesday 2025-07-08. CT:101 is a Local Weekday northbound trip on
@@ -471,10 +529,13 @@ GTEST(
       trip_101_times.push_back(st);
     }
   }
-  std::sort(trip_101_times.begin(), trip_101_times.end(),
+  std::sort(
+      trip_101_times.begin(),
+      trip_101_times.end(),
       [](const GtfsStopTime& a, const GtfsStopTime& b) {
         return a.stop_sequence < b.stop_sequence;
-      });
+      }
+  );
 
   ASSERT_EQ(trip_101_times.size(), 22);
 

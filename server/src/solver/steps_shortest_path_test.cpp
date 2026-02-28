@@ -195,7 +195,8 @@ INSTANTIATE_TEST_SUITE_P(
         },
         ShortestPathTestCase{
             .test_name = "WarmSpringsToMillbraeWithCaltrain",
-            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
+            .filter_options =
+                {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
             .origin_stop_name = "Warm Springs South Fremont BART",
             .origin_time = "07:49:00",
             .expected_paths =
@@ -208,7 +209,8 @@ INSTANTIATE_TEST_SUITE_P(
         },
         ShortestPathTestCase{
             .test_name = "WalkToCaltrainMillbrae",
-            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
+            .filter_options =
+                {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}},
             .origin_stop_name = "Sunnyvale & Hendy",
             .origin_time = "08:00:00",
             .expected_paths =
@@ -222,7 +224,11 @@ INSTANTIATE_TEST_SUITE_P(
 
         ShortestPathTestCase{
             .test_name = "WarmSpringsToMillbraeVERYEARLY",
-            .filter_options = {"../data/raw_RG_202506", "20250718", {"BA:", "CT:", "SC:"}, false},
+            .filter_options =
+                {"../data/raw_RG_202506",
+                 "20250718",
+                 {"BA:", "CT:", "SC:"},
+                 false},
             .origin_stop_name = "Berryessa / North San Jose",
             .origin_time = "00:00:00",
             .expected_paths =
@@ -382,9 +388,10 @@ void PrintPaths(
 }
 
 TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
-  const auto test_data =
-      GetCachedFilteredTestData(
-      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231",
+       "20260109",
+       {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
   StopId milpitas =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
@@ -560,9 +567,10 @@ TEST(ShortestPathTest, FindMinimalPathSetMilpitasToBerryessa) {
 }
 
 TEST(ShortestPathTest, FindMinimalPathSetFromFruitvale) {
-  const auto test_data =
-      GetCachedFilteredTestData(
-      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231",
+       "20260109",
+       {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
   StopId fruitvale =
       test_data.steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.at(
@@ -1296,9 +1304,10 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
 }
 
 TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
-  const auto test_data =
-      GetCachedFilteredTestData(
-      {"../data/raw_RG_20251231", "20260109", {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231",
+       "20260109",
+       {"BA:", "CT:", "SC:", "SM:", "AC:"}}
   );
 
   std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(

@@ -24,7 +24,5 @@ app.use(
 );
 
 app.listen(TRPC_PORT, "0.0.0.0", () => {
-  console.log(
-    `tRPC server listening on http://0.0.0.0:${TRPC_PORT} [${CHECKOUT_NAME}]`
-  );
+  console.log(`tRPC server listening on http://0.0.0.0:${TRPC_PORT} [${CHECKOUT_NAME}]`);
 });

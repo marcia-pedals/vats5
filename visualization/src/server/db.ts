@@ -65,8 +65,8 @@ const PartialSolutionRunSchema = z.object({
 export type PartialSolutionRun = z.infer<typeof PartialSolutionRunSchema>;
 
 const PartialSolutionPathSchema = z.object({
-  steps: z.array(PathStepRowSchema),  // Collapsed steps (grouped by trip)
-  original_steps: z.array(PathStepRowSchema),  // Original uncollapsed steps
+  steps: z.array(PathStepRowSchema), // Collapsed steps (grouped by trip)
+  original_steps: z.array(PathStepRowSchema), // Original uncollapsed steps
   duration: z.number(),
 });
 

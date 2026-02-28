@@ -28,7 +28,8 @@ ProblemState ApplyConstraints(
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
   std::unordered_set<StopId> required_stops = state.required_stops;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
+      state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
   StopId next_stop_id{state.minimal.NumStops()};
 
@@ -61,7 +62,8 @@ ProblemState ApplyConstraints(
       next_stop_id.v += 1;
       stop_infos[ab] = ProblemStateStopInfo{
           GtfsStopId{""},
-          "(" + stop_infos[require.a].stop_name + "->" + stop_infos[require.b].stop_name + ")"
+          "(" + stop_infos[require.a].stop_name + "->" +
+              stop_infos[require.b].stop_name + ")"
       };
       required_stops.insert(ab);
       required_stops.erase(require.a);
@@ -314,10 +316,12 @@ BranchAndBoundResult BranchAndBoundSolve(
         ComputeMinimalFeasiblePathsAlong(stop_sequence, state.completed);
     if (feasible_paths.size() > 0) {
       const Path& feasible_path = *std::min_element(
-          feasible_paths.begin(), feasible_paths.end(),
+          feasible_paths.begin(),
+          feasible_paths.end(),
           [](const Path& a, const Path& b) {
             return a.DurationSeconds() < b.DurationSeconds();
-          });
+          }
+      );
       if (search_log != nullptr) {
         *search_log
             << "  ub path ("

@@ -631,8 +631,7 @@ export function setFavicon(): void {
 
   // Append a cache-busting fragment so browsers don't serve a stale favicon
   // after switching checkouts or restarting the dev server.
-  const encoded =
-    "data:image/svg+xml," + encodeURIComponent(svg) + "#v=" + Date.now();
+  const encoded = `data:image/svg+xml,${encodeURIComponent(svg)}#v=${Date.now()}`;
 
   let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
   if (!link) {

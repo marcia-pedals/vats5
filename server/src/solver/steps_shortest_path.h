@@ -95,10 +95,10 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 // (a) Any path on `adjacency_list` between two `system_stops` [1] can be
 // matched or beat by a path on the minimal graph.
 //
-// (b) If you remove any "step" from the minimal graph, (a) no longer holds. (Here
-// "step" is used in the sense of one element of PathsBetween(a, b) even though
-// that's technically a Path, to disambiguate from the concept of a "path" made
-// up of multiple steps on a graph).
+// (b) If you remove any "step" from the minimal graph, (a) no longer holds.
+// (Here "step" is used in the sense of one element of PathsBetween(a, b) even
+// though that's technically a Path, to disambiguate from the concept of a
+// "path" made up of multiple steps on a graph).
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
 // the path happen at <36:00.

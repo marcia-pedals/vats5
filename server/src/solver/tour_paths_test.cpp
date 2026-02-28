@@ -14,8 +14,7 @@ namespace {
 // Helper: build a completed StepPathsAdjacencyList from raw steps and stops,
 // using the same pipeline as production code.
 StepPathsAdjacencyList MakeCompleted(
-    const std::vector<Step>& steps,
-    const std::unordered_set<StopId>& stops
+    const std::vector<Step>& steps, const std::unordered_set<StopId>& stops
 ) {
   return CompleteShortestPathsGraph(MakeAdjacencyList(steps), stops);
 }
@@ -58,11 +57,17 @@ TEST(TourPathsTest, MultiHopSelectsMinDuration) {
   // Total: 250
   std::vector<Step> steps = {
       Step::PrimitiveScheduled(
-          a, b, TimeSinceServiceStart{100}, TimeSinceServiceStart{200},
+          a,
+          b,
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
           TripId{1}
       ),
       Step::PrimitiveScheduled(
-          b, c, TimeSinceServiceStart{200}, TimeSinceServiceStart{350},
+          b,
+          c,
+          TimeSinceServiceStart{200},
+          TimeSinceServiceStart{350},
           TripId{2}
       ),
   };
@@ -89,7 +94,10 @@ TEST(TourPathsTest, FiltersNegativeTime) {
   // A step with negative origin time should be filtered out.
   std::vector<Step> steps = {
       Step::PrimitiveScheduled(
-          a, b, TimeSinceServiceStart{-100}, TimeSinceServiceStart{50},
+          a,
+          b,
+          TimeSinceServiceStart{-100},
+          TimeSinceServiceStart{50},
           TripId{1}
       ),
   };
@@ -109,11 +117,17 @@ TEST(TourPathsTest, MultiplePathsAllReturned) {
   // Path 2: depart 300, arrive 500 (duration 200)
   std::vector<Step> steps = {
       Step::PrimitiveScheduled(
-          a, b, TimeSinceServiceStart{100}, TimeSinceServiceStart{200},
+          a,
+          b,
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
           TripId{1}
       ),
       Step::PrimitiveScheduled(
-          a, b, TimeSinceServiceStart{300}, TimeSinceServiceStart{500},
+          a,
+          b,
+          TimeSinceServiceStart{300},
+          TimeSinceServiceStart{500},
           TripId{2}
       ),
   };
@@ -136,7 +150,10 @@ TEST(TourPathsTest, FlexStepUsedInPath) {
   std::vector<Step> steps = {
       Step::PrimitiveFlex(a, b, 60, TripId{1}),
       Step::PrimitiveScheduled(
-          b, c, TimeSinceServiceStart{200}, TimeSinceServiceStart{300},
+          b,
+          c,
+          TimeSinceServiceStart{200},
+          TimeSinceServiceStart{300},
           TripId{2}
       ),
   };
@@ -158,7 +175,10 @@ TEST(TourPathsTest, FlexStepFilteredWhenRequiresNegativeStart) {
   std::vector<Step> steps = {
       Step::PrimitiveFlex(a, b, 120, TripId{1}),
       Step::PrimitiveScheduled(
-          b, c, TimeSinceServiceStart{100}, TimeSinceServiceStart{200},
+          b,
+          c,
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
           TripId{2}
       ),
   };

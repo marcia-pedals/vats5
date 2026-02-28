@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { customSvgMap, emojiMap, emojiSvg } from "../favicon";
 import { useCheckoutTitle } from "./__root";
-import { emojiMap, emojiSvg, customSvgMap } from "../favicon";
 
 export const Route = createFileRoute("/styleguide")({
   component: StyleguidePage,
@@ -58,7 +58,6 @@ function StyleguidePage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-10">
-
         {/* ─────────────── COLORS ─────────────── */}
         <Section title="Surfaces">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
@@ -95,17 +94,29 @@ function StyleguidePage() {
         <Section title="Typography">
           <div className="space-y-6">
             <div className="panel">
-              <p className="text-xs font-mono text-tc-text-dim mb-3">Display / Headings — font-sans</p>
-              <h1 className="text-3xl font-semibold tracking-tight text-tc-text mb-2">System Overview</h1>
-              <h2 className="text-xl font-semibold tracking-tight text-tc-text mb-2">Route Status</h2>
+              <p className="text-xs font-mono text-tc-text-dim mb-3">
+                Display / Headings — font-sans
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight text-tc-text mb-2">
+                System Overview
+              </h1>
+              <h2 className="text-xl font-semibold tracking-tight text-tc-text mb-2">
+                Route Status
+              </h2>
               <h3 className="text-lg font-medium text-tc-text mb-2">Station Details</h3>
               <h4 className="text-base font-medium text-tc-text-muted">Subsystem</h4>
             </div>
             <div className="panel">
-              <p className="text-xs font-mono text-tc-text-dim mb-3">Monospace / Data — font-mono</p>
+              <p className="text-xs font-mono text-tc-text-dim mb-3">
+                Monospace / Data — font-mono
+              </p>
               <div className="space-y-2 font-mono">
-                <p className="text-sm text-tc-green text-glow-green">SYS.OK &mdash; ALL LINES OPERATIONAL</p>
-                <p className="text-sm text-tc-amber text-glow-amber">WARN &mdash; DELAY CENTRAL STN &rarr; UNION 4m</p>
+                <p className="text-sm text-tc-green text-glow-green">
+                  SYS.OK &mdash; ALL LINES OPERATIONAL
+                </p>
+                <p className="text-sm text-tc-amber text-glow-amber">
+                  WARN &mdash; DELAY CENTRAL STN &rarr; UNION 4m
+                </p>
                 <p className="text-sm text-tc-red">ERR &mdash; SIGNAL FAULT AT WESTGATE</p>
                 <p className="text-sm text-tc-cyan">INFO &mdash; NEXT TRAIN PLAZA 2m 14s</p>
                 <p className="text-sm text-tc-text-muted">-- idle --</p>
@@ -114,10 +125,10 @@ function StyleguidePage() {
             <div className="panel">
               <p className="text-xs font-mono text-tc-text-dim mb-3">Body Text — font-sans</p>
               <p className="text-sm text-tc-text leading-relaxed max-w-prose">
-                The Transit Control Center monitors all vehicle movements across the
-                network in real time. Controllers track position, speed, and
-                dwell time for every revenue vehicle, coordinating signal priority
-                and managing disruptions from a centralized operations room.
+                The Transit Control Center monitors all vehicle movements across the network in real
+                time. Controllers track position, speed, and dwell time for every revenue vehicle,
+                coordinating signal priority and managing disruptions from a centralized operations
+                room.
               </p>
             </div>
           </div>
@@ -182,22 +193,40 @@ function StyleguidePage() {
         {/* ─────────────── BUTTONS ─────────────── */}
         <Section title="Buttons">
           <div className="flex flex-wrap gap-3">
-            <button className="px-4 py-2 rounded text-sm font-mono bg-tc-cyan/15 text-tc-cyan border border-tc-cyan/30 hover:bg-tc-cyan/25 hover:glow-cyan transition-all cursor-pointer">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono bg-tc-cyan/15 text-tc-cyan border border-tc-cyan/30 hover:bg-tc-cyan/25 hover:glow-cyan transition-all cursor-pointer"
+            >
               Primary
             </button>
-            <button className="px-4 py-2 rounded text-sm font-mono bg-tc-green/15 text-tc-green border border-tc-green/30 hover:bg-tc-green/25 hover:glow-green transition-all cursor-pointer">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono bg-tc-green/15 text-tc-green border border-tc-green/30 hover:bg-tc-green/25 hover:glow-green transition-all cursor-pointer"
+            >
               Confirm
             </button>
-            <button className="px-4 py-2 rounded text-sm font-mono bg-tc-amber/15 text-tc-amber border border-tc-amber/30 hover:bg-tc-amber/25 hover:glow-amber transition-all cursor-pointer">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono bg-tc-amber/15 text-tc-amber border border-tc-amber/30 hover:bg-tc-amber/25 hover:glow-amber transition-all cursor-pointer"
+            >
               Caution
             </button>
-            <button className="px-4 py-2 rounded text-sm font-mono bg-tc-red/15 text-tc-red border border-tc-red/30 hover:bg-tc-red/25 hover:glow-red transition-all cursor-pointer">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono bg-tc-red/15 text-tc-red border border-tc-red/30 hover:bg-tc-red/25 hover:glow-red transition-all cursor-pointer"
+            >
               Alert
             </button>
-            <button className="px-4 py-2 rounded text-sm font-mono text-tc-text-muted border border-tc-border hover:border-tc-border-bright hover:text-tc-text transition-all cursor-pointer">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono text-tc-text-muted border border-tc-border hover:border-tc-border-bright hover:text-tc-text transition-all cursor-pointer"
+            >
               Neutral
             </button>
-            <button className="px-4 py-2 rounded text-sm font-mono text-tc-text-dim border border-transparent cursor-not-allowed opacity-50">
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm font-mono text-tc-text-dim border border-transparent cursor-not-allowed opacity-50"
+            >
               Disabled
             </button>
           </div>
@@ -209,42 +238,70 @@ function StyleguidePage() {
             <table className="w-full text-sm font-mono">
               <thead>
                 <tr className="border-b border-tc-border text-left">
-                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">Station</th>
-                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">Line</th>
-                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">ETA</th>
-                  <th className="py-2 text-tc-text-dim font-normal text-xs uppercase tracking-wider">Status</th>
+                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">
+                    Station
+                  </th>
+                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">
+                    Line
+                  </th>
+                  <th className="py-2 pr-4 text-tc-text-dim font-normal text-xs uppercase tracking-wider">
+                    ETA
+                  </th>
+                  <th className="py-2 text-tc-text-dim font-normal text-xs uppercase tracking-wider">
+                    Status
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-tc-border/50">
                 <tr>
                   <td className="py-2 pr-4 text-tc-text">Central Station</td>
-                  <td className="py-2 pr-4"><span className="text-route-yellow">Yellow</span></td>
+                  <td className="py-2 pr-4">
+                    <span className="text-route-yellow">Yellow</span>
+                  </td>
                   <td className="py-2 pr-4 text-tc-cyan">1m 42s</td>
-                  <td className="py-2"><span className="text-tc-green">ON TIME</span></td>
+                  <td className="py-2">
+                    <span className="text-tc-green">ON TIME</span>
+                  </td>
                 </tr>
                 <tr>
                   <td className="py-2 pr-4 text-tc-text">Union Square</td>
-                  <td className="py-2 pr-4"><span className="text-route-red">Red</span></td>
+                  <td className="py-2 pr-4">
+                    <span className="text-route-red">Red</span>
+                  </td>
                   <td className="py-2 pr-4 text-tc-cyan">4m 08s</td>
-                  <td className="py-2"><span className="text-tc-amber">+2m LATE</span></td>
+                  <td className="py-2">
+                    <span className="text-tc-amber">+2m LATE</span>
+                  </td>
                 </tr>
                 <tr>
                   <td className="py-2 pr-4 text-tc-text">Westgate</td>
-                  <td className="py-2 pr-4"><span className="text-route-green">Green</span></td>
+                  <td className="py-2 pr-4">
+                    <span className="text-route-green">Green</span>
+                  </td>
                   <td className="py-2 pr-4 text-tc-text-dim">&mdash;</td>
-                  <td className="py-2"><span className="text-tc-red">FAULT</span></td>
+                  <td className="py-2">
+                    <span className="text-tc-red">FAULT</span>
+                  </td>
                 </tr>
                 <tr>
                   <td className="py-2 pr-4 text-tc-text">Lakeside</td>
-                  <td className="py-2 pr-4"><span className="text-route-blue">Blue</span></td>
+                  <td className="py-2 pr-4">
+                    <span className="text-route-blue">Blue</span>
+                  </td>
                   <td className="py-2 pr-4 text-tc-cyan">8m 30s</td>
-                  <td className="py-2"><span className="text-tc-green">ON TIME</span></td>
+                  <td className="py-2">
+                    <span className="text-tc-green">ON TIME</span>
+                  </td>
                 </tr>
                 <tr>
                   <td className="py-2 pr-4 text-tc-text">Northfield</td>
-                  <td className="py-2 pr-4"><span className="text-route-orange">Orange</span></td>
+                  <td className="py-2 pr-4">
+                    <span className="text-route-orange">Orange</span>
+                  </td>
                   <td className="py-2 pr-4 text-tc-text-dim">&mdash;</td>
-                  <td className="py-2"><span className="text-tc-text-dim">OFFLINE</span></td>
+                  <td className="py-2">
+                    <span className="text-tc-text-dim">OFFLINE</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -257,11 +314,15 @@ function StyleguidePage() {
             <div className="text-tc-text-dim">14:32:07.041</div>
             <div className="text-tc-green">[SYS] All lines reporting nominal</div>
             <div className="text-tc-text-dim mt-1">14:32:12.889</div>
-            <div className="text-tc-cyan">[TRK] Train 2814 cleared CENTRAL platform 2 &rarr; UNION</div>
+            <div className="text-tc-cyan">
+              [TRK] Train 2814 cleared CENTRAL platform 2 &rarr; UNION
+            </div>
             <div className="text-tc-text-dim mt-1">14:32:18.204</div>
             <div className="text-tc-amber">[DLY] WESTGATE queue depth 3 — hold 45s</div>
             <div className="text-tc-text-dim mt-1">14:32:24.510</div>
-            <div className="text-tc-red">[ALT] Signal S-4022 WEST unreachable — fallback manual</div>
+            <div className="text-tc-red">
+              [ALT] Signal S-4022 WEST unreachable — fallback manual
+            </div>
             <div className="text-tc-text-dim mt-1">14:32:31.773</div>
             <div className="text-tc-text-muted">[HBT] Heartbeat OK — 247 active vehicles</div>
             <div className="mt-2 text-tc-green animate-pulse">_ </div>
@@ -373,7 +434,9 @@ function StyleguidePage() {
                   className="w-4 h-4 rounded"
                   title={name}
                 />
-                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">{name}</span>
+                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">
+                  {name}
+                </span>
               </div>
             ))}
           </div>
@@ -389,12 +452,13 @@ function StyleguidePage() {
                   className="w-4 h-4 rounded"
                   title={name}
                 />
-                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">{name}</span>
+                <span className="text-[9px] font-mono text-tc-text-dim truncate max-w-[3rem] text-center">
+                  {name}
+                </span>
               </div>
             ))}
           </div>
         </Section>
-
       </main>
 
       {/* Footer */}

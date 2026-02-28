@@ -11,6 +11,7 @@ namespace vats5 {
 // of paths that visit `stop_sequence` in order.
 std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     const std::vector<StopId>& stop_sequence,
-    const StepPathsAdjacencyList& completed);
+    const StepPathsAdjacencyList& completed
+);
 
 }  // namespace vats5
