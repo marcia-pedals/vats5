@@ -212,16 +212,19 @@ add_custom_target(test-all
 add_executable(gtfs_test src/gtfs/gtfs_test.cpp)
 target_link_libraries(gtfs_test PUBLIC gunit gtfs)
 add_test(NAME gtfs_test COMMAND gtfs_test)
+set_tests_properties(gtfs_test PROPERTIES RESOURCE_LOCK gtfs_data)
 
 # Add GTFS filter test executable
 add_executable(gtfs_filter_test src/gtfs/gtfs_filter_test.cpp)
 target_link_libraries(gtfs_filter_test PUBLIC gunit gtfs_filter)
 add_test(NAME gtfs_filter_test COMMAND gtfs_filter_test)
+set_tests_properties(gtfs_filter_test PROPERTIES RESOURCE_LOCK gtfs_data)
 
 # Add data test executable
 add_executable(data_test src/solver/data_test.cpp)
 target_link_libraries(data_test PUBLIC gunit data)
 add_test(NAME data_test COMMAND data_test)
+set_tests_properties(data_test PROPERTIES RESOURCE_LOCK gtfs_data)
 
 # Add step_merge test executable
 add_executable(step_merge_test src/solver/step_merge_test.cpp)
@@ -237,6 +240,7 @@ add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
 add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_test.cpp)
 target_link_libraries(relaxed_adjacency_list_test PUBLIC gunit relaxed_adjacency_list cached_test_data)
 add_test(NAME relaxed_adjacency_list_test COMMAND relaxed_adjacency_list_test)
+set_tests_properties(relaxed_adjacency_list_test PROPERTIES RESOURCE_LOCK gtfs_data)
 
 # Add concorde test executable
 add_executable(concorde_test src/solver/concorde_test.cpp)
@@ -253,6 +257,7 @@ add_test(NAME relaxed_shortest_path_test COMMAND relaxed_shortest_path_test)
 add_executable(steps_shortest_path_test src/solver/steps_shortest_path_test.cpp)
 target_link_libraries(steps_shortest_path_test PUBLIC gunit steps_shortest_path cached_test_data rapidcheck rapidcheck_gtest)
 add_test(NAME steps_shortest_path_test COMMAND steps_shortest_path_test)
+set_tests_properties(steps_shortest_path_test PROPERTIES RESOURCE_LOCK gtfs_data)
 
 # Add date test executable
 add_executable(date_test src/util/date_test.cpp)
@@ -263,13 +268,13 @@ add_test(NAME date_test COMMAND date_test)
 add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
 target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME branch_and_bound_test COMMAND branch_and_bound_test)
-set_tests_properties(branch_and_bound_test PROPERTIES LABELS "slow")
+set_tests_properties(branch_and_bound_test PROPERTIES LABELS "slow" RESOURCE_LOCK gtfs_data)
 
 # Add tarel_graph test executable
 add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
-set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow" RESOURCE_LOCK gtfs_data)
 
 # Add tour_paths test executable
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
