@@ -115,9 +115,8 @@ TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromWeightedEdgesEmpty) {
 }
 
 TEST(RelaxedAdjacencyListTest, MakeRelaxedAdjacencyListFromBART) {
-  const auto test_data = GetCachedFilteredTestData(
-      {"../data/raw_RG_202506", "20250718", {"BA:"}}
-  );
+  const auto test_data =
+      GetCachedFilteredTestData({"../data/raw_RG_202506", "20250718", {"BA:"}});
   std::vector<WeightedEdge> relaxed_edges =
       MakeRelaxedEdges(test_data.adjacency_list);
   RelaxedAdjacencyList relaxed =

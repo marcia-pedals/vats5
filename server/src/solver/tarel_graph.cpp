@@ -22,7 +22,8 @@ namespace vats5 {
 void ExpandStop(
     StopId stop,
     const std::unordered_map<StopId, PlainEdge>& original_edges,
-    std::vector<StopId>& out) {
+    std::vector<StopId>& out
+) {
   auto it = original_edges.find(stop);
   if (it == original_edges.end()) {
     out.push_back(stop);

@@ -237,9 +237,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   std::string problem_path = temp_dir + "/problem";
   std::string solution_path = temp_dir + "/solution";
 
-  auto cleanup_temp = [&]() {
-    std::filesystem::remove_all(temp_dir);
-  };
+  auto cleanup_temp = [&]() { std::filesystem::remove_all(temp_dir); };
 
   // Write TSP problem to temp file
   {

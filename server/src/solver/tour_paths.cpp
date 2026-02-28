@@ -10,8 +10,8 @@ namespace vats5 {
 // Returns a sorted and minimal (in the sense of CheckSortedAndMinimal) sequence
 // of paths that visit `stop_sequence` in order.
 std::vector<Path> ComputeMinimalFeasiblePathsAlong(
-  const std::vector<StopId>& stop_sequence,
-  const StepPathsAdjacencyList& completed
+    const std::vector<StopId>& stop_sequence,
+    const StepPathsAdjacencyList& completed
 ) {
   if (stop_sequence.size() < 2) {
     return {};
@@ -48,8 +48,9 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     std::vector<Path> new_paths;
     new_paths.reserve(merged.size());
     for (size_t j = 0; j < merged.size(); ++j) {
-      Path path{.merged_step = merged[j],
-                .steps = paths[provenance[j].ab_index].steps};
+      Path path{
+          .merged_step = merged[j], .steps = paths[provenance[j].ab_index].steps
+      };
       const std::vector<Step>& next_steps =
           next_paths[provenance[j].bc_index].steps;
       path.steps.insert(path.steps.end(), next_steps.begin(), next_steps.end());

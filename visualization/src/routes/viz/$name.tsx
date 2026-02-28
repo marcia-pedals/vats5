@@ -66,9 +66,7 @@ function StopDropdown({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-[10px] font-mono text-tc-text-dim w-8 shrink-0">
-        {label}
-      </span>
+      <span className="text-[10px] font-mono text-tc-text-dim w-8 shrink-0">{label}</span>
       <select
         value={value ?? ""}
         onChange={(e) => {
@@ -145,12 +143,8 @@ function PathSteps({
               <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
                 {path.is_flex ? "" : formatTime(step.arrive_time)}
               </td>
-              <td
-                className="px-2 py-1 text-[11px] text-tc-text-muted"
-                colSpan={2}
-              >
-                {stopNames.get(step.destination_stop_id) ??
-                  `stop ${step.destination_stop_id}`}
+              <td className="px-2 py-1 text-[11px] text-tc-text-muted" colSpan={2}>
+                {stopNames.get(step.destination_stop_id) ?? `stop ${step.destination_stop_id}`}
               </td>
             </tr>
           </React.Fragment>
@@ -173,7 +167,7 @@ function PathRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const stepsQuery = trpc.getPathSteps.useQuery(
-    expanded ? { name, pathId: path.path_id } : skipToken,
+    expanded ? { name, pathId: path.path_id } : skipToken
   );
 
   return (
@@ -200,10 +194,7 @@ function PathRow({
       </tr>
       {expanded && stepsQuery.isPending && (
         <tr>
-          <td
-            colSpan={4}
-            className="px-2 py-1.5 text-[10px] font-mono text-tc-text-dim"
-          >
+          <td colSpan={4} className="px-2 py-1.5 text-[10px] font-mono text-tc-text-dim">
             Loading steps...
           </td>
         </tr>
@@ -300,9 +291,7 @@ function StationPanel({
   onSwap: () => void;
 }) {
   const pathsQuery = trpc.getPaths.useQuery(
-    origin !== null && destination !== null
-      ? { name, origin, destination }
-      : skipToken,
+    origin !== null && destination !== null ? { name, origin, destination } : skipToken
   );
   const paths: VizPath[] | null = pathsQuery.data ?? null;
 
@@ -356,9 +345,7 @@ function StationPanel({
                   <th className="w-[70px] text-left px-2 py-1.5 font-normal whitespace-nowrap">
                     Arrive
                   </th>
-                  <th className="text-right px-2 py-1.5 font-normal">
-                    Duration
-                  </th>
+                  <th className="text-right px-2 py-1.5 font-normal">Duration</th>
                 </tr>
               </thead>
               <tbody>
@@ -378,14 +365,11 @@ function StationPanel({
       )}
 
       {/* No paths message */}
-      {origin !== null &&
-        destination !== null &&
-        paths !== null &&
-        paths.length === 0 && (
-          <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
-            No paths found between these stops
-          </div>
-        )}
+      {origin !== null && destination !== null && paths !== null && paths.length === 0 && (
+        <div className="px-3 py-3 text-xs font-mono text-tc-text-dim">
+          No paths found between these stops
+        </div>
+      )}
 
       {/* Empty state */}
       {(origin === null || destination === null) && (
@@ -521,19 +505,14 @@ function VizPage() {
     return m;
   }, [routesQuery.data]);
 
-  const runsQuery = trpc.getPartialSolutionRuns.useQuery(
-    { name },
-    { refetchInterval: 1000 },
-  );
+  const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name }, { refetchInterval: 1000 });
   const partialQuery = trpc.getPartialSolution.useQuery(
     selectedRun !== null
       ? { name, runTimestamp: selectedRun, iteration: selectedIteration }
       : skipToken,
     { refetchInterval: 1000 }
   );
-  const selectedRunData = runsQuery.data?.find(
-    (r) => r.run_timestamp === selectedRun,
-  );
+  const selectedRunData = runsQuery.data?.find((r) => r.run_timestamp === selectedRun);
   const maxIteration = selectedRunData?.max_iteration ?? 0;
 
   const containerCallbackRef = useCallback((node: HTMLDivElement | null) => {
@@ -564,10 +543,7 @@ function VizPage() {
     const cosLat = Math.cos((midLat * Math.PI) / 180);
     const dataW = lonRange * cosLat;
     const dataH = latRange;
-    const scalePerPixel = Math.min(
-      (w - 2 * pad) / dataW,
-      (h - 2 * pad) / dataH,
-    );
+    const scalePerPixel = Math.min((w - 2 * pad) / dataW, (h - 2 * pad) / dataH);
 
     const drawW = dataW * scalePerPixel;
     const drawH = dataH * scalePerPixel;
@@ -590,7 +566,7 @@ function VizPage() {
         setDestination(stopId);
       }
     },
-    [origin],
+    [origin]
   );
 
   // Greedy label placement: right or left, suppress in dense clusters
@@ -618,14 +594,10 @@ function VizPage() {
     });
 
     // Place most-isolated labels first (they anchor the layout)
-    const order = sp
-      .map((_, i) => i)
-      .sort((a, b) => nbrDistSq[b] - nbrDistSq[a]);
+    const order = sp.map((_, i) => i).sort((a, b) => nbrDistSq[b] - nbrDistSq[a]);
 
     const boxes: [number, number, number, number][] = []; // placed bboxes
-    const out: { dataX: number; dataY: number; visible: boolean }[] = new Array(
-      svgStops.length,
-    );
+    const out: { dataX: number; dataY: number; visible: boolean }[] = new Array(svgStops.length);
 
     for (const i of order) {
       // Suppress label entirely if too close to any neighbor
@@ -721,7 +693,7 @@ function VizPage() {
       target: mapRef,
       drag: { filterTaps: true },
       eventOptions: { passive: false },
-    },
+    }
   );
 
   const resetView = useCallback(() => {
@@ -846,9 +818,7 @@ function VizPage() {
               </span>
               <button
                 type="button"
-                onClick={() =>
-                  setSelectedIteration((i) => Math.min(maxIteration, i + 1))
-                }
+                onClick={() => setSelectedIteration((i) => Math.min(maxIteration, i + 1))}
                 disabled={selectedIteration === maxIteration}
                 className="w-5 h-5 flex items-center justify-center rounded text-tc-text-dim border border-tc-border bg-transparent hover:border-tc-cyan/50 hover:text-tc-cyan transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
               >
@@ -880,9 +850,7 @@ function VizPage() {
         {stopsQuery.error && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="panel border-tc-red/40 bg-tc-red-dim">
-              <span className="text-tc-red text-sm font-mono">
-                ERR: {stopsQuery.error.message}
-              </span>
+              <span className="text-tc-red text-sm font-mono">ERR: {stopsQuery.error.message}</span>
             </div>
           </div>
         )}
@@ -891,17 +859,11 @@ function VizPage() {
         {svgStops && (
           <>
             <span className="absolute bottom-3 left-3 z-10 text-xs font-mono text-tc-text-dim bg-tc-base/85 px-2 py-0.5 rounded border border-tc-border">
-              {svgStops.filter((s) => s.stop_type === "required").length}{" "}
-              required / {svgStops.length} stops
+              {svgStops.filter((s) => s.stop_type === "required").length} required /{" "}
+              {svgStops.length} stops
             </span>
 
-            <svg
-              width="100%"
-              height="100%"
-              className="block"
-              role="img"
-              aria-label="Station map"
-            >
+            <svg width="100%" height="100%" className="block" role="img" aria-label="Station map">
               <defs>
                 <marker
                   id="arrowhead"
@@ -915,9 +877,7 @@ function VizPage() {
                   <polygon points="0 0, 6 2, 0 4" fill="#22c55e" />
                 </marker>
               </defs>
-              <g
-                transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}
-              >
+              <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
                 {svgStops.map((stop) => (
                   <StopDot
                     key={stop.stop_id}
@@ -925,10 +885,7 @@ function VizPage() {
                     scale={transform.scale}
                     isSelected={isSelected(stop.stop_id)}
                     isRequired={stop.stop_type === "required"}
-                    isUnvisited={
-                      visitedStopSet.size > 0 &&
-                      !visitedStopSet.has(stop.stop_id)
-                    }
+                    isUnvisited={visitedStopSet.size > 0 && !visitedStopSet.has(stop.stop_id)}
                     isLeaf={leafSet.has(stop.stop_id)}
                     onClick={handleStopClick}
                   />

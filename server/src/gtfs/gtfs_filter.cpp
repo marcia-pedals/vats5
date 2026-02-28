@@ -29,8 +29,8 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
     config = toml::parse_file(config_path);
   } catch (const toml::parse_error& err) {
     throw std::runtime_error(
-        "Failed to parse world config file '" + config_path + "': " +
-        std::string(err.what())
+        "Failed to parse world config file '" + config_path +
+        "': " + std::string(err.what())
     );
   }
 
@@ -38,9 +38,7 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
   auto date = config["date"].value<std::string>();
 
   if (!input_dir || !date) {
-    throw std::runtime_error(
-        "Config file must contain input_dir and date"
-    );
+    throw std::runtime_error("Config file must contain input_dir and date");
   }
 
   std::vector<std::string> prefixes;

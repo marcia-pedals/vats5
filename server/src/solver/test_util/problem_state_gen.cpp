@@ -160,7 +160,8 @@ rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
       state.required_stops.begin(), state.required_stops.end()
   );
   ProblemBoundary boundary = state.boundary;
-  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos = state.stop_infos;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
+      state.stop_infos;
   int n = static_cast<int>(stops.size());
   return rc::gen::suchThat(
       rc::gen::apply(

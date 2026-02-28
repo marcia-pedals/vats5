@@ -27,8 +27,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Successfully saved filtered GTFS data!" << std::endl;
 
     std::cout << "\nCreated files:" << std::endl;
-    for (const auto& entry :
-         std::filesystem::directory_iterator(output_dir)) {
+    for (const auto& entry : std::filesystem::directory_iterator(output_dir)) {
       if (entry.is_regular_file()) {
         auto file_size = std::filesystem::file_size(entry.path());
         std::cout << "  " << entry.path().filename().string() << " ("
