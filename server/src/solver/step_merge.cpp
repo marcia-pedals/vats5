@@ -307,6 +307,24 @@ Step ConsecutiveMergedSteps(const std::vector<Step>& path) {
   };
 }
 
+std::vector<Step> CollapseStepsByTrip(const std::vector<Step>& steps) {
+  std::vector<Step> collapsed;
+  size_t si = 0;
+  while (si < steps.size()) {
+    size_t group_end = si + 1;
+    while (group_end < steps.size() &&
+           steps[group_end].destination.trip ==
+               steps[si].destination.trip) {
+      group_end++;
+    }
+    std::vector<Step> group(steps.begin() + si, steps.begin() + group_end);
+    collapsed.push_back(ConsecutiveMergedSteps(group));
+    si = group_end;
+  }
+  NormalizeConsecutiveSteps(collapsed);
+  return collapsed;
+}
+
 void NormalizeConsecutiveSteps(std::vector<Step>& steps) {
   if (steps.empty()) {
     return;

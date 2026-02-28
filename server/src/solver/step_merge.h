@@ -176,6 +176,10 @@ Step MergedStep(Step ab, Step bc);
 // transition to fixed trips.
 Step ConsecutiveMergedSteps(const std::vector<Step>& path);
 
+// Collapse a path's steps by grouping consecutive steps with the same trip,
+// merging each group into a single step, and normalizing flex times.
+std::vector<Step> CollapseStepsByTrip(const std::vector<Step>& steps);
+
 // Normalize flex steps' origin and destination times so they fit sequentially
 // into the path. After normalization, each step's origin equals the previous
 // step's destination, and leading flex steps are timed to arrive at the first

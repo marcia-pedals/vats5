@@ -1420,4 +1420,196 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
   }
 }
 
+TEST(ShortestPathTest, CompleteShortestPathsGraph_MaximalSystemStops) {
+  const auto test_data = GetCachedFilteredTestData(
+      {"../data/raw_RG_20251231",
+       "20260109",
+       {"BA:", "CT:", "SC:", "SM:", "AC:"}}
+  );
+
+  std::unordered_set<StopId> bart_stops = GetStopsForTripIdPrefix(
+      test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
+  );
+
+  StepPathsAdjacencyList complete_graph =
+      CompleteShortestPathsGraph(test_data.adjacency_list, bart_stops);
+
+  const auto& mapping = test_data.steps_from_gtfs.mapping;
+
+  auto FormatCollapsedPath = [&](const std::vector<Step>& steps)
+      -> std::string {
+    return FormatPath(CollapseStepsByTrip(steps), mapping);
+  };
+
+  struct ArrivalResult {
+    int time_seconds = std::numeric_limits<int>::max();
+    const Path* path = nullptr;
+  };
+
+  // Helper: find earliest arrival at `to` from `from` departing at or after
+  // `depart_after_seconds`, using the complete graph's own paths.
+  auto earliest_arrival = [&](StopId from, StopId to,
+                              int depart_after_seconds) -> ArrivalResult {
+    auto paths = complete_graph.PathsBetween(from, to);
+    if (paths.empty()) return {};
+
+    ArrivalResult best;
+
+    // Flex paths (origin time 0, available at any departure time).
+    for (const auto& p : paths) {
+      if (!p.merged_step.is_flex) break;
+      int arrival = depart_after_seconds + p.DurationSeconds();
+      if (arrival < best.time_seconds) {
+        best = {arrival, &p};
+      }
+    }
+
+    // Scheduled paths: find first departing at or after depart_after_seconds.
+    auto it = std::lower_bound(
+        paths.begin(), paths.end(), depart_after_seconds,
+        [](const Path& p, int t) {
+          return p.merged_step.origin.time.seconds < t;
+        }
+    );
+    if (it != paths.end() && !it->merged_step.is_flex) {
+      if (it->merged_step.destination.time.seconds < best.time_seconds) {
+        best = {it->merged_step.destination.time.seconds, &*it};
+      }
+    }
+
+    return best;
+  };
+
+  struct Violation {
+    std::string description;
+  };
+  std::vector<Violation> violations;
+  int total_paths_checked = 0;
+  constexpr int max_violations_to_report = 5;
+
+  for (const auto& [origin_stop, path_groups] : complete_graph.adjacent) {
+    for (const auto& path_group : path_groups) {
+      for (const Path& path : path_group) {
+        if (path.merged_step.is_flex) continue;
+        total_paths_checked++;
+
+        // Extract system stops visited by this path, in order, with times.
+        struct Visit {
+          StopId stop;
+          int time_seconds;
+        };
+        std::vector<Visit> system_visits;
+
+        if (!path.steps.empty()) {
+          StopId s = path.steps[0].origin.stop;
+          if (bart_stops.count(s)) {
+            system_visits.push_back({s, path.steps[0].origin.time.seconds});
+          }
+        }
+        for (const auto& step : path.steps) {
+          if (bart_stops.count(step.destination.stop)) {
+            system_visits.push_back(
+                {step.destination.stop, step.destination.time.seconds}
+            );
+          }
+        }
+
+        std::unordered_set<StopId> visited_system_stops;
+        for (const auto& v : system_visits) {
+          visited_system_stops.insert(v.stop);
+        }
+
+        // For each gap between consecutive system stops, check whether any
+        // unvisited system stop can be inserted.
+        for (size_t g = 0; g + 1 < system_visits.size(); ++g) {
+          StopId gap_start = system_visits[g].stop;
+          int gap_start_time = system_visits[g].time_seconds;
+          StopId gap_end = system_visits[g + 1].stop;
+          int gap_end_time = system_visits[g + 1].time_seconds;
+
+          for (StopId candidate : bart_stops) {
+            if (visited_system_stops.count(candidate)) continue;
+
+            auto to_candidate =
+                earliest_arrival(gap_start, candidate, gap_start_time);
+            if (to_candidate.time_seconds >= gap_end_time) continue;
+
+            auto to_gap_end =
+                earliest_arrival(candidate, gap_end, to_candidate.time_seconds);
+            if (to_gap_end.time_seconds <= gap_end_time) {
+              std::ostringstream msg;
+              msg << "Path: "
+                  << mapping.stop_id_to_stop_name.at(
+                         path.merged_step.origin.stop
+                     )
+                  << " -> "
+                  << mapping.stop_id_to_stop_name.at(
+                         path.merged_step.destination.stop
+                     )
+                  << " (" << path.merged_step.origin.time.ToString() << " -> "
+                  << path.merged_step.destination.time.ToString() << ")\n";
+              msg << "System stops visited:\n";
+              for (const auto& v : system_visits) {
+                msg << "  " << mapping.stop_id_to_stop_name.at(v.stop) << " @ "
+                    << TimeSinceServiceStart{v.time_seconds}.ToString() << "\n";
+              }
+              msg << "Insertable stop: "
+                  << mapping.stop_id_to_stop_name.at(candidate) << "\n";
+              msg << "  " << mapping.stop_id_to_stop_name.at(gap_start)
+                  << " @ "
+                  << TimeSinceServiceStart{gap_start_time}.ToString() << " -> "
+                  << mapping.stop_id_to_stop_name.at(candidate) << " @ "
+                  << TimeSinceServiceStart{to_candidate.time_seconds}.ToString()
+                  << ":\n"
+                  << FormatCollapsedPath(to_candidate.path->steps);
+              msg << "  " << mapping.stop_id_to_stop_name.at(candidate) << " @ "
+                  << TimeSinceServiceStart{to_candidate.time_seconds}.ToString()
+                  << " -> " << mapping.stop_id_to_stop_name.at(gap_end) << " @ "
+                  << TimeSinceServiceStart{to_gap_end.time_seconds}.ToString()
+                  << " <= "
+                  << TimeSinceServiceStart{gap_end_time}.ToString() << ":\n"
+                  << FormatCollapsedPath(to_gap_end.path->steps);
+              msg << "Original path steps (collapsed by trip):\n"
+                  << FormatCollapsedPath(path.steps);
+
+              violations.push_back({msg.str()});
+              break;  // one violation per path is enough
+            }
+          }
+          if (!violations.empty() &&
+              violations.size() >=
+                  static_cast<size_t>(max_violations_to_report)) {
+            break;
+          }
+        }
+        if (violations.size() >=
+            static_cast<size_t>(max_violations_to_report)) {
+          break;
+        }
+      }
+      if (violations.size() >= static_cast<size_t>(max_violations_to_report)) {
+        break;
+      }
+    }
+    if (violations.size() >= static_cast<size_t>(max_violations_to_report)) {
+      break;
+    }
+  }
+
+  std::cerr << "Checked " << total_paths_checked << " non-flex paths across "
+            << bart_stops.size() << " system stops." << std::endl;
+
+  if (!violations.empty()) {
+    std::ostringstream msg;
+    msg << violations.size() << " non-maximal paths found.\n\n";
+
+    for (size_t i = 0; i < violations.size(); ++i) {
+      msg << "--- Violation " << (i + 1) << " ---\n"
+          << violations[i].description << "\n";
+    }
+
+    FAIL() << msg.str();
+  }
+}
+
 }  // namespace vats5
