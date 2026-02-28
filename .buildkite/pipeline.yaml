@@ -1,13 +1,40 @@
 steps:
+  - label: ":nix: Install Nix"
+    key: nix-install
+    command: |
+      set -euo pipefail
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      # Warm the nix store so subsequent steps can reuse it.
+      nix develop --impure --command true
+    timeout_in_minutes: 15
+
+  - label: ":art: Format"
+    key: format
+    depends_on: nix-install
+    command: |
+      set -euo pipefail
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      nix develop --impure --command bash -c '
+        pre-commit run --all-files
+      '
+    notify:
+      - github_commit_status:
+          context: "Format"
+    timeout_in_minutes: 5
+
   - label: ":hammer: Build and Test"
+    key: build-test
+    depends_on: nix-install
     secrets:
       - CPP_SUITE_TOKEN
     command: |
       set -euo pipefail
-
-      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
       . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-
       export NIXPKGS_ALLOW_UNFREE=1
 
       nix develop --impure --command bash -c '
@@ -29,4 +56,7 @@ steps:
           files: "server/build-debug/test-results.xml"
           format: "junit"
           api-token-env-name: "CPP_SUITE_TOKEN"
+    notify:
+      - github_commit_status:
+          context: "Build and Test"
     timeout_in_minutes: 30
