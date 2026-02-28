@@ -119,16 +119,23 @@ void WriteVisualizationSqlite(
     stop_stmt.step_and_reset();
   }
 
-  // Insert routes keyed by GTFS route_id.
+  // Insert routes keyed by GtfsRouteDirectionId so that opposite directions
+  // (e.g. "Green Line North" vs "Green Line South") get separate entries.
   SqliteStmt route_stmt(
       db,
-      "INSERT OR IGNORE INTO routes (route_id, route_name, route_color, "
-      "route_text_color) VALUES (?, ?, ?, ?)"
+      "INSERT OR IGNORE INTO routes (route_direction_id, route_name, "
+      "route_color, route_text_color) VALUES (?, ?, ?, ?)"
   );
-  std::unordered_set<GtfsRouteId> inserted_routes;
+  std::unordered_set<GtfsRouteDirectionId> inserted_routes;
 
-  // Ensure a GTFS route is in the routes table. Returns the route_id string,
-  // or empty if this is a flex/walk trip with no GTFS route.
+  // Serialize a GtfsRouteDirectionId to a string for storage in SQLite.
+  auto route_direction_id_str =
+      [](const GtfsRouteDirectionId& rd) -> std::string {
+    return rd.route_id.v + ":" + std::to_string(rd.direction_id);
+  };
+
+  // Ensure a GTFS route+direction is in the routes table. Returns the
+  // serialized route_direction_id string, or empty for flex/walk trips.
   auto ensure_route = [&](TripId trip_id) -> std::string {
     auto info_it = mapping.trip_id_to_trip_info.find(trip_id);
     if (info_it == mapping.trip_id_to_trip_info.end()) return "";
@@ -138,44 +145,45 @@ void WriteVisualizationSqlite(
     auto trip_it = gtfs_trip_by_id.find(gtfs_trip_id);
     if (trip_it == gtfs_trip_by_id.end()) return "";
 
-    const GtfsRouteId& route_id = trip_it->second->route_direction_id.route_id;
-    if (inserted_routes.count(route_id) == 0) {
-      inserted_routes.insert(route_id);
+    const GtfsRouteDirectionId& route_dir = trip_it->second->route_direction_id;
+    if (inserted_routes.count(route_dir) == 0) {
+      inserted_routes.insert(route_dir);
       const std::string& route_name = mapping.trip_id_to_route_desc.at(trip_id);
       std::string color;
       std::string text_color;
-      auto route_it2 = gtfs_route_by_id.find(route_id);
+      auto route_it2 = gtfs_route_by_id.find(route_dir.route_id);
       if (route_it2 != gtfs_route_by_id.end()) {
         color = route_it2->second->route_color;
         text_color = route_it2->second->route_text_color;
       }
-      route_stmt.bind_text(1, route_id.v.c_str());
+      std::string rd_str = route_direction_id_str(route_dir);
+      route_stmt.bind_text(1, rd_str.c_str());
       route_stmt.bind_text(2, route_name.c_str());
       route_stmt.bind_text(3, color.c_str());
       route_stmt.bind_text(4, text_color.c_str());
       route_stmt.step_and_reset();
     }
-    return route_id.v;
+    return route_direction_id_str(route_dir);
   };
 
   // Insert trips table.
   SqliteStmt trip_stmt(
       db,
-      "INSERT OR IGNORE INTO trips (trip_id, gtfs_trip_id, route_id) "
-      "VALUES (?, ?, ?)"
+      "INSERT OR IGNORE INTO trips (trip_id, gtfs_trip_id, "
+      "route_direction_id) VALUES (?, ?, ?)"
   );
   for (const auto& [trip_id, trip_info] : mapping.trip_id_to_trip_info) {
     if (!std::holds_alternative<GtfsTripId>(trip_info.v)) continue;
     const GtfsTripId& gtfs_trip_id = std::get<GtfsTripId>(trip_info.v);
     auto trip_it = gtfs_trip_by_id.find(gtfs_trip_id);
     if (trip_it == gtfs_trip_by_id.end()) continue;
-    const std::string& route_id =
-        trip_it->second->route_direction_id.route_id.v;
+    std::string rd_str =
+        route_direction_id_str(trip_it->second->route_direction_id);
     // Ensure the route exists first.
     ensure_route(trip_id);
     trip_stmt.bind_int(1, trip_id.v);
     trip_stmt.bind_text(2, gtfs_trip_id.v.c_str());
-    trip_stmt.bind_text(3, route_id.c_str());
+    trip_stmt.bind_text(3, rd_str.c_str());
     trip_stmt.step_and_reset();
   }
 
@@ -189,7 +197,7 @@ void WriteVisualizationSqlite(
       db,
       "INSERT INTO paths_steps (path_id, origin_stop_id, "
       "destination_stop_id, depart_time, arrive_time, "
-      "is_flex, route_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "is_flex, route_direction_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
   int next_path_id = 1;
@@ -279,7 +287,7 @@ void WriteVisualizationSqlite(
         // single step using ConsecutiveMergedSteps.
         struct MergedStepInfo {
           Step step;
-          std::string route_id;  // empty for flex/walk
+          std::string route_direction_id;  // empty for flex/walk
         };
         std::vector<MergedStepInfo> merged_steps;
 
@@ -301,7 +309,7 @@ void WriteVisualizationSqlite(
           TripId step_trip_id = all_expanded_steps[si].destination.trip;
           std::string rid = ensure_route(step_trip_id);
 
-          merged_steps.push_back({merged, rid});
+          merged_steps.push_back({merged, std::move(rid)});
           si = group_end;
         }
 
@@ -330,10 +338,10 @@ void WriteVisualizationSqlite(
           step_stmt.bind_int(4, ms.step.origin.time.seconds);
           step_stmt.bind_int(5, ms.step.destination.time.seconds);
           step_stmt.bind_int(6, ms.step.is_flex ? 1 : 0);
-          if (ms.route_id.empty()) {
+          if (ms.route_direction_id.empty()) {
             step_stmt.bind_null(7);
           } else {
-            step_stmt.bind_text(7, ms.route_id.c_str());
+            step_stmt.bind_text(7, ms.route_direction_id.c_str());
           }
           step_stmt.step_and_reset();
         }

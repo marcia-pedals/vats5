@@ -112,10 +112,10 @@ function PathSteps({
   return (
     <>
       {steps.map((step, i) => {
-        const route = step.route_id ? routeMap.get(step.route_id) : undefined;
+        const route = step.route_direction_id ? routeMap.get(step.route_direction_id) : undefined;
         return (
           <React.Fragment key={`${step.depart_time}-${step.arrive_time}-${i}`}>
-            {(route || step.is_flex) && (
+            {(route !== undefined || step.is_flex !== 0) && (
               <tr className="bg-tc-raised/50">
                 {startCol > 0 && <td />}
                 <td className="w-[70px] px-2 py-1 text-[11px] text-tc-text-dim whitespace-nowrap">
@@ -501,7 +501,7 @@ function VizPage() {
   const routesQuery = trpc.getRoutes.useQuery({ name });
   const routeMap = useMemo(() => {
     const m = new Map<string, VizRoute>();
-    for (const r of routesQuery.data ?? []) m.set(r.route_id, r);
+    for (const r of routesQuery.data ?? []) m.set(r.route_direction_id, r);
     return m;
   }, [routesQuery.data]);
 

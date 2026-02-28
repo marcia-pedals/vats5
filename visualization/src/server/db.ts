@@ -46,12 +46,12 @@ const PathStepRowSchema = z.object({
   depart_time: z.number(),
   arrive_time: z.number(),
   is_flex: z.number(),
-  route_id: z.string().nullable(),
+  route_direction_id: z.string().nullable(),
 });
 export type PathStep = z.infer<typeof PathStepRowSchema>;
 
 const RouteSchema = z.object({
-  route_id: z.string(),
+  route_direction_id: z.string(),
   route_name: z.string(),
   route_color: z.string(),
   route_text_color: z.string(),
@@ -116,7 +116,7 @@ export function getPathSteps(name: string, pathId: number): PathStep[] {
   return withDb(name, (db) => {
     const rows = db
       .prepare(
-        "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_id FROM paths_steps WHERE path_id = ?"
+        "SELECT origin_stop_id, destination_stop_id, depart_time, arrive_time, is_flex, route_direction_id FROM paths_steps WHERE path_id = ?"
       )
       .all(pathId);
     return z.array(PathStepRowSchema).parse(rows);
@@ -126,7 +126,7 @@ export function getPathSteps(name: string, pathId: number): PathStep[] {
 export function getRoutes(name: string): Route[] {
   return withDb(name, (db) => {
     const rows = db
-      .prepare("SELECT route_id, route_name, route_color, route_text_color FROM routes")
+      .prepare("SELECT route_direction_id, route_name, route_color, route_text_color FROM routes")
       .all();
     return z.array(RouteSchema).parse(rows);
   });

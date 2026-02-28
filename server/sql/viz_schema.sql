@@ -7,7 +7,7 @@ CREATE TABLE stops (
 );
 
 CREATE TABLE routes (
-  route_id TEXT PRIMARY KEY,
+  route_direction_id TEXT PRIMARY KEY,
   route_name TEXT NOT NULL,
   route_color TEXT NOT NULL DEFAULT '',
   route_text_color TEXT NOT NULL DEFAULT ''
@@ -16,8 +16,8 @@ CREATE TABLE routes (
 CREATE TABLE trips (
   trip_id INTEGER PRIMARY KEY,
   gtfs_trip_id TEXT NOT NULL,
-  route_id TEXT NOT NULL,
-  FOREIGN KEY (route_id) REFERENCES routes(route_id)
+  route_direction_id TEXT NOT NULL,
+  FOREIGN KEY (route_direction_id) REFERENCES routes(route_direction_id)
 );
 
 CREATE TABLE paths (
@@ -41,13 +41,13 @@ CREATE TABLE paths_steps (
   depart_time INTEGER NOT NULL,
   arrive_time INTEGER NOT NULL,
   is_flex INTEGER NOT NULL,
-  -- NULL for flex/walking trips that have no GTFS route.
-  route_id TEXT,
+  -- NULL for flex/walking trips that have no GTFS route+direction.
+  route_direction_id TEXT,
 
   FOREIGN KEY (path_id) REFERENCES paths(path_id),
   FOREIGN KEY (origin_stop_id) REFERENCES stops(stop_id),
   FOREIGN KEY (destination_stop_id) REFERENCES stops(stop_id),
-  FOREIGN KEY (route_id) REFERENCES routes(route_id)
+  FOREIGN KEY (route_direction_id) REFERENCES routes(route_direction_id)
 );
 
 CREATE TABLE partial_solutions (
