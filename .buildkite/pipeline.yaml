@@ -1,4 +1,18 @@
 steps:
+  - label: ":lint-roller: Pre-commit"
+    command: |
+      set -euo pipefail
+
+      curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install linux --init none --no-confirm
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+      export NIXPKGS_ALLOW_UNFREE=1
+
+      nix develop --impure --command bash -c '
+        pre-commit run --all-files
+      '
+    timeout_in_minutes: 10
+
   - label: ":hammer: Build and Test"
     secrets:
       - CPP_SUITE_TOKEN
