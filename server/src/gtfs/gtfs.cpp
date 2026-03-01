@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -250,7 +251,25 @@ Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   gtfs.calendar = GtfsLoadCalendar(gtfs_directory_path + "/calendar.txt");
   gtfs.stop_times = GtfsLoadStopTimes(gtfs_directory_path + "/stop_times.txt");
   gtfs.routes = GtfsLoadRoutes(gtfs_directory_path + "/routes.txt");
-  gtfs.directions = GtfsLoadDirections(gtfs_directory_path + "/directions.txt");
+
+  auto directions_path = gtfs_directory_path + "/directions.txt";
+  if (std::filesystem::exists(directions_path)) {
+    gtfs.directions = GtfsLoadDirections(directions_path);
+  } else {
+    // Synthesize dummy directions from trips when directions.txt is absent
+    std::set<std::string> seen;
+    for (const auto& trip : gtfs.trips) {
+      auto key = trip.route_direction_id.route_id.v + ":" +
+                 std::to_string(trip.route_direction_id.direction_id);
+      if (seen.insert(key).second) {
+        gtfs.directions.push_back(GtfsDirection{
+            trip.route_direction_id,
+            "Direction " +
+                std::to_string(trip.route_direction_id.direction_id)
+        });
+      }
+    }
+  }
 
   return gtfs;
 }
