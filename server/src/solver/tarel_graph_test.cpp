@@ -153,7 +153,8 @@ TEST(TarelGraphTest, TarelEdges_BART) {
   );
   auto [state, _minimal_paths_sparse] =
       InitializeProblemState(test_data.steps_from_gtfs, bart_stops);
-  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  StepPathsAdjacencyList completed = CompletedGraph(state);
+  std::vector<TarelEdge> edges = MakeTarelEdges(completed);
 
   StopId warm_springs = state.StopIdFromName("Warm Springs South Fremont BART");
   StopId berryessa = state.StopIdFromName("Berryessa / North San Jose");
@@ -333,9 +334,10 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
   }
 
   // Verify completed is recomputed correctly by comparing merged steps
-  std::vector<Step> original_completed = original.completed.AllMergedSteps();
+  std::vector<Step> original_completed =
+      CompletedGraph(original).AllMergedSteps();
   std::vector<Step> deserialized_completed =
-      deserialized.completed.AllMergedSteps();
+      CompletedGraph(deserialized).AllMergedSteps();
   RC_ASSERT(original_completed.size() == deserialized_completed.size());
 
   std::sort(
@@ -423,7 +425,8 @@ RC_GTEST_PROP(
       )
   );
 
-  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  StepPathsAdjacencyList completed = CompletedGraph(state);
+  std::vector<TarelEdge> edges = MakeTarelEdges(completed);
   std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
 
   // Verify that all states have valid partition IDs and expected stops are

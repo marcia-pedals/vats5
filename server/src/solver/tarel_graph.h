@@ -64,12 +64,7 @@ struct ProblemState {
   // one tour impossible.
   StepsAdjacencyList minimal;
 
-  // The completion of `minimal`, i.e. every possible route between elements of
-  // `required_stops` is a path. Also includes a zero-duration END->START edge
-  // to complete the cycle for TSP formulation.
-  StepPathsAdjacencyList completed;
-
-  // Which stops in `minimal`/`completed` are the START and END.
+  // Which stops in `minimal` are the START and END.
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
@@ -131,6 +126,12 @@ ProblemState MakeProblemState(
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 );
+
+// Compute the "completed" graph for a ProblemState: the completion of
+// `state.minimal` where every possible route between elements of
+// `state.required_stops` is a path. Includes a zero-duration END->START edge
+// to complete the cycle for TSP formulation.
+StepPathsAdjacencyList CompletedGraph(const ProblemState& state);
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
   std::vector<int> required_stops_vec;

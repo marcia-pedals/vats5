@@ -73,7 +73,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
 
 // Builds an MST over the required stops (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
-std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
+std::unordered_set<StopId> MstLeaves(
+    const ProblemState& state, const StepPathsAdjacencyList& completed
+) {
   // Collect required stops, excluding START and END.
   std::vector<StopId> stops(
       state.required_stops.begin(), state.required_stops.end()
@@ -94,8 +96,7 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
 
   for (int i = 0; i < n; i++) {
     for (int k = i + 1; k < n; k++) {
-      auto paths =
-          state.completed.PathsBetweenBidirectional(stops[i], stops[k]);
+      auto paths = completed.PathsBetweenBidirectional(stops[i], stops[k]);
       auto it = std::ranges::min_element(paths, {}, [](const auto& path) {
         return path.DurationSeconds();
       });
@@ -172,7 +173,8 @@ struct PartialSolution {
 
 PartialSolution PartialSolveBranchAndBound(
     std::unordered_set<StopId> required_subset,
-    const ProblemState& original_problem
+    const ProblemState& original_problem,
+    const StepPathsAdjacencyList& original_completed
 ) {
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
@@ -214,7 +216,7 @@ PartialSolution PartialSolveBranchAndBound(
 
     // Reconstruct the paths through all original problem stops.
     std::vector<Path> more_original_paths =
-        ComputeMinimalFeasiblePathsAlong(tour, original_problem.completed);
+        ComputeMinimalFeasiblePathsAlong(tour, original_completed);
 
     // Some of these paths might have duration longer than the bb_path.
     // Disregard these.
@@ -252,6 +254,7 @@ PartialSolution PartialSolveBranchAndBound(
 
 PartialSolution NaivelyExtendPartialSolution(
     const ProblemState& original_problem,
+    const StepPathsAdjacencyList& original_completed,
     const std::vector<StopId>& partial_solution_tour,
     StopId new_stop
 ) {
@@ -273,9 +276,8 @@ PartialSolution NaivelyExtendPartialSolution(
     std::swap(extended_tour[new_stop_index - 1], extended_tour[new_stop_index]);
     assert(extended_tour[new_stop_index] == new_stop);
 
-    std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.completed
-    );
+    std::vector<Path> paths =
+        ComputeMinimalFeasiblePathsAlong(extended_tour, original_completed);
     auto best_path_it = std::ranges::min_element(
         paths, {}, [](const Path& path) { return path.DurationSeconds(); }
     );
@@ -307,6 +309,7 @@ PartialSolution NaivelyExtendPartialSolution(
 
 PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     const ProblemState& original_problem,
+    const StepPathsAdjacencyList& original_completed,
     const PartialSolutionPath& partial_path
 ) {
   PartialSolutionPath result = partial_path;
@@ -318,7 +321,7 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     std::vector<PartialSolutionPath> improved;
     for (StopId new_stop : unvisited) {
       PartialSolution extended = NaivelyExtendPartialSolution(
-          original_problem, result.subset_tour, new_stop
+          original_problem, original_completed, result.subset_tour, new_stop
       );
       auto best_extended_it =
           extended.BestPathByRequiredStops(original_problem.required_stops);
@@ -392,7 +395,9 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 // from x to the overall path is the minimum across all path stops p.
 // Returns results sorted by distance (ascending).
 std::vector<StopDistance> RequiredStopDistances(
-    const Path& path, const ProblemState& state
+    const Path& path,
+    const ProblemState& state,
+    const StepPathsAdjacencyList& completed
 ) {
   std::unordered_set<StopId> visited;
   path.VisitAllStops([&](StopId s) { visited.insert(s); });
@@ -408,7 +413,7 @@ std::vector<StopDistance> RequiredStopDistances(
       if (p == state.boundary.start || p == state.boundary.end) {
         continue;
       }
-      auto paths_xp = state.completed.PathsBetween(x, p);
+      auto paths_xp = completed.PathsBetween(x, p);
       const Path* shortest = nullptr;
       for (const Path& candidate : paths_xp) {
         if (!shortest ||
@@ -457,7 +462,11 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  std::unordered_set<StopId> required_subset = MstLeaves(state);
+  // Compute the completed graph once for the full problem. The original
+  // problem state doesn't change, so this can be reused across iterations.
+  StepPathsAdjacencyList completed = CompletedGraph(state);
+
+  std::unordered_set<StopId> required_subset = MstLeaves(state, completed);
 
   // Generate run timestamp.
   auto now = std::chrono::system_clock::now();
@@ -547,7 +556,8 @@ int main(int argc, char* argv[]) {
   for (int iteration = 0;; iteration++) {
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
               << required_subset.size() << " leaves ===\n";
-    auto solution = PartialSolveBranchAndBound(required_subset, state);
+    auto solution =
+        PartialSolveBranchAndBound(required_subset, state, completed);
 
     // Choose the path that visits the most required stops.
     auto best_solution_path_it =
@@ -562,14 +572,14 @@ int main(int argc, char* argv[]) {
               << best_solution_path.path.IntermediateStopCount() << "\n";
     best_solution_path =
         GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
-            state, best_solution_path
+            state, completed, best_solution_path
         );
     std::cout << "After greedy improve: "
               << best_solution_path.path.IntermediateStopCount() << "\n";
 
     const Path& best_path = best_solution_path.path;
     const std::vector<StopDistance> distances =
-        RequiredStopDistances(best_path, state);
+        RequiredStopDistances(best_path, state, completed);
 
     // Write partial solution to viz SQLite.
     {
