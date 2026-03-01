@@ -5,6 +5,7 @@ steps:
     command: |
       set -euo pipefail
 
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       export NIXPKGS_ALLOW_UNFREE=1
 
       nix develop --impure --command bash -c '
@@ -23,6 +24,7 @@ steps:
     command: |
       set -euo pipefail
 
+      . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       export NIXPKGS_ALLOW_UNFREE=1
 
       nix develop --impure --command bash -c '
