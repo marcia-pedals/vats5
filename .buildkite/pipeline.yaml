@@ -7,6 +7,7 @@ steps:
 
       . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       export NIXPKGS_ALLOW_UNFREE=1
+      export NIX_CONFIG="extra-experimental-features = nix-command flakes"
 
       nix develop --impure --command bash -c '
         pre-commit run --all-files
@@ -26,6 +27,7 @@ steps:
 
       . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       export NIXPKGS_ALLOW_UNFREE=1
+      export NIX_CONFIG="extra-experimental-features = nix-command flakes"
 
       nix develop --impure --command bash -c '
         cd server
