@@ -9,7 +9,7 @@ steps:
       export NIXPKGS_ALLOW_UNFREE=1
       export NIX_CONFIG="extra-experimental-features = nix-command flakes"
 
-      nix develop --impure --command bash -c '
+      nix develop .#ci-lint --impure --command bash -c '
         pre-commit run --all-files
       '
     notify:

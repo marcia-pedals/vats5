@@ -48,6 +48,18 @@
           default = concorde;
         };
 
+        devShells.ci-lint = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            biome
+            clang-tools
+            nodejs
+            pre-commit
+          ];
+          shellHook = ''
+            ${pre-commit-check.shellHook}
+          '';
+        };
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             biome
