@@ -413,7 +413,12 @@ GTEST("GtfsFilterByTrips should filter by specific trip") {
 
   // Check trips
   std::vector<GtfsTrip> expected_trips = {
-      GtfsTrip{GtfsRouteDirectionId{route_id, 0}, trip_id, service_id}
+      GtfsTrip{
+          GtfsRouteDirectionId{route_id, 0},
+          trip_id,
+          service_id,
+          "San Francisco"
+      }
   };
   EXPECT_EQ(filtered.trips, expected_trips);
 

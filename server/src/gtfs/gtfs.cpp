@@ -6,7 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <set>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -88,6 +88,9 @@ static std::vector<GtfsTrip> GtfsLoadTrips(const std::string& trips_file_path) {
       };
       trip.trip_id = GtfsTripId{row["trip_id"].get<std::string>()};
       trip.service_id = GtfsServiceId{row["service_id"].get<std::string>()};
+      if (reader.index_of("trip_headsign") != csv::CSV_NOT_FOUND) {
+        trip.trip_headsign = row["trip_headsign"].get<std::string>();
+      }
     }
   } catch (const std::exception& e) {
     throw std::runtime_error(
@@ -256,18 +259,33 @@ Gtfs GtfsLoad(const std::string& gtfs_directory_path) {
   if (std::filesystem::exists(directions_path)) {
     gtfs.directions = GtfsLoadDirections(directions_path);
   } else {
-    // Synthesize dummy directions from trips when directions.txt is absent
-    std::set<std::string> seen;
+    // Synthesize directions from trip headsigns when directions.txt is absent.
+    // For each (route_id, direction_id), count headsigns and use the most
+    // frequent one. Append "*" if there are multiple distinct headsigns.
+    std::map<std::string, std::map<std::string, int>> headsign_counts;
+    std::map<std::string, GtfsRouteDirectionId> key_to_rd;
     for (const auto& trip : gtfs.trips) {
       auto key = trip.route_direction_id.route_id.v + ":" +
                  std::to_string(trip.route_direction_id.direction_id);
-      if (seen.insert(key).second) {
-        gtfs.directions.push_back(GtfsDirection{
-            trip.route_direction_id,
-            "Direction " +
-                std::to_string(trip.route_direction_id.direction_id)
-        });
+      headsign_counts[key][trip.trip_headsign]++;
+      key_to_rd.emplace(key, trip.route_direction_id);
+    }
+    for (const auto& [key, counts] : headsign_counts) {
+      // Find the most frequent headsign.
+      std::string best_headsign;
+      int best_count = 0;
+      for (const auto& [headsign, count] : counts) {
+        if (count > best_count) {
+          best_count = count;
+          best_headsign = headsign;
+        }
       }
+      if (counts.size() > 1) {
+        best_headsign += "*";
+      }
+      gtfs.directions.push_back(
+          GtfsDirection{key_to_rd.at(key), best_headsign}
+      );
     }
   }
 
@@ -542,11 +560,12 @@ void GtfsSave(const GtfsDay& gtfs_day, const std::string& gtfs_directory_path) {
   // Save trips.txt
   if (!gtfs_day.trips.empty()) {
     std::ofstream trips_file(gtfs_directory_path + "/trips.txt");
-    trips_file << "route_id,direction_id,trip_id,service_id\n";
+    trips_file << "route_id,direction_id,trip_id,service_id,trip_headsign\n";
     for (const auto& trip : gtfs_day.trips) {
       trips_file << trip.route_direction_id.route_id.v << ","
                  << trip.route_direction_id.direction_id << ","
-                 << trip.trip_id.v << "," << trip.service_id.v << "\n";
+                 << trip.trip_id.v << "," << trip.service_id.v << ","
+                 << "\"" << trip.trip_headsign << "\"\n";
     }
   }
 
