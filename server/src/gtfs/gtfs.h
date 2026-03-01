@@ -97,14 +97,16 @@ struct GtfsTrip {
   GtfsRouteDirectionId route_direction_id;
   GtfsTripId trip_id;
   GtfsServiceId service_id;
+  std::string trip_headsign;
 
   bool operator==(const GtfsTrip& other) const {
     return route_direction_id == other.route_direction_id &&
-           trip_id == other.trip_id && service_id == other.service_id;
+           trip_id == other.trip_id && service_id == other.service_id &&
+           trip_headsign == other.trip_headsign;
   }
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
-    GtfsTrip, route_direction_id, trip_id, service_id
+    GtfsTrip, route_direction_id, trip_id, service_id, trip_headsign
 )
 
 struct GtfsCalendar {
