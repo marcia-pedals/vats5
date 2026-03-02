@@ -108,6 +108,11 @@ struct ProblemState {
 
   // Return a copy of this state with the required stops replaced by `stops`.
   ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
+
+  // Compute the "completed" graph: the completion of `minimal` where every
+  // possible route between elements of `required_stops` is a path. Includes
+  // a zero-duration END->START edge to complete the cycle for TSP formulation.
+  StepPathsAdjacencyList ComputeCompletedGraph() const;
 };
 
 // Recursively expands a combined stop into its original constituent stops.
@@ -126,12 +131,6 @@ ProblemState MakeProblemState(
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 );
-
-// Compute the "completed" graph for a ProblemState: the completion of
-// `state.minimal` where every possible route between elements of
-// `state.required_stops` is a path. Includes a zero-duration END->START edge
-// to complete the cycle for TSP formulation.
-StepPathsAdjacencyList CompletedGraph(const ProblemState& state);
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
   std::vector<int> required_stops_vec;

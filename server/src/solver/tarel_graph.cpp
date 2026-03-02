@@ -109,7 +109,7 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "  ]\n";
 
-  StepPathsAdjacencyList completed = CompletedGraph(state);
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
   std::vector<Step> merged_steps = completed.AllMergedSteps();
   std::unordered_set<StopId> completed_origins;
   std::unordered_set<StopId> completed_destinations;
@@ -165,12 +165,12 @@ ProblemState MakeProblemState(
   };
 }
 
-StepPathsAdjacencyList CompletedGraph(const ProblemState& state) {
+StepPathsAdjacencyList ProblemState::ComputeCompletedGraph() const {
   StepPathsAdjacencyList completed =
-      CompleteShortestPathsGraph(state.minimal, state.required_stops);
+      CompleteShortestPathsGraph(minimal, required_stops);
   // Add END->START edge to complete the cycle for TSP formulation.
-  completed.adjacent[state.boundary.end].push_back(
-      {ZeroPath(state.boundary.end, state.boundary.start)}
+  completed.adjacent[boundary.end].push_back(
+      {ZeroPath(boundary.end, boundary.start)}
   );
   return completed;
 }
@@ -844,7 +844,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
-  StepPathsAdjacencyList completed = CompletedGraph(state);
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
   // Check that every `state.required_stops` appears as both an origin and
   // destination in `completed`.

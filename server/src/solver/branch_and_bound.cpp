@@ -262,7 +262,7 @@ BranchAndBoundResult BranchAndBoundSolve(
 
     // Compute the completed graph for this subproblem (on demand, not stored
     // in ProblemState to save memory on queued nodes).
-    StepPathsAdjacencyList completed = CompletedGraph(state);
+    StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
     // Compute lower bound.
     std::optional<std::ofstream> tsp_log_file;
