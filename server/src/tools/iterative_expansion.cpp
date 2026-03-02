@@ -487,9 +487,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  std::cout << "Loading problem...\n";
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
+  std::cout << "Computing MST...\n";
   std::unordered_set<StopId> required_subset = MstLeaves(state);
 
   // Generate run timestamp.
@@ -593,6 +595,7 @@ int main(int argc, char* argv[]) {
     PartialSolutionPath best_solution_path = *best_solution_path_it;
     std::cout << "Before greedy improve: "
               << best_solution_path.path.IntermediateStopCount() << "\n";
+
     best_solution_path =
         GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
             state, best_solution_path
