@@ -260,6 +260,10 @@ BranchAndBoundResult BranchAndBoundSolve(
       return {best_ub, std::move(best_paths), std::move(best_original_edges)};
     }
 
+    // Compute the completed graph for this subproblem (on demand, not stored
+    // in ProblemState to save memory on queued nodes).
+    StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+
     // Compute lower bound.
     std::optional<std::ofstream> tsp_log_file;
     if (run_dir.has_value()) {
@@ -313,7 +317,7 @@ BranchAndBoundResult BranchAndBoundSolve(
       stop_sequence.push_back(edge.destination.stop);
     }
     std::vector<Path> feasible_paths =
-        ComputeMinimalFeasiblePathsAlong(stop_sequence, state.completed);
+        ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
     if (feasible_paths.size() > 0) {
       const Path& feasible_path = *std::min_element(
           feasible_paths.begin(),
@@ -370,7 +374,7 @@ BranchAndBoundResult BranchAndBoundSolve(
     std::vector<Step> primitive_steps;
     for (const TarelEdge& e : lb_result.tour_edges) {
       const auto& paths =
-          state.completed.PathsBetween(e.origin.stop, e.destination.stop);
+          completed.PathsBetween(e.origin.stop, e.destination.stop);
       assert(paths.size() > 0);
       Path best = paths[0];
       for (const Path& p : paths) {

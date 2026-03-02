@@ -109,7 +109,8 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "  ]\n";
 
-  std::vector<Step> merged_steps = state.completed.AllMergedSteps();
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+  std::vector<Step> merged_steps = completed.AllMergedSteps();
   std::unordered_set<StopId> completed_origins;
   std::unordered_set<StopId> completed_destinations;
   for (const Step& step : merged_steps) {
@@ -154,20 +155,24 @@ ProblemState MakeProblemState(
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
-  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
-  // Add END->START edge to complete the cycle for TSP formulation.
-  completed.adjacent[boundary.end].push_back(
-      {ZeroPath(boundary.end, boundary.start)}
-  );
   return ProblemState{
       std::move(minimal),
-      std::move(completed),
       boundary,
       std::move(stops),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
   };
+}
+
+StepPathsAdjacencyList ProblemState::ComputeCompletedGraph() const {
+  StepPathsAdjacencyList completed =
+      CompleteShortestPathsGraph(minimal, required_stops);
+  // Add END->START edge to complete the cycle for TSP formulation.
+  completed.adjacent[boundary.end].push_back(
+      {ZeroPath(boundary.end, boundary.start)}
+  );
+  return completed;
 }
 
 void AddBoundary(
@@ -839,15 +844,17 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+
   // Check that every `state.required_stops` appears as both an origin and
-  // destination in `state.completed`.
+  // destination in `completed`.
   //
   // This is necessary for correctness because `MakeTarelEdges` only produces
   // states for stops that appear as origins and destinations, and if it misses
   // any stops, then the TSP will simply not visit those stops.
   std::unordered_set<StopId> origins;
   std::unordered_set<StopId> destinations;
-  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+  for (const auto& [origin_stop, path_groups] : completed.adjacent) {
     for (const auto& path_group : path_groups) {
       if (!path_group.empty()) {
         origins.insert(path_group[0].merged_step.origin.stop);
@@ -861,8 +868,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  ProblemState reduced_state = state;
-  auto edges = MakeTarelEdges(reduced_state.completed);
+  auto edges = MakeTarelEdges(completed);
   auto merged_edges = MergeEquivalentTarelStates(edges);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
   return SolveTspAndExtractTour(

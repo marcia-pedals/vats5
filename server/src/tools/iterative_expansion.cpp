@@ -84,6 +84,16 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   std::ranges::sort(stops);
   int n = static_cast<int>(stops.size());
 
+  std::unordered_set<StopId> stop_set(stops.begin(), stops.end());
+
+  // Compute minimal path sets from each required stop to all others.
+  // For each origin, FindMinimalPathSet gives paths to all destinations.
+  std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Path>>>
+      paths_from;
+  for (StopId origin : stops) {
+    paths_from[origin] = FindMinimalPathSet(state.minimal, origin, stop_set);
+  }
+
   // Build weighted undirected edges: for each pair of required stops, the
   // weight is the min duration step between them in either direction.
   struct Edge {
@@ -94,13 +104,25 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
 
   for (int i = 0; i < n; i++) {
     for (int k = i + 1; k < n; k++) {
-      auto paths =
-          state.completed.PathsBetweenBidirectional(stops[i], stops[k]);
-      auto it = std::ranges::min_element(paths, {}, [](const auto& path) {
-        return path.DurationSeconds();
-      });
-      if (it != paths.end()) {
-        edges.push_back({i, k, it->DurationSeconds()});
+      int min_duration = std::numeric_limits<int>::max();
+      // Check forward direction.
+      auto& fw = paths_from[stops[i]];
+      auto fw_it = fw.find(stops[k]);
+      if (fw_it != fw.end()) {
+        for (const Path& p : fw_it->second) {
+          min_duration = std::min(min_duration, p.DurationSeconds());
+        }
+      }
+      // Check backward direction.
+      auto& bw = paths_from[stops[k]];
+      auto bw_it = bw.find(stops[i]);
+      if (bw_it != bw.end()) {
+        for (const Path& p : bw_it->second) {
+          min_duration = std::min(min_duration, p.DurationSeconds());
+        }
+      }
+      if (min_duration < std::numeric_limits<int>::max()) {
+        edges.push_back({i, k, min_duration});
       }
     }
   }
@@ -214,7 +236,7 @@ PartialSolution PartialSolveBranchAndBound(
 
     // Reconstruct the paths through all original problem stops.
     std::vector<Path> more_original_paths =
-        ComputeMinimalFeasiblePathsAlong(tour, original_problem.completed);
+        ComputeMinimalFeasiblePathsAlong(tour, original_problem.minimal);
 
     // Some of these paths might have duration longer than the bb_path.
     // Disregard these.
@@ -274,7 +296,7 @@ PartialSolution NaivelyExtendPartialSolution(
     assert(extended_tour[new_stop_index] == new_stop);
 
     std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.completed
+        extended_tour, original_problem.minimal
     );
     auto best_path_it = std::ranges::min_element(
         paths, {}, [](const Path& path) { return path.DurationSeconds(); }
@@ -387,7 +409,7 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 
 // For each required stop not on the path, computes its shortest "distance" to
 // the path. Distance from required stop x to path stop p: find the
-// min-duration path from x to p in state.completed, then count how many
+// min-duration path from x to p in state.minimal, then count how many
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
 // Returns results sorted by distance (ascending).
@@ -397,20 +419,31 @@ std::vector<StopDistance> RequiredStopDistances(
   std::unordered_set<StopId> visited;
   path.VisitAllStops([&](StopId s) { visited.insert(s); });
 
+  // Filter visited stops to exclude boundary.
+  std::unordered_set<StopId> path_stops;
+  for (StopId p : visited) {
+    if (p != state.boundary.start && p != state.boundary.end) {
+      path_stops.insert(p);
+    }
+  }
+
   std::vector<StopDistance> distances;
   for (StopId x : state.required_stops) {
     if (visited.contains(x)) {
       continue;
     }
+    // Compute minimal paths from x to all path stops on-demand.
+    auto paths_from_x = FindMinimalPathSet(state.minimal, x, path_stops);
+
     int min_dist = INT_MAX;
     StopId nearest_stop{};
-    for (StopId p : visited) {
-      if (p == state.boundary.start || p == state.boundary.end) {
+    for (StopId p : path_stops) {
+      auto it = paths_from_x.find(p);
+      if (it == paths_from_x.end()) {
         continue;
       }
-      auto paths_xp = state.completed.PathsBetween(x, p);
       const Path* shortest = nullptr;
-      for (const Path& candidate : paths_xp) {
+      for (const Path& candidate : it->second) {
         if (!shortest ||
             candidate.DurationSeconds() < shortest->DurationSeconds()) {
           shortest = &candidate;

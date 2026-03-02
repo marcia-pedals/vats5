@@ -64,12 +64,7 @@ struct ProblemState {
   // one tour impossible.
   StepsAdjacencyList minimal;
 
-  // The completion of `minimal`, i.e. every possible route between elements of
-  // `required_stops` is a path. Also includes a zero-duration END->START edge
-  // to complete the cycle for TSP formulation.
-  StepPathsAdjacencyList completed;
-
-  // Which stops in `minimal`/`completed` are the START and END.
+  // Which stops in `minimal` are the START and END.
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
@@ -113,6 +108,11 @@ struct ProblemState {
 
   // Return a copy of this state with the required stops replaced by `stops`.
   ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
+
+  // Compute the "completed" graph: the completion of `minimal` where every
+  // possible route between elements of `required_stops` is a path. Includes
+  // a zero-duration END->START edge to complete the cycle for TSP formulation.
+  StepPathsAdjacencyList ComputeCompletedGraph() const;
 };
 
 // Recursively expands a combined stop into its original constituent stops.

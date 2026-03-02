@@ -202,150 +202,139 @@ void WriteVisualizationSqlite(
 
   int next_path_id = 1;
 
-  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+  // Write steps from `minimal` (not `completed`) to keep the visualization
+  // sqlite small and avoid computing the expensive completed graph.
+  for (const Step& step : state.minimal.AllSteps()) {
+    StopId origin_stop = step.origin.stop;
+    StopId dest_stop = step.destination.stop;
+
     if (origin_stop == state.boundary.start ||
         origin_stop == state.boundary.end) {
       continue;
     }
+    if (dest_stop == state.boundary.start || dest_stop == state.boundary.end) {
+      continue;
+    }
 
-    for (const auto& path_group : path_groups) {
-      if (path_group.empty()) continue;
+    int path_id = next_path_id++;
 
-      StopId dest_stop = path_group[0].merged_step.destination.stop;
-      if (dest_stop == state.boundary.start ||
-          dest_stop == state.boundary.end) {
-        continue;
-      }
+    const std::string& origin_gtfs =
+        state.stop_infos.at(origin_stop).gtfs_stop_id.v;
+    const std::string& dest_gtfs =
+        state.stop_infos.at(dest_stop).gtfs_stop_id.v;
 
-      for (const Path& p : path_group) {
-        int path_id = next_path_id++;
+    path_stmt.bind_int(1, path_id);
+    path_stmt.bind_text(2, origin_gtfs.c_str());
+    path_stmt.bind_text(3, dest_gtfs.c_str());
+    path_stmt.bind_int(4, step.origin.time.seconds);
+    path_stmt.bind_int(5, step.destination.time.seconds);
+    path_stmt.bind_int(6, step.is_flex ? 1 : 0);
+    path_stmt.step_and_reset();
 
-        const std::string& origin_gtfs =
-            state.stop_infos.at(origin_stop).gtfs_stop_id.v;
-        const std::string& dest_gtfs =
-            state.stop_infos.at(dest_stop).gtfs_stop_id.v;
+    // Expand this minimal step using minimal_paths_sparse to get the
+    // original GTFS-level detail.
+    const GtfsStopId& s_origin_gtfs =
+        state.stop_infos.at(origin_stop).gtfs_stop_id;
+    const GtfsStopId& s_dest_gtfs = state.stop_infos.at(dest_stop).gtfs_stop_id;
+    StopId orig_origin = mapping.gtfs_stop_id_to_stop_id.at(s_origin_gtfs);
+    StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
 
-        path_stmt.bind_int(1, path_id);
-        path_stmt.bind_text(2, origin_gtfs.c_str());
-        path_stmt.bind_text(3, dest_gtfs.c_str());
-        path_stmt.bind_int(4, p.merged_step.origin.time.seconds);
-        path_stmt.bind_int(5, p.merged_step.destination.time.seconds);
-        path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
-        path_stmt.step_and_reset();
-
-        // Expand each step of the completed path using
-        // minimal_paths_sparse to get the original GTFS-level detail.
-        // Collect all expanded steps first so we can group by trip.
-        std::vector<Step> all_expanded_steps;
-        for (const Step& s : p.steps) {
-          // Map compacted StopIds to original StopIds.
-          const GtfsStopId& s_origin_gtfs =
-              state.stop_infos.at(s.origin.stop).gtfs_stop_id;
-          const GtfsStopId& s_dest_gtfs =
-              state.stop_infos.at(s.destination.stop).gtfs_stop_id;
-          StopId orig_origin =
-              mapping.gtfs_stop_id_to_stop_id.at(s_origin_gtfs);
-          StopId orig_dest = mapping.gtfs_stop_id_to_stop_id.at(s_dest_gtfs);
-
-          // Find matching path in minimal_paths_sparse.
-          auto sparse_paths =
-              result.minimal_paths_sparse.PathsBetween(orig_origin, orig_dest);
-          const Path* expanded = nullptr;
-          for (const Path& sp : sparse_paths) {
-            if (s.is_flex) {
-              if (sp.merged_step.is_flex) {
-                expanded = &sp;
-                break;
-              }
-            } else {
-              if (!sp.merged_step.is_flex &&
-                  sp.merged_step.origin.time == s.origin.time &&
-                  sp.merged_step.destination.time == s.destination.time) {
-                expanded = &sp;
-                break;
-              }
-            }
-          }
-
-          if (!expanded) {
-            throw std::runtime_error(
-                "No matching path in minimal_paths_sparse for step " +
-                s_origin_gtfs.v + " -> " + s_dest_gtfs.v +
-                " (is_flex=" + (s.is_flex ? "true" : "false") +
-                ", origin_time=" + std::to_string(s.origin.time.seconds) +
-                ", dest_time=" + std::to_string(s.destination.time.seconds) +
-                ")"
-            );
-          }
-
-          for (const Step& es : expanded->steps) {
-            all_expanded_steps.push_back(es);
-          }
+    // Find matching path in minimal_paths_sparse.
+    auto sparse_paths =
+        result.minimal_paths_sparse.PathsBetween(orig_origin, orig_dest);
+    const Path* expanded = nullptr;
+    for (const Path& sp : sparse_paths) {
+      if (step.is_flex) {
+        if (sp.merged_step.is_flex) {
+          expanded = &sp;
+          break;
         }
-
-        // Group consecutive steps by trip and merge each group into a
-        // single step using ConsecutiveMergedSteps.
-        struct MergedStepInfo {
-          Step step;
-          std::string route_direction_id;  // empty for flex/walk
-        };
-        std::vector<MergedStepInfo> merged_steps;
-
-        size_t si = 0;
-        while (si < all_expanded_steps.size()) {
-          size_t group_end = si + 1;
-          while (group_end < all_expanded_steps.size() &&
-                 all_expanded_steps[group_end].destination.trip ==
-                     all_expanded_steps[si].destination.trip) {
-            group_end++;
-          }
-
-          std::vector<Step> group_steps(
-              all_expanded_steps.begin() + si,
-              all_expanded_steps.begin() + group_end
-          );
-          Step merged = ConsecutiveMergedSteps(group_steps);
-
-          TripId step_trip_id = all_expanded_steps[si].destination.trip;
-          std::string rid = ensure_route(step_trip_id);
-
-          merged_steps.push_back({merged, std::move(rid)});
-          si = group_end;
-        }
-
-        // Normalize flex step times if necessary.
-        {
-          std::vector<Step> steps;
-          steps.reserve(merged_steps.size());
-          for (const auto& ms : merged_steps) {
-            steps.push_back(ms.step);
-          }
-          NormalizeConsecutiveSteps(steps);
-          for (size_t i = 0; i < merged_steps.size(); ++i) {
-            merged_steps[i].step = steps[i];
-          }
-        }
-
-        for (const auto& ms : merged_steps) {
-          const std::string& step_origin_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(ms.step.origin.stop).v;
-          const std::string& step_dest_gtfs =
-              mapping.stop_id_to_gtfs_stop_id.at(ms.step.destination.stop).v;
-
-          step_stmt.bind_int(1, path_id);
-          step_stmt.bind_text(2, step_origin_gtfs.c_str());
-          step_stmt.bind_text(3, step_dest_gtfs.c_str());
-          step_stmt.bind_int(4, ms.step.origin.time.seconds);
-          step_stmt.bind_int(5, ms.step.destination.time.seconds);
-          step_stmt.bind_int(6, ms.step.is_flex ? 1 : 0);
-          if (ms.route_direction_id.empty()) {
-            step_stmt.bind_null(7);
-          } else {
-            step_stmt.bind_text(7, ms.route_direction_id.c_str());
-          }
-          step_stmt.step_and_reset();
+      } else {
+        if (!sp.merged_step.is_flex &&
+            sp.merged_step.origin.time == step.origin.time &&
+            sp.merged_step.destination.time == step.destination.time) {
+          expanded = &sp;
+          break;
         }
       }
+    }
+
+    if (!expanded) {
+      throw std::runtime_error(
+          "No matching path in minimal_paths_sparse for step " +
+          s_origin_gtfs.v + " -> " + s_dest_gtfs.v +
+          " (is_flex=" + (step.is_flex ? "true" : "false") +
+          ", origin_time=" + std::to_string(step.origin.time.seconds) +
+          ", dest_time=" + std::to_string(step.destination.time.seconds) + ")"
+      );
+    }
+
+    std::vector<Step> all_expanded_steps;
+    for (const Step& es : expanded->steps) {
+      all_expanded_steps.push_back(es);
+    }
+
+    // Group consecutive steps by trip and merge each group into a
+    // single step using ConsecutiveMergedSteps.
+    struct MergedStepInfo {
+      Step step;
+      std::string route_direction_id;  // empty for flex/walk
+    };
+    std::vector<MergedStepInfo> merged_steps;
+
+    size_t si = 0;
+    while (si < all_expanded_steps.size()) {
+      size_t group_end = si + 1;
+      while (group_end < all_expanded_steps.size() &&
+             all_expanded_steps[group_end].destination.trip ==
+                 all_expanded_steps[si].destination.trip) {
+        group_end++;
+      }
+
+      std::vector<Step> group_steps(
+          all_expanded_steps.begin() + si,
+          all_expanded_steps.begin() + group_end
+      );
+      Step merged = ConsecutiveMergedSteps(group_steps);
+
+      TripId step_trip_id = all_expanded_steps[si].destination.trip;
+      std::string rid = ensure_route(step_trip_id);
+
+      merged_steps.push_back({merged, std::move(rid)});
+      si = group_end;
+    }
+
+    // Normalize flex step times if necessary.
+    {
+      std::vector<Step> steps;
+      steps.reserve(merged_steps.size());
+      for (const auto& ms : merged_steps) {
+        steps.push_back(ms.step);
+      }
+      NormalizeConsecutiveSteps(steps);
+      for (size_t i = 0; i < merged_steps.size(); ++i) {
+        merged_steps[i].step = steps[i];
+      }
+    }
+
+    for (const auto& ms : merged_steps) {
+      const std::string& step_origin_gtfs =
+          mapping.stop_id_to_gtfs_stop_id.at(ms.step.origin.stop).v;
+      const std::string& step_dest_gtfs =
+          mapping.stop_id_to_gtfs_stop_id.at(ms.step.destination.stop).v;
+
+      step_stmt.bind_int(1, path_id);
+      step_stmt.bind_text(2, step_origin_gtfs.c_str());
+      step_stmt.bind_text(3, step_dest_gtfs.c_str());
+      step_stmt.bind_int(4, ms.step.origin.time.seconds);
+      step_stmt.bind_int(5, ms.step.destination.time.seconds);
+      step_stmt.bind_int(6, ms.step.is_flex ? 1 : 0);
+      if (ms.route_direction_id.empty()) {
+        step_stmt.bind_null(7);
+      } else {
+        step_stmt.bind_text(7, ms.route_direction_id.c_str());
+      }
+      step_stmt.step_and_reset();
     }
   }
 

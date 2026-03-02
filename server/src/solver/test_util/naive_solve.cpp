@@ -14,6 +14,7 @@ namespace vats5 {
 std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
     const ProblemState& state
 ) {
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
   std::vector<SolutionSpaceElement> space;
 
   // Make the initial generating permutation, which is
@@ -34,7 +35,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
     std::vector<Step> accumulated_steps;
     std::vector<std::vector<StopId>> accumulated_actual_paths;
     for (size_t i = 0; i < gen_perm.size(); ++i) {
-      std::span<const Path> edge_paths = state.completed.PathsBetween(
+      std::span<const Path> edge_paths = completed.PathsBetween(
           gen_perm[i], gen_perm[(i + 1) % gen_perm.size()]
       );
       std::vector<Step> edge_steps;
