@@ -199,6 +199,7 @@ int main(int argc, char* argv[]) {
   std::string trip_id_prefix;
   std::string route_ids;
   std::string exclude_stop_ids;
+  std::string exclude_route_ids;
 
   app.add_option("config_path", config_path, "Path to TOML config file")
       ->required();
@@ -217,6 +218,11 @@ int main(int argc, char* argv[]) {
       "--route_ids",
       route_ids,
       "Comma-separated list of exact route IDs to include"
+  );
+  app.add_option(
+      "--exclude_route_ids",
+      exclude_route_ids,
+      "Comma-separated list of exact route IDs to exclude"
   );
   app.add_option(
       "--exclude_stop_ids",
@@ -262,6 +268,24 @@ int main(int argc, char* argv[]) {
       std::unordered_set<GtfsTripId> matching_trips;
       for (const auto& trip : data.trips) {
         if (route_id_set.count(trip.route_direction_id.route_id)) {
+          matching_trips.insert(trip.trip_id);
+        }
+      }
+      data = GtfsDayFilterByTrips(data, matching_trips);
+      RemoveUnreferencedTripsRoutesAndDirections(data);
+    }
+
+    if (!exclude_route_ids.empty()) {
+      std::unordered_set<GtfsRouteId> exclude_route_id_set;
+      std::istringstream ss(exclude_route_ids);
+      std::string id;
+      while (std::getline(ss, id, ',')) {
+        exclude_route_id_set.insert(GtfsRouteId{id});
+      }
+
+      std::unordered_set<GtfsTripId> matching_trips;
+      for (const auto& trip : data.trips) {
+        if (!exclude_route_id_set.count(trip.route_direction_id.route_id)) {
           matching_trips.insert(trip.trip_id);
         }
       }
