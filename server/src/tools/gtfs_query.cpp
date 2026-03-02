@@ -199,7 +199,6 @@ int main(int argc, char* argv[]) {
   std::string trip_id_prefix;
   std::string route_ids;
   std::string exclude_stop_ids;
-  std::string exclude_stop_id_prefixes;
 
   app.add_option("config_path", config_path, "Path to TOML config file")
       ->required();
@@ -223,11 +222,6 @@ int main(int argc, char* argv[]) {
       "--exclude_stop_ids",
       exclude_stop_ids,
       "Comma-separated list of stop IDs to exclude from output"
-  );
-  app.add_option(
-      "--exclude_stop_id_prefixes",
-      exclude_stop_id_prefixes,
-      "Comma-separated list of stop ID prefixes to exclude from output"
   );
 
   CLI11_PARSE(app, argc, argv);
@@ -282,25 +276,6 @@ int main(int argc, char* argv[]) {
       std::string id;
       while (std::getline(ss, id, ',')) {
         exclude_stop_id_set.insert(GtfsStopId{id});
-      }
-    }
-
-    // Parse exclude_stop_id_prefixes and resolve matching stops into the
-    // exclude set
-    if (!exclude_stop_id_prefixes.empty()) {
-      std::vector<std::string> prefixes;
-      std::istringstream ss(exclude_stop_id_prefixes);
-      std::string prefix;
-      while (std::getline(ss, prefix, ',')) {
-        prefixes.push_back(prefix);
-      }
-      for (const auto& stop : data.stops) {
-        for (const auto& p : prefixes) {
-          if (stop.stop_id.v.substr(0, p.length()) == p) {
-            exclude_stop_id_set.insert(stop.stop_id);
-            break;
-          }
-        }
       }
     }
 
