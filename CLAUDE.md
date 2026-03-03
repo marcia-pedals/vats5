@@ -18,3 +18,8 @@
 - `bin/viz url` — print the URL
 - `bin/viz logs` — tail the log file
 - Always run `bin/viz status` before attempting to start the server.
+
+## Pull Requests
+
+- When creating a PR, always use a blank description (empty `--body ""`).
+- When updating a PR, always create new commit(s) and push them. Never amend existing commits.
