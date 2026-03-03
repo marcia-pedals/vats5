@@ -250,7 +250,8 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
       state.required_stops,
       state.stop_infos,
       state.step_partition_names,
-      state.original_edges
+      state.original_edges,
+      state.alternate_stop
   );
 
   std::optional<TspTourResult> result;
@@ -260,6 +261,24 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
   RC_ASSERT(result.has_value());
+  int lower_bound = result->optimal_value;
+  int actual_value = BruteForceSolveOptimalDuration(state);
+  RC_ASSERT(lower_bound == actual_value);
+}
+
+// All-flex complete bidirectional graph with distinct partitions per step: the
+// tarel lower bound should be tight (equal to brute force optimal).
+RC_GTEST_PROP(TarelGraphTest, LowerBoundFlexComplete, ()) {
+  ProblemState state = *GenFlexProblemState();
+
+  std::optional<TspTourResult> result;
+  try {
+    result = ComputeTarelLowerBound(state);
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
+  RC_ASSERT(result.has_value());
+
   int lower_bound = result->optimal_value;
   int actual_value = BruteForceSolveOptimalDuration(state);
   RC_ASSERT(lower_bound == actual_value);
@@ -400,7 +419,7 @@ TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
        .original_destinations = {stateB1}},
   };
 
-  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges, {});
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.
@@ -424,7 +443,8 @@ RC_GTEST_PROP(
   );
 
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+  std::vector<TarelEdge> merged =
+      MergeEquivalentTarelStates(edges, state.alternate_stop);
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.

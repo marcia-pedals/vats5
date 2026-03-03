@@ -16,6 +16,35 @@
 
 namespace vats5 {
 
+rc::Gen<std::unordered_map<StopId, StopId>> GenAlternateStop(int num_stops) {
+  return rc::gen::map(
+      rc::gen::mapcat(
+          rc::gen::inRange(1, num_stops + 1),
+          [num_stops](int num_groups) {
+            return rc::gen::container<std::vector<int>>(
+                num_stops, rc::gen::inRange(0, num_groups)
+            );
+          }
+      ),
+      [num_stops](std::vector<int> group_assignments)
+          -> std::unordered_map<StopId, StopId> {
+        std::unordered_map<int, std::vector<int>> groups;
+        for (int i = 0; i < num_stops; ++i) {
+          groups[group_assignments[i]].push_back(i);
+        }
+        std::unordered_map<StopId, StopId> alternate_stop;
+        for (const auto& [group_id, members] : groups) {
+          if (members.size() <= 1) continue;
+          StopId representative{members[0]};
+          for (size_t i = 1; i < members.size(); ++i) {
+            alternate_stop[StopId{members[i]}] = representative;
+          }
+        }
+        return alternate_stop;
+      }
+  );
+}
+
 rc::Gen<ProblemState> GenProblemState(
     std::optional<rc::Gen<CycleIsFlex>> cycle_is_flex_gen,
     std::optional<rc::Gen<StepPartitionId>> step_partition_gen
@@ -77,12 +106,14 @@ rc::Gen<ProblemState> GenProblemState(
 
               return rc::gen::map(
                   rc::gen::tuple(
-                      std::move(steps_gen), std::move(cycle_steps_partition_gen)
+                      std::move(steps_gen),
+                      std::move(cycle_steps_partition_gen),
+                      GenAlternateStop(num_actual_stops)
                   ),
                   [num_actual_stops,
                    cycle_is_flex,
                    step_partition_gen_defaulted](auto arg) -> ProblemState {
-                    auto [steps, cycle_step_partitions] = arg;
+                    auto [steps, cycle_step_partitions, alternate_stop] = arg;
 
                     // Set up all the stops.
                     std::unordered_set<StopId> stops;
@@ -141,9 +172,83 @@ rc::Gen<ProblemState> GenProblemState(
                         stops,
                         stop_infos,
                         {},
-                        {}
+                        {},
+                        std::move(alternate_stop)
                     );
                   }
+              );
+            }
+        );
+      }
+  );
+}
+
+rc::Gen<ProblemState> GenFlexProblemState() {
+  rc::Gen<int> num_actual_stops_gen = rc::gen::inRange(2, 5);
+
+  return rc::gen::mapcat(
+      num_actual_stops_gen, [](int num_actual_stops) -> rc::Gen<ProblemState> {
+        int num_edges = num_actual_stops * (num_actual_stops - 1);
+
+        rc::Gen<std::vector<int>> durations_gen =
+            rc::gen::container<std::vector<int>>(
+                num_edges, rc::gen::inRange(1, 600)
+            );
+
+        return rc::gen::map(
+            rc::gen::tuple(
+                std::move(durations_gen), GenAlternateStop(num_actual_stops)
+            ),
+            [num_actual_stops](auto arg) -> ProblemState {
+              auto [durations, alternate_stop] = arg;
+
+              std::unordered_set<StopId> stops;
+              std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+              for (int i = 0; i < num_actual_stops; ++i) {
+                StopId stop{i};
+                stops.insert(stop);
+                stop_infos[stop] = ProblemStateStopInfo{
+                    GtfsStopId{std::string(1, 'a' + i)}, std::string(1, 'a' + i)
+                };
+              }
+
+              // Complete bidirectional graph of flex steps, each with a
+              // distinct partition.
+              std::vector<Step> steps;
+              TripId next_trip_id{0};
+              int edge_idx = 0;
+              for (int i = 0; i < num_actual_stops; ++i) {
+                for (int j = 0; j < num_actual_stops; ++j) {
+                  if (i == j) continue;
+                  TripId trip_id = next_trip_id;
+                  next_trip_id.v += 1;
+                  steps.push_back(
+                      Step::PrimitiveFlex(
+                          StopId{i},
+                          StopId{j},
+                          durations[edge_idx],
+                          trip_id,
+                          StepPartitionId{edge_idx}
+                      )
+                  );
+                  edge_idx += 1;
+                }
+              }
+
+              ProblemBoundary boundary{
+                  .start = StopId{num_actual_stops},
+                  .end = StopId{num_actual_stops + 1},
+              };
+              AddBoundary(steps, stops, stop_infos, boundary);
+
+              return MakeProblemState(
+                  MakeAdjacencyList(steps),
+                  boundary,
+                  stops,
+                  stop_infos,
+                  {},
+                  {},
+                  std::move(alternate_stop)
               );
             }
         );

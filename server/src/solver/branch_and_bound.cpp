@@ -174,7 +174,8 @@ ProblemState ApplyConstraints(
       std::move(required_stops),
       std::move(stop_infos),
       state.step_partition_names,
-      original_edges
+      original_edges,
+      state.alternate_stop
   );
 }
 

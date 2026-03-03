@@ -37,7 +37,13 @@ ProblemState ProblemState::WithRequiredStops(
     const std::unordered_set<StopId>& stops
 ) const {
   return MakeProblemState(
-      minimal, boundary, stops, stop_infos, step_partition_names, original_edges
+      minimal,
+      boundary,
+      stops,
+      stop_infos,
+      step_partition_names,
+      original_edges,
+      alternate_stop
   );
 }
 
@@ -152,13 +158,20 @@ ProblemState MakeProblemState(
     std::unordered_set<StopId> stops,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges
+    std::unordered_map<StopId, PlainEdge> original_edges,
+    std::unordered_map<StopId, StopId> alternate_stop
 ) {
   StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
   );
+
+  // Check that alternate_stop is really just a forest of a depth-1 trees.
+  for (const auto& [stop, alternate] : alternate_stop) {
+    assert(!alternate_stop.contains(alternate));
+  }
+
   return ProblemState{
       std::move(minimal),
       std::move(completed),
@@ -167,6 +180,7 @@ ProblemState MakeProblemState(
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
+      std::move(alternate_stop),
   };
 }
 
@@ -506,7 +520,8 @@ struct EdgeSignature {
 };
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(
-    const std::vector<TarelEdge>& edges
+    const std::vector<TarelEdge>& edges,
+    const std::unordered_map<StopId, StopId>& alternate_stop
 ) {
   // Two tarel states are "equivalent" if they have the same `origin.stop`, and
   // they have the same set of `destination`s and they have matching `weights`
@@ -559,7 +574,12 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
   // Group canonical states by stop and assign contiguous IDs.
   std::unordered_map<StopId, std::vector<TarelState>> canonical_by_stop;
   for (const TarelState& ts : all_canonical_states) {
-    canonical_by_stop[ts.stop].push_back(ts);
+    auto representative_it = alternate_stop.find(ts.stop);
+    StopId representative = representative_it == alternate_stop.end()
+                                ? ts.stop
+                                : representative_it->second;
+
+    canonical_by_stop[representative].push_back(ts);
   }
 
   std::unordered_map<TarelState, TarelState> renumbered_state;
@@ -861,9 +881,8 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  ProblemState reduced_state = state;
-  auto edges = MakeTarelEdges(reduced_state.completed);
-  auto merged_edges = MergeEquivalentTarelStates(edges);
+  auto edges = MakeTarelEdges(state.completed);
+  auto merged_edges = MergeEquivalentTarelStates(edges, state.alternate_stop);
   auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
   return SolveTspAndExtractTour(
       merged_edges, graph, state.boundary, ub, tsp_log

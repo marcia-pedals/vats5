@@ -11,11 +11,9 @@
 
 namespace vats5 {
 
-std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
-    const ProblemState& state
+void EnumeratePermutations(
+    const ProblemState& state, const SolutionSpaceCallback& callback
 ) {
-  std::vector<SolutionSpaceElement> space;
-
   // Make the initial generating permutation, which is
   // START -> ... all non-boundary stops in order ... -> END.
   std::vector<StopId> gen_perm;
@@ -81,7 +79,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
         // See function doc comment.
         continue;
       }
-      space.push_back(
+      callback(
           SolutionSpaceElement{
               .generating_permutation = gen_perm,
               .actual_path = accumulated_actual_paths[i],
@@ -90,24 +88,67 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
       );
     }
   } while (std::next_permutation(gen_perm.begin() + 1, gen_perm.end() - 1));
+}
 
-  return space;
+void EnumerateSolutionSpace(
+    const ProblemState& state, const SolutionSpaceCallback& callback
+) {
+  // Build groups from alternate_stop: for every required non-boundary stop,
+  // look up its rep (self if not in alternate_stop).
+  std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
+  for (StopId stop : state.required_stops) {
+    if (stop == state.boundary.start || stop == state.boundary.end) continue;
+    auto it = state.alternate_stop.find(stop);
+    StopId rep = (it != state.alternate_stop.end()) ? it->second : stop;
+    groups_by_rep[rep].push_back(stop);
+  }
+  for (auto& [rep, members] : groups_by_rep) {
+    std::sort(members.begin(), members.end(), [](StopId a, StopId b) {
+      return a.v < b.v;
+    });
+  }
+
+  // Collect groups sorted by first member for determinism.
+  std::vector<std::vector<StopId>> groups;
+  for (auto& [rep, members] : groups_by_rep) {
+    groups.push_back(std::move(members));
+  }
+  std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
+    return a[0].v < b[0].v;
+  });
+
+  // Enumerate all combinations: for each group, try each member.
+  std::vector<int> choices(groups.size(), 0);
+
+  while (true) {
+    ProblemState modified = state;
+    modified.required_stops = {state.boundary.start, state.boundary.end};
+    for (size_t g = 0; g < groups.size(); ++g) {
+      modified.required_stops.insert(groups[g][choices[g]]);
+    }
+
+    EnumeratePermutations(modified, callback);
+
+    // Advance to next combination.
+    bool advanced = false;
+    for (int i = static_cast<int>(groups.size()) - 1; i >= 0; --i) {
+      choices[i]++;
+      if (choices[i] < static_cast<int>(groups[i].size())) {
+        advanced = true;
+        break;
+      }
+      choices[i] = 0;
+    }
+    if (!advanced) break;
+  }
 }
 
 int BruteForceSolveOptimalDuration(const ProblemState& state) {
-  std::vector<SolutionSpaceElement> space = EnumerateSolutionSpace(state);
-  auto it = std::min_element(
-      space.begin(),
-      space.end(),
-      [](const SolutionSpaceElement& a, const SolutionSpaceElement& b) {
-        return a.merged_step.DurationSeconds() <
-               b.merged_step.DurationSeconds();
-      }
-  );
-  if (it == space.end()) {
-    return std::numeric_limits<int>::max();
-  }
-  return it->merged_step.DurationSeconds();
+  int best = std::numeric_limits<int>::max();
+  EnumerateSolutionSpace(state, [&](const SolutionSpaceElement& elem) {
+    best = std::min(best, elem.merged_step.DurationSeconds());
+  });
+  return best;
 }
 
 }  // namespace vats5

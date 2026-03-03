@@ -87,6 +87,10 @@ struct ProblemState {
   // original edge for (a->b) has endpoints a and b.
   std::unordered_map<StopId, PlainEdge> original_edges;
 
+  // Maps a stop to its alternate stop. When a stop has an alternate, the solver
+  // may choose to visit the alternate instead of the original.
+  std::unordered_map<StopId, StopId> alternate_stop;
+
   const std::string& StopName(StopId stop) const {
     return stop_infos.at(stop).stop_name;
   }
@@ -129,7 +133,8 @@ ProblemState MakeProblemState(
     std::unordered_set<StopId> stops,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges
+    std::unordered_map<StopId, PlainEdge> original_edges,
+    std::unordered_map<StopId, StopId> alternate_stop = {}
 );
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
@@ -149,6 +154,10 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   for (const auto& [k, v] : s.original_edges) {
     original_edges_vec.emplace_back(k.v, v);
   }
+  std::vector<std::pair<int, int>> alternate_stop_vec;
+  for (const auto& [k, v] : s.alternate_stop) {
+    alternate_stop_vec.emplace_back(k.v, v.v);
+  }
   j = nlohmann::json{
       {"minimal", s.minimal},
       {"boundary", s.boundary},
@@ -156,6 +165,7 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
       {"stop_infos", stop_infos_vec},
       {"step_partition_names", step_partition_names_vec},
       {"original_edges", original_edges_vec},
+      {"alternate_stop", alternate_stop_vec},
   };
 }
 
@@ -183,13 +193,21 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
        j.at("original_edges").get<std::vector<std::pair<int, PlainEdge>>>()) {
     original_edges[StopId{k}] = v;
   }
+  std::unordered_map<StopId, StopId> alternate_stop;
+  if (j.contains("alternate_stop")) {
+    for (const auto& [k, v] :
+         j.at("alternate_stop").get<std::vector<std::pair<int, int>>>()) {
+      alternate_stop[StopId{k}] = StopId{v};
+    }
+  }
   s = MakeProblemState(
       std::move(minimal),
       boundary,
       std::move(required_stops),
       std::move(stop_infos),
       std::move(step_partition_names),
-      std::move(original_edges)
+      std::move(original_edges),
+      std::move(alternate_stop)
   );
 }
 
@@ -353,7 +371,8 @@ InitializeProblemStateResult InitializeProblemState(
 );
 
 std::vector<TarelEdge> MergeEquivalentTarelStates(
-    const std::vector<TarelEdge>& edges
+    const std::vector<TarelEdge>& edges,
+    const std::unordered_map<StopId, StopId>& alternate_stop
 );
 
 TspGraphData MakeTspGraphEdges(

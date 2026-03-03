@@ -185,7 +185,8 @@ PartialSolution PartialSolveBranchAndBound(
       required_subset,
       original_problem.stop_infos,
       original_problem.step_partition_names,
-      original_problem.original_edges
+      original_problem.original_edges,
+      original_problem.alternate_stop
   );
 
   auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
