@@ -67,16 +67,8 @@ ProblemState ApplyConstraints(
       };
       required.representative[ab] = ab;
 
-      // Erases `to_erase` from `required`, including all stops in its group.
-      auto EraseRequired = [&](StopId to_erase) {
-        StopId rep = required.Representative(to_erase);
-        std::erase_if(required.representative, [&](const auto& pair) {
-          return pair.second == rep;
-        });
-      };
-
-      EraseRequired(require.a);
-      EraseRequired(require.b);
+      required.EraseGroup(require.a);
+      required.EraseGroup(require.b);
 
       assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {

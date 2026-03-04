@@ -73,11 +73,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     PartialSolutionData, leaves, paths, best_path
 )
 
-// Builds an MST over the required stops (excluding start/end) using min
+// Builds an MST over the required groups (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
 //
-// Stop groups are treated as 1 node in this computation, and when a group is a
-// leaf, we return all its elements in the result.
+// Returns flattened groups (all stops in all groups rather than just the
+// representatives).
 std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Collect all stops, excluding START and END.
   std::vector<StopId> stops;
@@ -138,12 +138,7 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
       StopId stop = stops[i];
-      leaves.insert(stops[i]);
-      for (const auto& [child, rep] : state.required.representative) {
-        if (rep == stop) {
-          leaves.insert(child);
-        }
-      }
+      state.required.VisitGroupStops(stop, [&](StopId s) { leaves.insert(s); });
     }
   }
   return leaves;
@@ -196,24 +191,17 @@ PartialSolution PartialSolveBranchAndBound(
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
 
-  // Build partial RequiredStops by filtering the original required stops to
-  // just this subset, keeping group structure for reps that are in the subset.
-  RequiredStops partial_required;
-  for (const auto& [stop, rep] : original_problem.required.representative) {
-    if (required_subset.contains(stop)) {
-      // Keep the original rep if the rep is in the subset, otherwise self-map.
-      if (required_subset.contains(rep)) {
-        partial_required.representative[stop] = rep;
-      } else {
-        partial_required.representative[stop] = stop;
-      }
-    }
+  // Filter required to just this subset. Each group must be entirely present
+  // or entirely absent, since we add stops by group via VisitGroupStops.
+  RequiredStops partial_required = original_problem.required;
+  std::erase_if(partial_required.representative, [&](const auto& pair) {
+    return !required_subset.contains(pair.first);
+  });
+  // Assert each group is entirely present or entirely absent.
+  for (const auto& [stop, rep] : partial_required.representative) {
+    assert(partial_required.representative.contains(rep));
+    assert(partial_required.representative.at(rep) == rep);
   }
-  // Ensure boundary stops are present.
-  partial_required.representative[original_problem.boundary.start] =
-      original_problem.boundary.start;
-  partial_required.representative[original_problem.boundary.end] =
-      original_problem.boundary.end;
 
   ProblemState partial_problem = MakeProblemState(
       MakeAdjacencyList(
@@ -354,13 +342,9 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     std::unordered_set<StopId> unvisited = original_problem.required.AllFlat();
     result.path.VisitAllStops([&](StopId stop) {
       StopId visited_rep = original_problem.required.Representative(stop);
-      unvisited.erase(visited_rep);
-      for (const auto& [child, rep] :
-           original_problem.required.representative) {
-        if (rep == visited_rep) {
-          unvisited.erase(child);
-        }
-      }
+      original_problem.required.VisitGroupStops(visited_rep, [&](StopId s) {
+        unvisited.erase(s);
+      });
     });
 
     std::vector<PartialSolutionPath> improved;
@@ -695,12 +679,9 @@ int main(int argc, char* argv[]) {
     StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
               << "\n\n";
-    required_subset.insert(farthest);
-    for (const auto& [child, rep] : state.required.representative) {
-      if (rep == farthest) {
-        required_subset.insert(child);
-      }
-    }
+    state.required.VisitGroupStops(farthest, [&](StopId s) {
+      required_subset.insert(s);
+    });
   }
 
   return 0;

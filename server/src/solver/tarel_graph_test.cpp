@@ -136,10 +136,14 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : stops) {
+    required.representative[stop] = stop;
+  }
   ProblemState state = MakeProblemState(
       MakeAdjacencyList(steps),
       boundary,
-      RequiredStops::FromStopsAndGroups(stops),
+      std::move(required),
       stop_infos,
       {},
       {}

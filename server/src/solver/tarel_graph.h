@@ -70,9 +70,27 @@ struct RequiredStops {
   // Deduplicated group representatives (unique values of representative).
   std::unordered_set<StopId> GroupRepresentatives() const;
 
+  // Groups of stops, where each group is a vector of stops sharing the same
+  // representative. Groups are sorted by first member for determinism.
+  std::vector<std::vector<StopId>> Groups() const;
+
   // Lookup representative for any stop. If not in map, returns stop itself
   // (safe for non-required stops).
   StopId Representative(StopId stop) const;
+
+  // Calls callback for every stop in the same group as `rep`.
+  template <typename F>
+  void VisitGroupStops(StopId rep, F&& callback) const {
+    for (const auto& [stop, r] : representative) {
+      if (r == rep) {
+        callback(stop);
+      }
+    }
+  }
+
+  // Erase an entire group by representative. Removes all entries whose
+  // representative matches the representative of `stop`.
+  void EraseGroup(StopId stop);
 
   // Whether stop is required.
   bool Contains(StopId stop) const;
@@ -81,14 +99,6 @@ struct RequiredStops {
   size_t size() const;
 
   bool operator==(const RequiredStops&) const = default;
-
-  // Build from a set of stops and optional group representative map.
-  // In the group_rep map, non-representatives map to their representative.
-  // Representatives and ungrouped stops are not in group_rep.
-  static RequiredStops FromStopsAndGroups(
-      const std::unordered_set<StopId>& stops,
-      const std::unordered_map<StopId, StopId>& group_rep = {}
-  );
 };
 
 struct ProblemState {
@@ -167,10 +177,9 @@ ProblemState MakeProblemState(
 );
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
-  // Serialize required stops as a flat list (same JSON format as before).
-  std::vector<int> required_stops_vec;
-  for (const auto& [stop, _] : s.required.representative) {
-    required_stops_vec.push_back(stop.v);
+  std::vector<std::pair<int, int>> required_vec;
+  for (const auto& [stop, rep] : s.required.representative) {
+    required_vec.emplace_back(stop.v, rep.v);
   }
   std::vector<std::pair<int, ProblemStateStopInfo>> stop_infos_vec;
   for (const auto& [k, v] : s.stop_infos) {
@@ -184,31 +193,23 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   for (const auto& [k, v] : s.original_edges) {
     original_edges_vec.emplace_back(k.v, v);
   }
-  // Serialize group representatives: only non-self mappings (same as the old
-  // stop_group_representative format).
-  std::vector<std::pair<int, int>> alternate_stop_vec;
-  for (const auto& [stop, rep] : s.required.representative) {
-    if (stop != rep) {
-      alternate_stop_vec.emplace_back(stop.v, rep.v);
-    }
-  }
   j = nlohmann::json{
       {"minimal", s.minimal},
       {"boundary", s.boundary},
-      {"required_stops", required_stops_vec},
+      {"required", required_vec},
       {"stop_infos", stop_infos_vec},
       {"step_partition_names", step_partition_names_vec},
       {"original_edges", original_edges_vec},
-      {"alternate_stop", alternate_stop_vec},
   };
 }
 
 inline void from_json(const nlohmann::json& j, ProblemState& s) {
   auto minimal = j.at("minimal").get<StepsAdjacencyList>();
   auto boundary = j.at("boundary").get<ProblemBoundary>();
-  std::unordered_set<StopId> required_stops;
-  for (int v : j.at("required_stops").get<std::vector<int>>()) {
-    required_stops.insert(StopId{v});
+  RequiredStops required;
+  for (const auto& [stop_v, rep_v] :
+       j.at("required").get<std::vector<std::pair<int, int>>>()) {
+    required.representative[StopId{stop_v}] = StopId{rep_v};
   }
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
   for (const auto& [k, v] :
@@ -227,17 +228,10 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
        j.at("original_edges").get<std::vector<std::pair<int, PlainEdge>>>()) {
     original_edges[StopId{k}] = v;
   }
-  std::unordered_map<StopId, StopId> alternate_stop;
-  if (j.contains("alternate_stop")) {
-    for (const auto& [k, v] :
-         j.at("alternate_stop").get<std::vector<std::pair<int, int>>>()) {
-      alternate_stop[StopId{k}] = StopId{v};
-    }
-  }
   s = MakeProblemState(
       std::move(minimal),
       boundary,
-      RequiredStops::FromStopsAndGroups(required_stops, alternate_stop),
+      std::move(required),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges)

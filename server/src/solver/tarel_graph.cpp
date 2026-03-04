@@ -35,6 +35,24 @@ std::unordered_set<StopId> RequiredStops::GroupRepresentatives() const {
   return result;
 }
 
+std::vector<std::vector<StopId>> RequiredStops::Groups() const {
+  std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
+  for (const auto& [stop, rep] : representative) {
+    groups_by_rep[rep].push_back(stop);
+  }
+  std::vector<std::vector<StopId>> result;
+  for (auto& [rep, members] : groups_by_rep) {
+    std::sort(members.begin(), members.end(), [](StopId a, StopId b) {
+      return a.v < b.v;
+    });
+    result.push_back(std::move(members));
+  }
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+    return a[0].v < b[0].v;
+  });
+  return result;
+}
+
 StopId RequiredStops::Representative(StopId stop) const {
   auto it = representative.find(stop);
   return it == representative.end() ? stop : it->second;
@@ -46,16 +64,11 @@ bool RequiredStops::Contains(StopId stop) const {
 
 size_t RequiredStops::size() const { return representative.size(); }
 
-RequiredStops RequiredStops::FromStopsAndGroups(
-    const std::unordered_set<StopId>& stops,
-    const std::unordered_map<StopId, StopId>& group_rep
-) {
-  RequiredStops result;
-  for (StopId stop : stops) {
-    auto it = group_rep.find(stop);
-    result.representative[stop] = it == group_rep.end() ? stop : it->second;
-  }
-  return result;
+void RequiredStops::EraseGroup(StopId stop) {
+  StopId rep = Representative(stop);
+  std::erase_if(representative, [&](const auto& pair) {
+    return pair.second == rep;
+  });
 }
 
 void ExpandStop(
@@ -186,37 +199,16 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "]\n";
 
-  std::unordered_set<StopId> group_reps = state.required.GroupRepresentatives();
-  if (group_reps.size() < state.required.size()) {
-    std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
-    for (const auto& [stop, rep] : state.required.representative) {
-      groups_by_rep[rep].push_back(stop);
+  os << "  groups=[\n";
+  for (const auto& group : state.required.Groups()) {
+    os << "    [";
+    for (size_t i = 0; i < group.size(); ++i) {
+      if (i > 0) os << ", ";
+      os << state.stop_infos.at(group[i]).stop_name;
     }
-    std::vector<std::vector<StopId>> groups;
-    for (auto& [rep, members] : groups_by_rep) {
-      groups.push_back(std::move(members));
-    }
-    for (auto& group : groups) {
-      std::sort(group.begin(), group.end(), [](StopId a, StopId b) {
-        return a.v < b.v;
-      });
-    }
-    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
-      return a[0].v < b[0].v;
-    });
-    os << "  groups=[\n";
-    for (const auto& group : groups) {
-      StopId rep_id = state.required.Representative(group[0]);
-      os << "    [";
-      for (size_t i = 0; i < group.size(); ++i) {
-        if (i > 0) os << ", ";
-        os << state.stop_infos.at(group[i]).stop_name;
-      }
-      os << "] (representative " << state.stop_infos.at(rep_id).stop_name
-         << ")\n";
-    }
-    os << "  ]\n";
+    os << "]\n";
   }
+  os << "  ]\n";
 
   os << "}";
 }
@@ -229,6 +221,14 @@ ProblemState MakeProblemState(
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
+  // Validate that the representative map forms a forest of depth-1 trees
+  // (every value is either the key itself or maps to itself).
+  for (const auto& [stop, rep] : required.representative) {
+    auto rep_it = required.representative.find(rep);
+    assert(rep_it != required.representative.end());
+    assert(rep_it->second == rep);
+  }
+
   std::unordered_set<StopId> stops = required.AllFlat();
   StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
@@ -444,11 +444,16 @@ InitializeProblemStateResult InitializeProblemState(
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, required_stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : required_stops) {
+    required.representative[stop] = stop;
+  }
+
   return InitializeProblemStateResult{
       .problem_state = MakeProblemState(
           MakeAdjacencyList(steps),
           boundary,
-          RequiredStops::FromStopsAndGroups(required_stops),
+          std::move(required),
           stop_infos,
           step_partition_to_route_desc,
           {}
