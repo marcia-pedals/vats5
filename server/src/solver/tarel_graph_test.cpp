@@ -407,24 +407,16 @@ TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
   TarelState stateB1{StopId{1}, StepPartitionId{1}};  // destination-only
 
   std::vector<TarelEdge> edges = {
-      {.origin = stateA0,
-       .destination = stateB0,
-       .weight = 100,
-       .original_origins = {stateA0},
-       .original_destinations = {stateB0}},
-      {.origin = stateA1,
-       .destination = stateB1,
-       .weight = 200,
-       .original_origins = {stateA1},
-       .original_destinations = {stateB1}},
+      {.origin = stateA0, .destination = stateB0, .weight = 100},
+      {.origin = stateA1, .destination = stateB1, .weight = 200},
   };
 
-  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges, {});
+  TarelStateRemapResult remap = RemapTarelStates(edges, {});
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, {StopId{0}, StopId{1}});
+      ValidateMergedEdgePartitions(remap.edges, {StopId{0}, StopId{1}});
   EXPECT_TRUE(errors.empty())
       << "Validation errors: " << (errors.empty() ? "" : errors[0]);
 }
@@ -443,8 +435,7 @@ RC_GTEST_PROP(
   );
 
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  std::vector<TarelEdge> merged =
-      MergeEquivalentTarelStates(edges, state.alternate_stop);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.alternate_stop);
 
   std::unordered_set<StopId> expected_stops;
   for (StopId stop : state.required_stops) {
@@ -456,7 +447,7 @@ RC_GTEST_PROP(
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, expected_stops);
+      ValidateMergedEdgePartitions(remap.edges, expected_stops);
   RC_ASSERT(errors.empty());
 }
 

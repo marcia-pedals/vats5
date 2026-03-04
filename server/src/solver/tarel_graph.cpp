@@ -531,8 +531,6 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
                 .origin = origin,
                 .destination = dest,
                 .weight = weight,
-                .original_origins = {origin},
-                .original_destinations = {dest},
             }
         );
       }
@@ -556,13 +554,13 @@ struct EdgeSignature {
   }
 };
 
-std::vector<TarelEdge> MergeEquivalentTarelStates(
+TarelStateRemapResult RemapTarelStates(
     const std::vector<TarelEdge>& edges,
     const std::unordered_map<StopId, StopId>& alternate_stop
 ) {
-  // Two tarel states are "equivalent" if they have the same `origin.stop`, and
-  // they have the same set of `destination`s and they have matching `weights`
-  // to each `destination`.
+  // Two tarel states are "equivalent" if they have the same `stop`, and they
+  // have the same set of `destination`s and they have matching `weights` to
+  // each `destination`.
 
   // Step 1: Build the "edge signature" for each TarelState.
   // The signature is the sorted list of (destination, weight) pairs.
@@ -635,17 +633,24 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
     return renumbered_state[canonical_state[ts]];
   };
 
-  // Collect original states and weight for each merged edge.
+  TarelStateRemapResult result;
+
+  // Collect weight for each merged edge.
   // Key is (new_origin, new_dest).
   struct MergedEdgeData {
     int weight;
-    std::vector<TarelState> original_origins;
-    std::vector<TarelState> original_destinations;
   };
   std::map<std::pair<TarelState, TarelState>, MergedEdgeData> merged_edges;
   for (const TarelEdge& edge : edges) {
     TarelState new_origin = final_state(edge.origin);
     TarelState new_dest = final_state(edge.destination);
+
+    // TODO: If multiple states map to the same remapped state, then we
+    // arbitrarily pick one. Think more about when this can happen and whether
+    // this is ok to do.
+    result.mapped_to_original[new_origin] = edge.origin;
+    result.mapped_to_original[new_dest] = edge.destination;
+
     auto [it, inserted] = merged_edges.try_emplace(
         {new_origin, new_dest}, MergedEdgeData{.weight = edge.weight}
     );
@@ -653,49 +658,19 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
     if (!inserted) {
       // TODO: Think harder about whether taking the min merged edge weight
       // makes sense.
-      // TODO: Consider whether we have to clear `original_origins` and
-      // `original_destinations`.
       if (edge.weight < data.weight) {
         data.weight = edge.weight;
       }
     }
-    for (const TarelState& orig : edge.original_origins) {
-      data.original_origins.push_back(orig);
-    }
-    for (const TarelState& orig : edge.original_destinations) {
-      data.original_destinations.push_back(orig);
-    }
   }
 
-  std::vector<TarelEdge> result;
   for (const auto& [key, data] : merged_edges) {
     const auto& [new_origin, new_dest] = key;
-    auto sorted_origins = data.original_origins;
-    auto sorted_destinations = data.original_destinations;
-    std::ranges::sort(
-        sorted_origins,
-        [](const TarelState& a, const TarelState& b) { return a < b; }
-    );
-    std::ranges::sort(
-        sorted_destinations,
-        [](const TarelState& a, const TarelState& b) { return a < b; }
-    );
-    sorted_origins.erase(
-        std::unique(sorted_origins.begin(), sorted_origins.end()),
-        sorted_origins.end()
-    );
-    sorted_destinations.erase(
-        std::unique(sorted_destinations.begin(), sorted_destinations.end()),
-        sorted_destinations.end()
-    );
-
-    result.push_back(
+    result.edges.push_back(
         TarelEdge{
             .origin = new_origin,
             .destination = new_dest,
             .weight = data.weight,
-            .original_origins = std::move(sorted_origins),
-            .original_destinations = std::move(sorted_destinations),
         }
     );
   }
@@ -822,11 +797,9 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     assert(false);
   };
 
-  // Validate tour and extract original StopIds.
+  // Validate tour and extract edges.
+  std::vector<TarelEdge> tour_edges;
   std::vector<std::string> tour_errors;
-  TspTourResult result;
-  result.optimal_value = solution->optimal_value;
-  TimeSinceServiceStart accumulated_weight{0};
   TarelState cur_state = TarelState{boundary.start, 0};
   int cur_stop_visited_states = 1;
   for (int tour_idx = 1; tour_idx < solution->tour.size() + 1; ++tour_idx) {
@@ -867,17 +840,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
       TarelState tarel_origin = cur_state;
       tarel_origin.partition.v =
           (cur_state.partition.v + 1) % cur_stop_num_states;
-      TarelEdge edge = FindTarelEdge(tarel_origin, next_state);
-      accumulated_weight.seconds += edge.weight;
-      result.cumulative_weights.push_back(accumulated_weight);
-      result.tour_edges.push_back(edge);
-
+      tour_edges.push_back(FindTarelEdge(tarel_origin, next_state));
       cur_stop_visited_states = 1;
-      if (cur_state.stop != boundary.start) {
-        // Note: Intentionally missing the last stop of `tour` because that is
-        // END.
-        result.original_stop_tour.push_back(cur_state.stop);
-      }
     }
 
     cur_state = next_state;
@@ -889,16 +853,18 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     }
     throw InvalidTourStructure(msg);
   }
-
-  return result;
+  return TspTourResult{
+      .optimal_value = solution->optimal_value,
+      .tour_edges = tour_edges,
+  };
 }
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
-  auto edges = MakeTarelEdges(state.completed);
-  auto merged_edges = MergeEquivalentTarelStates(edges, state.alternate_stop);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
+  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.alternate_stop);
+  TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
   // Check that at least one representative from each group of required stops
   // appears in `graph`.
@@ -923,9 +889,19 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  return SolveTspAndExtractTour(
-      merged_edges, graph, state.boundary, ub, tsp_log
-  );
+  std::optional<TspTourResult> result =
+      SolveTspAndExtractTour(remap.edges, graph, state.boundary, ub, tsp_log);
+  if (!result.has_value()) {
+    return std::nullopt;
+  }
+
+  // Map `result` states back to original states.
+  for (TarelEdge& edge : result->tour_edges) {
+    edge.origin = remap.mapped_to_original.at(edge.origin);
+    edge.destination = remap.mapped_to_original.at(edge.destination);
+  }
+
+  return result;
 }
 
 void WriteTarelSummary(
@@ -957,21 +933,9 @@ void WriteTarelSummary(
 
       out << dest << "\n";
       for (TarelEdge& e : od_edges) {
-        out << "  (";
-        for (int i = 0; i < e.original_origins.size(); ++i) {
-          if (i > 0) {
-            out << ", ";
-          }
-          out << state_descriptions.at(e.original_origins[i].partition);
-        }
-        out << ") -> (";
-        for (int i = 0; i < e.original_destinations.size(); ++i) {
-          if (i > 0) {
-            out << ", ";
-          }
-          out << state_descriptions.at(e.original_destinations[i].partition);
-        }
-        out << "): " << TimeSinceServiceStart{e.weight}.ToString() << "\n";
+        out << "  (" << state_descriptions.at(e.origin.partition) << ") -> ("
+            << state_descriptions.at(e.destination.partition)
+            << "): " << TimeSinceServiceStart{e.weight}.ToString() << "\n";
       }
       out << "\n";
     }

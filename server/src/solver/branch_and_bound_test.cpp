@@ -84,11 +84,10 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
 
   auto LogResult = [&](const ProblemState& state, const TspTourResult& result) {
     RC_LOG() << result.optimal_value << " ";
-    for (int i = 0; i < result.original_stop_tour.size(); ++i) {
-      if (i > 0) {
-        RC_LOG() << " -> ";
-      }
-      RC_LOG() << state.StopName(result.original_stop_tour[i]);
+    RC_LOG() << state.StopName(result.tour_edges[0].origin.stop);
+    for (int i = 0; i < result.tour_edges.size(); ++i) {
+      RC_LOG() << " -> "
+               << state.StopName(result.tour_edges[i].destination.stop);
     }
     RC_LOG() << "\n\n";
   };

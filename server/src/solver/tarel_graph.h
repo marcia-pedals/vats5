@@ -304,8 +304,6 @@ struct TarelEdge {
   TarelState origin;
   TarelState destination;
   int weight;
-  std::vector<TarelState> original_origins;
-  std::vector<TarelState> original_destinations;
 };
 
 // Computes intermediate data (steps_from and arrival_times_to) from steps.
@@ -335,10 +333,8 @@ struct TspGraphData {
 
 // Return type for SolveTspAndExtractTour.
 struct TspTourResult {
-  std::vector<StopId> original_stop_tour;
-  std::vector<TimeSinceServiceStart> cumulative_weights;
-  std::vector<TarelEdge> tour_edges;
   int optimal_value;
+  std::vector<TarelEdge> tour_edges;
 };
 
 // Adds the `boundary` START and END to `stops` and `stop_names`, and adds
@@ -370,7 +366,12 @@ InitializeProblemStateResult InitializeProblemState(
     bool optimize_edges = false
 );
 
-std::vector<TarelEdge> MergeEquivalentTarelStates(
+struct TarelStateRemapResult {
+  std::vector<TarelEdge> edges;
+  std::unordered_map<TarelState, TarelState> mapped_to_original;
+};
+
+TarelStateRemapResult RemapTarelStates(
     const std::vector<TarelEdge>& edges,
     const std::unordered_map<StopId, StopId>& alternate_stop
 );
