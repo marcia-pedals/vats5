@@ -300,10 +300,9 @@ BranchAndBoundResult BranchAndBoundSolve(
     }
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
         state,
-        std::nullopt,
-        // best_ub < std::numeric_limits<int>::max() ?
-        // std::make_optional(best_ub)
-        //                                           : std::nullopt,
+        // std::nullopt,
+        best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
+                                                  : std::nullopt,
         tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
     );
     if (!lb_result_opt.has_value()) {

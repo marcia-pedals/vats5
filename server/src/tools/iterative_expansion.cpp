@@ -93,7 +93,10 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
 
   std::vector weights(n * n, std::numeric_limits<int>::max());
   weights.reserve(n * n);
-  for (const Step& step : state.minimal.AllSteps()) {
+  // TODO: Change it to use minimal. BUT we might need to first reduce it to be
+  // a graph only on required stops so that these "intermediate stops" never
+  // appear as leaves.
+  for (const Step& step : state.completed.AllMergedSteps()) {
     if (step.origin.stop == state.boundary.start ||
         step.origin.stop == state.boundary.end ||
         step.destination.stop == state.boundary.start ||
@@ -112,6 +115,9 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Kruskal's MST: sort edges by weight, greedily add via union-find.
   std::vector<int> ordered_edges(n * n);
   std::iota(ordered_edges.begin(), ordered_edges.end(), 0);
+  std::erase_if(ordered_edges, [&](int edge_index) {
+    return weights[edge_index] == std::numeric_limits<int>::max();
+  });
   std::ranges::sort(ordered_edges, {}, [&](int edge_index) {
     return weights[edge_index];
   });
@@ -522,6 +528,10 @@ int main(int argc, char* argv[]) {
   ProblemState state = j.get<ProblemState>();
 
   std::unordered_set<StopId> required_subset = MstLeaves(state);
+  std::cout << "MST leaves:\n";
+  for (StopId stop : required_subset) {
+    std::cout << "  " << state.StopName(stop) << "\n";
+  }
 
   // Generate run timestamp.
   auto now = std::chrono::system_clock::now();
