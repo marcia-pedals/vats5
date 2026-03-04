@@ -149,6 +149,43 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "]\n";
 
+  if (!state.alternate_stop.empty()) {
+    std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
+    for (StopId stop : state.required_stops) {
+      auto it = state.alternate_stop.find(stop);
+      StopId rep = (it != state.alternate_stop.end()) ? it->second : stop;
+      groups_by_rep[rep].push_back(stop);
+    }
+    std::vector<std::vector<StopId>> groups;
+    for (auto& [rep, members] : groups_by_rep) {
+      groups.push_back(std::move(members));
+    }
+    for (auto& group : groups) {
+      std::sort(group.begin(), group.end(), [](StopId a, StopId b) {
+        return a.v < b.v;
+      });
+    }
+    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
+      return a[0].v < b[0].v;
+    });
+    os << "  groups=[\n";
+    for (const auto& group : groups) {
+      StopId rep_id = group[0];
+      auto rep_it = state.alternate_stop.find(rep_id);
+      if (rep_it != state.alternate_stop.end()) {
+        rep_id = rep_it->second;
+      }
+      os << "    [";
+      for (size_t i = 0; i < group.size(); ++i) {
+        if (i > 0) os << ", ";
+        os << state.stop_infos.at(group[i]).stop_name;
+      }
+      os << "] (representative " << state.stop_infos.at(rep_id).stop_name
+         << ")\n";
+    }
+    os << "  ]\n";
+  }
+
   os << "}";
 }
 
@@ -859,31 +896,33 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
-  // Check that every `state.required_stops` appears as both an origin and
-  // destination in `state.completed`.
+  auto edges = MakeTarelEdges(state.completed);
+  auto merged_edges = MergeEquivalentTarelStates(edges, state.alternate_stop);
+  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
+
+  // Check that at least one representative from each group of required stops
+  // appears in `graph`.
   //
-  // This is necessary for correctness because `MakeTarelEdges` only produces
-  // states for stops that appear as origins and destinations, and if it misses
-  // any stops, then the TSP will simply not visit those stops.
-  std::unordered_set<StopId> origins;
-  std::unordered_set<StopId> destinations;
-  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
-    for (const auto& path_group : path_groups) {
-      if (!path_group.empty()) {
-        origins.insert(path_group[0].merged_step.origin.stop);
-        destinations.insert(path_group[0].merged_step.destination.stop);
-      }
-    }
+  // This is necessary for correctness because the above construction can omit
+  // stops from `graph`, and if it does, then the TSP on `graph` will give a
+  // solution that does not reach all the stops. (Specifically, stops that don't
+  // appear as both origins and destinations are omitted).
+  std::unordered_set<StopId> representatives_in_graph;
+  for (const TarelState& tarel_state : graph.state_by_id) {
+    auto representative_it = state.alternate_stop.find(tarel_state.stop);
+    StopId representative = representative_it == state.alternate_stop.end()
+                                ? tarel_state.stop
+                                : representative_it->second;
+    representatives_in_graph.insert(representative);
   }
   for (StopId stop : state.required_stops) {
-    if (!origins.contains(stop) || !destinations.contains(stop)) {
+    bool is_representative =
+        state.alternate_stop.find(stop) == state.alternate_stop.end();
+    if (is_representative && !representatives_in_graph.contains(stop)) {
       return std::nullopt;
     }
   }
 
-  auto edges = MakeTarelEdges(state.completed);
-  auto merged_edges = MergeEquivalentTarelStates(edges, state.alternate_stop);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
   return SolveTspAndExtractTour(
       merged_edges, graph, state.boundary, ub, tsp_log
   );

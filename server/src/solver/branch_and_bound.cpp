@@ -31,6 +31,7 @@ ProblemState ApplyConstraints(
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
+  std::unordered_map<StopId, StopId> alternate_stop = state.alternate_stop;
   StopId next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.
@@ -66,8 +67,30 @@ ProblemState ApplyConstraints(
               stop_infos[require.b].stop_name + ")"
       };
       required_stops.insert(ab);
-      required_stops.erase(require.a);
-      required_stops.erase(require.b);
+
+      // Erases `to_erase` from `required_stops`, including all stops in its
+      // group.
+      auto EraseRequired = [&](StopId to_erase) {
+        auto representative_it = alternate_stop.find(to_erase);
+        StopId representative = representative_it == alternate_stop.end()
+                                    ? to_erase
+                                    : representative_it->second;
+        std::erase_if(required_stops, [&](StopId candidate) {
+          if (candidate == representative) {
+            return true;
+          }
+          auto candidate_rep_it = alternate_stop.find(candidate);
+          return candidate_rep_it != alternate_stop.end() &&
+                 candidate_rep_it->second == representative;
+        });
+        std::erase_if(alternate_stop, [&](const auto& pair) {
+          return pair.second == representative;
+        });
+      };
+
+      EraseRequired(require.a);
+      EraseRequired(require.b);
+
       assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {
         boundary.start = ab;
@@ -174,8 +197,8 @@ ProblemState ApplyConstraints(
       std::move(required_stops),
       std::move(stop_infos),
       state.step_partition_names,
-      original_edges,
-      state.alternate_stop
+      std::move(original_edges),
+      std::move(alternate_stop)
   );
 }
 
@@ -254,6 +277,11 @@ BranchAndBoundResult BranchAndBoundSolve(
       // *search_log << "\n";
     }
 
+    if (search_log != nullptr) {
+      showValue(state, *search_log);
+      *search_log << "\n";
+    }
+
     if (cur_node.parent_lb >= best_ub) {
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
@@ -271,14 +299,16 @@ BranchAndBoundResult BranchAndBoundSolve(
     }
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
         state,
-        best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
-                                                  : std::nullopt,
+        std::nullopt,
+        // best_ub < std::numeric_limits<int>::max() ?
+        // std::make_optional(best_ub)
+        //                                           : std::nullopt,
         tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
       if (search_log != nullptr) {
-        *search_log << "  infeasible\n";
+        *search_log << "  infeasible from tarel\n";
       }
       continue;
     }
@@ -393,10 +423,10 @@ BranchAndBoundResult BranchAndBoundSolve(
       *search_log << "\n";
     }
 
-    if (primitive_steps.size() <= 2) {
+    if (primitive_steps.size() <= 1) {
       // TODO: Figure out what to do here.
       if (search_log != nullptr) {
-        *search_log << "  pruned: 2 or fewer primitive steps\n";
+        *search_log << "  pruned: 1 or fewer primitive steps\n";
       }
       continue;
     }

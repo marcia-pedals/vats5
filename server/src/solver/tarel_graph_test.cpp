@@ -446,10 +446,17 @@ RC_GTEST_PROP(
   std::vector<TarelEdge> merged =
       MergeEquivalentTarelStates(edges, state.alternate_stop);
 
+  std::unordered_set<StopId> expected_stops;
+  for (StopId stop : state.required_stops) {
+    if (!state.alternate_stop.contains(stop)) {
+      expected_stops.insert(stop);
+    }
+  }
+
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, state.required_stops);
+      ValidateMergedEdgePartitions(merged, expected_stops);
   RC_ASSERT(errors.empty());
 }
 

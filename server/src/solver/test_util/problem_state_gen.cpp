@@ -80,7 +80,8 @@ rc::Gen<ProblemState> GenProblemState(
                         StopId{destination},
                         TimeSinceServiceStart{origin_time},
                         TimeSinceServiceStart{origin_time + duration},
-                        TripId::NOOP
+                        TripId::NOOP,
+                        step_partition
                     );
                   },
                   rc::gen::inRange(0, num_actual_stops),

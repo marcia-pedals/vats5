@@ -37,6 +37,12 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
   int opt_forbid = BruteForceSolveOptimalDuration(state_forbid);
   int opt_require = BruteForceSolveOptimalDuration(state_require);
 
+  RC_LOG() << "opt_orig " << TimeSinceServiceStart{opt_orig}.ToString() << "\n";
+  RC_LOG() << "opt_forbid " << TimeSinceServiceStart{opt_forbid}.ToString()
+           << "\n";
+  RC_LOG() << "opt_require " << TimeSinceServiceStart{opt_require}.ToString()
+           << "\n";
+
   RC_ASSERT(opt_orig == std::min(opt_forbid, opt_require));
 
   // TODO: I think that the branches should be a partition of the original
