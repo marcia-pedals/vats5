@@ -137,8 +137,9 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   std::unordered_set<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
-      StopId stop = stops[i];
-      state.required.VisitGroupStops(stop, [&](StopId s) { leaves.insert(s); });
+      state.required.VisitGroupStops(stops[i], [&](StopId s) {
+        leaves.insert(s);
+      });
     }
   }
   return leaves;
@@ -198,9 +199,11 @@ PartialSolution PartialSolveBranchAndBound(
     return !required_subset.contains(pair.first);
   });
   // Assert each group is entirely present or entirely absent.
-  for (const auto& [stop, rep] : partial_required.representative) {
-    assert(partial_required.representative.contains(rep));
-    assert(partial_required.representative.at(rep) == rep);
+  for (StopId rep : original_problem.required.GroupRepresentatives()) {
+    bool present_in_subset = required_subset.contains(rep);
+    original_problem.required.VisitGroupStops(rep, [&](StopId group_stop) {
+      assert(required_subset.contains(group_stop) == present_in_subset);
+    });
   }
 
   ProblemState partial_problem = MakeProblemState(
