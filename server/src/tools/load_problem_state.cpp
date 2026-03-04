@@ -28,8 +28,7 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Loaded successfully.\n\n";
   std::cout << "Number of stops: " << state.minimal.NumStops() << "\n";
-  std::cout << "Number of required stops: " << state.required_stops.size()
-            << "\n";
+  std::cout << "Number of required stops: " << state.required.size() << "\n";
   std::cout << "Number of minimal steps: " << state.minimal.AllSteps().size()
             << "\n";
   std::cout << "Boundary: START=" << state.boundary.start.v

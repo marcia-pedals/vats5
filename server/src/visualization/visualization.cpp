@@ -65,7 +65,7 @@ void WriteVisualizationSqlite(
       continue;
     }
     in_problem_state_gtfs_ids.insert(stop_info.gtfs_stop_id);
-    if (state.required_stops.count(stop_id) > 0) {
+    if (state.required.Contains(stop_id)) {
       required_gtfs_ids.insert(stop_info.gtfs_stop_id);
     }
   }

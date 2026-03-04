@@ -58,6 +58,39 @@ struct std::hash<vats5::StepPartitionId> {
 
 namespace vats5 {
 
+struct RequiredStops {
+  // Maps every required stop to its group representative.
+  // Representatives map to themselves.
+  // Keys = all required stops. Values = group representatives.
+  std::unordered_map<StopId, StopId> representative;
+
+  // All required stops (keys of representative).
+  std::unordered_set<StopId> AllFlat() const;
+
+  // Deduplicated group representatives (unique values of representative).
+  std::unordered_set<StopId> GroupRepresentatives() const;
+
+  // Lookup representative for any stop. If not in map, returns stop itself
+  // (safe for non-required stops).
+  StopId Representative(StopId stop) const;
+
+  // Whether stop is required.
+  bool Contains(StopId stop) const;
+
+  // Number of required stops.
+  size_t size() const;
+
+  bool operator==(const RequiredStops&) const = default;
+
+  // Build from a set of stops and optional group representative map.
+  // In the group_rep map, non-representatives map to their representative.
+  // Representatives and ungrouped stops are not in group_rep.
+  static RequiredStops FromStopsAndGroups(
+      const std::unordered_set<StopId>& stops,
+      const std::unordered_map<StopId, StopId>& group_rep = {}
+  );
+};
+
 struct ProblemState {
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least
@@ -73,7 +106,8 @@ struct ProblemState {
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
-  std::unordered_set<StopId> required_stops;
+  // Also encodes stop groups (see RequiredStops).
+  RequiredStops required;
 
   // Information about all stops (GTFS ID and name) for display and lookup.
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
@@ -86,21 +120,6 @@ struct ProblemState {
   // then the original edge for (a->b)->c has endpoints (a->b) and c, and the
   // original edge for (a->b) has endpoints a and b.
   std::unordered_map<StopId, PlainEdge> original_edges;
-
-  // Stops may be grouped into "stop groups," and solutions only need to visit
-  // at least one stop per group.
-  //
-  // Each stop group has a representative stop. This map stores the
-  // representative stop for all other stops in the group. The representative
-  // itself is not a key. Note that this means that size-1 groups do not appear
-  // in this map at all.
-  std::unordered_map<StopId, StopId> stop_group_representative;
-
-  // Return the representative of the stop group that `stop` is in.
-  StopId Representative(StopId stop) const {
-    auto it = stop_group_representative.find(stop);
-    return it == stop_group_representative.end() ? stop : it->second;
-  }
 
   const std::string& StopName(StopId stop) const {
     return stop_infos.at(stop).stop_name;
@@ -126,8 +145,8 @@ struct ProblemState {
     return it->second;
   }
 
-  // Return a copy of this state with the required stops replaced by `stops`.
-  ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
+  // Return a copy of this state with the required stops replaced.
+  ProblemState WithRequired(const RequiredStops& required) const;
 };
 
 // Recursively expands a combined stop into its original constituent stops.
@@ -141,16 +160,16 @@ void ExpandStop(
 ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
+    RequiredStops required,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges,
-    std::unordered_map<StopId, StopId> alternate_stop = {}
+    std::unordered_map<StopId, PlainEdge> original_edges
 );
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
+  // Serialize required stops as a flat list (same JSON format as before).
   std::vector<int> required_stops_vec;
-  for (StopId stop : s.required_stops) {
+  for (const auto& [stop, _] : s.required.representative) {
     required_stops_vec.push_back(stop.v);
   }
   std::vector<std::pair<int, ProblemStateStopInfo>> stop_infos_vec;
@@ -165,9 +184,13 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   for (const auto& [k, v] : s.original_edges) {
     original_edges_vec.emplace_back(k.v, v);
   }
+  // Serialize group representatives: only non-self mappings (same as the old
+  // stop_group_representative format).
   std::vector<std::pair<int, int>> alternate_stop_vec;
-  for (const auto& [k, v] : s.stop_group_representative) {
-    alternate_stop_vec.emplace_back(k.v, v.v);
+  for (const auto& [stop, rep] : s.required.representative) {
+    if (stop != rep) {
+      alternate_stop_vec.emplace_back(stop.v, rep.v);
+    }
   }
   j = nlohmann::json{
       {"minimal", s.minimal},
@@ -214,11 +237,10 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
   s = MakeProblemState(
       std::move(minimal),
       boundary,
-      std::move(required_stops),
+      RequiredStops::FromStopsAndGroups(required_stops, alternate_stop),
       std::move(stop_infos),
       std::move(step_partition_names),
-      std::move(original_edges),
-      std::move(alternate_stop)
+      std::move(original_edges)
   );
 }
 
@@ -383,8 +405,7 @@ struct TarelStateRemapResult {
 };
 
 TarelStateRemapResult RemapTarelStates(
-    const std::vector<TarelEdge>& edges,
-    const std::unordered_map<StopId, StopId>& alternate_stop
+    const std::vector<TarelEdge>& edges, const RequiredStops& required
 );
 
 TspGraphData MakeTspGraphEdges(

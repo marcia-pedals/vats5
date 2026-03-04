@@ -15,7 +15,7 @@ enum class CycleIsFlex { kNo, kYes };
 
 // Generates a random alternate_stop map for `num_stops` stops (ids 0..n-1).
 // Stops are randomly assigned to groups, and non-representative members map to
-// their group's representative.
+// their group's representative. Used internally to build RequiredStops.
 rc::Gen<std::unordered_map<StopId, StopId>> GenAlternateStop(int num_stops);
 
 rc::Gen<ProblemState> GenProblemState(

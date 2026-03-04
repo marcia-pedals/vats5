@@ -170,11 +170,12 @@ rc::Gen<ProblemState> GenProblemState(
                     return MakeProblemState(
                         MakeAdjacencyList(steps),
                         boundary,
-                        stops,
+                        RequiredStops::FromStopsAndGroups(
+                            stops, alternate_stop
+                        ),
                         stop_infos,
                         {},
-                        {},
-                        std::move(alternate_stop)
+                        {}
                     );
                   }
               );
@@ -245,11 +246,10 @@ rc::Gen<ProblemState> GenFlexProblemState() {
               return MakeProblemState(
                   MakeAdjacencyList(steps),
                   boundary,
-                  stops,
+                  RequiredStops::FromStopsAndGroups(stops, alternate_stop),
                   stop_infos,
                   {},
-                  {},
-                  std::move(alternate_stop)
+                  {}
               );
             }
         );
@@ -262,9 +262,8 @@ void showValue(const NamedBranchEdge& e, std::ostream& os) {
 }
 
 rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
-  std::vector<StopId> stops(
-      state.required_stops.begin(), state.required_stops.end()
-  );
+  std::unordered_set<StopId> required_flat = state.required.AllFlat();
+  std::vector<StopId> stops(required_flat.begin(), required_flat.end());
   ProblemBoundary boundary = state.boundary;
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
