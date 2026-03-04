@@ -79,14 +79,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
 // Stop groups are treated as 1 node in this computation, and when a group is a
 // leaf, we return all its elements in the result.
 std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
-  // Collect required stops, excluding START and END.
-  std::vector<StopId> stops(
-      state.required_stops.begin(), state.required_stops.end()
-  );
-  std::erase_if(stops, [&](StopId s) {
-    return s == state.boundary.start || s == state.boundary.end;
-  });
-  std::ranges::sort(stops);
+  // Collect all stops, excluding START and END.
+  std::vector<StopId> stops;
+  stops.reserve(state.minimal.NumStops());
+  for (int i = 0; i < state.minimal.NumStops(); ++i) {
+    stops.push_back(StopId{i});
+  }
   int n = static_cast<int>(stops.size());
   std::unordered_map<StopId, int> stop_index;
   for (int i = 0; i < n; ++i) {
@@ -96,6 +94,12 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   std::vector weights(n * n, std::numeric_limits<int>::max());
   weights.reserve(n * n);
   for (const Step& step : state.minimal.AllSteps()) {
+    if (step.origin.stop == state.boundary.start ||
+        step.origin.stop == state.boundary.end ||
+        step.destination.stop == state.boundary.start ||
+        step.destination.stop == state.boundary.end) {
+      continue;
+    }
     int a = stop_index.at(state.Representative(step.origin.stop));
     int b = stop_index.at(state.Representative(step.destination.stop));
     if (a > b) {

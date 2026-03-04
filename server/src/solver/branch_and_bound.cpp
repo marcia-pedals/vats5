@@ -278,10 +278,10 @@ BranchAndBoundResult BranchAndBoundSolve(
       // *search_log << "\n";
     }
 
-    if (search_log != nullptr) {
-      showValue(state, *search_log);
-      *search_log << "\n";
-    }
+    // if (search_log != nullptr) {
+    //   showValue(state, *search_log);
+    //   *search_log << "\n";
+    // }
 
     if (cur_node.parent_lb >= best_ub) {
       if (search_log != nullptr) {

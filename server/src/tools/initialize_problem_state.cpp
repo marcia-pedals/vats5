@@ -8,8 +8,6 @@
 
 #include "gtfs/gtfs_filter.h"
 #include "solver/data.h"
-#include "solver/steps_adjacency_list.h"
-#include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 #include "visualization/visualization.h"
 
@@ -77,28 +75,94 @@ int main(int argc, char* argv[]) {
             << "m, walking_speed=" << walking_speed << "m/s\n";
   StepsFromGtfs steps_from_gtfs = GetStepsFromGtfs(gtfs_day, options);
 
+  auto resolve_gtfs_stop_id = [&](const std::string& stop_id_str) -> StopId {
+    GtfsStopId gtfs_stop_id{stop_id_str};
+    auto it =
+        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
+    if (it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+      throw std::runtime_error(
+          "Stop ID '" + stop_id_str +
+          "' from required stops config not found in GTFS data"
+      );
+    }
+    return it->second;
+  };
+
   std::unordered_set<StopId> required_stops;
   for (const auto& stop_id_elem : *stop_ids_array) {
     auto stop_id_str = stop_id_elem.value<std::string>();
     if (!stop_id_str) {
       throw std::runtime_error("Invalid stop_id in required stops config");
     }
-    GtfsStopId gtfs_stop_id{*stop_id_str};
-    auto it =
-        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
-    if (it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
-      throw std::runtime_error(
-          "Stop ID '" + *stop_id_str +
-          "' from required stops config not found in GTFS data"
-      );
+    required_stops.insert(resolve_gtfs_stop_id(*stop_id_str));
+  }
+
+  // Parse optional stop_groups: array of arrays of GTFS stop IDs.
+  // We store these as GtfsStopId strings because InitializeProblemState
+  // compacts the StopIds, so we remap after initialization.
+  std::vector<std::vector<std::string>> stop_groups;
+  if (auto stop_groups_array = required_stops_toml["stop_groups"].as_array()) {
+    std::unordered_set<StopId> seen_in_groups;
+    for (size_t group_idx = 0; group_idx < stop_groups_array->size();
+         ++group_idx) {
+      auto group_elem = (*stop_groups_array)[group_idx].as_array();
+      if (!group_elem) {
+        throw std::runtime_error(
+            "stop_groups[" + std::to_string(group_idx) +
+            "] must be an array of stop IDs"
+        );
+      }
+      std::vector<std::string> group;
+      for (const auto& stop_id_elem : *group_elem) {
+        auto stop_id_str = stop_id_elem.value<std::string>();
+        if (!stop_id_str) {
+          throw std::runtime_error(
+              "Invalid stop_id in stop_groups[" + std::to_string(group_idx) +
+              "]"
+          );
+        }
+        StopId stop = resolve_gtfs_stop_id(*stop_id_str);
+        if (!required_stops.contains(stop)) {
+          throw std::runtime_error(
+              "Stop ID '" + *stop_id_str + "' in stop_groups is not in stop_ids"
+          );
+        }
+        if (!seen_in_groups.insert(stop).second) {
+          throw std::runtime_error(
+              "Stop ID '" + *stop_id_str + "' appears in multiple stop groups"
+          );
+        }
+        group.push_back(*stop_id_str);
+      }
+      stop_groups.push_back(std::move(group));
     }
-    required_stops.insert(it->second);
   }
 
   std::cout << "Initializing solution state...\n";
   auto init_result = InitializeProblemState(
       steps_from_gtfs, required_stops, /*optimize_edges=*/true
   );
+
+  // Build stop_group_representative map using compact StopIds from the
+  // problem state. First build a reverse lookup from GtfsStopId to compact
+  // StopId.
+  if (!stop_groups.empty()) {
+    std::unordered_map<GtfsStopId, StopId> gtfs_to_compact;
+    for (const auto& [stop_id, info] : init_result.problem_state.stop_infos) {
+      gtfs_to_compact[info.gtfs_stop_id] = stop_id;
+    }
+
+    std::unordered_map<StopId, StopId> stop_group_representative;
+    for (const auto& group : stop_groups) {
+      StopId representative = gtfs_to_compact.at(GtfsStopId{group[0]});
+      for (size_t i = 1; i < group.size(); ++i) {
+        StopId member = gtfs_to_compact.at(GtfsStopId{group[i]});
+        stop_group_representative[member] = representative;
+      }
+    }
+    init_result.problem_state.stop_group_representative =
+        std::move(stop_group_representative);
+  }
 
   std::cout << "Serializing to JSON...\n";
   nlohmann::json j = init_result.problem_state;
