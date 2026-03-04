@@ -98,8 +98,9 @@ void EnumerateSolutionSpace(
   std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
   for (StopId stop : state.required_stops) {
     if (stop == state.boundary.start || stop == state.boundary.end) continue;
-    auto it = state.alternate_stop.find(stop);
-    StopId rep = (it != state.alternate_stop.end()) ? it->second : stop;
+    auto it = state.stop_group_representative.find(stop);
+    StopId rep =
+        (it != state.stop_group_representative.end()) ? it->second : stop;
     groups_by_rep[rep].push_back(stop);
   }
   for (auto& [rep, members] : groups_by_rep) {

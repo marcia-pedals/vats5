@@ -87,9 +87,20 @@ struct ProblemState {
   // original edge for (a->b) has endpoints a and b.
   std::unordered_map<StopId, PlainEdge> original_edges;
 
-  // Maps a stop to its alternate stop. When a stop has an alternate, the solver
-  // may choose to visit the alternate instead of the original.
-  std::unordered_map<StopId, StopId> alternate_stop;
+  // Stops may be grouped into "stop groups," and solutions only need to visit
+  // at least one stop per group.
+  //
+  // Each stop group has a representative stop. This map stores the
+  // representative stop for all other stops in the group. The representative
+  // itself is not a key. Note that this means that size-1 groups do not appear
+  // in this map at all.
+  std::unordered_map<StopId, StopId> stop_group_representative;
+
+  // Return the representative of the stop group that `stop` is in.
+  StopId Representative(StopId stop) const {
+    auto it = stop_group_representative.find(stop);
+    return it == stop_group_representative.end() ? stop : it->second;
+  }
 
   const std::string& StopName(StopId stop) const {
     return stop_infos.at(stop).stop_name;
@@ -155,7 +166,7 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
     original_edges_vec.emplace_back(k.v, v);
   }
   std::vector<std::pair<int, int>> alternate_stop_vec;
-  for (const auto& [k, v] : s.alternate_stop) {
+  for (const auto& [k, v] : s.stop_group_representative) {
     alternate_stop_vec.emplace_back(k.v, v.v);
   }
   j = nlohmann::json{

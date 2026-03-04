@@ -13,11 +13,13 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "algorithm/union_find.h"
 #include "solver/branch_and_bound.h"
+#include "solver/data.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -73,6 +75,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
 
 // Builds an MST over the required stops (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
+//
+// Stop groups are treated as 1 node in this computation, and when a group is a
+// leaf, we return all its elements in the result.
 std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Collect required stops, excluding START and END.
   std::vector<StopId> stops(
@@ -83,38 +88,38 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   });
   std::ranges::sort(stops);
   int n = static_cast<int>(stops.size());
+  std::unordered_map<StopId, int> stop_index;
+  for (int i = 0; i < n; ++i) {
+    stop_index[stops[i]] = i;
+  }
 
-  // Build weighted undirected edges: for each pair of required stops, the
-  // weight is the min duration step between them in either direction.
-  struct Edge {
-    int u, v;  // indices into stops vector
-    int weight;
-  };
-  std::vector<Edge> edges;
-
-  for (int i = 0; i < n; i++) {
-    for (int k = i + 1; k < n; k++) {
-      auto paths =
-          state.completed.PathsBetweenBidirectional(stops[i], stops[k]);
-      auto it = std::ranges::min_element(paths, {}, [](const auto& path) {
-        return path.DurationSeconds();
-      });
-      if (it != paths.end()) {
-        edges.push_back({i, k, it->DurationSeconds()});
-      }
+  std::vector weights(n * n, std::numeric_limits<int>::max());
+  weights.reserve(n * n);
+  for (const Step& step : state.minimal.AllSteps()) {
+    int a = stop_index.at(state.Representative(step.origin.stop));
+    int b = stop_index.at(state.Representative(step.destination.stop));
+    if (a > b) {
+      std::swap(a, b);
     }
+    int weight = step.DurationSeconds();
+    weights[a * n + b] = std::min(weights[a * n + b], weight);
   }
 
   // Kruskal's MST: sort edges by weight, greedily add via union-find.
-  std::ranges::sort(edges, {}, [](const Edge& edge) { return edge.weight; });
+  std::vector<int> ordered_edges(n * n);
+  std::iota(ordered_edges.begin(), ordered_edges.end(), 0);
+  std::ranges::sort(ordered_edges, {}, [&](int edge_index) {
+    return weights[edge_index];
+  });
 
   UnionFind uf(n);
   std::vector<int> degree(n, 0);
-
-  for (const Edge& e : edges) {
-    if (uf.Unite(e.u, e.v)) {
-      degree[e.u]++;
-      degree[e.v]++;
+  for (int edge_index : ordered_edges) {
+    int a = edge_index / n;
+    int b = edge_index % n;
+    if (uf.Unite(a, b)) {
+      degree[a]++;
+      degree[b]++;
     }
   }
 
@@ -122,7 +127,13 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   std::unordered_set<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
+      StopId stop = stops[i];
       leaves.insert(stops[i]);
+      for (const auto& [child, rep] : state.stop_group_representative) {
+        if (rep == stop) {
+          leaves.insert(child);
+        }
+      }
     }
   }
   return leaves;
@@ -141,15 +152,19 @@ struct PartialSolutionPath {
 };
 
 int CountRequiredStops(
-    const Path& path, const std::unordered_set<StopId>& required_stops
+    const Path& path,
+    const std::unordered_set<StopId>& required_stops,
+    const std::unordered_map<StopId, StopId> stop_group_representative
 ) {
-  std::unordered_set<StopId> required_visited;
+  std::unordered_set<StopId> required_rep_visited;
   path.VisitAllStops([&](StopId stop) {
     if (required_stops.contains(stop)) {
-      required_visited.insert(stop);
+      auto it = stop_group_representative.find(stop);
+      StopId rep = it == stop_group_representative.end() ? stop : it->second;
+      required_rep_visited.insert(rep);
     }
   });
-  return required_visited.size();
+  return required_rep_visited.size();
 }
 
 // A "partial problem" is a problem where the paths are required to visit a
@@ -160,11 +175,14 @@ struct PartialSolution {
   // Returns the path that visits the most required stops.
   // Returns paths.end() if no paths are available.
   std::vector<PartialSolutionPath>::const_iterator BestPathByRequiredStops(
-      const std::unordered_set<StopId>& required_stops
+      const std::unordered_set<StopId>& required_stops,
+      const std::unordered_map<StopId, StopId> stop_group_representative
   ) const {
     return std::ranges::max_element(
         paths, {}, [&](const PartialSolutionPath& sol_path) {
-          return CountRequiredStops(sol_path.path, required_stops);
+          return CountRequiredStops(
+              sol_path.path, required_stops, stop_group_representative
+          );
         }
     );
   }
@@ -176,6 +194,13 @@ PartialSolution PartialSolveBranchAndBound(
 ) {
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
+
+  std::unordered_map<StopId, StopId> partial_stop_group_representative =
+      original_problem.stop_group_representative;
+  std::erase_if(partial_stop_group_representative, [&](const auto& pair) {
+    return !required_subset.contains(pair.second);
+  });
+
   ProblemState partial_problem = MakeProblemState(
       MakeAdjacencyList(
           ReduceToMinimalSystemPaths(original_problem.minimal, required_subset)
@@ -186,7 +211,7 @@ PartialSolution PartialSolveBranchAndBound(
       original_problem.stop_infos,
       original_problem.step_partition_names,
       original_problem.original_edges,
-      original_problem.alternate_stop
+      partial_stop_group_representative
   );
 
   auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
@@ -314,15 +339,26 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 
   while (true) {
     std::unordered_set<StopId> unvisited(original_problem.required_stops);
-    result.path.VisitAllStops([&](StopId stop) { unvisited.erase(stop); });
+    result.path.VisitAllStops([&](StopId stop) {
+      StopId visited_rep = original_problem.Representative(stop);
+      unvisited.erase(visited_rep);
+      for (const auto& [child, rep] :
+           original_problem.stop_group_representative) {
+        if (rep == visited_rep) {
+          unvisited.erase(child);
+        }
+      }
+    });
 
     std::vector<PartialSolutionPath> improved;
     for (StopId new_stop : unvisited) {
       PartialSolution extended = NaivelyExtendPartialSolution(
           original_problem, result.subset_tour, new_stop
       );
-      auto best_extended_it =
-          extended.BestPathByRequiredStops(original_problem.required_stops);
+      auto best_extended_it = extended.BestPathByRequiredStops(
+          original_problem.required_stops,
+          original_problem.stop_group_representative
+      );
       if (best_extended_it == extended.paths.end() ||
           best_extended_it->path.DurationSeconds() >
               result.path.DurationSeconds()) {
@@ -333,7 +369,11 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 
     auto best_improved_it = std::ranges::max_element(
         improved, {}, [&](const PartialSolutionPath& path) {
-          return CountRequiredStops(path.path, original_problem.required_stops);
+          return CountRequiredStops(
+              path.path,
+              original_problem.required_stops,
+              original_problem.stop_group_representative
+          );
         }
     );
     if (best_improved_it == improved.end()) {
@@ -392,15 +432,23 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
 // Returns results sorted by distance (ascending).
+//
+// Takes the min over all stops in groups and returns it as distance to
+// representative.
 std::vector<StopDistance> RequiredStopDistances(
     const Path& path, const ProblemState& state
 ) {
   std::unordered_set<StopId> visited;
-  path.VisitAllStops([&](StopId s) { visited.insert(s); });
+  std::unordered_set<StopId> visited_reps;
+  path.VisitAllStops([&](StopId s) {
+    visited.insert(s);
+    visited_reps.insert(state.Representative(s));
+  });
 
-  std::vector<StopDistance> distances;
+  std::unordered_map<StopId, StopDistance> rep_to_distance;
   for (StopId x : state.required_stops) {
-    if (visited.contains(x)) {
+    StopId rep = state.Representative(x);
+    if (visited_reps.contains(rep)) {
       continue;
     }
     int min_dist = INT_MAX;
@@ -431,7 +479,18 @@ std::vector<StopDistance> RequiredStopDistances(
         }
       }
     }
-    distances.push_back({min_dist, x, nearest_stop});
+
+    StopDistance distance{min_dist, x, nearest_stop};
+    auto [it, inserted] = rep_to_distance.try_emplace(rep, distance);
+    if (it->second.distance > distance.distance) {
+      it->second = distance;
+    }
+  }
+
+  std::vector<StopDistance> distances;
+  distances.reserve(rep_to_distance.size());
+  for (const auto& [rep, distance] : rep_to_distance) {
+    distances.push_back(distance);
   }
   std::sort(distances.begin(), distances.end());
   return distances;
@@ -551,8 +610,9 @@ int main(int argc, char* argv[]) {
     auto solution = PartialSolveBranchAndBound(required_subset, state);
 
     // Choose the path that visits the most required stops.
-    auto best_solution_path_it =
-        solution.BestPathByRequiredStops(state.required_stops);
+    auto best_solution_path_it = solution.BestPathByRequiredStops(
+        state.required_stops, state.stop_group_representative
+    );
     if (best_solution_path_it == solution.paths.end()) {
       std::cout << "No feasible paths found.\n";
       return 1;
@@ -626,6 +686,11 @@ int main(int argc, char* argv[]) {
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
               << "\n\n";
     required_subset.insert(farthest);
+    for (const auto& [child, rep] : state.stop_group_representative) {
+      if (rep == farthest) {
+        required_subset.insert(child);
+      }
+    }
   }
 
   return 0;

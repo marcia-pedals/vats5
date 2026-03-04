@@ -31,7 +31,8 @@ ProblemState ApplyConstraints(
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
-  std::unordered_map<StopId, StopId> alternate_stop = state.alternate_stop;
+  std::unordered_map<StopId, StopId> alternate_stop =
+      state.stop_group_representative;
   StopId next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.

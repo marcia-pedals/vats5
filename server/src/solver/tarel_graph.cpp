@@ -43,7 +43,7 @@ ProblemState ProblemState::WithRequiredStops(
       stop_infos,
       step_partition_names,
       original_edges,
-      alternate_stop
+      stop_group_representative
   );
 }
 
@@ -149,11 +149,12 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "]\n";
 
-  if (!state.alternate_stop.empty()) {
+  if (!state.stop_group_representative.empty()) {
     std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
     for (StopId stop : state.required_stops) {
-      auto it = state.alternate_stop.find(stop);
-      StopId rep = (it != state.alternate_stop.end()) ? it->second : stop;
+      auto it = state.stop_group_representative.find(stop);
+      StopId rep =
+          (it != state.stop_group_representative.end()) ? it->second : stop;
       groups_by_rep[rep].push_back(stop);
     }
     std::vector<std::vector<StopId>> groups;
@@ -171,8 +172,8 @@ void showValue(const ProblemState& state, std::ostream& os) {
     os << "  groups=[\n";
     for (const auto& group : groups) {
       StopId rep_id = group[0];
-      auto rep_it = state.alternate_stop.find(rep_id);
-      if (rep_it != state.alternate_stop.end()) {
+      auto rep_it = state.stop_group_representative.find(rep_id);
+      if (rep_it != state.stop_group_representative.end()) {
         rep_id = rep_it->second;
       }
       os << "    [";
@@ -863,7 +864,8 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  TarelStateRemapResult remap = RemapTarelStates(edges, state.alternate_stop);
+  TarelStateRemapResult remap =
+      RemapTarelStates(edges, state.stop_group_representative);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
   // Check that at least one representative from each group of required stops
@@ -875,15 +877,17 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   // appear as both origins and destinations are omitted).
   std::unordered_set<StopId> representatives_in_graph;
   for (const TarelState& tarel_state : graph.state_by_id) {
-    auto representative_it = state.alternate_stop.find(tarel_state.stop);
-    StopId representative = representative_it == state.alternate_stop.end()
-                                ? tarel_state.stop
-                                : representative_it->second;
+    auto representative_it =
+        state.stop_group_representative.find(tarel_state.stop);
+    StopId representative =
+        representative_it == state.stop_group_representative.end()
+            ? tarel_state.stop
+            : representative_it->second;
     representatives_in_graph.insert(representative);
   }
   for (StopId stop : state.required_stops) {
-    bool is_representative =
-        state.alternate_stop.find(stop) == state.alternate_stop.end();
+    bool is_representative = state.stop_group_representative.find(stop) ==
+                             state.stop_group_representative.end();
     if (is_representative && !representatives_in_graph.contains(stop)) {
       return std::nullopt;
     }

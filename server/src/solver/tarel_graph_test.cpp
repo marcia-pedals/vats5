@@ -251,7 +251,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
       state.stop_infos,
       state.step_partition_names,
       state.original_edges,
-      state.alternate_stop
+      state.stop_group_representative
   );
 
   std::optional<TspTourResult> result;
@@ -435,11 +435,12 @@ RC_GTEST_PROP(
   );
 
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  TarelStateRemapResult remap = RemapTarelStates(edges, state.alternate_stop);
+  TarelStateRemapResult remap =
+      RemapTarelStates(edges, state.stop_group_representative);
 
   std::unordered_set<StopId> expected_stops;
   for (StopId stop : state.required_stops) {
-    if (!state.alternate_stop.contains(stop)) {
+    if (!state.stop_group_representative.contains(stop)) {
       expected_stops.insert(stop);
     }
   }
