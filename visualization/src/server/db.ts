@@ -29,6 +29,7 @@ const StopSchema = z.object({
   lat: z.number(),
   lon: z.number(),
   stop_type: z.enum(["required", "in_problem_state", "original"]),
+  group_representative: z.string().nullable(),
 });
 export type Stop = z.infer<typeof StopSchema>;
 
@@ -96,7 +97,9 @@ export async function listVisualizations(): Promise<{ filename: string; name: st
 
 export function getStops(name: string): Stop[] {
   return withDb(name, (db) => {
-    const rows = db.prepare("SELECT stop_id, stop_name, lat, lon, stop_type FROM stops").all();
+    const rows = db
+      .prepare("SELECT stop_id, stop_name, lat, lon, stop_type, group_representative FROM stops")
+      .all();
     return z.array(StopSchema).parse(rows);
   });
 }
