@@ -93,27 +93,7 @@ void EnumeratePermutations(
 void EnumerateSolutionSpace(
     const ProblemState& state, const SolutionSpaceCallback& callback
 ) {
-  // Build groups from required: for every required non-boundary stop,
-  // look up its rep.
-  std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
-  for (const auto& [stop, rep] : state.required.representative) {
-    if (stop == state.boundary.start || stop == state.boundary.end) continue;
-    groups_by_rep[rep].push_back(stop);
-  }
-  for (auto& [rep, members] : groups_by_rep) {
-    std::sort(members.begin(), members.end(), [](StopId a, StopId b) {
-      return a.v < b.v;
-    });
-  }
-
-  // Collect groups sorted by first member for determinism.
-  std::vector<std::vector<StopId>> groups;
-  for (auto& [rep, members] : groups_by_rep) {
-    groups.push_back(std::move(members));
-  }
-  std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
-    return a[0].v < b[0].v;
-  });
+  std::vector<std::vector<StopId>> groups = state.required.Groups();
 
   // Enumerate all combinations: for each group, try each member.
   std::vector<int> choices(groups.size(), 0);
