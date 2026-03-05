@@ -274,7 +274,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   RC_ASSERT(lower_bound == actual_value);
 }
 
-// All-flex complete bidirectional graph with distinct partitions per step: the
+// All-flex complete bidirectional graph: the
 // tarel lower bound should be tight (equal to brute force optimal).
 RC_GTEST_PROP(TarelGraphTest, LowerBoundFlexComplete, ()) {
   ProblemState state = *GenFlexProblemState();

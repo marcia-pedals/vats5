@@ -214,8 +214,8 @@ rc::Gen<ProblemState> GenFlexProblemState() {
                 };
               }
 
-              // Complete bidirectional graph of flex steps, each with a
-              // distinct partition.
+              // Complete bidirectional graph of flex steps, all with the same
+              // partition.
               std::vector<Step> steps;
               TripId next_trip_id{0};
               int edge_idx = 0;
@@ -230,7 +230,7 @@ rc::Gen<ProblemState> GenFlexProblemState() {
                           StopId{j},
                           durations[edge_idx],
                           trip_id,
-                          StepPartitionId{edge_idx}
+                          StepPartitionId{0}
                       )
                   );
                   edge_idx += 1;

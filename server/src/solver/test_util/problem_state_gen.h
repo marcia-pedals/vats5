@@ -23,9 +23,8 @@ rc::Gen<ProblemState> GenProblemState(
     std::optional<rc::Gen<StepPartitionId>> step_partition_gen = std::nullopt
 );
 
-// Generates a ProblemState where all steps are flex (complete bidirectional
-// graph with random durations). Also generates alternate stops. With all-flex
-// and distinct partitions per step, the tarel lower bound should be tight.
+// Generates a ProblemState whose only steps are flex and which has a flex step
+// between every pair in both directions.
 rc::Gen<ProblemState> GenFlexProblemState();
 
 struct NamedBranchEdge {
