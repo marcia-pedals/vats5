@@ -7,6 +7,7 @@ namespace vats5 {
 struct InitializeProblemStateResult;
 struct GtfsDay;
 struct DataGtfsMapping;
+struct ProblemState;
 }  // namespace vats5
 
 namespace vats5::viz {
@@ -22,6 +23,15 @@ void WriteVisualizationSqlite(
     const GtfsDay& gtfs_day,
     const DataGtfsMapping& mapping,
     const std::string& path
+);
+
+// Write a self-contained viz SQLite for a ProblemState, copying stop
+// coordinates, routes, and trips from an existing viz SQLite file.
+// The partial_solutions table is left empty.
+void WriteProblemStateVisualizationSqlite(
+    const ProblemState& state,
+    const std::string& original_viz_path,
+    const std::string& output_path
 );
 
 }  // namespace vats5::viz

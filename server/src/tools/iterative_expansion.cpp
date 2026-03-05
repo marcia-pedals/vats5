@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "algorithm/union_find.h"
+#include "gtfs/gtfs.h"
 #include "solver/branch_and_bound.h"
 #include "solver/data.h"
 #include "solver/step_merge.h"
@@ -171,6 +172,7 @@ int CountRequiredStops(const Path& path, const RequiredStops& required) {
 // certain subset of the required stops. This is a solution to such a problem.
 struct PartialSolution {
   std::vector<PartialSolutionPath> paths;
+  ProblemState partial_problem;
 
   // Returns the path that visits the most required stops.
   // Returns paths.end() if no paths are available.
@@ -220,7 +222,7 @@ PartialSolution PartialSolveBranchAndBound(
 
   auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
   if (bb_result.best_paths.empty()) {
-    return PartialSolution{};
+    return PartialSolution{.partial_problem = std::move(partial_problem)};
   }
 
   // Find the original problem paths corresponding to the partial problem paths.
@@ -277,7 +279,10 @@ PartialSolution PartialSolveBranchAndBound(
   // TODO: Think about wither `paths` could contain duplicate
   // paths or other non-minimality.
 
-  return PartialSolution{.paths = std::move(paths)};
+  return PartialSolution{
+      .paths = std::move(paths),
+      .partial_problem = std::move(partial_problem),
+  };
 }
 
 PartialSolution NaivelyExtendPartialSolution(
@@ -490,6 +495,160 @@ std::vector<StopDistance> RequiredStopDistances(
   return distances;
 }
 
+struct RefinementResult {
+  int old_tour_new_weight;
+  ProblemState state;
+  StopId a, b;
+};
+
+RefinementResult Refine(
+    const ProblemState& state,
+    StopId a,
+    StopId b,
+    const std::vector<TarelEdge>& old_tour
+) {
+  // Mutable copies of all the `ProblemState` fields we'll be mutating.
+  std::vector<Step> steps = state.minimal.AllSteps();
+  ProblemBoundary boundary = state.boundary;
+  RequiredStops required = state.required;
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
+      state.stop_infos;
+  std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
+  StopId next_stop_id{state.minimal.NumStops()};
+
+  assert(a != boundary.start);
+  assert(a != boundary.end);
+  assert(b != boundary.start);
+  assert(b != boundary.end);
+
+  std::unordered_map<StopId, std::vector<Step>> xs_to_a;
+  std::unordered_map<StopId, std::vector<Step>> b_to_xs;
+  std::vector<Step> a_to_b;
+  for (const Step& step : steps) {
+    if (step.destination.stop == a) {
+      xs_to_a[step.origin.stop].push_back(step);
+    }
+    if (step.origin.stop == b) {
+      b_to_xs[step.destination.stop].push_back(step);
+    }
+    if (step.origin.stop == a && step.destination.stop == b) {
+      a_to_b.push_back(step);
+    }
+  }
+
+  const ProblemStateStopInfo& info_a = stop_infos[a];
+  const ProblemStateStopInfo& info_b = stop_infos[b];
+
+  StopId join_a = next_stop_id;
+  next_stop_id.v += 1;
+  required.representative[join_a] = required.Representative(a);
+  stop_infos[join_a] = ProblemStateStopInfo{
+      GtfsStopId{"[" + info_a.gtfs_stop_id.v + "]-" + info_b.gtfs_stop_id.v},
+      "[" + info_a.stop_name + "]-" + info_b.stop_name,
+  };
+
+  StopId join_b = next_stop_id;
+  next_stop_id.v += 1;
+  required.representative[join_b] = required.Representative(b);
+  stop_infos[join_b] = ProblemStateStopInfo{
+      GtfsStopId{info_a.gtfs_stop_id.v + "-[" + info_b.gtfs_stop_id.v + "]"},
+      info_a.stop_name + "-[" + info_b.stop_name + "]",
+  };
+
+  for (const auto& [x, x_to_a] : xs_to_a) {
+    std::vector<StepProvenance> prov;
+    std::vector<Step> x_to_b = PairwiseMergedSteps(x_to_a, a_to_b, &prov);
+    for (int i = 0; i < x_to_b.size(); ++i) {
+      Step step = x_to_b[i];
+
+      step.destination.stop = join_a;
+      step.destination.partition =
+          x_to_a[prov[i].ab_index].destination.partition;
+      steps.push_back(step);
+
+      Step continue_step{
+          .origin = step.destination,
+          .destination = step.destination,
+          .is_flex = step.is_flex
+      };
+      continue_step.destination.stop = join_b;
+      continue_step.destination.partition =
+          a_to_b[prov[i].bc_index].destination.partition;
+      steps.push_back(continue_step);
+    }
+  }
+
+  for (const auto& [x, b_to_x] : b_to_xs) {
+    for (Step step : b_to_x) {
+      step.origin.stop = join_b;
+      steps.push_back(step);
+    }
+  }
+
+  std::erase_if(steps, [&](const Step& step) {
+    return step.origin.stop == a && step.destination.stop == b;
+  });
+
+  // Build the new problem state from the stuff we've been mutating.
+  ProblemState new_problem = MakeProblemState(
+      MakeAdjacencyList(steps),
+      std::move(boundary),
+      std::move(required),
+      std::move(stop_infos),
+      state.step_partition_names,
+      std::move(original_edges)
+  );
+
+  // Compute weight of old tour in new problem!
+  std::vector<TarelEdge> new_problem_all_edges =
+      MakeTarelEdges(new_problem.completed);
+  std::vector<TarelEdge> new_tour;
+  for (const TarelEdge& old_edge : old_tour) {
+    TarelState old_origin = old_edge.origin;
+    if (old_origin.stop == a) {
+      old_origin.stop = join_a;
+    }
+    if (old_origin.stop == b) {
+      old_origin.stop = join_b;
+    }
+    TarelState old_dest = old_edge.destination;
+    if (old_dest.stop == a) {
+      old_dest.stop = join_a;
+    }
+    if (old_dest.stop == b) {
+      old_dest.stop = join_b;
+    }
+    auto edge_it = std::find_if(
+        new_problem_all_edges.begin(),
+        new_problem_all_edges.end(),
+        [&](const TarelEdge& candidate) {
+          return candidate.origin == old_origin &&
+                 candidate.destination == old_dest;
+        }
+    );
+    if (edge_it == new_problem_all_edges.end()) {
+      std::cout << "Not found! " << new_problem.StopName(old_origin.stop)
+                << " (" << new_problem.PartitionName(old_origin.partition)
+                << ") -> " << new_problem.StopName(old_dest.stop) << " ("
+                << new_problem.PartitionName(old_dest.partition) << ")\n";
+      assert(false);
+    }
+    new_tour.push_back(*edge_it);
+  }
+
+  int old_tour_new_weight = 0;
+  for (const TarelEdge& edge : new_tour) {
+    old_tour_new_weight += edge.weight;
+  }
+
+  return {
+      .old_tour_new_weight = old_tour_new_weight,
+      .state = new_problem,
+      .a = a,
+      .b = b,
+  };
+}
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
 
@@ -653,6 +812,26 @@ int main(int argc, char* argv[]) {
       stmt.step_and_reset();
     }
 
+    // Write per-iteration viz file for the partial problem.
+    {
+      std::string iter_viz_path;
+      {
+        size_t dot_pos = viz_sqlite_path.rfind('.');
+        if (dot_pos != std::string::npos) {
+          iter_viz_path = viz_sqlite_path.substr(0, dot_pos) + "-iter-" +
+                          std::to_string(iteration) +
+                          viz_sqlite_path.substr(dot_pos);
+        } else {
+          iter_viz_path =
+              viz_sqlite_path + "-iter-" + std::to_string(iteration);
+        }
+      }
+      viz::WriteProblemStateVisualizationSqlite(
+          solution.partial_problem, viz_sqlite_path, iter_viz_path
+      );
+      std::cout << "Wrote partial problem viz: " << iter_viz_path << "\n";
+    }
+
     std::cout << "\nBest duration: "
               << TimeSinceServiceStart{best_path.DurationSeconds()}.ToString()
               << "\n";
@@ -664,6 +843,74 @@ int main(int argc, char* argv[]) {
                 << state.StopName(step.destination.stop) << " ("
                 << step.destination.time.ToString() << ")\n";
     }
+
+    {
+      std::cout << "\nWhee let's go refining!!!\n";
+      ProblemState cur_state = solution.partial_problem;
+
+      int iteration = 0;
+      while (true) {
+        std::cout << "=== Iteration " << iteration << " ===\n";
+        iteration += 1;
+
+        std::optional<TspTourResult> tarel = ComputeTarelLowerBound(cur_state);
+        if (!tarel.has_value()) {
+          std::cout << "  infeasible!?";
+          break;
+        }
+        std::cout << "  cur path:\n";
+        for (int i = 0; i < tarel->tour_edges.size(); ++i) {
+          std::cout
+              << "    " << cur_state.StopName(tarel->tour_edges[i].origin.stop)
+              << " -> "
+              << cur_state.StopName(tarel->tour_edges[i].destination.stop)
+              << ": "
+              << TimeSinceServiceStart{tarel->tour_edges[i].weight}.ToString()
+              << "\n";
+        }
+        std::cout << "  cur lb: "
+                  << TimeSinceServiceStart{tarel->optimal_value}.ToString()
+                  << "\n";
+
+        if (tarel->optimal_value >= solution.paths[0].path.DurationSeconds()) {
+          std::cout << "  solved!\n";
+          break;
+        }
+
+        RefinementResult best_refinement;
+        best_refinement.old_tour_new_weight = 0;
+        for (int i = 1; i + 1 < tarel->tour_edges.size(); ++i) {
+          const TarelEdge& edge = tarel->tour_edges[i];
+          RefinementResult refined = Refine(
+              cur_state,
+              edge.origin.stop,
+              edge.destination.stop,
+              tarel->tour_edges
+          );
+          if (refined.old_tour_new_weight >
+              best_refinement.old_tour_new_weight) {
+            best_refinement = std::move(refined);
+          }
+        }
+        std::cout << "  best refinement: "
+                  << cur_state.StopName(best_refinement.a) << " -> "
+                  << cur_state.StopName(best_refinement.b) << "\n";
+        std::cout << "  best refinement weight: "
+                  << TimeSinceServiceStart{best_refinement.old_tour_new_weight}
+                         .ToString()
+                  << "\n";
+
+        if (best_refinement.old_tour_new_weight <= tarel->optimal_value) {
+          std::cout << "  refinement not an improvement!?\n";
+          break;
+        }
+
+        cur_state = best_refinement.state;
+      }
+    }
+
+    // TEMP
+    break;
 
     if (distances.empty()) {
       std::cout << "\nAll required stops are visited.\n";

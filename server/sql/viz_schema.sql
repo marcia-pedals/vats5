@@ -57,3 +57,11 @@ CREATE TABLE partial_solutions(
     iteration INTEGER NOT NULL,
     data TEXT NOT NULL
 );
+
+CREATE TABLE tarel_tour_edges(
+    origin_stop_id TEXT NOT NULL,
+    origin_partition_id INTEGER NOT NULL,
+    destination_stop_id TEXT NOT NULL,
+    destination_partition_id INTEGER NOT NULL,
+    weight INTEGER NOT NULL
+);

@@ -8,6 +8,7 @@ import type {
   PartialSolutionData,
   PathStep,
   Stop,
+  TarelTourEdge,
   VizPath,
   Route as VizRoute,
 } from "../../server/db";
@@ -259,6 +260,66 @@ function OverlayPathPanel({
         <span className="text-[10px] font-mono text-tc-text-dim">
           {middleSteps.length} segment{middleSteps.length !== 1 ? "s" : ""} ·{" "}
           {partialData.leaves.length} leaves
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function TarelTourPanel({
+  edges,
+  stopNames,
+}: {
+  edges: TarelTourEdge[];
+  stopNames: Map<string, string>;
+}) {
+  const totalWeight = edges.reduce((sum, e) => sum + e.weight, 0);
+
+  return (
+    <div className="absolute top-[104px] bottom-0 left-0 z-20 w-[340px] flex flex-col panel-surface m-3 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-tc-border shrink-0">
+        <span className="text-xs font-mono text-tc-text">Tarel Tour</span>
+        <span className="text-[10px] font-mono text-tc-text-dim">
+          {formatDuration(totalWeight)} total
+        </span>
+      </div>
+
+      {/* Edge list */}
+      <div className="overflow-y-auto flex-1">
+        <table className="w-full text-[11px] font-mono border-collapse">
+          <thead className="sticky top-0 bg-tc-surface">
+            <tr className="text-tc-text-dim border-b border-tc-border">
+              <th className="text-left px-2 py-1.5 font-normal">From</th>
+              <th className="text-left px-2 py-1.5 font-normal">To</th>
+              <th className="text-right px-2 py-1.5 font-normal">Weight</th>
+            </tr>
+          </thead>
+          <tbody>
+            {edges.map((edge, i) => (
+              <tr
+                key={`${edge.origin_stop_id}-${edge.origin_partition_id}-${edge.destination_stop_id}-${edge.destination_partition_id}-${i}`}
+                className="border-b border-tc-border/50"
+              >
+                <td className="px-2 py-1.5 text-tc-text-muted">
+                  {stopNames.get(edge.origin_stop_id) ?? edge.origin_stop_id}
+                </td>
+                <td className="px-2 py-1.5 text-tc-text-muted">
+                  {stopNames.get(edge.destination_stop_id) ?? edge.destination_stop_id}
+                </td>
+                <td className="px-2 py-1.5 text-right text-tc-text">
+                  {formatDuration(edge.weight)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Summary */}
+      <div className="px-3 py-2 border-t border-tc-border shrink-0">
+        <span className="text-[10px] font-mono text-tc-text-dim">
+          {edges.length} edge{edges.length !== 1 ? "s" : ""}
         </span>
       </div>
     </div>
@@ -522,6 +583,8 @@ function VizPage() {
     for (const r of routesQuery.data ?? []) m.set(r.route_direction_id, r);
     return m;
   }, [routesQuery.data]);
+
+  const tarelQuery = trpc.getTarelTourEdges.useQuery({ name });
 
   const runsQuery = trpc.getPartialSolutionRuns.useQuery({ name }, { refetchInterval: 1000 });
   const partialQuery = trpc.getPartialSolution.useQuery(
@@ -812,6 +875,18 @@ function VizPage() {
     return arrows;
   }, [partialQuery.data, stopCoords]);
 
+  const tarelLines = useMemo(() => {
+    if (!tarelQuery.data?.length || !stopCoords.size) return [];
+    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    for (const edge of tarelQuery.data) {
+      const orig = stopCoords.get(edge.origin_stop_id);
+      const dest = stopCoords.get(edge.destination_stop_id);
+      if (!orig || !dest) continue;
+      lines.push({ x1: orig.cx, y1: orig.cy, x2: dest.cx, y2: dest.cy });
+    }
+    return lines;
+  }, [tarelQuery.data, stopCoords]);
+
   return (
     <div
       ref={containerCallbackRef}
@@ -974,6 +1049,21 @@ function VizPage() {
                       </text>
                     );
                   })}
+                {/* Tarel tour edges */}
+                {tarelLines.map((l) => (
+                  <line
+                    key={`tarel-${l.x1}-${l.y1}-${l.x2}-${l.y2}`}
+                    x1={l.x1}
+                    y1={l.y1}
+                    x2={l.x2}
+                    y2={l.y2}
+                    stroke="var(--color-tc-amber)"
+                    strokeWidth={1.5 / transform.scale}
+                    strokeDasharray={`${6 / transform.scale} ${3 / transform.scale}`}
+                    opacity={0.6}
+                    style={{ pointerEvents: "none" }}
+                  />
+                ))}
                 {/* Partial solution: path arrows */}
                 {pathArrows.map((a) => (
                   <line
@@ -1002,6 +1092,11 @@ function VizPage() {
           routeMap={routeMap}
           partialData={partialQuery.data}
         />
+      )}
+
+      {/* Tarel tour panel — show when edges present and no overlay selected */}
+      {!partialQuery.data && tarelQuery.data && tarelQuery.data.length > 0 && (
+        <TarelTourPanel edges={tarelQuery.data} stopNames={stopNames} />
       )}
 
       {/* Station panel — outside the gesture-target div */}

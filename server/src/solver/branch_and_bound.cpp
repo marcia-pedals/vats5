@@ -307,9 +307,11 @@ BranchAndBoundResult BranchAndBoundSolve(
                   << "\n";
       *search_log << "  lb edges:\n";
       for (const TarelEdge& edge : lb_result.tour_edges) {
-        *search_log << "    " << state.StopName(edge.origin.stop) << " -> "
-                    << state.StopName(edge.destination.stop)
-                    << " w=" << TimeSinceServiceStart{edge.weight}.ToString()
+        *search_log << "    " << state.StopName(edge.origin.stop) << " ("
+                    << state.PartitionName(edge.origin.partition) << ") -> "
+                    << state.StopName(edge.destination.stop) << " ("
+                    << state.PartitionName(edge.destination.partition)
+                    << ") w=" << TimeSinceServiceStart{edge.weight}.ToString()
                     << "\n";
       }
     }

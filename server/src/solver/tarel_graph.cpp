@@ -261,9 +261,10 @@ void AddBoundary(
 
   // Add the "START" and "END" vertices.
   stops.insert(bounday.start);
-  stop_infos[bounday.start] = ProblemStateStopInfo{GtfsStopId{""}, "START"};
+  stop_infos[bounday.start] =
+      ProblemStateStopInfo{GtfsStopId{"__START__"}, "START"};
   stops.insert(bounday.end);
-  stop_infos[bounday.end] = ProblemStateStopInfo{GtfsStopId{""}, "END"};
+  stop_infos[bounday.end] = ProblemStateStopInfo{GtfsStopId{"__END__"}, "END"};
 }
 
 struct XEdge {
@@ -358,21 +359,21 @@ InitializeProblemStateResult InitializeProblemState(
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
   std::unordered_map<StepPartitionId, std::string> step_partition_to_route_desc;
   std::vector<Step> steps_with_partitions = steps_from_gtfs.steps;
-  for (Step& step : steps_with_partitions) {
-    if (!step.is_flex) {
-      auto [it, inserted] = route_desc_to_step_partition.try_emplace(
-          steps_from_gtfs.mapping.trip_id_to_route_desc.at(
-              step.destination.trip
-          ),
-          StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
-      );
-      if (inserted) {
-        step_partition_to_route_desc[it->second] = it->first;
-      }
-      step.origin.partition = it->second;
-      step.destination.partition = it->second;
-    }
-  }
+  // for (Step& step : steps_with_partitions) {
+  //   if (!step.is_flex) {
+  //     auto [it, inserted] = route_desc_to_step_partition.try_emplace(
+  //         steps_from_gtfs.mapping.trip_id_to_route_desc.at(
+  //             step.destination.trip
+  //         ),
+  //         StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
+  //     );
+  //     if (inserted) {
+  //       step_partition_to_route_desc[it->second] = it->first;
+  //     }
+  //     step.origin.partition = it->second;
+  //     step.destination.partition = it->second;
+  //   }
+  // }
 
   // Compute minimal adj list.
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(
@@ -781,6 +782,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     *tsp_log << "Solving TSP with " << graph.state_by_id.size()
              << " vertices and " << graph.tsp_edges.size() << " edges...\n";
   }
+  std::cout << "Solving TSP with " << graph.state_by_id.size()
+            << " vertices and " << graph.tsp_edges.size() << " edges...\n";
 
   std::optional<int> atsp_ub;
   if (ub.has_value()) {

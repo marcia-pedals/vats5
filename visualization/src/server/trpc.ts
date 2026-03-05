@@ -7,6 +7,7 @@ import {
   getPaths,
   getRoutes,
   getStops,
+  getTarelTourEdges,
   listVisualizations,
 } from "./db";
 
@@ -44,6 +45,10 @@ export const appRouter = t.router({
     .query(({ input }) => {
       return getPartialSolution(input.name, input.runTimestamp, input.iteration);
     }),
+
+  getTarelTourEdges: t.procedure.input(z.object({ name: z.string() })).query(({ input }) => {
+    return getTarelTourEdges(input.name);
+  }),
 });
 
 export type AppRouter = typeof appRouter;

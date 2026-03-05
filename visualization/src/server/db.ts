@@ -7,7 +7,7 @@ import { z } from "zod";
 const PROBLEMS_DIR = path.join(homedir(), "vats5-problems");
 
 function withDb<T>(name: string, callback: (db: Database.Database) => T): T {
-  const filePath = path.join(PROBLEMS_DIR, `${name}-viz.sqlite`);
+  const filePath = path.join(PROBLEMS_DIR, `${name}.sqlite`);
   const resolvedPath = path.resolve(filePath);
   const resolvedProblemsDir = path.resolve(PROBLEMS_DIR);
   if (!resolvedPath.startsWith(resolvedProblemsDir)) {
@@ -78,16 +78,25 @@ const PartialSolutionDataSchema = z.object({
 });
 export type PartialSolutionData = z.infer<typeof PartialSolutionDataSchema>;
 
+const TarelTourEdgeSchema = z.object({
+  origin_stop_id: z.string(),
+  origin_partition_id: z.number(),
+  destination_stop_id: z.string(),
+  destination_partition_id: z.number(),
+  weight: z.number(),
+});
+export type TarelTourEdge = z.infer<typeof TarelTourEdgeSchema>;
+
 // --- Queries ---
 
 export async function listVisualizations(): Promise<{ filename: string; name: string }[]> {
   try {
     const files = await fs.readdir(PROBLEMS_DIR);
     return files
-      .filter((file) => file.endsWith("-viz.sqlite"))
+      .filter((file) => file.endsWith(".sqlite"))
       .map((file) => ({
         filename: file,
-        name: file.replace("-viz.sqlite", ""),
+        name: file.replace(".sqlite", ""),
       }));
   } catch (error) {
     console.error("Error listing visualizations:", error);
@@ -161,5 +170,20 @@ export function getPartialSolution(
       .get(runTimestamp, iteration) as { data: string } | undefined;
     if (!row) return null;
     return PartialSolutionDataSchema.parse(JSON.parse(row.data));
+  });
+}
+
+export function getTarelTourEdges(name: string): TarelTourEdge[] {
+  return withDb(name, (db) => {
+    const tableExists = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tarel_tour_edges'")
+      .get();
+    if (!tableExists) return [];
+    const rows = db
+      .prepare(
+        "SELECT origin_stop_id, origin_partition_id, destination_stop_id, destination_partition_id, weight FROM tarel_tour_edges"
+      )
+      .all();
+    return z.array(TarelTourEdgeSchema).parse(rows);
   });
 }

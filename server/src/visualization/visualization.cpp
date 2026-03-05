@@ -95,6 +95,10 @@ void WriteVisualizationSqlite(
       "stop_type, group_representative) VALUES (?, ?, ?, ?, ?, ?)"
   );
 
+  double max_lat = -90.0;
+  double sum_lon = 0.0;
+  int stop_count = 0;
+
   for (StopId stop_id : all_sparse_stops) {
     auto gtfs_id_it = mapping.stop_id_to_gtfs_stop_id.find(stop_id);
     if (gtfs_id_it == mapping.stop_id_to_gtfs_stop_id.end()) {
@@ -120,6 +124,10 @@ void WriteVisualizationSqlite(
       stop_type = "in_problem_state";
     }
 
+    if (gtfs_stop.stop_lat > max_lat) max_lat = gtfs_stop.stop_lat;
+    sum_lon += gtfs_stop.stop_lon;
+    stop_count++;
+
     stop_stmt.bind_text(1, gtfs_id.v.c_str());
     stop_stmt.bind_text(2, gtfs_stop.stop_name.c_str());
     stop_stmt.bind_double(3, gtfs_stop.stop_lat);
@@ -131,6 +139,28 @@ void WriteVisualizationSqlite(
     } else {
       stop_stmt.bind_null(6);
     }
+    stop_stmt.step_and_reset();
+  }
+
+  // Insert synthetic START and END boundary stops above all real stops.
+  {
+    double boundary_lat = max_lat + 0.02;
+    double avg_lon = stop_count > 0 ? sum_lon / stop_count : 0.0;
+
+    stop_stmt.bind_text(1, "__START__");
+    stop_stmt.bind_text(2, "START");
+    stop_stmt.bind_double(3, boundary_lat);
+    stop_stmt.bind_double(4, avg_lon - 0.01);
+    stop_stmt.bind_text(5, "required");
+    stop_stmt.bind_null(6);
+    stop_stmt.step_and_reset();
+
+    stop_stmt.bind_text(1, "__END__");
+    stop_stmt.bind_text(2, "END");
+    stop_stmt.bind_double(3, boundary_lat);
+    stop_stmt.bind_double(4, avg_lon + 0.01);
+    stop_stmt.bind_text(5, "required");
+    stop_stmt.bind_null(6);
     stop_stmt.step_and_reset();
   }
 
@@ -215,30 +245,30 @@ void WriteVisualizationSqlite(
       "is_flex, route_direction_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
+  // Map StopId to viz stop_id string, using hardcoded IDs for boundary stops.
+  auto viz_stop_id = [&](StopId id) -> std::string {
+    if (id == state.boundary.start) return "__START__";
+    if (id == state.boundary.end) return "__END__";
+    return state.stop_infos.at(id).gtfs_stop_id.v;
+  };
+
+  auto is_boundary = [&](StopId id) -> bool {
+    return id == state.boundary.start || id == state.boundary.end;
+  };
+
   int next_path_id = 1;
 
   for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
-    if (origin_stop == state.boundary.start ||
-        origin_stop == state.boundary.end) {
-      continue;
-    }
-
     for (const auto& path_group : path_groups) {
       if (path_group.empty()) continue;
 
       StopId dest_stop = path_group[0].merged_step.destination.stop;
-      if (dest_stop == state.boundary.start ||
-          dest_stop == state.boundary.end) {
-        continue;
-      }
 
       for (const Path& p : path_group) {
         int path_id = next_path_id++;
 
-        const std::string& origin_gtfs =
-            state.stop_infos.at(origin_stop).gtfs_stop_id.v;
-        const std::string& dest_gtfs =
-            state.stop_infos.at(dest_stop).gtfs_stop_id.v;
+        std::string origin_gtfs = viz_stop_id(origin_stop);
+        std::string dest_gtfs = viz_stop_id(dest_stop);
 
         path_stmt.bind_int(1, path_id);
         path_stmt.bind_text(2, origin_gtfs.c_str());
@@ -247,6 +277,24 @@ void WriteVisualizationSqlite(
         path_stmt.bind_int(5, p.merged_step.destination.time.seconds);
         path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
         path_stmt.step_and_reset();
+
+        // Boundary paths are trivial zero-duration edges that can't be
+        // expanded through minimal_paths_sparse. Write steps directly.
+        if (is_boundary(origin_stop) || is_boundary(dest_stop)) {
+          for (const Step& s : p.steps) {
+            std::string s_orig = viz_stop_id(s.origin.stop);
+            std::string s_dest = viz_stop_id(s.destination.stop);
+            step_stmt.bind_int(1, path_id);
+            step_stmt.bind_text(2, s_orig.c_str());
+            step_stmt.bind_text(3, s_dest.c_str());
+            step_stmt.bind_int(4, s.origin.time.seconds);
+            step_stmt.bind_int(5, s.destination.time.seconds);
+            step_stmt.bind_int(6, s.is_flex ? 1 : 0);
+            step_stmt.bind_null(7);
+            step_stmt.step_and_reset();
+          }
+          continue;
+        }
 
         // Expand each step of the completed path using
         // minimal_paths_sparse to get the original GTFS-level detail.
@@ -361,6 +409,316 @@ void WriteVisualizationSqlite(
           step_stmt.step_and_reset();
         }
       }
+    }
+  }
+
+  db.exec("COMMIT");
+}
+
+void WriteProblemStateVisualizationSqlite(
+    const ProblemState& state,
+    const std::string& original_viz_path,
+    const std::string& output_path
+) {
+  std::remove(output_path.c_str());
+  std::remove((output_path + "-wal").c_str());
+  std::remove((output_path + "-shm").c_str());
+
+  auto is_boundary = [&](StopId id) -> bool {
+    return id == state.boundary.start || id == state.boundary.end;
+  };
+
+  // Collect all GTFS stop IDs referenced by paths in the problem state.
+  // Boundary stops are inserted synthetically, so skip them here.
+  std::unordered_set<std::string> referenced_gtfs_ids;
+  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+    for (const auto& path_group : path_groups) {
+      for (const Path& p : path_group) {
+        StopId dest = p.merged_step.destination.stop;
+        if (!is_boundary(origin_stop)) {
+          referenced_gtfs_ids.insert(
+              state.stop_infos.at(origin_stop).gtfs_stop_id.v
+          );
+        }
+        if (!is_boundary(dest)) {
+          referenced_gtfs_ids.insert(state.stop_infos.at(dest).gtfs_stop_id.v);
+        }
+        for (const Step& s : p.steps) {
+          if (!is_boundary(s.origin.stop)) {
+            referenced_gtfs_ids.insert(
+                state.stop_infos.at(s.origin.stop).gtfs_stop_id.v
+            );
+          }
+          if (!is_boundary(s.destination.stop)) {
+            referenced_gtfs_ids.insert(
+                state.stop_infos.at(s.destination.stop).gtfs_stop_id.v
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Determine required GTFS IDs and group representatives.
+  std::unordered_set<std::string> required_gtfs;
+  std::unordered_map<std::string, std::string> gtfs_representative;
+  for (const auto& [stop_id, rep_id] : state.required.representative) {
+    const std::string& gtfs = state.stop_infos.at(stop_id).gtfs_stop_id.v;
+    const std::string& rep_gtfs = state.stop_infos.at(rep_id).gtfs_stop_id.v;
+    required_gtfs.insert(gtfs);
+    gtfs_representative[gtfs] = rep_gtfs;
+  }
+
+  SqliteDb db(output_path);
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec("BEGIN TRANSACTION");
+  db.exec(kSchemaSql);
+
+  // Build trip_id -> route_direction_id mapping from the original viz SQLite.
+  std::unordered_map<int, std::string> trip_to_route;
+
+  // Copy referenced stops from original viz SQLite.
+  {
+    SqliteDb orig_db(original_viz_path);
+    sqlite3_stmt* read_stmt = nullptr;
+    sqlite3_prepare_v2(
+        orig_db.handle(),
+        "SELECT stop_id, stop_name, lat, lon FROM stops",
+        -1,
+        &read_stmt,
+        nullptr
+    );
+    SqliteStmt stop_stmt(
+        db,
+        "INSERT OR IGNORE INTO stops (stop_id, stop_name, lat, lon, "
+        "stop_type, group_representative) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    double max_lat = -90.0;
+    double sum_lon = 0.0;
+    int stop_count = 0;
+    while (sqlite3_step(read_stmt) == SQLITE_ROW) {
+      const char* sid =
+          reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 0));
+      if (!referenced_gtfs_ids.contains(sid)) continue;
+
+      const char* sname =
+          reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 1));
+      double lat = sqlite3_column_double(read_stmt, 2);
+      double lon = sqlite3_column_double(read_stmt, 3);
+
+      if (lat > max_lat) max_lat = lat;
+      sum_lon += lon;
+      stop_count++;
+
+      const char* stop_type =
+          required_gtfs.contains(sid) ? "required" : "in_problem_state";
+
+      stop_stmt.bind_text(1, sid);
+      stop_stmt.bind_text(2, sname);
+      stop_stmt.bind_double(3, lat);
+      stop_stmt.bind_double(4, lon);
+      stop_stmt.bind_text(5, stop_type);
+      auto rep_it = gtfs_representative.find(sid);
+      if (rep_it != gtfs_representative.end()) {
+        stop_stmt.bind_text(6, rep_it->second.c_str());
+      } else {
+        stop_stmt.bind_null(6);
+      }
+      stop_stmt.step_and_reset();
+    }
+    sqlite3_finalize(read_stmt);
+
+    // Insert synthetic START and END boundary stops above all real stops.
+    // Use hardcoded IDs so this works even with old serialized data where
+    // both boundary stops had GtfsStopId{""}.
+    double boundary_lat = max_lat + 0.02;
+    double avg_lon = stop_count > 0 ? sum_lon / stop_count : 0.0;
+
+    stop_stmt.bind_text(1, "__START__");
+    stop_stmt.bind_text(2, "START");
+    stop_stmt.bind_double(3, boundary_lat);
+    stop_stmt.bind_double(4, avg_lon - 0.01);
+    stop_stmt.bind_text(5, "required");
+    stop_stmt.bind_null(6);
+    stop_stmt.step_and_reset();
+
+    stop_stmt.bind_text(1, "__END__");
+    stop_stmt.bind_text(2, "END");
+    stop_stmt.bind_double(3, boundary_lat);
+    stop_stmt.bind_double(4, avg_lon + 0.01);
+    stop_stmt.bind_text(5, "required");
+    stop_stmt.bind_null(6);
+    stop_stmt.step_and_reset();
+  }
+
+  // Copy all routes from original viz SQLite.
+  {
+    SqliteDb orig_db(original_viz_path);
+    sqlite3_stmt* read_stmt = nullptr;
+    sqlite3_prepare_v2(
+        orig_db.handle(),
+        "SELECT route_direction_id, route_name, route_color, "
+        "route_text_color FROM routes",
+        -1,
+        &read_stmt,
+        nullptr
+    );
+    SqliteStmt route_stmt(
+        db,
+        "INSERT OR IGNORE INTO routes (route_direction_id, route_name, "
+        "route_color, route_text_color) VALUES (?, ?, ?, ?)"
+    );
+    while (sqlite3_step(read_stmt) == SQLITE_ROW) {
+      route_stmt.bind_text(
+          1, reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 0))
+      );
+      route_stmt.bind_text(
+          2, reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 1))
+      );
+      route_stmt.bind_text(
+          3, reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 2))
+      );
+      route_stmt.bind_text(
+          4, reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 3))
+      );
+      route_stmt.step_and_reset();
+    }
+    sqlite3_finalize(read_stmt);
+  }
+
+  // Copy all trips from original viz SQLite and build trip_to_route mapping.
+  {
+    SqliteDb orig_db(original_viz_path);
+    sqlite3_stmt* read_stmt = nullptr;
+    sqlite3_prepare_v2(
+        orig_db.handle(),
+        "SELECT trip_id, gtfs_trip_id, route_direction_id FROM trips",
+        -1,
+        &read_stmt,
+        nullptr
+    );
+    SqliteStmt trip_stmt(
+        db,
+        "INSERT OR IGNORE INTO trips (trip_id, gtfs_trip_id, "
+        "route_direction_id) VALUES (?, ?, ?)"
+    );
+    while (sqlite3_step(read_stmt) == SQLITE_ROW) {
+      int tid = sqlite3_column_int(read_stmt, 0);
+      const char* gtfs_tid =
+          reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 1));
+      const char* rd_id =
+          reinterpret_cast<const char*>(sqlite3_column_text(read_stmt, 2));
+      trip_to_route[tid] = rd_id;
+      trip_stmt.bind_int(1, tid);
+      trip_stmt.bind_text(2, gtfs_tid);
+      trip_stmt.bind_text(3, rd_id);
+      trip_stmt.step_and_reset();
+    }
+    sqlite3_finalize(read_stmt);
+  }
+
+  // Map StopId to viz stop_id string, using hardcoded IDs for boundary
+  // stops so this works with old serialized data.
+  auto viz_stop_id = [&](StopId id) -> std::string {
+    if (id == state.boundary.start) return "__START__";
+    if (id == state.boundary.end) return "__END__";
+    return state.stop_infos.at(id).gtfs_stop_id.v;
+  };
+
+  // Write paths and path_steps from the problem state.
+  SqliteStmt path_stmt(
+      db,
+      "INSERT INTO paths (path_id, origin_stop_id, destination_stop_id, "
+      "depart_time, arrive_time, is_flex) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  SqliteStmt step_stmt(
+      db,
+      "INSERT INTO paths_steps (path_id, origin_stop_id, "
+      "destination_stop_id, depart_time, arrive_time, "
+      "is_flex, route_direction_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+
+  int next_path_id = 1;
+  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
+    for (const auto& path_group : path_groups) {
+      if (path_group.empty()) continue;
+      StopId dest_stop = path_group[0].merged_step.destination.stop;
+
+      for (const Path& p : path_group) {
+        int path_id = next_path_id++;
+
+        std::string origin_gtfs = viz_stop_id(origin_stop);
+        std::string dest_gtfs = viz_stop_id(dest_stop);
+
+        path_stmt.bind_int(1, path_id);
+        path_stmt.bind_text(2, origin_gtfs.c_str());
+        path_stmt.bind_text(3, dest_gtfs.c_str());
+        path_stmt.bind_int(4, p.merged_step.origin.time.seconds);
+        path_stmt.bind_int(5, p.merged_step.destination.time.seconds);
+        path_stmt.bind_int(6, p.merged_step.is_flex ? 1 : 0);
+        path_stmt.step_and_reset();
+
+        // Group consecutive steps by trip and merge.
+        std::vector<Step> merged_steps;
+        size_t si = 0;
+        while (si < p.steps.size()) {
+          size_t group_end = si + 1;
+          while (group_end < p.steps.size() &&
+                 p.steps[group_end].destination.trip ==
+                     p.steps[si].destination.trip) {
+            group_end++;
+          }
+          std::vector<Step> group_steps(
+              p.steps.begin() + si, p.steps.begin() + group_end
+          );
+          merged_steps.push_back(ConsecutiveMergedSteps(group_steps));
+          si = group_end;
+        }
+
+        NormalizeConsecutiveSteps(merged_steps);
+
+        for (const Step& s : merged_steps) {
+          std::string s_origin_gtfs = viz_stop_id(s.origin.stop);
+          std::string s_dest_gtfs = viz_stop_id(s.destination.stop);
+
+          step_stmt.bind_int(1, path_id);
+          step_stmt.bind_text(2, s_origin_gtfs.c_str());
+          step_stmt.bind_text(3, s_dest_gtfs.c_str());
+          step_stmt.bind_int(4, s.origin.time.seconds);
+          step_stmt.bind_int(5, s.destination.time.seconds);
+          step_stmt.bind_int(6, s.is_flex ? 1 : 0);
+
+          auto trip_route_it = trip_to_route.find(s.destination.trip.v);
+          if (trip_route_it != trip_to_route.end()) {
+            step_stmt.bind_text(7, trip_route_it->second.c_str());
+          } else {
+            step_stmt.bind_null(7);
+          }
+          step_stmt.step_and_reset();
+        }
+      }
+    }
+  }
+
+  // Compute tarel lower bound and write tour edges.
+  auto tarel_result = ComputeTarelLowerBound(state);
+  if (tarel_result.has_value()) {
+    SqliteStmt tarel_stmt(
+        db,
+        "INSERT INTO tarel_tour_edges (origin_stop_id, origin_partition_id, "
+        "destination_stop_id, destination_partition_id, weight) "
+        "VALUES (?, ?, ?, ?, ?)"
+    );
+    for (const TarelEdge& edge : tarel_result->tour_edges) {
+      std::string origin_gtfs = viz_stop_id(edge.origin.stop);
+      std::string dest_gtfs = viz_stop_id(edge.destination.stop);
+
+      tarel_stmt.bind_text(1, origin_gtfs.c_str());
+      tarel_stmt.bind_int(2, edge.origin.partition.v);
+      tarel_stmt.bind_text(3, dest_gtfs.c_str());
+      tarel_stmt.bind_int(4, edge.destination.partition.v);
+      tarel_stmt.bind_int(5, edge.weight);
+      tarel_stmt.step_and_reset();
     }
   }
 
