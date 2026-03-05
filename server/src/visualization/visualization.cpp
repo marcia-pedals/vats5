@@ -65,7 +65,7 @@ void WriteVisualizationSqlite(
       continue;
     }
     in_problem_state_gtfs_ids.insert(stop_info.gtfs_stop_id);
-    if (state.required_stops.count(stop_id) > 0) {
+    if (state.required.Contains(stop_id)) {
       required_gtfs_ids.insert(stop_info.gtfs_stop_id);
     }
   }
@@ -79,11 +79,20 @@ void WriteVisualizationSqlite(
     }
   }
 
+  // Build a map from required GTFS stop IDs to their representative's GTFS
+  // stop ID, so we can write group_representative into the stops table.
+  std::unordered_map<GtfsStopId, GtfsStopId> gtfs_representative;
+  for (const auto& [stop_id, rep_id] : state.required.representative) {
+    const GtfsStopId& stop_gtfs = state.stop_infos.at(stop_id).gtfs_stop_id;
+    const GtfsStopId& rep_gtfs = state.stop_infos.at(rep_id).gtfs_stop_id;
+    gtfs_representative[stop_gtfs] = rep_gtfs;
+  }
+
   // Insert stops from minimal_paths_sparse with stop_type classification.
   SqliteStmt stop_stmt(
       db,
       "INSERT OR IGNORE INTO stops (stop_id, stop_name, lat, lon, "
-      "stop_type) VALUES (?, ?, ?, ?, ?)"
+      "stop_type, group_representative) VALUES (?, ?, ?, ?, ?, ?)"
   );
 
   for (StopId stop_id : all_sparse_stops) {
@@ -116,6 +125,12 @@ void WriteVisualizationSqlite(
     stop_stmt.bind_double(3, gtfs_stop.stop_lat);
     stop_stmt.bind_double(4, gtfs_stop.stop_lon);
     stop_stmt.bind_text(5, stop_type);
+    auto rep_it = gtfs_representative.find(gtfs_id);
+    if (rep_it != gtfs_representative.end()) {
+      stop_stmt.bind_text(6, rep_it->second.v.c_str());
+    } else {
+      stop_stmt.bind_null(6);
+    }
     stop_stmt.step_and_reset();
   }
 

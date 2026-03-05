@@ -19,6 +19,58 @@
 
 namespace vats5 {
 
+std::unordered_set<StopId> RequiredStops::AllFlat() const {
+  std::unordered_set<StopId> result;
+  for (const auto& [stop, _] : representative) {
+    result.insert(stop);
+  }
+  return result;
+}
+
+std::unordered_set<StopId> RequiredStops::GroupRepresentatives() const {
+  std::unordered_set<StopId> result;
+  for (const auto& [_, rep] : representative) {
+    result.insert(rep);
+  }
+  return result;
+}
+
+std::vector<std::vector<StopId>> RequiredStops::Groups() const {
+  std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
+  for (const auto& [stop, rep] : representative) {
+    groups_by_rep[rep].push_back(stop);
+  }
+  std::vector<std::vector<StopId>> result;
+  for (auto& [rep, members] : groups_by_rep) {
+    std::sort(members.begin(), members.end(), [](StopId a, StopId b) {
+      return a.v < b.v;
+    });
+    result.push_back(std::move(members));
+  }
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+    return a[0].v < b[0].v;
+  });
+  return result;
+}
+
+StopId RequiredStops::Representative(StopId stop) const {
+  auto it = representative.find(stop);
+  return it == representative.end() ? stop : it->second;
+}
+
+bool RequiredStops::Contains(StopId stop) const {
+  return representative.contains(stop);
+}
+
+size_t RequiredStops::size() const { return representative.size(); }
+
+void RequiredStops::EraseGroup(StopId stop) {
+  StopId rep = Representative(stop);
+  std::erase_if(representative, [&](const auto& pair) {
+    return pair.second == rep;
+  });
+}
+
 void ExpandStop(
     StopId stop,
     const std::unordered_map<StopId, PlainEdge>& original_edges,
@@ -33,11 +85,14 @@ void ExpandStop(
   ExpandStop(it->second.b, original_edges, out);
 }
 
-ProblemState ProblemState::WithRequiredStops(
-    const std::unordered_set<StopId>& stops
-) const {
+ProblemState ProblemState::WithRequired(const RequiredStops& required) const {
   return MakeProblemState(
-      minimal, boundary, stops, stop_infos, step_partition_names, original_edges
+      minimal,
+      boundary,
+      required,
+      stop_infos,
+      step_partition_names,
+      original_edges
   );
 }
 
@@ -72,8 +127,9 @@ void showValue(const ProblemState& state, std::ostream& os) {
     return a.v < b.v;
   });
 
+  std::unordered_set<StopId> required_flat = state.required.AllFlat();
   std::vector<StopId> required_stop_ids(
-      state.required_stops.begin(), state.required_stops.end()
+      required_flat.begin(), required_flat.end()
   );
   std::sort(
       required_stop_ids.begin(),
@@ -143,27 +199,48 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "]\n";
 
+  os << "  groups=[\n";
+  for (const auto& group : state.required.Groups()) {
+    os << "    [";
+    for (size_t i = 0; i < group.size(); ++i) {
+      if (i > 0) os << ", ";
+      os << state.stop_infos.at(group[i]).stop_name;
+    }
+    os << "]\n";
+  }
+  os << "  ]\n";
+
   os << "}";
 }
 
 ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
+    RequiredStops required,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 ) {
+  // Validate that the representative map forms a forest of depth-1 trees
+  // (every value is either the key itself or maps to itself).
+  for (const auto& [stop, rep] : required.representative) {
+    auto rep_it = required.representative.find(rep);
+    assert(rep_it != required.representative.end());
+    assert(rep_it->second == rep);
+  }
+
+  std::unordered_set<StopId> stops = required.AllFlat();
   StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
   );
+
   return ProblemState{
       std::move(minimal),
       std::move(completed),
       boundary,
-      std::move(stops),
+      std::move(required),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
@@ -367,11 +444,16 @@ InitializeProblemStateResult InitializeProblemState(
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, required_stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : required_stops) {
+    required.representative[stop] = stop;
+  }
+
   return InitializeProblemStateResult{
       .problem_state = MakeProblemState(
           MakeAdjacencyList(steps),
           boundary,
-          required_stops,
+          std::move(required),
           stop_infos,
           step_partition_to_route_desc,
           {}
@@ -480,8 +562,6 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
                 .origin = origin,
                 .destination = dest,
                 .weight = weight,
-                .original_origins = {origin},
-                .original_destinations = {dest},
             }
         );
       }
@@ -505,12 +585,12 @@ struct EdgeSignature {
   }
 };
 
-std::vector<TarelEdge> MergeEquivalentTarelStates(
-    const std::vector<TarelEdge>& edges
+TarelStateRemapResult RemapTarelStates(
+    const std::vector<TarelEdge>& edges, const RequiredStops& required
 ) {
-  // Two tarel states are "equivalent" if they have the same `origin.stop`, and
-  // they have the same set of `destination`s and they have matching `weights`
-  // to each `destination`.
+  // Two tarel states are "equivalent" if they have the same `stop`, and they
+  // have the same set of `destination`s and they have matching `weights` to
+  // each `destination`.
 
   // Step 1: Build the "edge signature" for each TarelState.
   // The signature is the sorted list of (destination, weight) pairs.
@@ -559,7 +639,9 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
   // Group canonical states by stop and assign contiguous IDs.
   std::unordered_map<StopId, std::vector<TarelState>> canonical_by_stop;
   for (const TarelState& ts : all_canonical_states) {
-    canonical_by_stop[ts.stop].push_back(ts);
+    StopId rep = required.Representative(ts.stop);
+
+    canonical_by_stop[rep].push_back(ts);
   }
 
   std::unordered_map<TarelState, TarelState> renumbered_state;
@@ -578,17 +660,24 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
     return renumbered_state[canonical_state[ts]];
   };
 
-  // Collect original states and weight for each merged edge.
+  TarelStateRemapResult result;
+
+  // Collect weight for each merged edge.
   // Key is (new_origin, new_dest).
   struct MergedEdgeData {
     int weight;
-    std::vector<TarelState> original_origins;
-    std::vector<TarelState> original_destinations;
   };
   std::map<std::pair<TarelState, TarelState>, MergedEdgeData> merged_edges;
   for (const TarelEdge& edge : edges) {
     TarelState new_origin = final_state(edge.origin);
     TarelState new_dest = final_state(edge.destination);
+
+    // TODO: If multiple states map to the same remapped state, then we
+    // arbitrarily pick one. Think more about when this can happen and whether
+    // this is ok to do.
+    result.mapped_to_original[new_origin] = edge.origin;
+    result.mapped_to_original[new_dest] = edge.destination;
+
     auto [it, inserted] = merged_edges.try_emplace(
         {new_origin, new_dest}, MergedEdgeData{.weight = edge.weight}
     );
@@ -596,49 +685,19 @@ std::vector<TarelEdge> MergeEquivalentTarelStates(
     if (!inserted) {
       // TODO: Think harder about whether taking the min merged edge weight
       // makes sense.
-      // TODO: Consider whether we have to clear `original_origins` and
-      // `original_destinations`.
       if (edge.weight < data.weight) {
         data.weight = edge.weight;
       }
     }
-    for (const TarelState& orig : edge.original_origins) {
-      data.original_origins.push_back(orig);
-    }
-    for (const TarelState& orig : edge.original_destinations) {
-      data.original_destinations.push_back(orig);
-    }
   }
 
-  std::vector<TarelEdge> result;
   for (const auto& [key, data] : merged_edges) {
     const auto& [new_origin, new_dest] = key;
-    auto sorted_origins = data.original_origins;
-    auto sorted_destinations = data.original_destinations;
-    std::ranges::sort(
-        sorted_origins,
-        [](const TarelState& a, const TarelState& b) { return a < b; }
-    );
-    std::ranges::sort(
-        sorted_destinations,
-        [](const TarelState& a, const TarelState& b) { return a < b; }
-    );
-    sorted_origins.erase(
-        std::unique(sorted_origins.begin(), sorted_origins.end()),
-        sorted_origins.end()
-    );
-    sorted_destinations.erase(
-        std::unique(sorted_destinations.begin(), sorted_destinations.end()),
-        sorted_destinations.end()
-    );
-
-    result.push_back(
+    result.edges.push_back(
         TarelEdge{
             .origin = new_origin,
             .destination = new_dest,
             .weight = data.weight,
-            .original_origins = std::move(sorted_origins),
-            .original_destinations = std::move(sorted_destinations),
         }
     );
   }
@@ -765,11 +824,9 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     assert(false);
   };
 
-  // Validate tour and extract original StopIds.
+  // Validate tour and extract edges.
+  std::vector<TarelEdge> tour_edges;
   std::vector<std::string> tour_errors;
-  TspTourResult result;
-  result.optimal_value = solution->optimal_value;
-  TimeSinceServiceStart accumulated_weight{0};
   TarelState cur_state = TarelState{boundary.start, 0};
   int cur_stop_visited_states = 1;
   for (int tour_idx = 1; tour_idx < solution->tour.size() + 1; ++tour_idx) {
@@ -810,17 +867,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
       TarelState tarel_origin = cur_state;
       tarel_origin.partition.v =
           (cur_state.partition.v + 1) % cur_stop_num_states;
-      TarelEdge edge = FindTarelEdge(tarel_origin, next_state);
-      accumulated_weight.seconds += edge.weight;
-      result.cumulative_weights.push_back(accumulated_weight);
-      result.tour_edges.push_back(edge);
-
+      tour_edges.push_back(FindTarelEdge(tarel_origin, next_state));
       cur_stop_visited_states = 1;
-      if (cur_state.stop != boundary.start) {
-        // Note: Intentionally missing the last stop of `tour` because that is
-        // END.
-        result.original_stop_tour.push_back(cur_state.stop);
-      }
     }
 
     cur_state = next_state;
@@ -832,42 +880,51 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     }
     throw InvalidTourStructure(msg);
   }
-
-  return result;
+  return TspTourResult{
+      .optimal_value = solution->optimal_value,
+      .tour_edges = tour_edges,
+  };
 }
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
-  // Check that every `state.required_stops` appears as both an origin and
-  // destination in `state.completed`.
+  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
+  TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
+
+  // Check that at least one representative from each group of required stops
+  // appears in `graph`.
   //
-  // This is necessary for correctness because `MakeTarelEdges` only produces
-  // states for stops that appear as origins and destinations, and if it misses
-  // any stops, then the TSP will simply not visit those stops.
-  std::unordered_set<StopId> origins;
-  std::unordered_set<StopId> destinations;
-  for (const auto& [origin_stop, path_groups] : state.completed.adjacent) {
-    for (const auto& path_group : path_groups) {
-      if (!path_group.empty()) {
-        origins.insert(path_group[0].merged_step.origin.stop);
-        destinations.insert(path_group[0].merged_step.destination.stop);
-      }
-    }
+  // This is necessary for correctness because the above construction can omit
+  // stops from `graph`, and if it does, then the TSP on `graph` will give a
+  // solution that does not reach all the stops. (Specifically, stops that don't
+  // appear as both origins and destinations are omitted).
+  std::unordered_set<StopId> representatives_in_graph;
+  for (const TarelState& tarel_state : graph.state_by_id) {
+    representatives_in_graph.insert(
+        state.required.Representative(tarel_state.stop)
+    );
   }
-  for (StopId stop : state.required_stops) {
-    if (!origins.contains(stop) || !destinations.contains(stop)) {
+  for (StopId rep : state.required.GroupRepresentatives()) {
+    if (!representatives_in_graph.contains(rep)) {
       return std::nullopt;
     }
   }
 
-  ProblemState reduced_state = state;
-  auto edges = MakeTarelEdges(reduced_state.completed);
-  auto merged_edges = MergeEquivalentTarelStates(edges);
-  auto graph = MakeTspGraphEdges(merged_edges, state.boundary);
-  return SolveTspAndExtractTour(
-      merged_edges, graph, state.boundary, ub, tsp_log
-  );
+  std::optional<TspTourResult> result =
+      SolveTspAndExtractTour(remap.edges, graph, state.boundary, ub, tsp_log);
+  if (!result.has_value()) {
+    return std::nullopt;
+  }
+
+  // Map `result` states back to original states.
+  for (TarelEdge& edge : result->tour_edges) {
+    edge.origin = remap.mapped_to_original.at(edge.origin);
+    edge.destination = remap.mapped_to_original.at(edge.destination);
+  }
+
+  return result;
 }
 
 void WriteTarelSummary(
@@ -899,21 +956,9 @@ void WriteTarelSummary(
 
       out << dest << "\n";
       for (TarelEdge& e : od_edges) {
-        out << "  (";
-        for (int i = 0; i < e.original_origins.size(); ++i) {
-          if (i > 0) {
-            out << ", ";
-          }
-          out << state_descriptions.at(e.original_origins[i].partition);
-        }
-        out << ") -> (";
-        for (int i = 0; i < e.original_destinations.size(); ++i) {
-          if (i > 0) {
-            out << ", ";
-          }
-          out << state_descriptions.at(e.original_destinations[i].partition);
-        }
-        out << "): " << TimeSinceServiceStart{e.weight}.ToString() << "\n";
+        out << "  (" << state_descriptions.at(e.origin.partition) << ") -> ("
+            << state_descriptions.at(e.destination.partition)
+            << "): " << TimeSinceServiceStart{e.weight}.ToString() << "\n";
       }
       out << "\n";
     }

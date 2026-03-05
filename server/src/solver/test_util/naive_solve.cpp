@@ -11,16 +11,14 @@
 
 namespace vats5 {
 
-std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
-    const ProblemState& state
+void EnumeratePermutations(
+    const ProblemState& state, const SolutionSpaceCallback& callback
 ) {
-  std::vector<SolutionSpaceElement> space;
-
   // Make the initial generating permutation, which is
   // START -> ... all non-boundary stops in order ... -> END.
   std::vector<StopId> gen_perm;
   gen_perm.push_back(state.boundary.start);
-  for (StopId stop : state.required_stops) {
+  for (StopId stop : state.required.AllFlat()) {
     if (stop != state.boundary.start && stop != state.boundary.end) {
       gen_perm.push_back(stop);
     }
@@ -81,7 +79,7 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
         // See function doc comment.
         continue;
       }
-      space.push_back(
+      callback(
           SolutionSpaceElement{
               .generating_permutation = gen_perm,
               .actual_path = accumulated_actual_paths[i],
@@ -90,24 +88,51 @@ std::vector<SolutionSpaceElement> EnumerateSolutionSpace(
       );
     }
   } while (std::next_permutation(gen_perm.begin() + 1, gen_perm.end() - 1));
+}
 
-  return space;
+void EnumerateSolutionSpace(
+    const ProblemState& state, const SolutionSpaceCallback& callback
+) {
+  std::vector<std::vector<StopId>> groups = state.required.Groups();
+
+  // Enumerate all combinations: for each group, try each member.
+  std::vector<int> choices(groups.size(), 0);
+
+  while (true) {
+    // Build a RequiredStops with one chosen member per group (no groups).
+    RequiredStops modified_required;
+    modified_required.representative[state.boundary.start] =
+        state.boundary.start;
+    modified_required.representative[state.boundary.end] = state.boundary.end;
+    for (size_t g = 0; g < groups.size(); ++g) {
+      StopId chosen = groups[g][choices[g]];
+      modified_required.representative[chosen] = chosen;
+    }
+
+    ProblemState modified = state.WithRequired(modified_required);
+
+    EnumeratePermutations(modified, callback);
+
+    // Advance to next combination.
+    bool advanced = false;
+    for (int i = static_cast<int>(groups.size()) - 1; i >= 0; --i) {
+      choices[i]++;
+      if (choices[i] < static_cast<int>(groups[i].size())) {
+        advanced = true;
+        break;
+      }
+      choices[i] = 0;
+    }
+    if (!advanced) break;
+  }
 }
 
 int BruteForceSolveOptimalDuration(const ProblemState& state) {
-  std::vector<SolutionSpaceElement> space = EnumerateSolutionSpace(state);
-  auto it = std::min_element(
-      space.begin(),
-      space.end(),
-      [](const SolutionSpaceElement& a, const SolutionSpaceElement& b) {
-        return a.merged_step.DurationSeconds() <
-               b.merged_step.DurationSeconds();
-      }
-  );
-  if (it == space.end()) {
-    return std::numeric_limits<int>::max();
-  }
-  return it->merged_step.DurationSeconds();
+  int best = std::numeric_limits<int>::max();
+  EnumerateSolutionSpace(state, [&](const SolutionSpaceElement& elem) {
+    best = std::min(best, elem.merged_step.DurationSeconds());
+  });
+  return best;
 }
 
 }  // namespace vats5
