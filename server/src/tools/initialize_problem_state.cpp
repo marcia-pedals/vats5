@@ -143,25 +143,21 @@ int main(int argc, char* argv[]) {
       steps_from_gtfs, required_stops, /*optimize_edges=*/true
   );
 
-  // Build stop_group_representative map using compact StopIds from the
-  // problem state. First build a reverse lookup from GtfsStopId to compact
-  // StopId.
+  // Build stop group representative map and update RequiredStops.
   if (!stop_groups.empty()) {
     std::unordered_map<GtfsStopId, StopId> gtfs_to_compact;
     for (const auto& [stop_id, info] : init_result.problem_state.stop_infos) {
       gtfs_to_compact[info.gtfs_stop_id] = stop_id;
     }
 
-    std::unordered_map<StopId, StopId> stop_group_representative;
     for (const auto& group : stop_groups) {
       StopId representative = gtfs_to_compact.at(GtfsStopId{group[0]});
-      for (size_t i = 1; i < group.size(); ++i) {
-        StopId member = gtfs_to_compact.at(GtfsStopId{group[i]});
-        stop_group_representative[member] = representative;
+      for (const std::string& member_str : group) {
+        StopId member = gtfs_to_compact.at(GtfsStopId{member_str});
+        init_result.problem_state.required.representative[member] =
+            representative;
       }
     }
-    init_result.problem_state.stop_group_representative =
-        std::move(stop_group_representative);
   }
 
   std::cout << "Serializing to JSON...\n";

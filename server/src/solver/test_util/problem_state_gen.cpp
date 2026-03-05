@@ -16,7 +16,7 @@
 
 namespace vats5 {
 
-rc::Gen<std::unordered_map<StopId, StopId>> GenAlternateStop(int num_stops) {
+rc::Gen<RequiredStops> GenRequiredStops(int num_stops) {
   return rc::gen::map(
       rc::gen::mapcat(
           rc::gen::inRange(1, num_stops + 1),
@@ -26,21 +26,19 @@ rc::Gen<std::unordered_map<StopId, StopId>> GenAlternateStop(int num_stops) {
             );
           }
       ),
-      [num_stops](std::vector<int> group_assignments)
-          -> std::unordered_map<StopId, StopId> {
+      [num_stops](std::vector<int> group_assignments) -> RequiredStops {
         std::unordered_map<int, std::vector<int>> groups;
         for (int i = 0; i < num_stops; ++i) {
           groups[group_assignments[i]].push_back(i);
         }
-        std::unordered_map<StopId, StopId> alternate_stop;
+        RequiredStops required;
         for (const auto& [group_id, members] : groups) {
-          if (members.size() <= 1) continue;
           StopId representative{members[0]};
-          for (size_t i = 1; i < members.size(); ++i) {
-            alternate_stop[StopId{members[i]}] = representative;
+          for (int member : members) {
+            required.representative[StopId{member}] = representative;
           }
         }
-        return alternate_stop;
+        return required;
       }
   );
 }
@@ -109,14 +107,14 @@ rc::Gen<ProblemState> GenProblemState(
                   rc::gen::tuple(
                       std::move(steps_gen),
                       std::move(cycle_steps_partition_gen),
-                      GenAlternateStop(num_actual_stops)
+                      GenRequiredStops(num_actual_stops)
                   ),
                   [num_actual_stops,
                    cycle_is_flex,
                    step_partition_gen_defaulted](auto arg) -> ProblemState {
-                    auto [steps, cycle_step_partitions, alternate_stop] = arg;
+                    auto [steps, cycle_step_partitions, required] = arg;
 
-                    // Set up all the stops.
+                    // Set up stop_infos.
                     std::unordered_set<StopId> stops;
                     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
                     for (int i = 0; i < num_actual_stops; ++i) {
@@ -167,14 +165,17 @@ rc::Gen<ProblemState> GenProblemState(
                     };
                     AddBoundary(steps, stops, stop_infos, boundary);
 
+                    // Add boundary stops to required.
+                    required.representative[boundary.start] = boundary.start;
+                    required.representative[boundary.end] = boundary.end;
+
                     return MakeProblemState(
                         MakeAdjacencyList(steps),
                         boundary,
-                        stops,
+                        std::move(required),
                         stop_infos,
                         {},
-                        {},
-                        std::move(alternate_stop)
+                        {}
                     );
                   }
               );
@@ -198,10 +199,10 @@ rc::Gen<ProblemState> GenFlexProblemState() {
 
         return rc::gen::map(
             rc::gen::tuple(
-                std::move(durations_gen), GenAlternateStop(num_actual_stops)
+                std::move(durations_gen), GenRequiredStops(num_actual_stops)
             ),
             [num_actual_stops](auto arg) -> ProblemState {
-              auto [durations, alternate_stop] = arg;
+              auto [durations, required] = arg;
 
               std::unordered_set<StopId> stops;
               std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
@@ -242,14 +243,17 @@ rc::Gen<ProblemState> GenFlexProblemState() {
               };
               AddBoundary(steps, stops, stop_infos, boundary);
 
+              // Add boundary stops to required.
+              required.representative[boundary.start] = boundary.start;
+              required.representative[boundary.end] = boundary.end;
+
               return MakeProblemState(
                   MakeAdjacencyList(steps),
                   boundary,
-                  stops,
+                  std::move(required),
                   stop_infos,
                   {},
-                  {},
-                  std::move(alternate_stop)
+                  {}
               );
             }
         );
@@ -262,9 +266,8 @@ void showValue(const NamedBranchEdge& e, std::ostream& os) {
 }
 
 rc::Gen<NamedBranchEdge> GenBranchEdge(const ProblemState& state) {
-  std::vector<StopId> stops(
-      state.required_stops.begin(), state.required_stops.end()
-  );
+  std::unordered_set<StopId> required_flat = state.required.AllFlat();
+  std::vector<StopId> stops(required_flat.begin(), required_flat.end());
   ProblemBoundary boundary = state.boundary;
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;

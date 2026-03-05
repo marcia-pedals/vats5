@@ -18,7 +18,7 @@ void EnumeratePermutations(
   // START -> ... all non-boundary stops in order ... -> END.
   std::vector<StopId> gen_perm;
   gen_perm.push_back(state.boundary.start);
-  for (StopId stop : state.required_stops) {
+  for (StopId stop : state.required.AllFlat()) {
     if (stop != state.boundary.start && stop != state.boundary.end) {
       gen_perm.push_back(stop);
     }
@@ -93,14 +93,11 @@ void EnumeratePermutations(
 void EnumerateSolutionSpace(
     const ProblemState& state, const SolutionSpaceCallback& callback
 ) {
-  // Build groups from alternate_stop: for every required non-boundary stop,
-  // look up its rep (self if not in alternate_stop).
+  // Build groups from required: for every required non-boundary stop,
+  // look up its rep.
   std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
-  for (StopId stop : state.required_stops) {
+  for (const auto& [stop, rep] : state.required.representative) {
     if (stop == state.boundary.start || stop == state.boundary.end) continue;
-    auto it = state.stop_group_representative.find(stop);
-    StopId rep =
-        (it != state.stop_group_representative.end()) ? it->second : stop;
     groups_by_rep[rep].push_back(stop);
   }
   for (auto& [rep, members] : groups_by_rep) {
@@ -122,11 +119,17 @@ void EnumerateSolutionSpace(
   std::vector<int> choices(groups.size(), 0);
 
   while (true) {
-    ProblemState modified = state;
-    modified.required_stops = {state.boundary.start, state.boundary.end};
+    // Build a RequiredStops with one chosen member per group (no groups).
+    RequiredStops modified_required;
+    modified_required.representative[state.boundary.start] =
+        state.boundary.start;
+    modified_required.representative[state.boundary.end] = state.boundary.end;
     for (size_t g = 0; g < groups.size(); ++g) {
-      modified.required_stops.insert(groups[g][choices[g]]);
+      StopId chosen = groups[g][choices[g]];
+      modified_required.representative[chosen] = chosen;
     }
+
+    ProblemState modified = state.WithRequired(modified_required);
 
     EnumeratePermutations(modified, callback);
 

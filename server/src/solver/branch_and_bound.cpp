@@ -27,12 +27,10 @@ ProblemState ApplyConstraints(
   // Mutable copies of all the `ProblemState` fields we'll be mutating.
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
-  std::unordered_set<StopId> required_stops = state.required_stops;
+  RequiredStops required = state.required;
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
-  std::unordered_map<StopId, StopId> alternate_stop =
-      state.stop_group_representative;
   StopId next_stop_id{state.minimal.NumStops()};
 
   // Apply constraints in order, by mutating the copies that we just made above.
@@ -67,30 +65,10 @@ ProblemState ApplyConstraints(
           "(" + stop_infos[require.a].stop_name + "->" +
               stop_infos[require.b].stop_name + ")"
       };
-      required_stops.insert(ab);
+      required.representative[ab] = ab;
 
-      // Erases `to_erase` from `required_stops`, including all stops in its
-      // group.
-      auto EraseRequired = [&](StopId to_erase) {
-        auto representative_it = alternate_stop.find(to_erase);
-        StopId representative = representative_it == alternate_stop.end()
-                                    ? to_erase
-                                    : representative_it->second;
-        std::erase_if(required_stops, [&](StopId candidate) {
-          if (candidate == representative) {
-            return true;
-          }
-          auto candidate_rep_it = alternate_stop.find(candidate);
-          return candidate_rep_it != alternate_stop.end() &&
-                 candidate_rep_it->second == representative;
-        });
-        std::erase_if(alternate_stop, [&](const auto& pair) {
-          return pair.second == representative;
-        });
-      };
-
-      EraseRequired(require.a);
-      EraseRequired(require.b);
+      required.EraseGroup(require.a);
+      required.EraseGroup(require.b);
 
       assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {
@@ -195,11 +173,10 @@ ProblemState ApplyConstraints(
   return MakeProblemState(
       MakeAdjacencyList(steps),
       std::move(boundary),
-      std::move(required_stops),
+      std::move(required),
       std::move(stop_infos),
       state.step_partition_names,
-      std::move(original_edges),
-      std::move(alternate_stop)
+      std::move(original_edges)
   );
 }
 

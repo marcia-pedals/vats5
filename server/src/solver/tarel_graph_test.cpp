@@ -136,8 +136,17 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : stops) {
+    required.representative[stop] = stop;
+  }
   ProblemState state = MakeProblemState(
-      MakeAdjacencyList(steps), boundary, stops, stop_infos, {}, {}
+      MakeAdjacencyList(steps),
+      boundary,
+      std::move(required),
+      stop_infos,
+      {},
+      {}
   );
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
@@ -247,11 +256,10 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   state = MakeProblemState(
       MakeAdjacencyList(steps),
       state.boundary,
-      state.required_stops,
+      state.required,
       state.stop_infos,
       state.step_partition_names,
-      state.original_edges,
-      state.stop_group_representative
+      state.original_edges
   );
 
   std::optional<TspTourResult> result;
@@ -298,7 +306,7 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
   // Check that the deserialized state matches the original
   RC_ASSERT(original.boundary.start == deserialized.boundary.start);
   RC_ASSERT(original.boundary.end == deserialized.boundary.end);
-  RC_ASSERT(original.required_stops == deserialized.required_stops);
+  RC_ASSERT(original.required == deserialized.required);
   RC_ASSERT(original.stop_infos == deserialized.stop_infos);
   RC_ASSERT(original.step_partition_names == deserialized.step_partition_names);
   RC_ASSERT(original.original_edges == deserialized.original_edges);
@@ -435,15 +443,10 @@ RC_GTEST_PROP(
   );
 
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  TarelStateRemapResult remap =
-      RemapTarelStates(edges, state.stop_group_representative);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
 
-  std::unordered_set<StopId> expected_stops;
-  for (StopId stop : state.required_stops) {
-    if (!state.stop_group_representative.contains(stop)) {
-      expected_stops.insert(stop);
-    }
-  }
+  std::unordered_set<StopId> expected_stops =
+      state.required.GroupRepresentatives();
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.

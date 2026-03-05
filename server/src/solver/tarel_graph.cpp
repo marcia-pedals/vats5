@@ -19,6 +19,58 @@
 
 namespace vats5 {
 
+std::unordered_set<StopId> RequiredStops::AllFlat() const {
+  std::unordered_set<StopId> result;
+  for (const auto& [stop, _] : representative) {
+    result.insert(stop);
+  }
+  return result;
+}
+
+std::unordered_set<StopId> RequiredStops::GroupRepresentatives() const {
+  std::unordered_set<StopId> result;
+  for (const auto& [_, rep] : representative) {
+    result.insert(rep);
+  }
+  return result;
+}
+
+std::vector<std::vector<StopId>> RequiredStops::Groups() const {
+  std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
+  for (const auto& [stop, rep] : representative) {
+    groups_by_rep[rep].push_back(stop);
+  }
+  std::vector<std::vector<StopId>> result;
+  for (auto& [rep, members] : groups_by_rep) {
+    std::sort(members.begin(), members.end(), [](StopId a, StopId b) {
+      return a.v < b.v;
+    });
+    result.push_back(std::move(members));
+  }
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+    return a[0].v < b[0].v;
+  });
+  return result;
+}
+
+StopId RequiredStops::Representative(StopId stop) const {
+  auto it = representative.find(stop);
+  return it == representative.end() ? stop : it->second;
+}
+
+bool RequiredStops::Contains(StopId stop) const {
+  return representative.contains(stop);
+}
+
+size_t RequiredStops::size() const { return representative.size(); }
+
+void RequiredStops::EraseGroup(StopId stop) {
+  StopId rep = Representative(stop);
+  std::erase_if(representative, [&](const auto& pair) {
+    return pair.second == rep;
+  });
+}
+
 void ExpandStop(
     StopId stop,
     const std::unordered_map<StopId, PlainEdge>& original_edges,
@@ -33,17 +85,14 @@ void ExpandStop(
   ExpandStop(it->second.b, original_edges, out);
 }
 
-ProblemState ProblemState::WithRequiredStops(
-    const std::unordered_set<StopId>& stops
-) const {
+ProblemState ProblemState::WithRequired(const RequiredStops& required) const {
   return MakeProblemState(
       minimal,
       boundary,
-      stops,
+      required,
       stop_infos,
       step_partition_names,
-      original_edges,
-      stop_group_representative
+      original_edges
   );
 }
 
@@ -78,8 +127,9 @@ void showValue(const ProblemState& state, std::ostream& os) {
     return a.v < b.v;
   });
 
+  std::unordered_set<StopId> required_flat = state.required.AllFlat();
   std::vector<StopId> required_stop_ids(
-      state.required_stops.begin(), state.required_stops.end()
+      required_flat.begin(), required_flat.end()
   );
   std::sort(
       required_stop_ids.begin(),
@@ -149,43 +199,16 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "]\n";
 
-  if (!state.stop_group_representative.empty()) {
-    std::unordered_map<StopId, std::vector<StopId>> groups_by_rep;
-    for (StopId stop : state.required_stops) {
-      auto it = state.stop_group_representative.find(stop);
-      StopId rep =
-          (it != state.stop_group_representative.end()) ? it->second : stop;
-      groups_by_rep[rep].push_back(stop);
+  os << "  groups=[\n";
+  for (const auto& group : state.required.Groups()) {
+    os << "    [";
+    for (size_t i = 0; i < group.size(); ++i) {
+      if (i > 0) os << ", ";
+      os << state.stop_infos.at(group[i]).stop_name;
     }
-    std::vector<std::vector<StopId>> groups;
-    for (auto& [rep, members] : groups_by_rep) {
-      groups.push_back(std::move(members));
-    }
-    for (auto& group : groups) {
-      std::sort(group.begin(), group.end(), [](StopId a, StopId b) {
-        return a.v < b.v;
-      });
-    }
-    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
-      return a[0].v < b[0].v;
-    });
-    os << "  groups=[\n";
-    for (const auto& group : groups) {
-      StopId rep_id = group[0];
-      auto rep_it = state.stop_group_representative.find(rep_id);
-      if (rep_it != state.stop_group_representative.end()) {
-        rep_id = rep_it->second;
-      }
-      os << "    [";
-      for (size_t i = 0; i < group.size(); ++i) {
-        if (i > 0) os << ", ";
-        os << state.stop_infos.at(group[i]).stop_name;
-      }
-      os << "] (representative " << state.stop_infos.at(rep_id).stop_name
-         << ")\n";
-    }
-    os << "  ]\n";
+    os << "]\n";
   }
+  os << "  ]\n";
 
   os << "}";
 }
@@ -193,32 +216,34 @@ void showValue(const ProblemState& state, std::ostream& os) {
 ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
+    RequiredStops required,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
-    std::unordered_map<StopId, PlainEdge> original_edges,
-    std::unordered_map<StopId, StopId> alternate_stop
+    std::unordered_map<StopId, PlainEdge> original_edges
 ) {
+  // Validate that the representative map forms a forest of depth-1 trees
+  // (every value is either the key itself or maps to itself).
+  for (const auto& [stop, rep] : required.representative) {
+    auto rep_it = required.representative.find(rep);
+    assert(rep_it != required.representative.end());
+    assert(rep_it->second == rep);
+  }
+
+  std::unordered_set<StopId> stops = required.AllFlat();
   StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
   );
 
-  // Check that alternate_stop is really just a forest of a depth-1 trees.
-  for (const auto& [stop, alternate] : alternate_stop) {
-    assert(!alternate_stop.contains(alternate));
-  }
-
   return ProblemState{
       std::move(minimal),
       std::move(completed),
       boundary,
-      std::move(stops),
+      std::move(required),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
-      std::move(alternate_stop),
   };
 }
 
@@ -419,11 +444,16 @@ InitializeProblemStateResult InitializeProblemState(
   std::vector<Step> steps = minimal_compact.list.AllSteps();
   AddBoundary(steps, required_stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : required_stops) {
+    required.representative[stop] = stop;
+  }
+
   return InitializeProblemStateResult{
       .problem_state = MakeProblemState(
           MakeAdjacencyList(steps),
           boundary,
-          required_stops,
+          std::move(required),
           stop_infos,
           step_partition_to_route_desc,
           {}
@@ -556,8 +586,7 @@ struct EdgeSignature {
 };
 
 TarelStateRemapResult RemapTarelStates(
-    const std::vector<TarelEdge>& edges,
-    const std::unordered_map<StopId, StopId>& alternate_stop
+    const std::vector<TarelEdge>& edges, const RequiredStops& required
 ) {
   // Two tarel states are "equivalent" if they have the same `stop`, and they
   // have the same set of `destination`s and they have matching `weights` to
@@ -610,12 +639,9 @@ TarelStateRemapResult RemapTarelStates(
   // Group canonical states by stop and assign contiguous IDs.
   std::unordered_map<StopId, std::vector<TarelState>> canonical_by_stop;
   for (const TarelState& ts : all_canonical_states) {
-    auto representative_it = alternate_stop.find(ts.stop);
-    StopId representative = representative_it == alternate_stop.end()
-                                ? ts.stop
-                                : representative_it->second;
+    StopId rep = required.Representative(ts.stop);
 
-    canonical_by_stop[representative].push_back(ts);
+    canonical_by_stop[rep].push_back(ts);
   }
 
   std::unordered_map<TarelState, TarelState> renumbered_state;
@@ -864,8 +890,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
 ) {
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
-  TarelStateRemapResult remap =
-      RemapTarelStates(edges, state.stop_group_representative);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
   // Check that at least one representative from each group of required stops
@@ -877,18 +902,12 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   // appear as both origins and destinations are omitted).
   std::unordered_set<StopId> representatives_in_graph;
   for (const TarelState& tarel_state : graph.state_by_id) {
-    auto representative_it =
-        state.stop_group_representative.find(tarel_state.stop);
-    StopId representative =
-        representative_it == state.stop_group_representative.end()
-            ? tarel_state.stop
-            : representative_it->second;
-    representatives_in_graph.insert(representative);
+    representatives_in_graph.insert(
+        state.required.Representative(tarel_state.stop)
+    );
   }
-  for (StopId stop : state.required_stops) {
-    bool is_representative = state.stop_group_representative.find(stop) ==
-                             state.stop_group_representative.end();
-    if (is_representative && !representatives_in_graph.contains(stop)) {
+  for (StopId rep : state.required.GroupRepresentatives()) {
+    if (!representatives_in_graph.contains(rep)) {
       return std::nullopt;
     }
   }
