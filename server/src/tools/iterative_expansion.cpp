@@ -547,13 +547,13 @@ RefinementResult Refine(
       "[" + info_a.stop_name + "]-" + info_b.stop_name,
   };
 
-  StopId join_b = next_stop_id;
-  next_stop_id.v += 1;
-  required.representative[join_b] = required.Representative(b);
-  stop_infos[join_b] = ProblemStateStopInfo{
-      GtfsStopId{info_a.gtfs_stop_id.v + "-[" + info_b.gtfs_stop_id.v + "]"},
-      info_a.stop_name + "-[" + info_b.stop_name + "]",
-  };
+  // StopId join_b = next_stop_id;
+  // next_stop_id.v += 1;
+  // required.representative[join_b] = required.Representative(b);
+  // stop_infos[join_b] = ProblemStateStopInfo{
+  //     GtfsStopId{info_a.gtfs_stop_id.v + "-[" + info_b.gtfs_stop_id.v + "]"},
+  //     info_a.stop_name + "-[" + info_b.stop_name + "]",
+  // };
 
   for (const auto& [x, x_to_a] : xs_to_a) {
     std::vector<StepProvenance> prov;
@@ -571,19 +571,19 @@ RefinementResult Refine(
           .destination = step.destination,
           .is_flex = step.is_flex
       };
-      continue_step.destination.stop = join_b;
+      continue_step.destination.stop = b;
       continue_step.destination.partition =
           a_to_b[prov[i].bc_index].destination.partition;
       steps.push_back(continue_step);
     }
   }
 
-  for (const auto& [x, b_to_x] : b_to_xs) {
-    for (Step step : b_to_x) {
-      step.origin.stop = join_b;
-      steps.push_back(step);
-    }
-  }
+  // for (const auto& [x, b_to_x] : b_to_xs) {
+  //   for (Step step : b_to_x) {
+  //     step.origin.stop = join_b;
+  //     steps.push_back(step);
+  //   }
+  // }
 
   std::erase_if(steps, [&](const Step& step) {
     return step.origin.stop == a && step.destination.stop == b;
@@ -608,16 +608,16 @@ RefinementResult Refine(
     if (old_origin.stop == a) {
       old_origin.stop = join_a;
     }
-    if (old_origin.stop == b) {
-      old_origin.stop = join_b;
-    }
+    // if (old_origin.stop == b) {
+    //   old_origin.stop = join_b;
+    // }
     TarelState old_dest = old_edge.destination;
     if (old_dest.stop == a) {
       old_dest.stop = join_a;
     }
-    if (old_dest.stop == b) {
-      old_dest.stop = join_b;
-    }
+    // if (old_dest.stop == b) {
+    //   old_dest.stop = join_b;
+    // }
     auto edge_it = std::find_if(
         new_problem_all_edges.begin(),
         new_problem_all_edges.end(),
@@ -877,24 +877,48 @@ int main(int argc, char* argv[]) {
           break;
         }
 
-        RefinementResult best_refinement;
-        best_refinement.old_tour_new_weight = 0;
-        for (int i = 1; i + 1 < tarel->tour_edges.size(); ++i) {
-          const TarelEdge& edge = tarel->tour_edges[i];
-          RefinementResult refined = Refine(
-              cur_state,
-              edge.origin.stop,
-              edge.destination.stop,
-              tarel->tour_edges
-          );
-          if (refined.old_tour_new_weight >
-              best_refinement.old_tour_new_weight) {
-            best_refinement = std::move(refined);
-          }
+        // RefinementResult best_refinement;
+        // best_refinement.old_tour_new_weight = 0;
+        // for (int i = 1; i + 1 < tarel->tour_edges.size(); ++i) {
+        //   const TarelEdge& edge = tarel->tour_edges[i];
+        //   RefinementResult refined = Refine(
+        //       cur_state,
+        //       edge.origin.stop,
+        //       edge.destination.stop,
+        //       tarel->tour_edges
+        //   );
+        //   if (refined.old_tour_new_weight >
+        //       best_refinement.old_tour_new_weight) {
+        //     best_refinement = std::move(refined);
+        //   }
+        // }
+        // const TarelEdge& refine_edge =
+        // tarel->tour_edges[tarel->tour_edges.size() - 2];
+
+        auto refine_edge_it = tarel->tour_edges.end() - 2;
+        while (refine_edge_it != tarel->tour_edges.begin() &&
+               !solution.partial_problem.required.Contains(
+                   refine_edge_it->origin.stop
+               )) {
+          refine_edge_it -= 1;
         }
+        if (!solution.partial_problem.required.Contains(
+                refine_edge_it->origin.stop
+            )) {
+          std::cout << "  ran out of edges to refine!\n";
+          break;
+        }
+        const TarelEdge& refine_edge = *refine_edge_it;
         std::cout << "  best refinement: "
-                  << cur_state.StopName(best_refinement.a) << " -> "
-                  << cur_state.StopName(best_refinement.b) << "\n";
+                  << cur_state.StopName(refine_edge.origin.stop) << " -> "
+                  << cur_state.StopName(refine_edge.destination.stop) << "\n";
+
+        RefinementResult best_refinement = Refine(
+            cur_state,
+            refine_edge.origin.stop,
+            refine_edge.destination.stop,
+            tarel->tour_edges
+        );
         std::cout << "  best refinement weight: "
                   << TimeSinceServiceStart{best_refinement.old_tour_new_weight}
                          .ToString()
