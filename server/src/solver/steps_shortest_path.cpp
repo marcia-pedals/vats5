@@ -696,6 +696,11 @@ StepPathsAdjacencyList CompleteShortestPathsGraph(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops
 ) {
+  assert(
+      system_stops.size() < 100 &&
+      "CompleteShortestPathsGraph with >= 100 stops is probably hopeless; "
+      "consider making this call lazy instead"
+  );
   return ReduceToMinimalSystemPathsImpl(
       adjacency_list, system_stops, /*keep_through_other_destination=*/true
   );

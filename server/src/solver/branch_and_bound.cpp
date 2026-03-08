@@ -268,8 +268,6 @@ BranchAndBoundResult BranchAndBoundSolve(
       return {best_ub, std::move(best_paths), std::move(best_original_edges)};
     }
 
-    // Compute the completed graph for this subproblem (on demand, not stored
-    // in ProblemState to save memory on queued nodes).
     StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
     // Compute lower bound.
