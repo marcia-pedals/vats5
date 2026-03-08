@@ -182,6 +182,10 @@ target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter vi
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
 target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
+# Add benchmark_bnb tool
+add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
+target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
