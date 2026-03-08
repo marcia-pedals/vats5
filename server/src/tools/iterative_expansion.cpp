@@ -92,12 +92,15 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
     stop_index[stops[i]] = i;
   }
 
+  // Compute the minimal graph on the required stops. We can't use
+  // `state.minimal` directly because it may include intermediate non-required
+  // stops and we don't want those to participate in the MST.
+  StepPathsAdjacencyList minimal =
+      ReduceToMinimalSystemPaths(state.minimal, state.required.AllFlat());
+
   std::vector weights(n * n, std::numeric_limits<int>::max());
   weights.reserve(n * n);
-  // TODO: Change it to use minimal. BUT we might need to first reduce it to be
-  // a graph only on required stops so that these "intermediate stops" never
-  // appear as leaves.
-  for (const Step& step : state.completed.AllMergedSteps()) {
+  for (const Step& step : minimal.AllMergedSteps()) {
     if (step.origin.stop == state.boundary.start ||
         step.origin.stop == state.boundary.end ||
         step.destination.stop == state.boundary.start ||
@@ -245,7 +248,7 @@ PartialSolution PartialSolveBranchAndBound(
 
     // Reconstruct the paths through all original problem stops.
     std::vector<Path> more_original_paths =
-        ComputeMinimalFeasiblePathsAlong(tour, original_problem.completed);
+        ComputeMinimalFeasiblePathsAlong(tour, original_problem.minimal);
 
     // Some of these paths might have duration longer than the bb_path.
     // Disregard these.
@@ -305,7 +308,7 @@ PartialSolution NaivelyExtendPartialSolution(
     assert(extended_tour[new_stop_index] == new_stop);
 
     std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.completed
+        extended_tour, original_problem.minimal
     );
     auto best_path_it = std::ranges::min_element(
         paths, {}, [](const Path& path) { return path.DurationSeconds(); }
@@ -423,7 +426,7 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 
 // For each required stop not on the path, computes its shortest "distance" to
 // the path. Distance from required stop x to path stop p: find the
-// min-duration path from x to p in state.completed, then count how many
+// min-duration path from x to p in state.minimal, then count how many
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
 // Returns results sorted by distance (ascending).
@@ -440,21 +443,32 @@ std::vector<StopDistance> RequiredStopDistances(
     visited_reps.insert(state.required.Representative(s));
   });
 
+  // Filter visited stops to exclude boundary.
+  std::unordered_set<StopId> path_stops;
+  for (StopId p : visited) {
+    if (p != state.boundary.start && p != state.boundary.end) {
+      path_stops.insert(p);
+    }
+  }
+
   std::unordered_map<StopId, StopDistance> rep_to_distance;
   for (StopId x : state.required.AllFlat()) {
     StopId rep = state.required.Representative(x);
     if (visited_reps.contains(rep)) {
       continue;
     }
+    // Compute minimal paths from x to all path stops on-demand.
+    auto paths_from_x = FindMinimalPathSet(state.minimal, x, path_stops);
+
     int min_dist = INT_MAX;
     StopId nearest_stop{};
-    for (StopId p : visited) {
-      if (p == state.boundary.start || p == state.boundary.end) {
+    for (StopId p : path_stops) {
+      auto it = paths_from_x.find(p);
+      if (it == paths_from_x.end()) {
         continue;
       }
-      auto paths_xp = state.completed.PathsBetween(x, p);
       const Path* shortest = nullptr;
-      for (const Path& candidate : paths_xp) {
+      for (const Path& candidate : it->second) {
         if (!shortest ||
             candidate.DurationSeconds() < shortest->DurationSeconds()) {
           shortest = &candidate;
@@ -583,9 +597,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  std::cout << "Loading problem...\n";
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
+  std::cout << "Computing MST...\n";
   std::unordered_set<StopId> required_subset = MstLeaves(state);
   std::cout << "MST leaves:\n";
   for (StopId stop : required_subset) {
@@ -701,6 +717,7 @@ int main(int argc, char* argv[]) {
     PartialSolutionPath best_solution_path = *best_solution_path_it;
     std::cout << "Before greedy improve: "
               << best_solution_path.path.IntermediateStopCount() << "\n";
+
     best_solution_path =
         GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
             state, best_solution_path

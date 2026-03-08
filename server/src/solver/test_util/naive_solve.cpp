@@ -12,6 +12,8 @@ namespace vats5 {
 void EnumeratePermutations(
     const ProblemState& state, const SolutionSpaceCallback& callback
 ) {
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+
   // Make the initial generating permutation, which is
   // START -> ... all non-boundary stops in order ... -> END.
   std::vector<StopId> gen_perm;
@@ -32,7 +34,7 @@ void EnumeratePermutations(
     tour_sequence.push_back(state.boundary.start);
 
     std::vector<Path> paths =
-        ComputeMinimalFeasiblePathsAlong(tour_sequence, state.completed);
+        ComputeMinimalFeasiblePathsAlong(tour_sequence, completed);
 
     for (Path& path : paths) {
       callback(

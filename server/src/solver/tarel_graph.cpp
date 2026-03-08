@@ -166,7 +166,8 @@ void showValue(const ProblemState& state, std::ostream& os) {
   }
   os << "  ]\n";
 
-  std::vector<Step> merged_steps = state.completed.AllMergedSteps();
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+  std::vector<Step> merged_steps = completed.AllMergedSteps();
   std::unordered_set<StopId> completed_origins;
   std::unordered_set<StopId> completed_destinations;
   for (const Step& step : merged_steps) {
@@ -230,22 +231,24 @@ ProblemState MakeProblemState(
     assert(rep_it->second == rep);
   }
 
-  std::unordered_set<StopId> stops = required.AllFlat();
-  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(minimal, stops);
-  // Add END->START edge to complete the cycle for TSP formulation.
-  completed.adjacent[boundary.end].push_back(
-      {ZeroPath(boundary.end, boundary.start)}
-  );
-
   return ProblemState{
       std::move(minimal),
-      std::move(completed),
       boundary,
       std::move(required),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges),
   };
+}
+
+StepPathsAdjacencyList ProblemState::ComputeCompletedGraph() const {
+  StepPathsAdjacencyList completed =
+      CompleteShortestPathsGraph(minimal, required.AllFlat());
+  // Add END->START edge to complete the cycle for TSP formulation.
+  completed.adjacent[boundary.end].push_back(
+      {ZeroPath(boundary.end, boundary.start)}
+  );
+  return completed;
 }
 
 void AddBoundary(
@@ -910,7 +913,9 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     std::ostream* tsp_log,
     const SearchEventCallback& on_event
 ) {
-  std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+
+  std::vector<TarelEdge> edges = MakeTarelEdges(completed);
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
