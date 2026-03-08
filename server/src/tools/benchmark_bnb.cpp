@@ -48,17 +48,27 @@ int main(int argc, char* argv[]) {
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
           .count();
 
-  std::cout << "\n";
-  std::cout << "Optimal value: " << result.best_ub << " seconds ("
-            << result.best_ub / 60 << " min)\n";
+  std::cout << "\nBest duration: "
+            << TimeSinceServiceStart{result.best_ub}.ToString() << "\n";
   std::cout << "Paths: " << result.best_paths.size() << "\n";
   for (size_t i = 0; i < result.best_paths.size(); ++i) {
     const auto& path = result.best_paths[i];
-    std::cout << "  Path " << i << ": ";
-    path.VisitAllStops([&](StopId stop) { std::cout << stop.v << " "; });
-    std::cout << "(" << path.DurationSeconds() << "s)\n";
+
+    // Expand combined stops back to original stop IDs.
+    std::vector<StopId> tour;
+    path.VisitAllStops([&](StopId stop) {
+      ExpandStop(stop, result.original_edges, tour);
+    });
+
+    std::cout << "\nPath " << i << " (" << path.steps.size() << " steps):\n";
+    for (const Step& step : path.steps) {
+      std::cout << "  " << state.StopName(step.origin.stop) << " ("
+                << step.origin.time.ToString() << ") -> "
+                << state.StopName(step.destination.stop) << " ("
+                << step.destination.time.ToString() << ")\n";
+    }
   }
-  std::cout << "Time: " << duration_ms << " ms\n";
+  std::cout << "\nTime: " << duration_ms << " ms\n";
 
   return 0;
 }
