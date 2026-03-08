@@ -92,11 +92,15 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
     stop_index[stops[i]] = i;
   }
 
-  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+  // Compute the minimal graph on the required stops. We can't use
+  // `state.minimal` directly because it may include intermediate non-required
+  // stops and we don't want those to participate in the MST.
+  StepPathsAdjacencyList minimal =
+      ReduceToMinimalSystemPaths(state.minimal, state.required.AllFlat());
 
   std::vector weights(n * n, std::numeric_limits<int>::max());
   weights.reserve(n * n);
-  for (const Step& step : completed.AllMergedSteps()) {
+  for (const Step& step : minimal.AllMergedSteps()) {
     if (step.origin.stop == state.boundary.start ||
         step.origin.stop == state.boundary.end ||
         step.destination.stop == state.boundary.start ||
