@@ -804,6 +804,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
             .vertex_count = static_cast<int>(graph.state_by_id.size()),
             .edge_count = static_cast<int>(graph.tsp_edges.size()),
             .concorde_ms = concorde_ms,
+            .feasible = solution.has_value(),
         }
     );
   }

@@ -9,6 +9,7 @@ struct TarelSolve {
   int vertex_count;
   int edge_count;
   int concorde_ms;
+  bool feasible;
 };
 
 using SearchEvent = std::variant<TarelSolve>;

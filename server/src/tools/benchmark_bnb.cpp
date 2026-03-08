@@ -91,7 +91,7 @@ int main(int argc, char* argv[]) {
     const auto& s = solves[i];
     std::cout << "  #" << (i + 1) << ": " << s.vertex_count << " vertices, "
               << s.edge_count << " edges, " << FormatDuration(s.concorde_ms)
-              << "\n";
+              << (s.feasible ? "" : " (infeasible)") << "\n";
   }
 
   std::cout << "\nTotal time:       " << FormatDuration(total_ms) << "\n";
