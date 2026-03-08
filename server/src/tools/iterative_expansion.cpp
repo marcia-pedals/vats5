@@ -3,6 +3,7 @@
 #include <chrono>
 #include <climits>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -497,6 +498,13 @@ int main(int argc, char* argv[]) {
   app.add_option("input_path", input_path, "Path to problem state JSON")
       ->required();
 
+  std::string required_subset_dir;
+  app.add_option(
+      "--required_subset_dir",
+      required_subset_dir,
+      "Directory to write required_iteration_{n}.toml files"
+  );
+
   CLI11_PARSE(app, argc, argv);
 
   std::string viz_sqlite_path = viz::VizSqlitePath(input_path);
@@ -602,7 +610,85 @@ int main(int argc, char* argv[]) {
     return vp;
   };
 
+  // Create required_subset_dir if specified.
+  if (!required_subset_dir.empty()) {
+    std::filesystem::create_directories(required_subset_dir);
+  }
+
+  auto WriteRequiredSubsetToml = [&state](
+                                     const std::string& dir,
+                                     int iteration,
+                                     const std::unordered_set<StopId>& subset
+                                 ) {
+    if (dir.empty()) return;
+
+    std::string path =
+        dir + "/required_iteration_" + std::to_string(iteration) + ".toml";
+    std::ofstream out(path);
+
+    // Collect GTFS stop IDs and names, sorted by GTFS ID for determinism.
+    struct StopEntry {
+      std::string gtfs_id;
+      std::string name;
+    };
+    std::vector<StopEntry> entries;
+    for (StopId stop : subset) {
+      // Skip START and END boundary stops.
+      if (!state.stop_infos.contains(stop)) continue;
+      const auto& info = state.stop_infos.at(stop);
+      entries.push_back({info.gtfs_stop_id.v, info.stop_name});
+    }
+    std::ranges::sort(entries, {}, &StopEntry::gtfs_id);
+
+    // Figure out which stop groups are fully present in the subset.
+    std::vector<std::vector<StopEntry>> groups;
+    for (const auto& group : state.required.Groups()) {
+      if (group.size() <= 1) continue;
+      bool all_present = true;
+      for (StopId s : group) {
+        if (!subset.contains(s)) {
+          all_present = false;
+          break;
+        }
+      }
+      if (!all_present) continue;
+      std::vector<StopEntry> group_entries;
+      for (StopId s : group) {
+        const auto& info = state.stop_infos.at(s);
+        group_entries.push_back({info.gtfs_stop_id.v, info.stop_name});
+      }
+      groups.push_back(std::move(group_entries));
+    }
+
+    out << "# Iteration " << iteration << " required subset\n";
+    out << "# Number of stops: " << entries.size() << "\n\n";
+    out << "stop_ids = [\n";
+    for (const auto& entry : entries) {
+      out << "  \"" << entry.gtfs_id << "\", # " << entry.name << "\n";
+    }
+    out << "]\n";
+
+    if (!groups.empty()) {
+      out << "\nstop_groups = [\n";
+      for (const auto& group : groups) {
+        out << "  [";
+        for (size_t i = 0; i < group.size(); ++i) {
+          if (i > 0) out << ", ";
+          out << "\"" << group[i].gtfs_id << "\"";
+        }
+        out << "], # ";
+        for (size_t i = 0; i < group.size(); ++i) {
+          if (i > 0) out << "; ";
+          out << group[i].name;
+        }
+        out << "\n";
+      }
+      out << "]\n";
+    }
+  };
+
   for (int iteration = 0;; iteration++) {
+    WriteRequiredSubsetToml(required_subset_dir, iteration, required_subset);
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
               << required_subset.size() << " leaves ===\n";
     auto solution = PartialSolveBranchAndBound(required_subset, state);
