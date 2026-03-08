@@ -3,6 +3,7 @@
 #include <chrono>
 #include <climits>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -13,11 +14,13 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "algorithm/union_find.h"
 #include "solver/branch_and_bound.h"
+#include "solver/data.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -71,72 +74,62 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     PartialSolutionData, leaves, paths, best_path
 )
 
-// Builds an MST over the required stops (excluding start/end) using min
+// Builds an MST over the required groups (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
+//
+// Returns flattened groups (all stops in all groups rather than just the
+// representatives).
 std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
-  // Collect required stops, excluding START and END.
-  std::vector<StopId> stops(
-      state.required_stops.begin(), state.required_stops.end()
-  );
-  std::erase_if(stops, [&](StopId s) {
-    return s == state.boundary.start || s == state.boundary.end;
-  });
-  std::ranges::sort(stops);
+  // Collect all stops, excluding START and END.
+  std::vector<StopId> stops;
+  stops.reserve(state.minimal.NumStops());
+  for (int i = 0; i < state.minimal.NumStops(); ++i) {
+    stops.push_back(StopId{i});
+  }
   int n = static_cast<int>(stops.size());
-
-  std::unordered_set<StopId> stop_set(stops.begin(), stops.end());
-
-  // Compute minimal path sets from each required stop to all others.
-  // For each origin, FindMinimalPathSet gives paths to all destinations.
-  std::unordered_map<StopId, std::unordered_map<StopId, std::vector<Path>>>
-      paths_from;
-  for (StopId origin : stops) {
-    paths_from[origin] = FindMinimalPathSet(state.minimal, origin, stop_set);
+  std::unordered_map<StopId, int> stop_index;
+  for (int i = 0; i < n; ++i) {
+    stop_index[stops[i]] = i;
   }
 
-  // Build weighted undirected edges: for each pair of required stops, the
-  // weight is the min duration step between them in either direction.
-  struct Edge {
-    int u, v;  // indices into stops vector
-    int weight;
-  };
-  std::vector<Edge> edges;
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
-  for (int i = 0; i < n; i++) {
-    for (int k = i + 1; k < n; k++) {
-      int min_duration = std::numeric_limits<int>::max();
-      // Check forward direction.
-      auto& fw = paths_from[stops[i]];
-      auto fw_it = fw.find(stops[k]);
-      if (fw_it != fw.end()) {
-        for (const Path& p : fw_it->second) {
-          min_duration = std::min(min_duration, p.DurationSeconds());
-        }
-      }
-      // Check backward direction.
-      auto& bw = paths_from[stops[k]];
-      auto bw_it = bw.find(stops[i]);
-      if (bw_it != bw.end()) {
-        for (const Path& p : bw_it->second) {
-          min_duration = std::min(min_duration, p.DurationSeconds());
-        }
-      }
-      if (min_duration < std::numeric_limits<int>::max()) {
-        edges.push_back({i, k, min_duration});
-      }
+  std::vector weights(n * n, std::numeric_limits<int>::max());
+  weights.reserve(n * n);
+  for (const Step& step : completed.AllMergedSteps()) {
+    if (step.origin.stop == state.boundary.start ||
+        step.origin.stop == state.boundary.end ||
+        step.destination.stop == state.boundary.start ||
+        step.destination.stop == state.boundary.end) {
+      continue;
     }
+    int a = stop_index.at(state.required.Representative(step.origin.stop));
+    int b = stop_index.at(state.required.Representative(step.destination.stop));
+    if (a > b) {
+      std::swap(a, b);
+    }
+    int weight = step.DurationSeconds();
+    weights[a * n + b] = std::min(weights[a * n + b], weight);
   }
 
   // Kruskal's MST: sort edges by weight, greedily add via union-find.
-  std::ranges::sort(edges, {}, [](const Edge& edge) { return edge.weight; });
+  std::vector<int> ordered_edges(n * n);
+  std::iota(ordered_edges.begin(), ordered_edges.end(), 0);
+  std::erase_if(ordered_edges, [&](int edge_index) {
+    return weights[edge_index] == std::numeric_limits<int>::max();
+  });
+  std::ranges::sort(ordered_edges, {}, [&](int edge_index) {
+    return weights[edge_index];
+  });
 
   UnionFind uf(n);
   std::vector<int> degree(n, 0);
-
-  for (const Edge& e : edges) {
-    if (uf.Unite(e.u, e.v)) {
-      degree[e.u]++;
-      degree[e.v]++;
+  for (int edge_index : ordered_edges) {
+    int a = edge_index / n;
+    int b = edge_index % n;
+    if (uf.Unite(a, b)) {
+      degree[a]++;
+      degree[b]++;
     }
   }
 
@@ -144,7 +137,9 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   std::unordered_set<StopId> leaves;
   for (int i = 0; i < n; i++) {
     if (degree[i] == 1) {
-      leaves.insert(stops[i]);
+      state.required.VisitGroupStops(stops[i], [&](StopId s) {
+        leaves.insert(s);
+      });
     }
   }
   return leaves;
@@ -162,16 +157,14 @@ struct PartialSolutionPath {
   std::vector<StopId> subset_tour;
 };
 
-int CountRequiredStops(
-    const Path& path, const std::unordered_set<StopId>& required_stops
-) {
-  std::unordered_set<StopId> required_visited;
+int CountRequiredStops(const Path& path, const RequiredStops& required) {
+  std::unordered_set<StopId> required_rep_visited;
   path.VisitAllStops([&](StopId stop) {
-    if (required_stops.contains(stop)) {
-      required_visited.insert(stop);
+    if (required.Contains(stop)) {
+      required_rep_visited.insert(required.Representative(stop));
     }
   });
-  return required_visited.size();
+  return required_rep_visited.size();
 }
 
 // A "partial problem" is a problem where the paths are required to visit a
@@ -182,11 +175,11 @@ struct PartialSolution {
   // Returns the path that visits the most required stops.
   // Returns paths.end() if no paths are available.
   std::vector<PartialSolutionPath>::const_iterator BestPathByRequiredStops(
-      const std::unordered_set<StopId>& required_stops
+      const RequiredStops& required
   ) const {
     return std::ranges::max_element(
         paths, {}, [&](const PartialSolutionPath& sol_path) {
-          return CountRequiredStops(sol_path.path, required_stops);
+          return CountRequiredStops(sol_path.path, required);
         }
     );
   }
@@ -198,13 +191,28 @@ PartialSolution PartialSolveBranchAndBound(
 ) {
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
+
+  // Filter required to just this subset. Each group must be entirely present
+  // or entirely absent, since we add stops by group via VisitGroupStops.
+  RequiredStops partial_required = original_problem.required;
+  std::erase_if(partial_required.representative, [&](const auto& pair) {
+    return !required_subset.contains(pair.first);
+  });
+  // Assert each group is entirely present or entirely absent.
+  for (StopId rep : original_problem.required.GroupRepresentatives()) {
+    bool present_in_subset = required_subset.contains(rep);
+    original_problem.required.VisitGroupStops(rep, [&](StopId group_stop) {
+      assert(required_subset.contains(group_stop) == present_in_subset);
+    });
+  }
+
   ProblemState partial_problem = MakeProblemState(
       MakeAdjacencyList(
           ReduceToMinimalSystemPaths(original_problem.minimal, required_subset)
               .AllMergedSteps()
       ),
       original_problem.boundary,
-      required_subset,
+      std::move(partial_required),
       original_problem.stop_infos,
       original_problem.step_partition_names,
       original_problem.original_edges
@@ -334,8 +342,13 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
   PartialSolutionPath result = partial_path;
 
   while (true) {
-    std::unordered_set<StopId> unvisited(original_problem.required_stops);
-    result.path.VisitAllStops([&](StopId stop) { unvisited.erase(stop); });
+    std::unordered_set<StopId> unvisited = original_problem.required.AllFlat();
+    result.path.VisitAllStops([&](StopId stop) {
+      StopId visited_rep = original_problem.required.Representative(stop);
+      original_problem.required.VisitGroupStops(visited_rep, [&](StopId s) {
+        unvisited.erase(s);
+      });
+    });
 
     std::vector<PartialSolutionPath> improved;
     for (StopId new_stop : unvisited) {
@@ -343,7 +356,7 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
           original_problem, result.subset_tour, new_stop
       );
       auto best_extended_it =
-          extended.BestPathByRequiredStops(original_problem.required_stops);
+          extended.BestPathByRequiredStops(original_problem.required);
       if (best_extended_it == extended.paths.end() ||
           best_extended_it->path.DurationSeconds() >
               result.path.DurationSeconds()) {
@@ -354,7 +367,7 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 
     auto best_improved_it = std::ranges::max_element(
         improved, {}, [&](const PartialSolutionPath& path) {
-          return CountRequiredStops(path.path, original_problem.required_stops);
+          return CountRequiredStops(path.path, original_problem.required);
         }
     );
     if (best_improved_it == improved.end()) {
@@ -413,11 +426,18 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
 // required stops are on that path (including both endpoints). The distance
 // from x to the overall path is the minimum across all path stops p.
 // Returns results sorted by distance (ascending).
+//
+// Takes the min over all stops in groups and returns it as distance to
+// representative.
 std::vector<StopDistance> RequiredStopDistances(
     const Path& path, const ProblemState& state
 ) {
   std::unordered_set<StopId> visited;
-  path.VisitAllStops([&](StopId s) { visited.insert(s); });
+  std::unordered_set<StopId> visited_reps;
+  path.VisitAllStops([&](StopId s) {
+    visited.insert(s);
+    visited_reps.insert(state.required.Representative(s));
+  });
 
   // Filter visited stops to exclude boundary.
   std::unordered_set<StopId> path_stops;
@@ -427,9 +447,10 @@ std::vector<StopDistance> RequiredStopDistances(
     }
   }
 
-  std::vector<StopDistance> distances;
-  for (StopId x : state.required_stops) {
-    if (visited.contains(x)) {
+  std::unordered_map<StopId, StopDistance> rep_to_distance;
+  for (StopId x : state.required.AllFlat()) {
+    StopId rep = state.required.Representative(x);
+    if (visited_reps.contains(rep)) {
       continue;
     }
     // Compute minimal paths from x to all path stops on-demand.
@@ -453,7 +474,7 @@ std::vector<StopDistance> RequiredStopDistances(
         // Count required stops on the connecting path, including endpoints.
         int count = 0;
         shortest->VisitAllStops([&](StopId s) {
-          if (state.required_stops.contains(s)) {
+          if (state.required.Contains(s)) {
             count++;
           }
         });
@@ -463,10 +484,88 @@ std::vector<StopDistance> RequiredStopDistances(
         }
       }
     }
-    distances.push_back({min_dist, x, nearest_stop});
+
+    StopDistance distance{min_dist, x, nearest_stop};
+    auto [it, inserted] = rep_to_distance.try_emplace(rep, distance);
+    if (it->second.distance > distance.distance) {
+      it->second = distance;
+    }
+  }
+
+  std::vector<StopDistance> distances;
+  distances.reserve(rep_to_distance.size());
+  for (const auto& [rep, distance] : rep_to_distance) {
+    distances.push_back(distance);
   }
   std::sort(distances.begin(), distances.end());
   return distances;
+}
+
+void WriteRequiredSubsetToml(
+    const ProblemState& state,
+    const std::string& dir,
+    int iteration,
+    const std::unordered_set<StopId>& subset
+) {
+  if (dir.empty()) return;
+
+  std::string path =
+      dir + "/required_iteration_" + std::to_string(iteration) + ".toml";
+  std::ofstream out(path);
+
+  // Collect GTFS stop IDs and names, sorted by GTFS ID for determinism.
+  struct StopEntry {
+    std::string gtfs_id;
+    std::string name;
+  };
+  std::vector<StopEntry> entries;
+  for (StopId stop : subset) {
+    // Skip START and END boundary stops.
+    if (!state.stop_infos.contains(stop)) continue;
+    const auto& info = state.stop_infos.at(stop);
+    entries.push_back({info.gtfs_stop_id.v, info.stop_name});
+  }
+  std::ranges::sort(entries, {}, &StopEntry::gtfs_id);
+
+  // Figure out which stop groups have members in the subset.
+  std::vector<std::vector<StopEntry>> groups;
+  for (const auto& group : state.required.Groups()) {
+    if (group.size() <= 1) continue;
+    std::vector<StopEntry> group_entries;
+    for (StopId s : group) {
+      if (!subset.contains(s)) continue;
+      const auto& info = state.stop_infos.at(s);
+      group_entries.push_back({info.gtfs_stop_id.v, info.stop_name});
+    }
+    if (group_entries.size() <= 1) continue;
+    groups.push_back(std::move(group_entries));
+  }
+
+  out << "# Iteration " << iteration << " required subset\n";
+  out << "# Number of stops: " << entries.size() << "\n\n";
+  out << "stop_ids = [\n";
+  for (const auto& entry : entries) {
+    out << "  \"" << entry.gtfs_id << "\", # " << entry.name << "\n";
+  }
+  out << "]\n";
+
+  if (!groups.empty()) {
+    out << "\nstop_groups = [\n";
+    for (const auto& group : groups) {
+      out << "  [";
+      for (size_t i = 0; i < group.size(); ++i) {
+        if (i > 0) out << ", ";
+        out << "\"" << group[i].gtfs_id << "\"";
+      }
+      out << "], # ";
+      for (size_t i = 0; i < group.size(); ++i) {
+        if (i > 0) out << "; ";
+        out << group[i].name;
+      }
+      out << "\n";
+    }
+    out << "]\n";
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -475,6 +574,13 @@ int main(int argc, char* argv[]) {
   std::string input_path;
   app.add_option("input_path", input_path, "Path to problem state JSON")
       ->required();
+
+  std::string required_subset_dir;
+  app.add_option(
+      "--required_subset_dir",
+      required_subset_dir,
+      "Directory to write required_iteration_{n}.toml files"
+  );
 
   CLI11_PARSE(app, argc, argv);
 
@@ -493,6 +599,10 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Computing MST...\n";
   std::unordered_set<StopId> required_subset = MstLeaves(state);
+  std::cout << "MST leaves:\n";
+  for (StopId stop : required_subset) {
+    std::cout << "  " << state.StopName(stop) << "\n";
+  }
 
   // Generate run timestamp.
   auto now = std::chrono::system_clock::now();
@@ -579,14 +689,22 @@ int main(int argc, char* argv[]) {
     return vp;
   };
 
+  // Create required_subset_dir if specified.
+  if (!required_subset_dir.empty()) {
+    std::filesystem::create_directories(required_subset_dir);
+  }
+
   for (int iteration = 0;; iteration++) {
+    WriteRequiredSubsetToml(
+        state, required_subset_dir, iteration, required_subset
+    );
     std::cout << "=== Iteration " << iteration << ": branch and bound on "
               << required_subset.size() << " leaves ===\n";
     auto solution = PartialSolveBranchAndBound(required_subset, state);
 
     // Choose the path that visits the most required stops.
     auto best_solution_path_it =
-        solution.BestPathByRequiredStops(state.required_stops);
+        solution.BestPathByRequiredStops(state.required);
     if (best_solution_path_it == solution.paths.end()) {
       std::cout << "No feasible paths found.\n";
       return 1;
@@ -660,7 +778,9 @@ int main(int argc, char* argv[]) {
     StopId farthest = distances.back().unvisited_stop;
     std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
               << "\n\n";
-    required_subset.insert(farthest);
+    state.required.VisitGroupStops(farthest, [&](StopId s) {
+      required_subset.insert(s);
+    });
   }
 
   return 0;

@@ -71,7 +71,8 @@ void QueryRequiredStopsConfig(
     const GtfsDay& data,
     int argc,
     char* argv[],
-    const std::unordered_set<GtfsStopId>& exclude_stop_ids = {}
+    const std::unordered_set<GtfsStopId>& exclude_stop_ids = {},
+    const std::vector<std::vector<std::string>>& stop_groups = {}
 ) {
   // Build a map of stop_id to stop_name
   std::unordered_map<GtfsStopId, std::string> stop_names;
@@ -189,6 +190,51 @@ void QueryRequiredStopsConfig(
   }
 
   std::cout << "]\n";
+
+  if (!stop_groups.empty()) {
+    // Validate stop groups: all stop IDs must be in the output set, and no
+    // stop can appear in multiple groups.
+    std::unordered_set<std::string> all_stop_ids;
+    for (const auto& stop_id : sorted_stops) {
+      all_stop_ids.insert(stop_id.v);
+    }
+    std::unordered_set<std::string> seen_in_groups;
+    for (size_t group_idx = 0; group_idx < stop_groups.size(); ++group_idx) {
+      for (const auto& stop_id : stop_groups[group_idx]) {
+        if (!all_stop_ids.contains(stop_id)) {
+          throw std::runtime_error(
+              "Stop ID '" + stop_id +
+              "' in --stop_groups is not in the output stop set"
+          );
+        }
+        if (!seen_in_groups.insert(stop_id).second) {
+          throw std::runtime_error(
+              "Stop ID '" + stop_id + "' appears in multiple stop groups"
+          );
+        }
+      }
+    }
+
+    std::cout << "\nstop_groups = [\n";
+    for (const auto& group : stop_groups) {
+      std::cout << "  [";
+      for (size_t i = 0; i < group.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        std::cout << "\"" << group[i] << "\"";
+      }
+      std::cout << "],";
+      // Add stop name comments
+      for (size_t i = 0; i < group.size(); ++i) {
+        GtfsStopId gtfs_id{group[i]};
+        auto name_it = stop_names.find(gtfs_id);
+        if (name_it != stop_names.end()) {
+          std::cout << (i == 0 ? " # " : "; ") << name_it->second;
+        }
+      }
+      std::cout << "\n";
+    }
+    std::cout << "]\n";
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -199,6 +245,8 @@ int main(int argc, char* argv[]) {
   std::string trip_id_prefix;
   std::string route_ids;
   std::string exclude_stop_ids;
+  std::string exclude_route_ids;
+  std::vector<std::string> stop_groups_raw;
 
   app.add_option("config_path", config_path, "Path to TOML config file")
       ->required();
@@ -219,9 +267,20 @@ int main(int argc, char* argv[]) {
       "Comma-separated list of exact route IDs to include"
   );
   app.add_option(
+      "--exclude_route_ids",
+      exclude_route_ids,
+      "Comma-separated list of exact route IDs to exclude"
+  );
+  app.add_option(
       "--exclude_stop_ids",
       exclude_stop_ids,
       "Comma-separated list of stop IDs to exclude from output"
+  );
+  app.add_option(
+      "--stop_groups",
+      stop_groups_raw,
+      "Stop groups (repeatable). Each value is a comma-separated list of "
+      "stop IDs in the group."
   );
 
   CLI11_PARSE(app, argc, argv);
@@ -269,6 +328,24 @@ int main(int argc, char* argv[]) {
       RemoveUnreferencedTripsRoutesAndDirections(data);
     }
 
+    if (!exclude_route_ids.empty()) {
+      std::unordered_set<GtfsRouteId> exclude_route_id_set;
+      std::istringstream ss(exclude_route_ids);
+      std::string id;
+      while (std::getline(ss, id, ',')) {
+        exclude_route_id_set.insert(GtfsRouteId{id});
+      }
+
+      std::unordered_set<GtfsTripId> matching_trips;
+      for (const auto& trip : data.trips) {
+        if (!exclude_route_id_set.count(trip.route_direction_id.route_id)) {
+          matching_trips.insert(trip.trip_id);
+        }
+      }
+      data = GtfsDayFilterByTrips(data, matching_trips);
+      RemoveUnreferencedTripsRoutesAndDirections(data);
+    }
+
     // Parse exclude_stop_ids if provided
     std::unordered_set<GtfsStopId> exclude_stop_id_set;
     if (!exclude_stop_ids.empty()) {
@@ -279,12 +356,26 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    // Parse --stop_groups: each value is "id1,id2,id3"
+    std::vector<std::vector<std::string>> stop_groups;
+    for (const auto& group_str : stop_groups_raw) {
+      std::vector<std::string> group;
+      std::istringstream ss(group_str);
+      std::string id;
+      while (std::getline(ss, id, ',')) {
+        group.push_back(id);
+      }
+      stop_groups.push_back(std::move(group));
+    }
+
     if (command == "stops") {
       QueryStops(data);
     } else if (command == "routes") {
       QueryRoutes(data);
     } else if (command == "required_stops_config") {
-      QueryRequiredStopsConfig(data, argc, argv, exclude_stop_id_set);
+      QueryRequiredStopsConfig(
+          data, argc, argv, exclude_stop_id_set, stop_groups
+      );
     } else {
       std::cerr << "Unknown command: " << command << std::endl;
       std::cerr << "Available commands: stops, routes, required_stops_config"

@@ -13,6 +13,7 @@
 
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
+#include "solver/search_event.h"
 #include "solver/steps_adjacency_list.h"
 
 namespace vats5 {
@@ -58,6 +59,49 @@ struct std::hash<vats5::StepPartitionId> {
 
 namespace vats5 {
 
+struct RequiredStops {
+  // Maps every required stop to its group representative.
+  // Representatives map to themselves.
+  // Keys = all required stops. Values = group representatives.
+  std::unordered_map<StopId, StopId> representative;
+
+  // All required stops (keys of representative).
+  std::unordered_set<StopId> AllFlat() const;
+
+  // Deduplicated group representatives (unique values of representative).
+  std::unordered_set<StopId> GroupRepresentatives() const;
+
+  // Groups of stops, where each group is a vector of stops sharing the same
+  // representative. Groups are sorted by first member for determinism.
+  std::vector<std::vector<StopId>> Groups() const;
+
+  // Lookup representative for any stop. If not in map, returns stop itself
+  // (safe for non-required stops).
+  StopId Representative(StopId stop) const;
+
+  // Calls callback for every stop in the same group as `rep`.
+  template <typename F>
+  void VisitGroupStops(StopId rep, F&& callback) const {
+    for (const auto& [stop, r] : representative) {
+      if (r == rep) {
+        callback(stop);
+      }
+    }
+  }
+
+  // Erase an entire group by representative. Removes all entries whose
+  // representative matches the representative of `stop`.
+  void EraseGroup(StopId stop);
+
+  // Whether stop is required.
+  bool Contains(StopId stop) const;
+
+  // Number of required stops.
+  size_t size() const;
+
+  bool operator==(const RequiredStops&) const = default;
+};
+
 struct ProblemState {
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least
@@ -68,7 +112,8 @@ struct ProblemState {
   ProblemBoundary boundary;
 
   // All stops that are required to be visited, including START and END.
-  std::unordered_set<StopId> required_stops;
+  // Also encodes stop groups (see RequiredStops).
+  RequiredStops required;
 
   // Information about all stops (GTFS ID and name) for display and lookup.
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
@@ -106,8 +151,8 @@ struct ProblemState {
     return it->second;
   }
 
-  // Return a copy of this state with the required stops replaced by `stops`.
-  ProblemState WithRequiredStops(const std::unordered_set<StopId>& stops) const;
+  // Return a copy of this state with the required stops replaced.
+  ProblemState WithRequired(const RequiredStops& required) const;
 
   // Compute the "completed" graph: the completion of `minimal` where every
   // possible route between elements of `required_stops` is a path. Includes
@@ -126,16 +171,16 @@ void ExpandStop(
 ProblemState MakeProblemState(
     StepsAdjacencyList minimal,
     ProblemBoundary boundary,
-    std::unordered_set<StopId> stops,
+    RequiredStops required,
     std::unordered_map<StopId, ProblemStateStopInfo> stop_infos,
     std::unordered_map<StepPartitionId, std::string> step_partition_names,
     std::unordered_map<StopId, PlainEdge> original_edges
 );
 
 inline void to_json(nlohmann::json& j, const ProblemState& s) {
-  std::vector<int> required_stops_vec;
-  for (StopId stop : s.required_stops) {
-    required_stops_vec.push_back(stop.v);
+  std::vector<std::pair<int, int>> required_vec;
+  for (const auto& [stop, rep] : s.required.representative) {
+    required_vec.emplace_back(stop.v, rep.v);
   }
   std::vector<std::pair<int, ProblemStateStopInfo>> stop_infos_vec;
   for (const auto& [k, v] : s.stop_infos) {
@@ -152,7 +197,7 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
   j = nlohmann::json{
       {"minimal", s.minimal},
       {"boundary", s.boundary},
-      {"required_stops", required_stops_vec},
+      {"required", required_vec},
       {"stop_infos", stop_infos_vec},
       {"step_partition_names", step_partition_names_vec},
       {"original_edges", original_edges_vec},
@@ -162,9 +207,10 @@ inline void to_json(nlohmann::json& j, const ProblemState& s) {
 inline void from_json(const nlohmann::json& j, ProblemState& s) {
   auto minimal = j.at("minimal").get<StepsAdjacencyList>();
   auto boundary = j.at("boundary").get<ProblemBoundary>();
-  std::unordered_set<StopId> required_stops;
-  for (int v : j.at("required_stops").get<std::vector<int>>()) {
-    required_stops.insert(StopId{v});
+  RequiredStops required;
+  for (const auto& [stop_v, rep_v] :
+       j.at("required").get<std::vector<std::pair<int, int>>>()) {
+    required.representative[StopId{stop_v}] = StopId{rep_v};
   }
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
   for (const auto& [k, v] :
@@ -186,7 +232,7 @@ inline void from_json(const nlohmann::json& j, ProblemState& s) {
   s = MakeProblemState(
       std::move(minimal),
       boundary,
-      std::move(required_stops),
+      std::move(required),
       std::move(stop_infos),
       std::move(step_partition_names),
       std::move(original_edges)
@@ -286,8 +332,6 @@ struct TarelEdge {
   TarelState origin;
   TarelState destination;
   int weight;
-  std::vector<TarelState> original_origins;
-  std::vector<TarelState> original_destinations;
 };
 
 // Computes intermediate data (steps_from and arrival_times_to) from steps.
@@ -317,10 +361,8 @@ struct TspGraphData {
 
 // Return type for SolveTspAndExtractTour.
 struct TspTourResult {
-  std::vector<StopId> original_stop_tour;
-  std::vector<TimeSinceServiceStart> cumulative_weights;
-  std::vector<TarelEdge> tour_edges;
   int optimal_value;
+  std::vector<TarelEdge> tour_edges;
 };
 
 // Adds the `boundary` START and END to `stops` and `stop_names`, and adds
@@ -352,8 +394,13 @@ InitializeProblemStateResult InitializeProblemState(
     bool optimize_edges = false
 );
 
-std::vector<TarelEdge> MergeEquivalentTarelStates(
-    const std::vector<TarelEdge>& edges
+struct TarelStateRemapResult {
+  std::vector<TarelEdge> edges;
+  std::unordered_map<TarelState, TarelState> mapped_to_original;
+};
+
+TarelStateRemapResult RemapTarelStates(
+    const std::vector<TarelEdge>& edges, const RequiredStops& required
 );
 
 TspGraphData MakeTspGraphEdges(
@@ -365,13 +412,15 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const TspGraphData& graph,
     const ProblemBoundary& boundary,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    std::ostream* tsp_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    std::ostream* tsp_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

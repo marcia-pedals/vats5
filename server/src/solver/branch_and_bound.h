@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 #include "solver/data.h"
+#include "solver/search_event.h"
 #include "solver/tarel_graph.h"
 
 namespace vats5 {
@@ -86,7 +87,8 @@ BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
-    int max_iter = -1
+    int max_iter = -1,
+    const SearchEventCallback& on_event = nullptr
 );
 
 }  // namespace vats5

@@ -481,6 +481,24 @@ function StopDot({
   );
 }
 
+function groupByRepresentative<S extends { group_representative: string | null }, T>(
+  stops: S[],
+  accessor: (stop: S) => T
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const stop of stops) {
+    const rep = stop.group_representative;
+    if (!rep) continue;
+    const group = groups.get(rep);
+    if (group === undefined) {
+      groups.set(rep, [accessor(stop)]);
+    } else {
+      group.push(accessor(stop));
+    }
+  }
+  return groups;
+}
+
 function VizPage() {
   const { name } = Route.useParams();
   useCheckoutTitle(name);
@@ -745,8 +763,41 @@ function VizPage() {
       s.add(step.origin_stop_id);
       s.add(step.destination_stop_id);
     }
+    // If any stop in a group is visited, mark the whole group as visited.
+    if (stopsQuery.data) {
+      for (const members of groupByRepresentative(stopsQuery.data, (s) => s.stop_id).values()) {
+        if (members.some((id) => s.has(id))) {
+          for (const id of members) s.add(id);
+        }
+      }
+    }
     return s;
-  }, [partialQuery.data]);
+  }, [partialQuery.data, stopsQuery.data]);
+
+  // Dashed lines connecting stops in the same group (same group_representative)
+  const groupLines = useMemo(() => {
+    if (!svgStops) return [];
+    const groups = groupByRepresentative(svgStops, (s) => ({
+      cx: s.cx,
+      cy: s.cy,
+    }));
+    // For each group with 2+ members, create lines between all pairs
+    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          lines.push({
+            x1: members[i].cx,
+            y1: members[i].cy,
+            x2: members[j].cx,
+            y2: members[j].cy,
+          });
+        }
+      }
+    }
+    return lines;
+  }, [svgStops]);
 
   const pathArrows = useMemo(() => {
     if (!partialQuery.data || !stopCoords.size) return [];
@@ -878,6 +929,21 @@ function VizPage() {
                 </marker>
               </defs>
               <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+                {/* Stop group lines (dashed) */}
+                {groupLines.map((l) => (
+                  <line
+                    key={`group-${l.x1}-${l.y1}-${l.x2}-${l.y2}`}
+                    x1={l.x1}
+                    y1={l.y1}
+                    x2={l.x2}
+                    y2={l.y2}
+                    stroke="var(--color-tc-cyan)"
+                    strokeWidth={1.5 / transform.scale}
+                    strokeDasharray={`${4 / transform.scale} ${4 / transform.scale}`}
+                    opacity={0.5}
+                    style={{ pointerEvents: "none" }}
+                  />
+                ))}
                 {svgStops.map((stop) => (
                   <StopDot
                     key={stop.stop_id}

@@ -182,6 +182,10 @@ target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter vi
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
 target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
+# Add benchmark_bnb tool
+add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
+target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
@@ -196,7 +200,7 @@ target_link_libraries(problem_state_gen PUBLIC tarel_graph rapidcheck)
 target_include_directories(problem_state_gen PUBLIC src)
 
 add_library(naive_solve src/solver/test_util/naive_solve.cpp)
-target_link_libraries(naive_solve PUBLIC tarel_graph step_merge)
+target_link_libraries(naive_solve PUBLIC tarel_graph tour_paths)
 target_include_directories(naive_solve PUBLIC src)
 
 # Enable CMake testing

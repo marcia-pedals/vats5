@@ -136,8 +136,17 @@ TEST(TarelGraphTest, InfeasibleProblemNoSolution) {
   };
   AddBoundary(steps, stops, stop_infos, boundary);
 
+  RequiredStops required;
+  for (StopId stop : stops) {
+    required.representative[stop] = stop;
+  }
   ProblemState state = MakeProblemState(
-      MakeAdjacencyList(steps), boundary, stops, stop_infos, {}, {}
+      MakeAdjacencyList(steps),
+      boundary,
+      std::move(required),
+      stop_infos,
+      {},
+      {}
   );
 
   std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
@@ -248,7 +257,7 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
   state = MakeProblemState(
       MakeAdjacencyList(steps),
       state.boundary,
-      state.required_stops,
+      state.required,
       state.stop_infos,
       state.step_partition_names,
       state.original_edges
@@ -261,6 +270,24 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundMaxPartitioning, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
   RC_ASSERT(result.has_value());
+  int lower_bound = result->optimal_value;
+  int actual_value = BruteForceSolveOptimalDuration(state);
+  RC_ASSERT(lower_bound == actual_value);
+}
+
+// All-flex complete bidirectional graph: the
+// tarel lower bound should be tight (equal to brute force optimal).
+RC_GTEST_PROP(TarelGraphTest, LowerBoundFlexComplete, ()) {
+  ProblemState state = *GenFlexProblemState();
+
+  std::optional<TspTourResult> result;
+  try {
+    result = ComputeTarelLowerBound(state);
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
+  RC_ASSERT(result.has_value());
+
   int lower_bound = result->optimal_value;
   int actual_value = BruteForceSolveOptimalDuration(state);
   RC_ASSERT(lower_bound == actual_value);
@@ -280,7 +307,7 @@ RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
   // Check that the deserialized state matches the original
   RC_ASSERT(original.boundary.start == deserialized.boundary.start);
   RC_ASSERT(original.boundary.end == deserialized.boundary.end);
-  RC_ASSERT(original.required_stops == deserialized.required_stops);
+  RC_ASSERT(original.required == deserialized.required);
   RC_ASSERT(original.stop_infos == deserialized.stop_infos);
   RC_ASSERT(original.step_partition_names == deserialized.step_partition_names);
   RC_ASSERT(original.original_edges == deserialized.original_edges);
@@ -390,24 +417,16 @@ TEST(TarelGraphTest, MergeEquivalentTarelStates_DestinationOnlyStates) {
   TarelState stateB1{StopId{1}, StepPartitionId{1}};  // destination-only
 
   std::vector<TarelEdge> edges = {
-      {.origin = stateA0,
-       .destination = stateB0,
-       .weight = 100,
-       .original_origins = {stateA0},
-       .original_destinations = {stateB0}},
-      {.origin = stateA1,
-       .destination = stateB1,
-       .weight = 200,
-       .original_origins = {stateA1},
-       .original_destinations = {stateB1}},
+      {.origin = stateA0, .destination = stateB0, .weight = 100},
+      {.origin = stateA1, .destination = stateB1, .weight = 200},
   };
 
-  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+  TarelStateRemapResult remap = RemapTarelStates(edges, {});
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, {StopId{0}, StopId{1}});
+      ValidateMergedEdgePartitions(remap.edges, {StopId{0}, StopId{1}});
   EXPECT_TRUE(errors.empty())
       << "Validation errors: " << (errors.empty() ? "" : errors[0]);
 }
@@ -427,12 +446,15 @@ RC_GTEST_PROP(
 
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
-  std::vector<TarelEdge> merged = MergeEquivalentTarelStates(edges);
+  TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
+
+  std::unordered_set<StopId> expected_stops =
+      state.required.GroupRepresentatives();
 
   // Verify that all states have valid partition IDs and expected stops are
   // present.
   std::vector<std::string> errors =
-      ValidateMergedEdgePartitions(merged, state.required_stops);
+      ValidateMergedEdgePartitions(remap.edges, expected_stops);
   RC_ASSERT(errors.empty());
 }
 

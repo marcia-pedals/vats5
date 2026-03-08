@@ -27,7 +27,7 @@ ProblemState ApplyConstraints(
   // Mutable copies of all the `ProblemState` fields we'll be mutating.
   std::vector<Step> steps = state.minimal.AllSteps();
   ProblemBoundary boundary = state.boundary;
-  std::unordered_set<StopId> required_stops = state.required_stops;
+  RequiredStops required = state.required;
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
@@ -65,9 +65,11 @@ ProblemState ApplyConstraints(
           "(" + stop_infos[require.a].stop_name + "->" +
               stop_infos[require.b].stop_name + ")"
       };
-      required_stops.insert(ab);
-      required_stops.erase(require.a);
-      required_stops.erase(require.b);
+      required.representative[ab] = ab;
+
+      required.EraseGroup(require.a);
+      required.EraseGroup(require.b);
+
       assert(!(boundary.start == require.a && boundary.end == require.b));
       if (boundary.start == require.a) {
         boundary.start = ab;
@@ -171,10 +173,10 @@ ProblemState ApplyConstraints(
   return MakeProblemState(
       MakeAdjacencyList(steps),
       std::move(boundary),
-      std::move(required_stops),
+      std::move(required),
       std::move(stop_infos),
       state.step_partition_names,
-      original_edges
+      std::move(original_edges)
   );
 }
 
@@ -182,7 +184,8 @@ BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
-    int max_iter
+    int max_iter,
+    const SearchEventCallback& on_event
 ) {
   std::vector<SearchEdge> search_edges;
   std::vector<SearchNode> q;
@@ -253,6 +256,11 @@ BranchAndBoundResult BranchAndBoundSolve(
       // *search_log << "\n";
     }
 
+    // if (search_log != nullptr) {
+    //   showValue(state, *search_log);
+    //   *search_log << "\n";
+    // }
+
     if (cur_node.parent_lb >= best_ub) {
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
@@ -274,14 +282,16 @@ BranchAndBoundResult BranchAndBoundSolve(
     }
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
         state,
+        // std::nullopt,
         best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
                                                   : std::nullopt,
-        tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
+        tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr,
+        on_event
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
       if (search_log != nullptr) {
-        *search_log << "  infeasible\n";
+        *search_log << "  infeasible from tarel\n";
       }
       continue;
     }
@@ -396,10 +406,10 @@ BranchAndBoundResult BranchAndBoundSolve(
       *search_log << "\n";
     }
 
-    if (primitive_steps.size() <= 2) {
+    if (primitive_steps.size() <= 1) {
       // TODO: Figure out what to do here.
       if (search_log != nullptr) {
-        *search_log << "  pruned: 2 or fewer primitive steps\n";
+        *search_log << "  pruned: 1 or fewer primitive steps\n";
       }
       continue;
     }
