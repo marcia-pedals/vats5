@@ -527,7 +527,7 @@ void WriteRequiredSubsetToml(
       const auto& info = state.stop_infos.at(s);
       group_entries.push_back({info.gtfs_stop_id.v, info.stop_name});
     }
-    if (group_entries.empty()) continue;
+    if (group_entries.size() <= 1) continue;
     groups.push_back(std::move(group_entries));
   }
 
