@@ -272,6 +272,18 @@ struct std::hash<vats5::TarelState> {
 };
 
 template <>
+struct std::hash<std::pair<vats5::TarelState, vats5::TarelState>> {
+  std::size_t operator()(
+      const std::pair<vats5::TarelState, vats5::TarelState>& v
+  ) const {
+    std::size_t seed = std::hash<vats5::TarelState>{}(v.first);
+    seed ^= std::hash<vats5::TarelState>{}(v.second) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
+template <>
 struct std::hash<std::pair<vats5::StopId, bool>> {
   std::size_t operator()(const std::pair<vats5::StopId, bool>& v) const {
     std::size_t seed = std::hash<vats5::StopId>{}(v.first);

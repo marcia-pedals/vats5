@@ -907,6 +907,91 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   };
 }
 
+void PrunePartitions(std::vector<TarelEdge>& edges) {
+  std::unordered_map<StopId, std::unordered_set<TarelState>> states_by_stop;
+  std::unordered_map<std::pair<TarelState, TarelState>, int> graph_weight;
+  for (const TarelEdge& edge : edges) {
+    states_by_stop[edge.origin.stop].insert(edge.origin);
+    states_by_stop[edge.destination.stop].insert(edge.destination);
+    graph_weight[{edge.origin, edge.destination}] = edge.weight;
+  }
+
+  std::unordered_set<TarelState> dominated_states;
+
+  for (const auto& [victim_stop, victim_states] : states_by_stop) {
+    std::unordered_map<std::pair<TarelState, TarelState>, int> best_weight_through_victim;
+
+    for (const auto& [sx, sx_states] : states_by_stop) {
+      if (sx == victim_stop) {
+        continue;
+      }
+      for (const auto& [sy, sy_states] : states_by_stop) {
+        if (sx == sy || sy == victim_stop) {
+          continue;
+        }
+
+        for (const TarelState& sx_state : sx_states) {
+          for (const TarelState& sy_state : sy_states) {
+            auto [it, _] = best_weight_through_victim.try_emplace({sx_state, sy_state}, std::numeric_limits<int>::max());
+            int& best_weight = it->second;
+            for (const TarelState& victim_state : victim_states) {
+              auto sx_to_victim = graph_weight.find({sx_state, victim_state});
+              auto sy_to_victim = graph_weight.find({victim_state, sy_state});
+              if (sx_to_victim != graph_weight.end() && sy_to_victim != graph_weight.end()) {
+                best_weight = std::min(best_weight, sx_to_victim->second + sy_to_victim->second);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const TarelState& victim_state : victim_states) {
+      bool dominated = true;
+      for (const auto& [sx, sx_states] : states_by_stop) {
+        if (sx == victim_stop) {
+          continue;
+        }
+        for (const auto& [sy, sy_states] : states_by_stop) {
+          if (sx == sy || sy == victim_stop) {
+            continue;
+          }
+
+          for (const TarelState& sx_state : sx_states) {
+            for (const TarelState& sy_state : sy_states) {
+              auto sx_to_victim = graph_weight.find({sx_state, victim_state});
+              auto sy_to_victim = graph_weight.find({victim_state, sy_state});
+              if (sx_to_victim != graph_weight.end() && sy_to_victim != graph_weight.end()) {
+                if (sx_to_victim->second + sy_to_victim->second <= best_weight_through_victim[{sx_state, sy_state}]) {
+                  dominated = false;
+                  break;
+                }
+              }
+            }
+            if (!dominated) {
+              break;
+            }
+          }
+          if (!dominated) {
+            break;
+          }
+        }
+        if (!dominated) {
+          break;
+        }
+      }
+
+      if (dominated) {
+        dominated_states.insert(victim_state);
+      }
+    }
+  }
+
+  std::erase_if(edges, [&](const TarelEdge& edge) {
+    return dominated_states.contains(edge.origin) || dominated_states.contains(edge.destination);
+  });
+}
+
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub,
@@ -916,6 +1001,8 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
+  PrunePartitions(edges);
+
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
