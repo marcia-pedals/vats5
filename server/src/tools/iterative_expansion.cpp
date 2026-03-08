@@ -298,6 +298,10 @@ PartialSolution NaivelyExtendPartialSolution(
   int best_duration = std::numeric_limits<int>::max();
   std::vector<PartialSolutionPath> best_paths;
 
+  // Cache FindMinimalPathSet results across insertion positions: most edges
+  // in the tour stay the same when we swap new_stop to a different position.
+  PathCache path_cache;
+
   // Figure out the duration of the extended tour with the new stop in each
   // position, by swapping it forwards. Intentionally don't try the new stop
   // first or last because first and last should always be START and END.
@@ -308,7 +312,7 @@ PartialSolution NaivelyExtendPartialSolution(
     assert(extended_tour[new_stop_index] == new_stop);
 
     std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.minimal
+        extended_tour, original_problem.minimal, path_cache
     );
     auto best_path_it = std::ranges::min_element(
         paths, {}, [](const Path& path) { return path.DurationSeconds(); }

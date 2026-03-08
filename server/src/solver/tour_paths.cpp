@@ -97,14 +97,29 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlong(
 std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     const std::vector<StopId>& stop_sequence, const StepsAdjacencyList& minimal
 ) {
+  PathCache cache;
+  return ComputeMinimalFeasiblePathsAlong(stop_sequence, minimal, cache);
+}
+
+std::vector<Path> ComputeMinimalFeasiblePathsAlong(
+    const std::vector<StopId>& stop_sequence,
+    const StepsAdjacencyList& minimal,
+    PathCache& cache
+) {
   return ComputeMinimalFeasiblePathsAlongImpl(
-      stop_sequence, [&](StopId a, StopId b) -> std::vector<Path> {
-        auto path_map = FindMinimalPathSet(minimal, a, {b});
-        auto it = path_map.find(b);
-        if (it == path_map.end()) {
-          return {};
+      stop_sequence,
+      [&](StopId origin, StopId dest) -> const std::vector<Path>& {
+        auto key = std::pair{origin, dest};
+        auto it = cache.find(key);
+        if (it != cache.end()) {
+          return it->second;
         }
-        return std::move(it->second);
+        auto path_map = FindMinimalPathSet(minimal, origin, {dest});
+        auto path_it = path_map.find(dest);
+        if (path_it == path_map.end()) {
+          return cache[key];  // insert empty vector
+        }
+        return cache.emplace(key, std::move(path_it->second)).first->second;
       }
   );
 }
