@@ -123,6 +123,11 @@ add_library(tour_paths STATIC src/solver/tour_paths.cpp)
 target_link_libraries(tour_paths PUBLIC steps_adjacency_list)
 target_include_directories(tour_paths PUBLIC src)
 
+# Create path_massage library target
+add_library(path_massage STATIC src/solver/path_massage.cpp)
+target_link_libraries(path_massage PUBLIC tarel_graph tour_paths)
+target_include_directories(path_massage PUBLIC src)
+
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
@@ -188,7 +193,7 @@ target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths path_massage branch_and_bound union_find CLI11::CLI11 visualization)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
@@ -279,4 +284,9 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
 target_link_libraries(tour_paths_test PUBLIC gunit tour_paths steps_shortest_path)
 add_test(NAME tour_paths_test COMMAND tour_paths_test)
+
+# Add path_massage test executable
+add_executable(path_massage_test src/solver/path_massage_test.cpp)
+target_link_libraries(path_massage_test PUBLIC gunit path_massage)
+add_test(NAME path_massage_test COMMAND path_massage_test)
 
