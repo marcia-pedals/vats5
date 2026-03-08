@@ -1,6 +1,7 @@
 #include "solver/tarel_graph.h"
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <ios>
 #include <iostream>
@@ -774,7 +775,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const TspGraphData& graph,
     const ProblemBoundary& boundary,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    std::ostream* tsp_log,
+    const SearchEventCallback& on_event
 ) {
   // Solve TSP!!!!
   if (tsp_log) {
@@ -787,9 +789,25 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     atsp_ub = *ub + graph.expected_num_cycle_edges * kCycleEdgeWeight;
   }
 
+  auto concorde_start = std::chrono::steady_clock::now();
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(
       MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), atsp_ub, tsp_log
   );
+  auto concorde_end = std::chrono::steady_clock::now();
+  if (on_event) {
+    int concorde_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          concorde_end - concorde_start
+    )
+                          .count();
+    on_event(
+        TarelSolve{
+            .vertex_count = static_cast<int>(graph.state_by_id.size()),
+            .edge_count = static_cast<int>(graph.tsp_edges.size()),
+            .concorde_ms = concorde_ms,
+            .feasible = solution.has_value(),
+        }
+    );
+  }
   if (!solution.has_value()) {
     return std::nullopt;
   }
@@ -887,7 +905,10 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 }
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state, std::optional<int> ub, std::ostream* tsp_log
+    const ProblemState& state,
+    std::optional<int> ub,
+    std::ostream* tsp_log,
+    const SearchEventCallback& on_event
 ) {
   std::vector<TarelEdge> edges = MakeTarelEdges(state.completed);
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
@@ -912,8 +933,9 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  std::optional<TspTourResult> result =
-      SolveTspAndExtractTour(remap.edges, graph, state.boundary, ub, tsp_log);
+  std::optional<TspTourResult> result = SolveTspAndExtractTour(
+      remap.edges, graph, state.boundary, ub, tsp_log, on_event
+  );
   if (!result.has_value()) {
     return std::nullopt;
   }

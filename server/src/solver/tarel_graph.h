@@ -13,6 +13,7 @@
 
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
+#include "solver/search_event.h"
 #include "solver/steps_adjacency_list.h"
 
 namespace vats5 {
@@ -411,13 +412,15 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const TspGraphData& graph,
     const ProblemBoundary& boundary,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    std::ostream* tsp_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    std::ostream* tsp_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

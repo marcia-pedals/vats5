@@ -184,7 +184,8 @@ BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
-    int max_iter
+    int max_iter,
+    const SearchEventCallback& on_event
 ) {
   std::vector<SearchEdge> search_edges;
   std::vector<SearchNode> q;
@@ -280,7 +281,8 @@ BranchAndBoundResult BranchAndBoundSolve(
         // std::nullopt,
         best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
                                                   : std::nullopt,
-        tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr
+        tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr,
+        on_event
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
