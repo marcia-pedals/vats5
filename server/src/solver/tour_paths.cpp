@@ -11,8 +11,8 @@ namespace vats5 {
 namespace {
 
 // Common implementation for ComputeMinimalFeasiblePathsAlong.
-// GetEdgePaths(origin, destination) must return the paths for that edge,
-// either as a vector or span of Path. Returns empty optional if no paths exist.
+// GetEdgePaths(origin, destination) must return the paths for that edge as a
+// range of Path (vector, span, etc.). Returns empty range if no paths exist.
 template <typename GetEdgePaths>
 std::vector<Path> ComputeMinimalFeasiblePathsAlongImpl(
     const std::vector<StopId>& stop_sequence, GetEdgePaths&& get_edge_paths
@@ -22,17 +22,17 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlongImpl(
   }
 
   auto first_edge = get_edge_paths(stop_sequence[0], stop_sequence[1]);
-  if (!first_edge.has_value() || first_edge->empty()) {
+  if (first_edge.empty()) {
     return {};
   }
-  std::vector<Path> paths(first_edge->begin(), first_edge->end());
+  std::vector<Path> paths(first_edge.begin(), first_edge.end());
 
   for (size_t i = 1; i + 1 < stop_sequence.size(); ++i) {
     auto next_edge = get_edge_paths(stop_sequence[i], stop_sequence[i + 1]);
-    if (!next_edge.has_value() || next_edge->empty()) {
+    if (next_edge.empty()) {
       return {};
     }
-    const auto& next_paths = *next_edge;
+    const auto& next_paths = next_edge;
 
     // Extract merged steps from current and next paths.
     std::vector<Step> ab_steps;
@@ -88,13 +88,8 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     const StepPathsAdjacencyList& completed
 ) {
   return ComputeMinimalFeasiblePathsAlongImpl(
-      stop_sequence,
-      [&](StopId a, StopId b) -> std::optional<std::span<const Path>> {
-        std::span<const Path> paths = completed.PathsBetween(a, b);
-        if (paths.empty()) {
-          return std::nullopt;
-        }
-        return paths;
+      stop_sequence, [&](StopId a, StopId b) -> std::span<const Path> {
+        return completed.PathsBetween(a, b);
       }
   );
 }
@@ -103,12 +98,11 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlong(
     const std::vector<StopId>& stop_sequence, const StepsAdjacencyList& minimal
 ) {
   return ComputeMinimalFeasiblePathsAlongImpl(
-      stop_sequence,
-      [&](StopId a, StopId b) -> std::optional<std::vector<Path>> {
+      stop_sequence, [&](StopId a, StopId b) -> std::vector<Path> {
         auto path_map = FindMinimalPathSet(minimal, a, {b});
         auto it = path_map.find(b);
         if (it == path_map.end()) {
-          return std::nullopt;
+          return {};
         }
         return std::move(it->second);
       }
