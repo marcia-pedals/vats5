@@ -2,12 +2,10 @@
 
 #include <algorithm>
 #include <limits>
-#include <span>
 #include <vector>
 
-#include "solver/data.h"
-#include "solver/step_merge.h"
 #include "solver/tarel_graph.h"
+#include "solver/tour_paths.h"
 
 namespace vats5 {
 
@@ -29,61 +27,18 @@ void EnumeratePermutations(
   // Now loop over all generating permutations using std::next_permutation to
   // cycle through permutations of all interior elements.
   do {
-    std::vector<Step> accumulated_steps;
-    std::vector<std::vector<StopId>> accumulated_actual_paths;
-    for (size_t i = 0; i < gen_perm.size(); ++i) {
-      std::span<const Path> edge_paths = state.completed.PathsBetween(
-          gen_perm[i], gen_perm[(i + 1) % gen_perm.size()]
-      );
-      std::vector<Step> edge_steps;
-      edge_steps.reserve(edge_paths.size());
-      for (const Path& p : edge_paths) {
-        edge_steps.push_back(p.merged_step);
-      }
+    // Close the tour by appending START, so the last edge is END -> START.
+    std::vector<StopId> tour_sequence = gen_perm;
+    tour_sequence.push_back(state.boundary.start);
 
-      if (i == 0) {
-        accumulated_steps = edge_steps;
-        for (const Path& p : edge_paths) {
-          accumulated_actual_paths.push_back({});
-          for (const Step& s : p.steps) {
-            accumulated_actual_paths.back().push_back(s.origin.stop);
-          }
-          assert(accumulated_actual_paths.back().size() > 0);
-          assert(accumulated_actual_paths.back()[0] == state.boundary.start);
-        }
-      } else {
-        std::vector<StepProvenance> new_provenance;
-        std::vector<Step> new_accumulated_steps =
-            PairwiseMergedSteps(accumulated_steps, edge_steps, &new_provenance);
-        std::vector<std::vector<StopId>> new_accumulated_actual_paths;
-        for (const StepProvenance& step_provenance : new_provenance) {
-          assert(step_provenance.ab_index < accumulated_actual_paths.size());
-          assert(step_provenance.bc_index < edge_paths.size());
-          new_accumulated_actual_paths.push_back(
-              accumulated_actual_paths[step_provenance.ab_index]
-          );
-          for (const Step& s : edge_paths[step_provenance.bc_index].steps) {
-            new_accumulated_actual_paths.back().push_back(s.origin.stop);
-          }
-          assert(
-              new_accumulated_actual_paths.back()[0] == state.boundary.start
-          );
-        }
-        accumulated_steps = std::move(new_accumulated_steps);
-        accumulated_actual_paths = std::move(new_accumulated_actual_paths);
-      }
-      assert(accumulated_steps.size() == accumulated_actual_paths.size());
-    }
-    for (int i = 0; i < accumulated_steps.size(); ++i) {
-      if (accumulated_steps[i].origin.time < TimeSinceServiceStart{0}) {
-        // See function doc comment.
-        continue;
-      }
+    std::vector<Path> paths =
+        ComputeMinimalFeasiblePathsAlong(tour_sequence, state.completed);
+
+    for (Path& path : paths) {
       callback(
           SolutionSpaceElement{
               .generating_permutation = gen_perm,
-              .actual_path = accumulated_actual_paths[i],
-              .merged_step = accumulated_steps[i],
+              .path = std::move(path),
           }
       );
     }
@@ -130,7 +85,7 @@ void EnumerateSolutionSpace(
 int BruteForceSolveOptimalDuration(const ProblemState& state) {
   int best = std::numeric_limits<int>::max();
   EnumerateSolutionSpace(state, [&](const SolutionSpaceElement& elem) {
-    best = std::min(best, elem.merged_step.DurationSeconds());
+    best = std::min(best, elem.path.DurationSeconds());
   });
   return best;
 }

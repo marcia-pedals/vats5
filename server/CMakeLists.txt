@@ -196,7 +196,7 @@ target_link_libraries(problem_state_gen PUBLIC tarel_graph rapidcheck)
 target_include_directories(problem_state_gen PUBLIC src)
 
 add_library(naive_solve src/solver/test_util/naive_solve.cpp)
-target_link_libraries(naive_solve PUBLIC tarel_graph step_merge)
+target_link_libraries(naive_solve PUBLIC tarel_graph tour_paths)
 target_include_directories(naive_solve PUBLIC src)
 
 # Enable CMake testing
