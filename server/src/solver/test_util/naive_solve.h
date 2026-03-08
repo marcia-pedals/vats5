@@ -3,14 +3,14 @@
 #include <functional>
 #include <vector>
 
+#include "solver/data.h"
 #include "solver/tarel_graph.h"
 
 namespace vats5 {
 
 struct SolutionSpaceElement {
   std::vector<StopId> generating_permutation;
-  std::vector<StopId> actual_path;
-  Step merged_step;
+  Path path;
 };
 
 using SolutionSpaceCallback = std::function<void(const SolutionSpaceElement&)>;
