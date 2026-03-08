@@ -50,17 +50,9 @@ int main(int argc, char* argv[]) {
 
   std::cout << "\nBest duration: "
             << TimeSinceServiceStart{result.best_ub}.ToString() << "\n";
-  std::cout << "Paths: " << result.best_paths.size() << "\n";
-  for (size_t i = 0; i < result.best_paths.size(); ++i) {
-    const auto& path = result.best_paths[i];
-
-    // Expand combined stops back to original stop IDs.
-    std::vector<StopId> tour;
-    path.VisitAllStops([&](StopId stop) {
-      ExpandStop(stop, result.original_edges, tour);
-    });
-
-    std::cout << "\nPath " << i << " (" << path.steps.size() << " steps):\n";
+  if (!result.best_paths.empty()) {
+    const auto& path = result.best_paths[0];
+    std::cout << "Path (" << path.steps.size() << " steps):\n";
     for (const Step& step : path.steps) {
       std::cout << "  " << state.StopName(step.origin.stop) << " ("
                 << step.origin.time.ToString() << ") -> "
