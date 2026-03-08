@@ -65,7 +65,8 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
     // Build the route description
     std::string route_desc;
     if (route && direction) {
-      route_desc = route->route_short_name + " " + direction->direction;
+      // route_desc = route->route_short_name + " " + direction->direction;
+      route_desc = route->route_short_name;
     } else {
       // Fallback to trip_id if route or direction not found
       route_desc = trip.trip_id.v;

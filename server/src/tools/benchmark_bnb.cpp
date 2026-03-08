@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "solver/branch_and_bound.h"
+#include "solver/data.h"
 #include "solver/search_event.h"
 #include "solver/tarel_graph.h"
 
@@ -49,6 +50,11 @@ int main(int argc, char* argv[]) {
   ProblemState state = j.get<ProblemState>();
   in.close();
 
+  // for (auto& s : state.minimal.steps) {
+  //   s.origin_partition = StepPartitionId::NONE;
+  //   s.destination_partition = StepPartitionId::NONE;
+  // }
+
   std::cout << "Loaded problem state from: " << input_path << "\n";
   std::cout << "Stops: " << state.minimal.NumStops() << "\n";
   std::cout << "Required stops: " << state.required.size() << "\n";
@@ -77,12 +83,13 @@ int main(int argc, char* argv[]) {
             << TimeSinceServiceStart{result.best_ub}.ToString() << "\n";
   if (!result.best_paths.empty()) {
     const auto& path = result.best_paths[0];
-    std::cout << "Path (" << path.steps.size() << " steps):\n";
-    for (const Step& step : path.steps) {
-      std::cout << "  " << state.StopName(step.origin.stop) << " ("
-                << step.origin.time.ToString() << ") -> "
-                << state.StopName(step.destination.stop) << " ("
-                << step.destination.time.ToString() << ")\n";
+    std::vector<StopId> tour;
+    path.VisitAllStops([&](StopId stop) {
+      ExpandStop(stop, result.original_edges, tour);
+    });
+    std::cout << "Tour (" << tour.size() << " stops):\n";
+    for (StopId stop : tour) {
+      std::cout << "  " << state.StopName(stop) << "\n";
     }
   }
 

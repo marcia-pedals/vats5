@@ -364,17 +364,20 @@ InitializeProblemStateResult InitializeProblemState(
   std::vector<Step> steps_with_partitions = steps_from_gtfs.steps;
   for (Step& step : steps_with_partitions) {
     if (!step.is_flex) {
-      auto [it, inserted] = route_desc_to_step_partition.try_emplace(
-          steps_from_gtfs.mapping.trip_id_to_route_desc.at(
-              step.destination.trip
-          ),
-          StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
-      );
-      if (inserted) {
-        step_partition_to_route_desc[it->second] = it->first;
+      const auto& base_desc = steps_from_gtfs.mapping.trip_id_to_route_desc.at(
+                    step.destination.trip
+                );
+      if (base_desc.starts_with("Green Line") || base_desc.starts_with("Orange Line") || base_desc.starts_with("Blue Line")) {
+        auto [it, inserted] = route_desc_to_step_partition.try_emplace(
+            base_desc,
+            StepPartitionId{static_cast<int>(route_desc_to_step_partition.size())}
+        );
+        if (inserted) {
+          step_partition_to_route_desc[it->second] = it->first;
+        }
+        step.origin.partition = it->second;
+        step.destination.partition = it->second;
       }
-      step.origin.partition = it->second;
-      step.destination.partition = it->second;
     }
   }
 
@@ -907,7 +910,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   };
 }
 
-void PrunePartitions(std::vector<TarelEdge>& edges) {
+void PrunePartitions(const ProblemState& state, std::vector<TarelEdge>& edges) {
   std::unordered_map<StopId, std::unordered_set<TarelState>> states_by_stop;
   std::unordered_map<std::pair<TarelState, TarelState>, int> graph_weight;
   for (const TarelEdge& edge : edges) {
@@ -919,7 +922,7 @@ void PrunePartitions(std::vector<TarelEdge>& edges) {
   std::unordered_set<TarelState> dominated_states;
 
   for (const auto& [victim_stop, victim_states] : states_by_stop) {
-    std::unordered_map<std::pair<TarelState, TarelState>, int> best_weight_through_victim;
+    std::unordered_map<std::pair<TarelState, TarelState>, std::pair<int, std::unordered_set<TarelState>>> best_weight_through_victim;
 
     for (const auto& [sx, sx_states] : states_by_stop) {
       if (sx == victim_stop) {
@@ -932,59 +935,142 @@ void PrunePartitions(std::vector<TarelEdge>& edges) {
 
         for (const TarelState& sx_state : sx_states) {
           for (const TarelState& sy_state : sy_states) {
-            auto [it, _] = best_weight_through_victim.try_emplace({sx_state, sy_state}, std::numeric_limits<int>::max());
-            int& best_weight = it->second;
+            auto [it, _] = best_weight_through_victim.try_emplace(std::pair{sx_state, sy_state}, std::pair{std::numeric_limits<int>::max(), std::unordered_set<TarelState>()});
+            std::pair<int, std::unordered_set<TarelState>>& best_weight = it->second;
             for (const TarelState& victim_state : victim_states) {
               auto sx_to_victim = graph_weight.find({sx_state, victim_state});
               auto sy_to_victim = graph_weight.find({victim_state, sy_state});
               if (sx_to_victim != graph_weight.end() && sy_to_victim != graph_weight.end()) {
-                best_weight = std::min(best_weight, sx_to_victim->second + sy_to_victim->second);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    for (const TarelState& victim_state : victim_states) {
-      bool dominated = true;
-      for (const auto& [sx, sx_states] : states_by_stop) {
-        if (sx == victim_stop) {
-          continue;
-        }
-        for (const auto& [sy, sy_states] : states_by_stop) {
-          if (sx == sy || sy == victim_stop) {
-            continue;
-          }
-
-          for (const TarelState& sx_state : sx_states) {
-            for (const TarelState& sy_state : sy_states) {
-              auto sx_to_victim = graph_weight.find({sx_state, victim_state});
-              auto sy_to_victim = graph_weight.find({victim_state, sy_state});
-              if (sx_to_victim != graph_weight.end() && sy_to_victim != graph_weight.end()) {
-                if (sx_to_victim->second + sy_to_victim->second <= best_weight_through_victim[{sx_state, sy_state}]) {
-                  dominated = false;
-                  break;
+                int this_weight = sx_to_victim->second + sy_to_victim->second;
+                if (this_weight < best_weight.first) {
+                  best_weight.first = this_weight;
+                  best_weight.second = {};
+                }
+                if (this_weight == best_weight.first) {
+                  best_weight.second.insert(victim_state);
                 }
               }
             }
-            if (!dominated) {
-              break;
-            }
           }
-          if (!dominated) {
+        }
+      }
+    }
+
+    // I need at least one representative of each set.
+    // First let's choose all the forced ones: ones that are in singleton sets.
+    std::unordered_set<TarelState> non_dominated;
+    for (const auto& [_, pair] : best_weight_through_victim) {
+      if (pair.second.size() == 0) {
+        continue;
+      }
+      if (pair.second.size() == 1) {
+        for (const TarelState& state : pair.second) {
+          non_dominated.insert(state);
+        }
+      }
+    }
+
+    // Then let's keep choosing the one that represents the most more sets until we've represented everything.
+    while (true) {
+      int unrepresented_count = 0;
+      std::unordered_map<TarelState, int> rep_count;
+      for (const auto& [_, pair] : best_weight_through_victim) {
+        if (pair.second.size() == 0) {
+          continue;
+        }
+
+        bool represented = false;
+        for (const TarelState& state : pair.second) {
+          if (non_dominated.contains(state)) {
+            represented = true;
             break;
           }
         }
-        if (!dominated) {
-          break;
+        if (represented) {
+          continue;
+        }
+        unrepresented_count += 1;
+        for (const TarelState& state : pair.second) {
+          rep_count[state] += 1;
+        }
+      }
+      if (unrepresented_count == 0) {
+        break;
+      }
+
+      int max_rep_count = 0;
+      TarelState max_rep_state;
+      for (const auto& [state, count] : rep_count) {
+        if (count > max_rep_count) {
+          max_rep_count = count;
+          max_rep_state = state;
         }
       }
 
-      if (dominated) {
+      assert(max_rep_count > 0);
+
+      non_dominated.insert(max_rep_state);
+    }
+
+    for (const TarelState& victim_state : victim_states) {
+      if (!non_dominated.contains(victim_state)) {
         dominated_states.insert(victim_state);
       }
     }
+
+    // for (const TarelState& victim_state : victim_states) {
+    //   bool dominated = true;
+    //   for (const auto& [sx, sx_states] : states_by_stop) {
+    //     if (sx == victim_stop) {
+    //       continue;
+    //     }
+    //     for (const auto& [sy, sy_states] : states_by_stop) {
+    //       if (sx == sy || sy == victim_stop) {
+    //         continue;
+    //       }
+
+    //       for (const TarelState& sx_state : sx_states) {
+    //         for (const TarelState& sy_state : sy_states) {
+    //           auto sx_to_victim = graph_weight.find({sx_state, victim_state});
+    //           auto sy_to_victim = graph_weight.find({victim_state, sy_state});
+    //           if (sx_to_victim != graph_weight.end() && sy_to_victim != graph_weight.end()) {
+    //             int this_weight = sx_to_victim->second + sy_to_victim->second;
+    //             const std::pair<int, std::unordered_set<TarelState>>& best_weight = best_weight_through_victim[{sx_state, sy_state}];
+    //             if (this_weight > best_weight.first) {
+    //               continue;
+    //             }
+
+    //             bool other_non_dominated = false;
+    //             for (const TarelState& other : best_weight.second) {
+    //               if (other != victim_state && !dominated_states.contains(other)) {
+    //                 other_non_dominated = true;
+    //                 break;
+    //               }
+    //             }
+
+    //             if (!other_non_dominated) {
+    //               dominated = false;
+    //               break;
+    //             }
+    //           }
+    //         }
+    //         if (!dominated) {
+    //           break;
+    //         }
+    //       }
+    //       if (!dominated) {
+    //         break;
+    //       }
+    //     }
+    //     if (!dominated) {
+    //       break;
+    //     }
+    //   }
+
+    //   if (dominated) {
+    //     dominated_states.insert(victim_state);
+    //   }
+    // }
   }
 
   std::erase_if(edges, [&](const TarelEdge& edge) {
@@ -1001,7 +1087,40 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
-  PrunePartitions(edges);
+
+  std::unordered_map<StopId, std::unordered_set<TarelState>> states_by_stop;
+  for (const TarelEdge& edge : edges) {
+    states_by_stop[edge.origin.stop].insert(edge.origin);
+    states_by_stop[edge.destination.stop].insert(edge.destination);
+  }
+
+  int edge_count = edges.size();
+  while (true) {
+    PrunePartitions(state, edges);
+    int new_edge_count = edges.size();
+    if (new_edge_count == edge_count) {
+      break;
+    }
+    edge_count = new_edge_count;
+  }
+
+  std::unordered_set<TarelState> remaining_states;
+  for (const TarelEdge& edge : edges) {
+    remaining_states.insert(edge.origin);
+    remaining_states.insert(edge.destination);
+  }
+
+  std::cout << "\n\n=====\n";
+  for (const auto& [stop, states] : states_by_stop) {
+    std::cout << state.StopName(stop) << "\n";
+    for (const TarelState& s : states) {
+      std::cout << "  " << state.PartitionName(s.partition);
+      if (!remaining_states.contains(s)) {
+        std::cout << " PRUNED";
+      }
+      std::cout << "\n";
+    }
+  }
 
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
