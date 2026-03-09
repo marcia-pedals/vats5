@@ -130,7 +130,7 @@ target_include_directories(path_massage PUBLIC src)
 
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
-target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
+target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde tomlplusplus::tomlplusplus)
 target_include_directories(tarel_graph PUBLIC src)
 
 # Create sqlite_wrapper library target
@@ -287,6 +287,7 @@ add_test(NAME tour_paths_test COMMAND tour_paths_test)
 
 # Add path_massage test executable
 add_executable(path_massage_test src/solver/path_massage_test.cpp)
-target_link_libraries(path_massage_test PUBLIC gunit path_massage)
+target_link_libraries(path_massage_test PUBLIC gunit path_massage cached_test_data)
 add_test(NAME path_massage_test COMMAND path_massage_test)
+set_tests_properties(path_massage_test PROPERTIES LABELS "slow")
 

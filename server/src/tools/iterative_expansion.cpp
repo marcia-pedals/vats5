@@ -221,6 +221,12 @@ PartialSolution PartialSolveBranchAndBound(
     // paths in the partial problem are also paths in the full problem.
     assert(more_original_paths.size() > 0);
 
+    // aaa hax hax hax
+    std::erase_if(more_original_paths, [&](const Path& path) {
+      return path.merged_step.origin.time != bb_path.merged_step.origin.time;
+    });
+    assert(more_original_paths.size() == 1);
+
     // All original problem paths much have duration == the bb_result path
     // because otherwise the bb_result path isn't the best path in the partial
     // problem.
@@ -232,8 +238,8 @@ PartialSolution PartialSolveBranchAndBound(
       assert(path.DurationSeconds() == bb_path.DurationSeconds());
       paths.push_back(
           PartialSolutionPath{
-              .path = path,
-              .subset_tour = tour,
+              .partial_problem_path = bb_path,
+              .original_problem_path = path,
           }
       );
     }
@@ -567,28 +573,21 @@ int main(int argc, char* argv[]) {
               << required_subset.size() << " leaves ===\n";
     auto solution = PartialSolveBranchAndBound(required_subset, state);
 
-    // Choose the path that visits the most required stops.
-    auto best_solution_path_it =
-        solution.BestPathByRequiredStops(state.required);
-    if (best_solution_path_it == solution.paths.end()) {
-      std::cout << "No feasible paths found.\n";
-      return 1;
+    int best_visit_count = 0;
+    PartialSolutionPath best_path;
+    for (const PartialSolutionPath& psp : solution.paths) {
+      PartialSolutionPath extended =
+          GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(state, psp);
+      int visit_count =
+          CountRequiredStops(extended.original_problem_path, state.required);
+      if (visit_count > best_visit_count) {
+        best_visit_count = visit_count;
+        best_path = std::move(extended);
+      }
     }
 
-    PartialSolutionPath best_solution_path = *best_solution_path_it;
-    std::cout << "Before greedy improve: "
-              << best_solution_path.path.IntermediateStopCount() << "\n";
-
-    best_solution_path =
-        GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
-            state, best_solution_path
-        );
-    std::cout << "After greedy improve: "
-              << best_solution_path.path.IntermediateStopCount() << "\n";
-
-    const Path& best_path = best_solution_path.path;
     const std::vector<StopDistance> distances =
-        RequiredStopDistances(best_path, state);
+        RequiredStopDistances(best_path.original_problem_path, state);
 
     // Write partial solution to viz SQLite.
     {
@@ -597,9 +596,9 @@ int main(int argc, char* argv[]) {
         data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
       }
       for (const PartialSolutionPath& sol_path : solution.paths) {
-        data.paths.push_back(ToVizPath(sol_path.path));
+        data.paths.push_back(ToVizPath(sol_path.original_problem_path));
       }
-      data.best_path = ToVizPath(best_path);
+      data.best_path = ToVizPath(best_path.original_problem_path);
 
       viz::SqliteDb db(viz_sqlite_path);
       viz::SqliteStmt stmt(
@@ -615,11 +614,14 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\nBest duration: "
-              << TimeSinceServiceStart{best_path.DurationSeconds()}.ToString()
+              << TimeSinceServiceStart{best_path.original_problem_path
+                                           .DurationSeconds()}
+                     .ToString()
               << "\n";
 
-    std::cout << "Path (" << best_path.steps.size() << " steps):\n";
-    for (const Step& step : best_path.steps) {
+    std::cout << "Path (" << best_path.original_problem_path.steps.size()
+              << " steps):\n";
+    for (const Step& step : best_path.original_problem_path.steps) {
       std::cout << "  " << state.StopName(step.origin.stop) << " ("
                 << step.origin.time.ToString() << ") -> "
                 << state.StopName(step.destination.stop) << " ("

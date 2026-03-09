@@ -72,6 +72,67 @@ void RequiredStops::EraseGroup(StopId stop) {
   });
 }
 
+RequiredStops::Config RequiredStops::LoadToml(const toml::table& toml) {
+  Config config;
+
+  auto stop_ids_array = toml["stop_ids"].as_array();
+  if (!stop_ids_array) {
+    throw std::runtime_error(
+        "Required stops config must contain stop_ids array"
+    );
+  }
+  for (const auto& elem : *stop_ids_array) {
+    auto stop_id_str = elem.value<std::string>();
+    if (!stop_id_str) {
+      throw std::runtime_error("Invalid stop_id in required stops config");
+    }
+    if (!config.stop_ids.insert(GtfsStopId{*stop_id_str}).second) {
+      throw std::runtime_error(
+          "Duplicate stop_id '" + *stop_id_str + "' in stop_ids"
+      );
+    }
+  }
+
+  if (auto stop_groups_array = toml["stop_groups"].as_array()) {
+    std::unordered_set<GtfsStopId> seen_in_groups;
+    for (size_t group_idx = 0; group_idx < stop_groups_array->size();
+         ++group_idx) {
+      auto group_elem = (*stop_groups_array)[group_idx].as_array();
+      if (!group_elem) {
+        throw std::runtime_error(
+            "stop_groups[" + std::to_string(group_idx) +
+            "] must be an array of stop IDs"
+        );
+      }
+      std::vector<GtfsStopId> group;
+      for (const auto& stop_id_elem : *group_elem) {
+        auto stop_id_str = stop_id_elem.value<std::string>();
+        if (!stop_id_str) {
+          throw std::runtime_error(
+              "Invalid stop_id in stop_groups[" + std::to_string(group_idx) +
+              "]"
+          );
+        }
+        GtfsStopId gtfs_stop_id{*stop_id_str};
+        if (!config.stop_ids.contains(gtfs_stop_id)) {
+          throw std::runtime_error(
+              "Stop ID '" + *stop_id_str + "' in stop_groups is not in stop_ids"
+          );
+        }
+        if (!seen_in_groups.insert(gtfs_stop_id).second) {
+          throw std::runtime_error(
+              "Stop ID '" + *stop_id_str + "' appears in multiple stop groups"
+          );
+        }
+        group.push_back(gtfs_stop_id);
+      }
+      config.stop_groups.push_back(std::move(group));
+    }
+  }
+
+  return config;
+}
+
 void ExpandStop(
     StopId stop,
     const std::unordered_map<StopId, PlainEdge>& original_edges,
@@ -464,6 +525,47 @@ InitializeProblemStateResult InitializeProblemState(
       ),
       .minimal_paths_sparse = std::move(minimal_paths_sparse),
   };
+}
+
+InitializeProblemStateResult InitializeProblemState(
+    const StepsFromGtfs& steps_from_gtfs,
+    const RequiredStops::Config& config,
+    bool optimize_edges
+) {
+  // Resolve GtfsStopId -> StopId.
+  std::unordered_set<StopId> system_stops;
+  for (const GtfsStopId& gtfs_stop_id : config.stop_ids) {
+    auto it =
+        steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.find(gtfs_stop_id);
+    if (it == steps_from_gtfs.mapping.gtfs_stop_id_to_stop_id.end()) {
+      throw std::runtime_error(
+          "Stop ID '" + gtfs_stop_id.v +
+          "' from required stops config not found in GTFS data"
+      );
+    }
+    system_stops.insert(it->second);
+  }
+
+  auto result =
+      InitializeProblemState(steps_from_gtfs, system_stops, optimize_edges);
+
+  // Apply stop groups: remap via GtfsStopId -> compact StopId using stop_infos.
+  if (!config.stop_groups.empty()) {
+    std::unordered_map<GtfsStopId, StopId> gtfs_to_compact;
+    for (const auto& [stop_id, info] : result.problem_state.stop_infos) {
+      gtfs_to_compact[info.gtfs_stop_id] = stop_id;
+    }
+
+    for (const auto& group : config.stop_groups) {
+      StopId representative = gtfs_to_compact.at(group[0]);
+      for (const GtfsStopId& member_gtfs : group) {
+        StopId member = gtfs_to_compact.at(member_gtfs);
+        result.problem_state.required.representative[member] = representative;
+      }
+    }
+  }
+
+  return result;
 }
 
 bool TarelState::operator<(const TarelState& other) const {

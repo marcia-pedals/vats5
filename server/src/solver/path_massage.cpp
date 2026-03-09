@@ -4,6 +4,10 @@
 #include <limits>
 #include <unordered_set>
 
+#include "solver/data.h"
+#include "solver/step_merge.h"
+#include "solver/steps_shortest_path.h"
+
 namespace vats5 {
 
 int CountRequiredStops(const Path& path, const RequiredStops& required) {
@@ -16,112 +20,144 @@ int CountRequiredStops(const Path& path, const RequiredStops& required) {
   return required_rep_visited.size();
 }
 
-std::vector<PartialSolutionPath>::const_iterator
-PartialSolution::BestPathByRequiredStops(const RequiredStops& required) const {
-  return std::ranges::max_element(
-      paths, {}, [&](const PartialSolutionPath& sol_path) {
-        return CountRequiredStops(sol_path.path, required);
-      }
-  );
-}
-
-PartialSolution NaivelyExtendPartialSolution(
+std::optional<PartialSolutionPath> NaivelyExtendPartialSolution(
     const ProblemState& original_problem,
-    const std::vector<StopId>& partial_solution_tour,
+    const PartialSolutionPath& partial_solution_path,
     StopId new_stop
 ) {
-  // Create an extended tour with the new stop inserted at index 0.
-  std::vector<StopId> extended_tour;
-  extended_tour.reserve(partial_solution_tour.size() + 1);
-  extended_tour.push_back(new_stop);
-  extended_tour.append_range(partial_solution_tour);
+  const Path& partial_problem_path = partial_solution_path.partial_problem_path;
+  const Path& original_problem_path =
+      partial_solution_path.original_problem_path;
 
-  int best_duration = std::numeric_limits<int>::max();
-  std::vector<PartialSolutionPath> best_paths;
+  // Try to insert `new_stop` at each position in
+  // `partial_solution_path.partial_problem_path`. Each iteration inserts the
+  // stop "in between"
+  // `partial_solution_path.partial_problem_path.steps[insert_index]`.
+  for (int insert_index = 1;
+       insert_index + 1 < partial_problem_path.steps.size();
+       ++insert_index) {
+    const Step& prev_step = partial_problem_path.steps[insert_index - 1];
+    const Step& insert_in_step = partial_problem_path.steps[insert_index];
+    const Step& next_step = partial_problem_path.steps[insert_index + 1];
 
-  // Cache FindMinimalPathSet results across insertion positions: most edges
-  // in the tour stay the same when we swap new_stop to a different position.
-  PathCache path_cache;
-
-  // Figure out the duration of the extended tour with the new stop in each
-  // position, by swapping it forwards. Intentionally don't try the new stop
-  // first or last because first and last should always be START and END.
-  for (int new_stop_index = 1; new_stop_index + 1 < extended_tour.size();
-       ++new_stop_index) {
-    // Swap forwards.
-    std::swap(extended_tour[new_stop_index - 1], extended_tour[new_stop_index]);
-    assert(extended_tour[new_stop_index] == new_stop);
-
-    std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.minimal, path_cache
+    auto original_problem_insert_begin = std::find_if(
+        original_problem_path.steps.begin(),
+        original_problem_path.steps.end(),
+        [&](const Step& s) { return s.origin == insert_in_step.origin; }
     );
-    auto best_path_it = std::ranges::min_element(
-        paths, {}, [](const Path& path) { return path.DurationSeconds(); }
+    assert(original_problem_insert_begin != original_problem_path.steps.end());
+    auto original_problem_insert_end = std::find_if(
+        original_problem_path.steps.begin(),
+        original_problem_path.steps.end(),
+        [&](const Step& s) { return s.origin == next_step.origin; }
     );
-    if (best_path_it == paths.end()) {
+    assert(original_problem_insert_end != original_problem_path.steps.end());
+
+    std::vector<Step> to_new_stop = FindShortestPathsAtTime(
+        original_problem.minimal,
+        prev_step.destination.time,
+        prev_step.destination.stop,
+        {new_stop}
+    );
+    const Step& step_to_new_stop = to_new_stop[new_stop.v];
+    if (step_to_new_stop.destination.time > next_step.origin.time) {
       continue;
     }
-    const Path& best_path = *best_path_it;
-    if (best_path.DurationSeconds() < best_duration) {
-      best_duration = best_path.DurationSeconds();
-      best_paths.clear();
+
+    std::vector<Step> from_new_stop = FindShortestPathsAtTime(
+        original_problem.minimal,
+        step_to_new_stop.destination.time,
+        new_stop,
+        {next_step.origin.stop}
+    );
+    const Step& step_from_new_stop = from_new_stop[next_step.origin.stop.v];
+    if (step_from_new_stop.destination.time > next_step.origin.time) {
+      continue;
     }
-    if (best_path.DurationSeconds() == best_duration) {
-      for (const Path& path : paths) {
-        if (path.DurationSeconds() > best_path.DurationSeconds()) {
-          continue;
-        }
-        best_paths.push_back({
-            .path = path,
-            .subset_tour = extended_tour,
-        });
-      }
-    }
+
+    // We can splice this in without disrupting the rest of the path!!
+    std::vector<Step> steps_to_new_stop = BacktrackPath(to_new_stop, new_stop);
+    Path path_to_new_stop{
+        .merged_step = ConsecutiveMergedSteps(steps_to_new_stop),
+        .steps = steps_to_new_stop,
+    };
+
+    std::vector<Step> steps_from_new_stop =
+        BacktrackPath(from_new_stop, next_step.origin.stop);
+    Path path_from_new_stop = {
+        .merged_step = ConsecutiveMergedSteps(steps_from_new_stop),
+        .steps = steps_from_new_stop,
+    };
+
+    PartialSolutionPath result = partial_solution_path;
+    result.partial_problem_path.steps[insert_index] =
+        path_to_new_stop.merged_step;
+    result.partial_problem_path.steps.insert(
+        result.partial_problem_path.steps.begin() + insert_index + 1,
+        path_from_new_stop.merged_step
+    );
+
+    result.original_problem_path.steps.clear();
+    result.original_problem_path.steps.insert(
+        result.original_problem_path.steps.end(),
+        original_problem_path.steps.begin(),
+        original_problem_insert_begin
+    );
+    NormalizeConsecutiveSteps(result.original_problem_path.steps);
+    result.original_problem_path.steps.insert(
+        result.original_problem_path.steps.end(),
+        steps_to_new_stop.begin(),
+        steps_to_new_stop.end()
+    );
+    NormalizeConsecutiveSteps(result.original_problem_path.steps);
+    result.original_problem_path.steps.insert(
+        result.original_problem_path.steps.end(),
+        steps_from_new_stop.begin(),
+        steps_from_new_stop.end()
+    );
+    NormalizeConsecutiveSteps(result.original_problem_path.steps);
+
+    result.original_problem_path.steps.insert(
+        result.original_problem_path.steps.end(),
+        original_problem_insert_end,
+        original_problem_path.steps.end()
+    );
+    NormalizeConsecutiveSteps(result.original_problem_path.steps);
+
+    return result;
   }
 
-  return PartialSolution{.paths = best_paths};
+  return std::nullopt;
 }
 
 PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     const ProblemState& original_problem,
-    const PartialSolutionPath& partial_path
+    const PartialSolutionPath& partial_solution_path
 ) {
-  PartialSolutionPath result = partial_path;
+  PartialSolutionPath result = partial_solution_path;
+  std::unordered_set<StopId> candidates = original_problem.required.AllFlat();
 
-  while (true) {
-    std::unordered_set<StopId> unvisited = original_problem.required.AllFlat();
-    result.path.VisitAllStops([&](StopId stop) {
+  while (candidates.size() > 0) {
+    result.original_problem_path.VisitAllStops([&](StopId stop) {
       StopId visited_rep = original_problem.required.Representative(stop);
       original_problem.required.VisitGroupStops(visited_rep, [&](StopId s) {
-        unvisited.erase(s);
+        candidates.erase(s);
       });
     });
 
     std::vector<PartialSolutionPath> improved;
-    for (StopId new_stop : unvisited) {
-      PartialSolution extended = NaivelyExtendPartialSolution(
-          original_problem, result.subset_tour, new_stop
-      );
-      auto best_extended_it =
-          extended.BestPathByRequiredStops(original_problem.required);
-      if (best_extended_it == extended.paths.end() ||
-          best_extended_it->path.DurationSeconds() >
-              result.path.DurationSeconds()) {
-        continue;
+    std::unordered_set<StopId> cur_candidates = candidates;
+    for (StopId new_stop : cur_candidates) {
+      std::optional<PartialSolutionPath> extended =
+          NaivelyExtendPartialSolution(
+              original_problem, partial_solution_path, new_stop
+          );
+      if (extended.has_value()) {
+        result = std::move(*extended);
+      } else {
+        candidates.erase(new_stop);
       }
-      improved.push_back(*best_extended_it);
     }
-
-    auto best_improved_it = std::ranges::max_element(
-        improved, {}, [&](const PartialSolutionPath& path) {
-          return CountRequiredStops(path.path, original_problem.required);
-        }
-    );
-    if (best_improved_it == improved.end()) {
-      break;
-    }
-
-    result = *best_improved_it;
   }
 
   return result;

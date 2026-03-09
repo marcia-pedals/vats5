@@ -343,7 +343,7 @@ void NormalizeConsecutiveSteps(std::vector<Step>& steps) {
 
   for (size_t i = 0; i < steps.size() - 1; ++i) {
     assert(steps[i].destination.stop == steps[i + 1].origin.stop);
-    assert(steps[i].destination.time <= steps[i + 1].destination.time);
+    assert(steps[i].destination.time <= steps[i + 1].origin.time);
   }
 }
 

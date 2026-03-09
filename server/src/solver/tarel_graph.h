@@ -7,6 +7,7 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <toml++/toml.hpp>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -60,6 +61,16 @@ struct std::hash<vats5::StepPartitionId> {
 namespace vats5 {
 
 struct RequiredStops {
+  // TOML-level config: all IDs as GtfsStopId, no resolution needed.
+  struct Config {
+    std::unordered_set<GtfsStopId> stop_ids;
+    std::vector<std::vector<GtfsStopId>> stop_groups;
+  };
+
+  // Parse a TOML table into a Config. Validates stop_groups members are in
+  // stop_ids, no duplicates across groups, etc.
+  static Config LoadToml(const toml::table& toml);
+
   // Maps every required stop to its group representative.
   // Representatives map to themselves.
   // Keys = all required stops. Values = group representatives.
@@ -391,6 +402,12 @@ struct InitializeProblemStateResult {
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
+    bool optimize_edges = false
+);
+
+InitializeProblemStateResult InitializeProblemState(
+    const StepsFromGtfs& steps_from_gtfs,
+    const RequiredStops::Config& config,
     bool optimize_edges = false
 );
 
