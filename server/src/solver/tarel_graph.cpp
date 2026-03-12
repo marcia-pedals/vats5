@@ -829,8 +829,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   );
   if (tsp_log) {
     *tsp_log << "Tarel TSP optimal value: "
-             << TimeSinceServiceStart{solution->optimal_value}
-             << "\n";
+             << TimeSinceServiceStart{solution->optimal_value} << "\n";
   }
 
   // Build lookup for tarel edge weights: (origin, destination) -> weight

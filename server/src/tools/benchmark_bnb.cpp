@@ -73,8 +73,8 @@ int main(int argc, char* argv[]) {
   }
   int non_concorde_ms = total_ms - total_concorde_ms;
 
-  std::cout << "\nBest duration: "
-            << TimeSinceServiceStart{result.best_ub} << "\n";
+  std::cout << "\nBest duration: " << TimeSinceServiceStart{result.best_ub}
+            << "\n";
   if (!result.best_paths.empty()) {
     const auto& path = result.best_paths[0];
     std::vector<StopId> tour;

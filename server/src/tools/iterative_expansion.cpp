@@ -754,8 +754,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\nBest duration: "
-              << TimeSinceServiceStart{best_path.DurationSeconds()}
-              << "\n";
+              << TimeSinceServiceStart{best_path.DurationSeconds()} << "\n";
 
     std::cout << "Path (" << best_path.steps.size() << " steps):\n";
     for (const Step& step : best_path.steps) {
