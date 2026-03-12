@@ -753,16 +753,7 @@ int main(int argc, char* argv[]) {
       stmt.step_and_reset();
     }
 
-    std::cout << "\nBest duration: "
-              << TimeSinceServiceStart{best_path.DurationSeconds()} << "\n";
-
-    std::cout << "Path (" << best_path.steps.size() << " steps):\n";
-    for (const Step& step : best_path.steps) {
-      std::cout << "  " << state.StopName(step.origin.stop) << " ("
-                << step.origin.time.ToString() << ") -> "
-                << state.StopName(step.destination.stop) << " ("
-                << step.destination.time.ToString() << ")\n";
-    }
+    std::cout << "\n" << best_path.Debug(state);
 
     if (distances.empty()) {
       std::cout << "\nAll required stops are visited.\n";
