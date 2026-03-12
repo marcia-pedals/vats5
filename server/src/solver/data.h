@@ -235,7 +235,7 @@ inline std::ostream& operator<<(std::ostream& os, const StopId& value) {
 inline std::ostream& operator<<(
     std::ostream& os, const TimeSinceServiceStart& value
 ) {
-  return os << "Time{" << value.seconds << "}";
+  return os << value.ToString();
 }
 
 inline std::ostream& operator<<(std::ostream& os, const TripId& value) {

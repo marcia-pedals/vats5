@@ -231,7 +231,7 @@ BranchAndBoundResult BranchAndBoundSolve(
 
     if (search_log != nullptr) {
       *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take "
-                  << TimeSinceServiceStart{cur_node.parent_lb}.ToString();
+                  << TimeSinceServiceStart{cur_node.parent_lb};
       if (cur_node.edge_index != -1) {
         for (auto c : search_edges[cur_node.edge_index].constraints) {
           if (std::holds_alternative<ConstraintForbidEdge>(c)) {
@@ -299,22 +299,19 @@ BranchAndBoundResult BranchAndBoundSolve(
       // Pruned node!
       if (search_log != nullptr) {
         *search_log << "  pruned: LB ("
-                    << TimeSinceServiceStart{lb_result.optimal_value}.ToString()
-                    << ") >= UB (" << TimeSinceServiceStart{best_ub}.ToString()
-                    << ")\n";
+                    << TimeSinceServiceStart{lb_result.optimal_value}
+                    << ") >= UB (" << TimeSinceServiceStart{best_ub} << ")\n";
       }
       continue;
     }
     if (search_log != nullptr) {
-      *search_log << "  lb: "
-                  << TimeSinceServiceStart{lb_result.optimal_value}.ToString()
+      *search_log << "  lb: " << TimeSinceServiceStart{lb_result.optimal_value}
                   << "\n";
       *search_log << "  lb edges:\n";
       for (const TarelEdge& edge : lb_result.tour_edges) {
         *search_log << "    " << state.StopName(edge.origin.stop) << " -> "
                     << state.StopName(edge.destination.stop)
-                    << " w=" << TimeSinceServiceStart{edge.weight}.ToString()
-                    << "\n";
+                    << " w=" << TimeSinceServiceStart{edge.weight} << "\n";
       }
     }
 
@@ -335,10 +332,9 @@ BranchAndBoundResult BranchAndBoundSolve(
           }
       );
       if (search_log != nullptr) {
-        *search_log
-            << "  ub path ("
-            << TimeSinceServiceStart{feasible_path.DurationSeconds()}.ToString()
-            << "): ";
+        *search_log << "  ub path ("
+                    << TimeSinceServiceStart{feasible_path.DurationSeconds()}
+                    << "): ";
         for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
           if (i > 0) {
             *search_log << " -> ";
@@ -358,11 +354,9 @@ BranchAndBoundResult BranchAndBoundSolve(
         }
         best_original_edges = state.original_edges;
         if (search_log != nullptr) {
-          *search_log << "  found new ub "
-                      << TimeSinceServiceStart{best_ub}.ToString() << " "
-                      << feasible_path.merged_step.origin.time.ToString() << " "
-                      << feasible_path.merged_step.destination.time.ToString()
-                      << "\n";
+          *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
+                      << " " << feasible_path.merged_step.origin.time << " "
+                      << feasible_path.merged_step.destination.time << "\n";
         }
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();
