@@ -754,7 +754,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\nBest duration: "
-              << TimeSinceServiceStart{best_path.DurationSeconds()}.ToString()
+              << TimeSinceServiceStart{best_path.DurationSeconds()}
               << "\n";
 
     std::cout << "Path (" << best_path.steps.size() << " steps):\n";

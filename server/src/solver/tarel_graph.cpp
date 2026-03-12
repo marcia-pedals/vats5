@@ -156,11 +156,10 @@ void showValue(const ProblemState& state, std::ostream& os) {
     os << "    " << state.stop_infos.at(step.origin.stop).stop_name << " -> "
        << state.stop_infos.at(step.destination.stop).stop_name;
     if (step.is_flex) {
-      os << " (flex "
-         << TimeSinceServiceStart{step.FlexDurationSeconds()}.ToString() << ")";
+      os << " (flex " << TimeSinceServiceStart{step.FlexDurationSeconds()}
+         << ")";
     } else {
-      os << " [" << step.origin.time.ToString() << " -> "
-         << step.destination.time.ToString() << "]";
+      os << " [" << step.origin.time << " -> " << step.destination.time << "]";
     }
     os << " p=" << step.destination.partition.v << "\n";
   }
@@ -830,7 +829,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   );
   if (tsp_log) {
     *tsp_log << "Tarel TSP optimal value: "
-             << TimeSinceServiceStart{solution->optimal_value}.ToString()
+             << TimeSinceServiceStart{solution->optimal_value}
              << "\n";
   }
 
@@ -985,7 +984,7 @@ void WriteTarelSummary(
       for (TarelEdge& e : od_edges) {
         out << "  (" << state_descriptions.at(e.origin.partition) << ") -> ("
             << state_descriptions.at(e.destination.partition)
-            << "): " << TimeSinceServiceStart{e.weight}.ToString() << "\n";
+            << "): " << TimeSinceServiceStart{e.weight} << "\n";
       }
       out << "\n";
     }
