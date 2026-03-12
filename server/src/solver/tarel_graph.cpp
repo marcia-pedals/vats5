@@ -476,14 +476,14 @@ std::string TarelEdge::Debug(const ProblemState& state) const {
 
 std::string Step::Debug(const ProblemState& state) const {
   return origin.time.ToString() + " " + state.StopName(origin.stop) + " -> " +
-         destination.time.ToString() + " " +
-         state.StopName(destination.stop) + " (" +
-         state.PartitionName(destination.partition) + ")";
+         destination.time.ToString() + " " + state.StopName(destination.stop) +
+         " (" + state.PartitionName(destination.partition) + ")";
 }
 
 std::string Path::Debug(const ProblemState& state) const {
-  std::string result = "Path duration: " +
-      TimeSinceServiceStart{DurationSeconds()}.ToString() + "\n";
+  std::string result =
+      "Path duration: " + TimeSinceServiceStart{DurationSeconds()}.ToString() +
+      "\n";
   for (const Step& step : steps) {
     result += "  " + step.Debug(state) + "\n";
   }
