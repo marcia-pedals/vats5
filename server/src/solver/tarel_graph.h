@@ -247,6 +247,8 @@ struct TarelState {
 
   bool operator==(const TarelState&) const = default;
   bool operator<(const TarelState& other) const;
+
+  std::string Debug(const ProblemState& state) const;
 };
 
 inline std::ostream& operator<<(
@@ -332,6 +334,8 @@ struct TarelEdge {
   TarelState origin;
   TarelState destination;
   int weight;
+
+  std::string Debug(const ProblemState& state) const;
 };
 
 // Computes intermediate data (steps_from and arrival_times_to) from steps.

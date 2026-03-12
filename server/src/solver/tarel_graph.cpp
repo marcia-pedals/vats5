@@ -465,6 +465,31 @@ InitializeProblemStateResult InitializeProblemState(
   };
 }
 
+std::string TarelState::Debug(const ProblemState& state) const {
+  return state.StopName(stop) + " " + state.PartitionName(partition);
+}
+
+std::string TarelEdge::Debug(const ProblemState& state) const {
+  return origin.Debug(state) + " -> " + destination.Debug(state) + ": " +
+         TimeSinceServiceStart{weight}.ToString();
+}
+
+std::string Step::Debug(const ProblemState& state) const {
+  return origin.time.ToString() + " " + state.StopName(origin.stop) + " -> " +
+         destination.time.ToString() + " " +
+         state.StopName(destination.stop) + " (" +
+         state.PartitionName(destination.partition) + ")";
+}
+
+std::string Path::Debug(const ProblemState& state) const {
+  std::string result = "Path duration: " +
+      TimeSinceServiceStart{DurationSeconds()}.ToString() + "\n";
+  for (const Step& step : steps) {
+    result += "  " + step.Debug(state) + "\n";
+  }
+  return result;
+}
+
 bool TarelState::operator<(const TarelState& other) const {
   if (stop.v != other.stop.v) return stop.v < other.stop.v;
   return partition.v < other.partition.v;

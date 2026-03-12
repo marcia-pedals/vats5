@@ -128,6 +128,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     StepEndpoint, stop, is_flex, partition, time, trip
 )
 
+struct ProblemState;
+
 struct Step {
   StepEndpoint origin;
   StepEndpoint destination;
@@ -192,6 +194,8 @@ struct Step {
     return origin == other.origin && destination == other.destination &&
            is_flex == other.is_flex;
   }
+
+  std::string Debug(const ProblemState& state) const;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Step, origin, destination, is_flex)
 
@@ -224,6 +228,7 @@ struct Path {
       visitor(steps[i].destination.stop);
     }
   }
+  std::string Debug(const ProblemState& state) const;
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Path, merged_step, steps)
 
