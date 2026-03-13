@@ -15,6 +15,106 @@ Path ZeroPath(StopId a, StopId b) {
   return Path{step, {step}};
 }
 
+static void AddWalkingSteps(
+    StepsFromGtfs& result, int& next_trip_id, const GetStepsOptions& options
+) {
+  // Create a sorted copy for sliding window algorithm
+  std::vector<StopPosition> stop_positions = result.mapping.stop_positions;
+
+  // Sort stops by x_meters (longitude equivalent) for sliding window
+  std::sort(
+      stop_positions.begin(),
+      stop_positions.end(),
+      [](const StopPosition& a, const StopPosition& b) {
+        return a.x_meters < b.x_meters;
+      }
+  );
+
+  // Sliding window to find stops within specified walking distance
+  for (size_t i = 0; i < stop_positions.size(); ++i) {
+    const auto& current_stop = stop_positions[i];
+
+    // Find window of stops within x-coordinate range
+    size_t window_start = i;
+    size_t window_end = i;
+
+    // Extend window to include all stops within x-coordinate range
+    while (window_end < stop_positions.size() &&
+           stop_positions[window_end].x_meters <=
+               current_stop.x_meters + options.max_walking_distance_meters) {
+      window_end++;
+    }
+
+    // Check actual distances within the window
+    for (size_t j = window_start; j < window_end; ++j) {
+      if (i == j) continue;  // Skip same stop
+
+      const auto& other_stop = stop_positions[j];
+
+      // Calculate actual Euclidean distance in meters
+      double dx = current_stop.x_meters - other_stop.x_meters;
+      double dy = current_stop.y_meters - other_stop.y_meters;
+      double distance = std::sqrt(dx * dx + dy * dy);
+
+      if (distance <= options.max_walking_distance_meters) {
+        int walk_duration =
+            static_cast<int>(distance / options.walking_speed_ms);
+
+        // Create FlexTrip and add to trip mapping
+        TripId walk_trip_id{next_trip_id++};
+        FlexTrip flex_trip{
+            current_stop.stop_id, other_stop.stop_id, walk_duration
+        };
+
+        result.mapping.trip_id_to_trip_info[walk_trip_id] = TripInfo{flex_trip};
+
+        // Create route description for walking - lookup stop names
+        std::string current_stop_name =
+            result.mapping.stop_id_to_stop_name[current_stop.stop_id];
+        std::string other_stop_name =
+            result.mapping.stop_id_to_stop_name[other_stop.stop_id];
+
+        std::string walk_desc =
+            "Walk from " + current_stop_name + " to " + other_stop_name;
+        result.mapping.trip_id_to_route_desc[walk_trip_id] = walk_desc;
+
+        // Create walking step with flex time markers
+        Step walk_step = Step::PrimitiveFlex(
+            current_stop.stop_id,
+            other_stop.stop_id,
+            walk_duration,
+            walk_trip_id
+        );
+
+        result.steps.push_back(walk_step);
+
+        // Create the reverse walking step (bidirectional walking)
+        TripId reverse_walk_trip_id{next_trip_id++};
+        FlexTrip reverse_flex_trip{
+            other_stop.stop_id, current_stop.stop_id, walk_duration
+        };
+
+        result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
+            TripInfo{reverse_flex_trip};
+
+        std::string reverse_walk_desc =
+            "Walk from " + other_stop_name + " to " + current_stop_name;
+        result.mapping.trip_id_to_route_desc[reverse_walk_trip_id] =
+            reverse_walk_desc;
+
+        Step reverse_walk_step = Step::PrimitiveFlex(
+            other_stop.stop_id,
+            current_stop.stop_id,
+            walk_duration,
+            reverse_walk_trip_id
+        );
+
+        result.steps.push_back(reverse_walk_step);
+      }
+    }
+  }
+}
+
 StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
   StepsFromGtfs result;
   result.mapping = DataGtfsMapping{};
@@ -131,107 +231,8 @@ StepsFromGtfs GetStepsFromGtfs(GtfsDay gtfs, const GetStepsOptions& options) {
     }
   }
 
-  // Create a sorted copy for sliding window algorithm
-  std::vector<StopPosition> stop_positions = result.mapping.stop_positions;
-
-  // Sort stops by x_meters (longitude equivalent) for sliding window
-  std::sort(
-      stop_positions.begin(),
-      stop_positions.end(),
-      [](const StopPosition& a, const StopPosition& b) {
-        return a.x_meters < b.x_meters;
-      }
-  );
-
-  // Sliding window to find stops within specified walking distance
-  for (size_t i = 0; i < stop_positions.size(); ++i) {
-    const auto& current_stop = stop_positions[i];
-
-    // Find window of stops within x-coordinate range (500m in x direction)
-    size_t window_start = i;
-    size_t window_end = i;
-
-    // Extend window to include all stops within x-coordinate range
-    while (window_end < stop_positions.size() &&
-           stop_positions[window_end].x_meters <=
-               current_stop.x_meters + options.max_walking_distance_meters) {
-      window_end++;
-    }
-
-    // Check actual distances within the window
-    for (size_t j = window_start; j < window_end; ++j) {
-      if (i == j) continue;  // Skip same stop
-
-      const auto& other_stop = stop_positions[j];
-
-      // Calculate actual Euclidean distance in meters
-      double dx = current_stop.x_meters - other_stop.x_meters;
-      double dy = current_stop.y_meters - other_stop.y_meters;
-      double distance = std::sqrt(dx * dx + dy * dy);
-
-      if (distance <= options.max_walking_distance_meters) {
-        // Create FlexTrip and add to trip mapping
-        TripId walk_trip_id{next_trip_id++};
-        FlexTrip flex_trip{
-            current_stop.stop_id,
-            other_stop.stop_id,
-            static_cast<int>(
-                distance / options.walking_speed_ms
-            )  // duration in seconds
-        };
-
-        result.mapping.trip_id_to_trip_info[walk_trip_id] = TripInfo{flex_trip};
-
-        // Create route description for walking - lookup stop names
-        std::string current_stop_name =
-            result.mapping.stop_id_to_stop_name[current_stop.stop_id];
-        std::string other_stop_name =
-            result.mapping.stop_id_to_stop_name[other_stop.stop_id];
-
-        std::string walk_desc =
-            "Walk from " + current_stop_name + " to " + other_stop_name;
-        result.mapping.trip_id_to_route_desc[walk_trip_id] = walk_desc;
-
-        // Create walking step with flex time markers
-        int walk_duration =
-            static_cast<int>(distance / options.walking_speed_ms);
-        Step walk_step = Step::PrimitiveFlex(
-            current_stop.stop_id,
-            other_stop.stop_id,
-            walk_duration,
-            walk_trip_id
-        );
-
-        result.steps.push_back(walk_step);
-
-        // Create the reverse walking step (bidirectional walking)
-        TripId reverse_walk_trip_id{next_trip_id++};
-        FlexTrip reverse_flex_trip{
-            other_stop.stop_id,
-            current_stop.stop_id,
-            static_cast<int>(
-                distance / options.walking_speed_ms
-            )  // same duration
-        };
-
-        result.mapping.trip_id_to_trip_info[reverse_walk_trip_id] =
-            TripInfo{reverse_flex_trip};
-
-        std::string reverse_walk_desc =
-            "Walk from " + other_stop_name + " to " + current_stop_name;
-        result.mapping.trip_id_to_route_desc[reverse_walk_trip_id] =
-            reverse_walk_desc;
-
-        Step reverse_walk_step = Step::PrimitiveFlex(
-            other_stop.stop_id,
-            current_stop.stop_id,
-            walk_duration,
-            reverse_walk_trip_id
-        );
-
-        result.steps.push_back(reverse_walk_step);
-      }
-    }
+  if (options.walking_speed_ms > 0.0) {
+    AddWalkingSteps(result, next_trip_id, options);
   }
 
   return result;
