@@ -6,11 +6,11 @@
 #include <unistd.h>
 
 #include <cassert>
-#include <cstring>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -291,13 +291,29 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     }
     if (concorde_ub.has_value()) {
       execlp(
-          "concorde", "concorde", "-s", seed_str.c_str(), "-u",
-          ub_str.c_str(), "-x", "-o", "solution", "problem", nullptr
+          "concorde",
+          "concorde",
+          "-s",
+          seed_str.c_str(),
+          "-u",
+          ub_str.c_str(),
+          "-x",
+          "-o",
+          "solution",
+          "problem",
+          nullptr
       );
     } else {
       execlp(
-          "concorde", "concorde", "-s", seed_str.c_str(), "-x", "-o",
-          "solution", "problem", nullptr
+          "concorde",
+          "concorde",
+          "-s",
+          seed_str.c_str(),
+          "-x",
+          "-o",
+          "solution",
+          "problem",
+          nullptr
       );
     }
     _exit(127);

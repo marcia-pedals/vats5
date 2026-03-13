@@ -26,8 +26,7 @@ class InvalidTourStructure : public std::exception {
 // Thrown when Concorde crashes (e.g., SIGABRT). Retrying may succeed.
 class ConcordeCrash : public std::exception {
  public:
-  explicit ConcordeCrash(std::string message)
-      : message_(std::move(message)) {}
+  explicit ConcordeCrash(std::string message) : message_(std::move(message)) {}
   const char* what() const noexcept override { return message_.c_str(); }
 
  private:
