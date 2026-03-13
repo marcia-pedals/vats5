@@ -1,6 +1,8 @@
 #include "solver/concorde.h"
 
+#include <signal.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <cassert>
@@ -8,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -220,7 +223,8 @@ std::vector<StopId> ValidateAndExtractTour(
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    std::ostream* tsp_log,
+    int seed
 ) {
   DoubledGraphWeights weights(relaxed);
   int n = weights.NumStops();
@@ -251,29 +255,100 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   }
 
   // Invoke Concorde from temp dir so its temp files don't conflict when running
-  // in parallel. Use a constant seed for deterministic execution for property
-  // tests.
-  std::ostringstream cmd;
-  cmd << "cd " << temp_dir << " && concorde -s 43";
+  // in parallel.
+  //
+  // We use fork/exec instead of popen so we have the child PID. Concorde
+  // occasionally crashes with SIGABRT and hangs; having the PID lets us kill
+  // it immediately and retry.
+  std::string seed_str = std::to_string(seed);
+  std::string ub_str;
   if (concorde_ub.has_value()) {
-    cmd << " -u " << *concorde_ub;
+    ub_str = std::to_string(*concorde_ub);
   }
-  cmd << " -x -o solution problem 2>&1";
 
-  FILE* pipe = popen(cmd.str().c_str(), "r");
-  if (!pipe) {
-    throw std::runtime_error("Failed to run concorde");
+  int pipefd[2];
+  if (pipe(pipefd) != 0) {
+    cleanup_temp();
+    throw std::runtime_error("Failed to create pipe for concorde");
   }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    cleanup_temp();
+    throw std::runtime_error("Failed to fork for concorde");
+  }
+
+  if (pid == 0) {
+    // Child: redirect stdout+stderr to pipe, chdir, exec concorde.
+    close(pipefd[0]);
+    dup2(pipefd[1], STDOUT_FILENO);
+    dup2(pipefd[1], STDERR_FILENO);
+    close(pipefd[1]);
+    if (chdir(temp_dir.c_str()) != 0) {
+      _exit(127);
+    }
+    if (concorde_ub.has_value()) {
+      execlp(
+          "concorde",
+          "concorde",
+          "-s",
+          seed_str.c_str(),
+          "-u",
+          ub_str.c_str(),
+          "-x",
+          "-o",
+          "solution",
+          "problem",
+          nullptr
+      );
+    } else {
+      execlp(
+          "concorde",
+          "concorde",
+          "-s",
+          seed_str.c_str(),
+          "-x",
+          "-o",
+          "solution",
+          "problem",
+          nullptr
+      );
+    }
+    _exit(127);
+  }
+
+  // Parent: read concorde output, watching for crashes.
+  close(pipefd[1]);
+  FILE* pipe_read = fdopen(pipefd[0], "r");
 
   std::string concorde_output;
   char buffer[256];
-  while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+  bool crashed = false;
+  while (fgets(buffer, sizeof(buffer), pipe_read) != nullptr) {
     if (tsp_log) {
       *tsp_log << buffer << std::flush;
     }
     concorde_output += buffer;
+    if (strstr(buffer, "SIGABRT") != nullptr) {
+      crashed = true;
+      break;
+    }
   }
-  pclose(pipe);
+
+  if (crashed) {
+    kill(pid, SIGKILL);
+    waitpid(pid, nullptr, 0);
+    fclose(pipe_read);
+    cleanup_temp();
+    throw ConcordeCrash(
+        "Concorde crashed with SIGABRT. Output:\n" + concorde_output
+    );
+  }
+
+  fclose(pipe_read);
+  waitpid(pid, nullptr, 0);
 
   size_t pos = concorde_output.find("Optimal Solution:");
   if (pos == std::string::npos) {
@@ -335,9 +410,12 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
     std::ostream* tsp_log
 ) {
   constexpr int kMaxRetries = 5;
+  constexpr int kBaseSeed = 43;
   for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
     try {
-      return SolveTspWithConcordeImpl(relaxed, ub, tsp_log);
+      return SolveTspWithConcordeImpl(
+          relaxed, ub, tsp_log, kBaseSeed + attempt - 1
+      );
     } catch (const InvalidTourStructure&) {
       // Don't retry - indicates insufficient kInterVertexOffset or a bug, not
       // transient.
