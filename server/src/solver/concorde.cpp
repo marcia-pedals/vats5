@@ -21,7 +21,11 @@
 namespace vats5 {
 namespace {
 
-constexpr int kForbiddenEdgeWeight = 20000;
+// Must be much larger than any legitimate edge weight (after negative-weight
+// offset). A too-small value distorts Concorde's LP relaxation and
+// tie-breaking, which cascades through reweighting to weaken the LB.
+// Concorde's internal edge weight limit is 32768.
+constexpr int kForbiddenEdgeWeight = 32768;
 constexpr int kInterVertexOffset = 11000;
 
 // Helper class for computing edge weights in the doubled graph.
@@ -37,10 +41,36 @@ class DoubledGraphWeights {
             edge.weight_seconds;
       }
     }
+
+    // Offset all weights so the minimum is 0. Concorde doesn't handle negative
+    // edge weights correctly.
+    int min_weight = 0;
+    for (int w : edge_weights_) {
+      if (w < kForbiddenEdgeWeight) {
+        min_weight = std::min(min_weight, w);
+      }
+    }
+    negative_weight_offset_ = -min_weight;
+    if (negative_weight_offset_ > 0) {
+      for (int& w : edge_weights_) {
+        if (w < kForbiddenEdgeWeight) {
+          w += negative_weight_offset_;
+          if (w >= kForbiddenEdgeWeight) {
+            throw EdgeWeightOverflow(
+                "Edge weight " + std::to_string(w - negative_weight_offset_) +
+                " + offset " + std::to_string(negative_weight_offset_) + " = " +
+                std::to_string(w) + " >= kForbiddenEdgeWeight " +
+                std::to_string(kForbiddenEdgeWeight)
+            );
+          }
+        }
+      }
+    }
   }
 
   int NumStops() const { return n_; }
   int DoubledN() const { return 2 * n_; }
+  int NegativeWeightOffset() const { return negative_weight_offset_; }
 
   // Get asymmetric weight from original vertex `from` to `to`.
   int GetAsymmetricWeight(int from, int to) const {
@@ -90,6 +120,7 @@ class DoubledGraphWeights {
 
  private:
   int n_;
+  int negative_weight_offset_ = 0;
   std::vector<int> edge_weights_;
 };
 
@@ -251,7 +282,8 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
   std::optional<int> concorde_ub;
   if (ub.has_value()) {
-    concorde_ub = *ub + n * kInterVertexOffset;
+    concorde_ub =
+        *ub + n * kInterVertexOffset + n * weights.NegativeWeightOffset();
   }
 
   // Invoke Concorde from temp dir so its temp files don't conflict when running
@@ -389,10 +421,11 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // Validate structure and extract original tour
   std::vector<StopId> tour = ValidateAndExtractTour(doubled_tour);
 
-  // Subtract the inter-vertex offset that was added during graph construction.
-  // The proper tour has exactly n inter-vertex edges, so we subtract n *
-  // offset.
-  int optimal_value = raw_optimal_value - n * kInterVertexOffset;
+  // Subtract the offsets added during graph construction. A proper tour has
+  // exactly n inter-vertex edges, each inflated by kInterVertexOffset and
+  // by the negative-weight offset.
+  int optimal_value = raw_optimal_value - n * kInterVertexOffset -
+                      n * weights.NegativeWeightOffset();
 
   // Cleanup temp directory
   cleanup_temp();

@@ -104,12 +104,12 @@ RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue, ()) {
   int num_stops = *rc::gen::inRange(2, 6);
 
   // Generate edge weights for all pairs (complete graph ensures valid tour
-  // exists). Weight constraint: must be < 32767 (Concorde limit).
+  // exists). Includes negative weights to exercise the negative-weight offset.
   std::vector<WeightedEdge> edges;
   for (int from = 0; from < num_stops; ++from) {
     for (int to = 0; to < num_stops; ++to) {
       if (from != to) {
-        int weight = *rc::gen::inRange(1, 1000);
+        int weight = *rc::gen::inRange(-500, 1000);
         edges.push_back(WeightedEdge{StopId{from}, StopId{to}, weight});
       }
     }
@@ -217,6 +217,51 @@ RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
 
   // Verify optimal value is num_stops (each edge has weight 1).
   RC_ASSERT(solution->optimal_value == num_stops);
+}
+
+// Test with negative edge weights. The negative-weight offset should handle
+// them transparently.
+TEST(ConcordeTest, NegativeWeights) {
+  // 0->1->2->3->0 = (-5)+8+5+22 = 30
+  // 0->1->2->3->0 is still optimal (same structure as Simple4NodeATSP but
+  // with edge 0->1 shifted from 10 to -5).
+  std::vector<WeightedEdge> edges = {
+      {StopId{0}, StopId{1}, -5},
+      {StopId{0}, StopId{2}, 15},
+      {StopId{0}, StopId{3}, 20},
+      {StopId{1}, StopId{0}, 12},
+      {StopId{1}, StopId{2}, 8},
+      {StopId{1}, StopId{3}, 25},
+      {StopId{2}, StopId{0}, 18},
+      {StopId{2}, StopId{1}, 9},
+      {StopId{2}, StopId{3}, 5},
+      {StopId{3}, StopId{0}, 22},
+      {StopId{3}, StopId{1}, 14},
+      {StopId{3}, StopId{2}, 6},
+  };
+
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
+  ASSERT_TRUE(solution.has_value());
+  EXPECT_EQ(solution->optimal_value, 30);
+}
+
+// Test that EdgeWeightOverflow is thrown when a legitimate edge weight plus the
+// negative-weight offset reaches kForbiddenEdgeWeight. We trigger this by
+// having one very negative edge (creating a large offset) and one very large
+// positive edge (which overflows after offset).
+TEST(ConcordeTest, EdgeWeightOverflowThrown) {
+  std::vector<WeightedEdge> edges = {
+      {StopId{0}, StopId{1}, -500000},
+      {StopId{0}, StopId{2}, 500001},
+      {StopId{1}, StopId{0}, 1},
+      {StopId{1}, StopId{2}, 1},
+      {StopId{2}, StopId{0}, 1},
+      {StopId{2}, StopId{1}, 1},
+  };
+
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+  EXPECT_THROW(SolveTspWithConcorde(relaxed), EdgeWeightOverflow);
 }
 
 }  // namespace vats5
