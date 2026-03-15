@@ -23,6 +23,18 @@ class InvalidTourStructure : public std::exception {
   std::string message_;
 };
 
+// Thrown when an edge weight is too large for kForbiddenEdgeWeight to
+// distinguish it from a truly absent edge.
+class EdgeWeightOverflow : public std::exception {
+ public:
+  explicit EdgeWeightOverflow(std::string message)
+      : message_(std::move(message)) {}
+  const char* what() const noexcept override { return message_.c_str(); }
+
+ private:
+  std::string message_;
+};
+
 // Thrown when Concorde crashes (e.g., SIGABRT). Retrying may succeed.
 class ConcordeCrash : public std::exception {
  public:

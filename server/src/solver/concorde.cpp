@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <sstream>
@@ -21,7 +23,72 @@
 namespace vats5 {
 namespace {
 
-constexpr int kForbiddenEdgeWeight = 20000;
+constexpr int kBruteForceThreshold = 5;
+
+// Solve small ATSP instances by enumerating all permutations.
+// Returns nullopt if no valid Hamiltonian cycle exists or the best tour
+// cost >= ub (strict upper bound, matching Concorde's -u semantics).
+std::optional<ConcordeSolution> SolveTspBruteForce(
+    const RelaxedAdjacencyList& relaxed, std::optional<int> ub
+) {
+  int n = relaxed.NumStops();
+
+  // Build perm = [1, 2, ..., n-1]. We fix node 0 as the start to avoid
+  // checking rotations of the same cycle.
+  std::vector<int> perm(n - 1);
+  std::iota(perm.begin(), perm.end(), 1);
+
+  std::optional<ConcordeSolution> best;
+
+  do {
+    // Compute tour cost for cycle: 0 -> perm[0] -> ... -> perm[n-2] -> 0
+    int cost = 0;
+    bool valid = true;
+
+    // Edge from 0 to perm[0]
+    auto w = relaxed.GetWeight(StopId{0}, StopId{perm[0]});
+    if (!w.has_value()) {
+      continue;
+    }
+    cost += *w;
+
+    // Edges along the permutation
+    for (int i = 0; i + 1 < n - 1; ++i) {
+      w = relaxed.GetWeight(StopId{perm[i]}, StopId{perm[i + 1]});
+      if (!w.has_value()) {
+        valid = false;
+        break;
+      }
+      cost += *w;
+    }
+    if (!valid) continue;
+
+    // Edge back to 0
+    w = relaxed.GetWeight(StopId{perm[n - 2]}, StopId{0});
+    if (!w.has_value()) {
+      continue;
+    }
+    cost += *w;
+
+    if (!best.has_value() || cost < best->optimal_value) {
+      std::vector<StopId> tour;
+      tour.reserve(n);
+      tour.push_back(StopId{0});
+      for (int v : perm) {
+        tour.push_back(StopId{v});
+      }
+      best = ConcordeSolution{.tour = std::move(tour), .optimal_value = cost};
+    }
+  } while (std::next_permutation(perm.begin(), perm.end()));
+
+  if (best.has_value() && ub.has_value() && best->optimal_value >= *ub) {
+    return std::nullopt;
+  }
+
+  return best;
+}
+
+constexpr int kForbiddenEdgeWeight = 1000000;
 constexpr int kInterVertexOffset = 11000;
 
 // Helper class for computing edge weights in the doubled graph.
@@ -37,10 +104,36 @@ class DoubledGraphWeights {
             edge.weight_seconds;
       }
     }
+
+    // Offset all weights so the minimum is 0. Concorde doesn't handle negative
+    // edge weights correctly.
+    int min_weight = 0;
+    for (int w : edge_weights_) {
+      if (w < kForbiddenEdgeWeight) {
+        min_weight = std::min(min_weight, w);
+      }
+    }
+    negative_weight_offset_ = -min_weight;
+    if (negative_weight_offset_ > 0) {
+      for (int& w : edge_weights_) {
+        if (w < kForbiddenEdgeWeight) {
+          w += negative_weight_offset_;
+          if (w >= kForbiddenEdgeWeight) {
+            throw EdgeWeightOverflow(
+                "Edge weight " + std::to_string(w - negative_weight_offset_) +
+                " + offset " + std::to_string(negative_weight_offset_) + " = " +
+                std::to_string(w) + " >= kForbiddenEdgeWeight " +
+                std::to_string(kForbiddenEdgeWeight)
+            );
+          }
+        }
+      }
+    }
   }
 
   int NumStops() const { return n_; }
   int DoubledN() const { return 2 * n_; }
+  int NegativeWeightOffset() const { return negative_weight_offset_; }
 
   // Get asymmetric weight from original vertex `from` to `to`.
   int GetAsymmetricWeight(int from, int to) const {
@@ -90,6 +183,7 @@ class DoubledGraphWeights {
 
  private:
   int n_;
+  int negative_weight_offset_ = 0;
   std::vector<int> edge_weights_;
 };
 
@@ -251,7 +345,8 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
   std::optional<int> concorde_ub;
   if (ub.has_value()) {
-    concorde_ub = *ub + n * kInterVertexOffset;
+    concorde_ub =
+        *ub + n * kInterVertexOffset + n * weights.NegativeWeightOffset();
   }
 
   // Invoke Concorde from temp dir so its temp files don't conflict when running
@@ -389,10 +484,11 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // Validate structure and extract original tour
   std::vector<StopId> tour = ValidateAndExtractTour(doubled_tour);
 
-  // Subtract the inter-vertex offset that was added during graph construction.
-  // The proper tour has exactly n inter-vertex edges, so we subtract n *
-  // offset.
-  int optimal_value = raw_optimal_value - n * kInterVertexOffset;
+  // Subtract the offsets added during graph construction. A proper tour has
+  // exactly n inter-vertex edges, each inflated by kInterVertexOffset and
+  // by the negative-weight offset.
+  int optimal_value = raw_optimal_value - n * kInterVertexOffset -
+                      n * weights.NegativeWeightOffset();
 
   // Cleanup temp directory
   cleanup_temp();
@@ -409,6 +505,10 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
     std::optional<int> ub,
     std::ostream* tsp_log
 ) {
+  if (relaxed.NumStops() < kBruteForceThreshold) {
+    return SolveTspBruteForce(relaxed, ub);
+  }
+
   constexpr int kMaxRetries = 5;
   constexpr int kBaseSeed = 43;
   for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
