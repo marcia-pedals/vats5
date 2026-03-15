@@ -88,10 +88,6 @@ std::optional<ConcordeSolution> SolveTspBruteForce(
   return best;
 }
 
-// Must be much larger than any legitimate edge weight (after negative-weight
-// offset). A too-small value distorts Concorde's LP relaxation and
-// tie-breaking, which cascades through reweighting to weaken the LB.
-// Concorde's internal edge weight limit is 32768.
 constexpr int kForbiddenEdgeWeight = 1000000;
 constexpr int kInterVertexOffset = 11000;
 

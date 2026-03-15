@@ -99,11 +99,7 @@ TEST(ConcordeTest, Simple3NodeSymmetric) {
   EXPECT_EQ(solution->optimal_value, 30);
 }
 
-// Property test: verify that the sum of edge weights along the tour equals
-// optimal_value (brute-force path, 2-4 nodes).
-RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue_BruteForce, ()) {
-  int num_stops = *rc::gen::inRange(2, 5);
-
+void CheckTourCostMatchesOptimalValue(int num_stops) {
   std::vector<WeightedEdge> edges;
   for (int from = 0; from < num_stops; ++from) {
     for (int to = 0; to < num_stops; ++to) {
@@ -136,41 +132,12 @@ RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue_BruteForce, ()) {
   RC_ASSERT(tour_cost == solution->optimal_value);
 }
 
-// Property test: verify that the sum of edge weights along the tour equals
-// optimal_value (Concorde path, 5-7 nodes).
+RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue_BruteForce, ()) {
+  CheckTourCostMatchesOptimalValue(*rc::gen::inRange(2, 5));
+}
+
 RC_GTEST_PROP(ConcordeTest, TourCostMatchesOptimalValue_Concorde, ()) {
-  int num_stops = *rc::gen::inRange(5, 8);
-
-  std::vector<WeightedEdge> edges;
-  for (int from = 0; from < num_stops; ++from) {
-    for (int to = 0; to < num_stops; ++to) {
-      if (from != to) {
-        int weight = *rc::gen::inRange(-500, 1000);
-        edges.push_back(WeightedEdge{StopId{from}, StopId{to}, weight});
-      }
-    }
-  }
-
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
-
-  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
-  RC_ASSERT(solution.has_value());
-
-  RC_ASSERT(static_cast<int>(solution->tour.size()) == num_stops);
-  std::unordered_set<int> visited;
-  for (const auto& stop : solution->tour) {
-    visited.insert(stop.v);
-  }
-  RC_ASSERT(static_cast<int>(visited.size()) == num_stops);
-
-  int tour_cost = 0;
-  for (int i = 0; i < num_stops; ++i) {
-    StopId from = solution->tour[i];
-    StopId to = solution->tour[(i + 1) % num_stops];
-    tour_cost += relaxed.GetWeight(from, to).value();
-  }
-
-  RC_ASSERT(tour_cost == solution->optimal_value);
+  CheckTourCostMatchesOptimalValue(*rc::gen::inRange(5, 8));
 }
 
 // Test with a 3-node ATSP that has no valid tour.
@@ -195,12 +162,7 @@ TEST(ConcordeTest, NoValidTour) {
   EXPECT_FALSE(solution.has_value());
 }
 
-// Property test: a graph with edges only along a permutation has exactly one
-// valid tour.
-RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
-  // Generate a random permutation of 5-10 vertices.
-  int num_stops = *rc::gen::inRange(5, 11);
-
+void CheckUniquePermutationTour(int num_stops) {
   // Generate a random permutation using Fisher-Yates shuffle.
   std::vector<int> perm(num_stops);
   for (int i = 0; i < num_stops; ++i) {
@@ -212,7 +174,6 @@ RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
   }
 
   // Build a graph with edges only along the permutation.
-  // Edge from perm[i] to perm[(i+1) % n] with weight 1.
   std::vector<WeightedEdge> edges;
   for (int i = 0; i < num_stops; ++i) {
     int from = perm[i];
@@ -222,15 +183,12 @@ RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
 
   RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
 
-  // Solve with Concorde.
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
   RC_ASSERT(solution.has_value());
 
-  // Verify tour has the correct size.
   RC_ASSERT(static_cast<int>(solution->tour.size()) == num_stops);
 
   // The solution tour should be a rotation of the original permutation.
-  // Find where perm[0] appears in the solution tour.
   int rotation_offset = -1;
   for (int i = 0; i < num_stops; ++i) {
     if (solution->tour[i].v == perm[0]) {
@@ -240,15 +198,17 @@ RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
   }
   RC_ASSERT(rotation_offset != -1);
 
-  // Verify the tour matches the permutation (as a cycle).
   for (int i = 0; i < num_stops; ++i) {
     int expected = perm[i];
     int actual = solution->tour[(rotation_offset + i) % num_stops].v;
     RC_ASSERT(expected == actual);
   }
 
-  // Verify optimal value is num_stops (each edge has weight 1).
   RC_ASSERT(solution->optimal_value == num_stops);
+}
+
+RC_GTEST_PROP(ConcordeTest, UniquePermutationTour, ()) {
+  CheckUniquePermutationTour(*rc::gen::inRange(5, 11));
 }
 
 // Test with negative edge weights. The negative-weight offset should handle
@@ -351,50 +311,8 @@ TEST(ConcordeTest, Simple5NodeATSP) {
   EXPECT_EQ(solution->optimal_value, best_cost);
 }
 
-// Property test: a graph with edges only along a permutation has exactly one
-// valid tour (brute-force path, 2-4 nodes).
 RC_GTEST_PROP(ConcordeTest, UniquePermutationTour_BruteForce, ()) {
-  int num_stops = *rc::gen::inRange(2, 5);
-
-  std::vector<int> perm(num_stops);
-  for (int i = 0; i < num_stops; ++i) {
-    perm[i] = i;
-  }
-  for (int i = num_stops - 1; i > 0; --i) {
-    int j = *rc::gen::inRange(0, i + 1);
-    std::swap(perm[i], perm[j]);
-  }
-
-  std::vector<WeightedEdge> edges;
-  for (int i = 0; i < num_stops; ++i) {
-    int from = perm[i];
-    int to = perm[(i + 1) % num_stops];
-    edges.push_back(WeightedEdge{StopId{from}, StopId{to}, 1});
-  }
-
-  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
-
-  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed);
-  RC_ASSERT(solution.has_value());
-
-  RC_ASSERT(static_cast<int>(solution->tour.size()) == num_stops);
-
-  int rotation_offset = -1;
-  for (int i = 0; i < num_stops; ++i) {
-    if (solution->tour[i].v == perm[0]) {
-      rotation_offset = i;
-      break;
-    }
-  }
-  RC_ASSERT(rotation_offset != -1);
-
-  for (int i = 0; i < num_stops; ++i) {
-    int expected = perm[i];
-    int actual = solution->tour[(rotation_offset + i) % num_stops].v;
-    RC_ASSERT(expected == actual);
-  }
-
-  RC_ASSERT(solution->optimal_value == num_stops);
+  CheckUniquePermutationTour(*rc::gen::inRange(2, 5));
 }
 
 }  // namespace vats5
