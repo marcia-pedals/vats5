@@ -21,6 +21,22 @@
 
 namespace vats5 {
 
+std::string ConstraintRequireEdge::Debug(const ProblemState& state) const {
+  return "[require " + state.StopName(a) + " -> " + state.StopName(b) + "]";
+}
+
+std::string ConstraintForbidEdge::Debug(const ProblemState& state) const {
+  return "[forbid " + state.StopName(a) + " -> " + state.StopName(b) + "]";
+}
+
+std::string BranchEdge::Debug(const ProblemState& state) const {
+  return state.StopName(a) + " -> " + state.StopName(b);
+}
+
+std::string Debug(const ProblemConstraint& c, const ProblemState& state) {
+  return std::visit([&](const auto& x) { return x.Debug(state); }, c);
+}
+
 ProblemState ApplyConstraints(
     const ProblemState& state, const std::vector<ProblemConstraint>& constraints
 ) {
@@ -233,16 +249,8 @@ BranchAndBoundResult BranchAndBoundSolve(
       *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take "
                   << TimeSinceServiceStart{cur_node.parent_lb};
       if (cur_node.edge_index != -1) {
-        for (auto c : search_edges[cur_node.edge_index].constraints) {
-          if (std::holds_alternative<ConstraintForbidEdge>(c)) {
-            auto f = std::get<ConstraintForbidEdge>(c);
-            *search_log << " [forbid " << state.StopName(f.a) << " -> "
-                        << state.StopName(f.b) << "]";
-          } else {
-            auto r = std::get<ConstraintRequireEdge>(c);
-            *search_log << " [require " << state.StopName(r.a) << " -> "
-                        << state.StopName(r.b) << "]";
-          }
+        for (const auto& c : search_edges[cur_node.edge_index].constraints) {
+          *search_log << " " << Debug(c, state);
         }
       }
       *search_log << " {cur " << cur_node.edge_index;

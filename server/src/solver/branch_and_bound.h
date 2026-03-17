@@ -14,21 +14,29 @@ namespace vats5 {
 struct ConstraintRequireEdge {
   StopId a;
   StopId b;
+
+  std::string Debug(const ProblemState& state) const;
 };
 
 struct ConstraintForbidEdge {
   StopId a;
   StopId b;
+
+  std::string Debug(const ProblemState& state) const;
 };
 
 using ProblemConstraint =
     std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
+
+std::string Debug(const ProblemConstraint& c, const ProblemState& state);
 
 struct BranchEdge {
   StopId a;
   StopId b;
 
   bool operator==(const BranchEdge& other) const = default;
+
+  std::string Debug(const ProblemState& state) const;
 
   ConstraintRequireEdge Require() const { return ConstraintRequireEdge{a, b}; }
 
