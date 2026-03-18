@@ -1,7 +1,9 @@
 #include "solver/branch_and_bound2.h"
 
+#include <algorithm>
 #include <limits>
 #include <memory>
+#include <unordered_map>
 
 #include "solver/data.h"
 #include "solver/step_merge.h"
@@ -81,6 +83,16 @@ struct Search2Node {
     }
     return lb > other.lb;
   }
+};
+
+struct Search2Constraint {
+  bool require;
+  TarelEdge edge;
+  int step_count;
+};
+
+struct Search2History {
+  std::vector<Search2Constraint> constraints;
 };
 
 Search2State ForbidSteps(
@@ -211,6 +223,27 @@ Search2State RequireSteps(
   if (problem.boundary.start == ab) {
     // Do (1).
 
+    // The steps to ab are: The steps to a.
+    for (const auto& [x, x_to_a] : x_to_as) {
+      std::vector<Path> path_group_to_ab;
+      for (Step x_to_a_step : x_to_a) {
+        x_to_a_step.destination.stop = ab;
+        path_group_to_ab.push_back(Path{x_to_a_step, {x_to_a_step}});
+      }
+      completed.adjacent[x].push_back(std::move(path_group_to_ab));
+    }
+
+    // The steps from ab are: The steps a->b merged with the steps from b.
+    for (const auto& [x, b_to_x] : b_to_xs) {
+      std::vector<Path> path_group_to_x;
+      std::vector<Step> merged_steps = PairwiseMergedSteps(steps, b_to_x);
+      for (Step merged_step : merged_steps) {
+        merged_step.origin.stop = ab;
+        path_group_to_x.push_back(Path{merged_step, {merged_step}});
+      }
+      completed.adjacent[ab].push_back(std::move(path_group_to_x));
+    }
+
   } else {
     // Do (2).
 
@@ -244,6 +277,7 @@ Search2State RequireSteps(
 
 BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
   int next_node_index = 0;
+  std::vector<Search2History> history;
   std::vector<Search2Node> q;
   q.push_back(
       {.lb = 0,
@@ -252,20 +286,31 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
            initial_state, initial_state.ComputeCompletedGraph()
        )}
   );
+  history.push_back({.constraints = {}});
   next_node_index += 1;
 
   int iter_count = 0;
   int best_ub = std::numeric_limits<int>::max();
   while (!q.empty()) {
-    iter_count += 1;
-    if (iter_count > 2) {
-      break;
-    }
-    std::cout << "Iter " << iter_count << "\n";
-
     std::pop_heap(q.begin(), q.end());
     Search2Node node = std::move(q.back());
     q.pop_back();
+
+    iter_count += 1;
+    std::cout << "Iter " << iter_count << ": take "
+              << TimeSinceServiceStart{node.lb} << " (" << (q.size() + 1)
+              << " active)\n";
+
+    for (const Search2Constraint& c : history[node.node_index].constraints) {
+      std::cout << "  ";
+      if (c.require) {
+        std::cout << "REQ";
+      } else {
+        std::cout << "FBD";
+      }
+      std::cout << " " << c.edge.Debug(node.state->problem) << " - "
+                << c.step_count << "\n";
+    }
 
     std::optional<TspTourResult> lb_result = ComputeTarelLowerBound(
         node.state->problem,
@@ -278,7 +323,8 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
       std::cout << "  infeasible from tarel\n";
       continue;
     }
-    std::cout << "  lb: " << TimeSinceServiceStart{lb_result->optimal_value}
+    std::cout << "  delta-lb: "
+              << TimeSinceServiceStart{lb_result->optimal_value - node.lb}
               << "\n";
 
     PartitionStartSteps partition_start_steps =
@@ -313,10 +359,10 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
       std::vector<Step> zero_error_steps;
 
       bool BetterThan(const EdgeErrorSummary& other) {
-        if (zero_error_count < other.zero_error_count) {
-          return true;
+        if (zero_error_count == other.zero_error_count) {
+          return smallest_nonzero_error > other.smallest_nonzero_error;
         }
-        return smallest_nonzero_error > other.smallest_nonzero_error;
+        return zero_error_count < other.zero_error_count;
       }
     };
     EdgeErrorSummary best_constraint{
@@ -333,6 +379,14 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
           steps_between[{e.origin.stop, e.destination}],
           &prov
       );
+
+      std::cout
+          << "  partition starts: "
+          << partition_start_steps[e.origin.stop][e.origin.partition].size()
+          << "\n"
+          << "  steps between: "
+          << steps_between[{e.origin.stop, e.destination}].size() << "\n"
+          << "  merged: " << e_steps.size() << "\n";
 
       std::vector<Step> zero_error_steps;
       std::map<int, int> error_histogram;
@@ -373,13 +427,14 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
       }
     }
 
-    std::cout << "Best constraint "
-              << best_constraint.edge.Debug(node.state->problem) << "\n";
-    std::cout << "  zero_error_count: " << best_constraint.zero_error_count
-              << "\n";
-    std::cout << "  smallest_nonzero_error: "
-              << TimeSinceServiceStart{best_constraint.smallest_nonzero_error}
-              << "\n";
+    // std::cout << "Best constraint "
+    //           << best_constraint.edge.Debug(node.state->problem) << "\n";
+    // std::cout << "  zero_error_count: " << best_constraint.zero_error_count
+    //           << "\n";
+    // std::cout << "  smallest_nonzero_error: "
+    //           <<
+    //           TimeSinceServiceStart{best_constraint.smallest_nonzero_error}
+    //           << "\n";
 
     q.push_back(
         Search2Node{
@@ -392,6 +447,35 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
             )),
         }
     );
+    std::push_heap(q.begin(), q.end());
+    Search2History hist_with_forbid = history[node.node_index];
+    hist_with_forbid.constraints.push_back({
+        .require = false,
+        .edge = best_constraint.edge,
+        .step_count = static_cast<int>(best_constraint.zero_error_steps.size()),
+    });
+    history.push_back(hist_with_forbid);
+    next_node_index += 1;
+
+    q.push_back(
+        Search2Node{
+            .lb = std::max(node.lb, lb_result->optimal_value),
+            .node_index = next_node_index,
+            .state = std::make_unique<Search2State>(RequireSteps(
+                *node.state,
+                best_constraint.edge,
+                best_constraint.zero_error_steps
+            )),
+        }
+    );
+    std::push_heap(q.begin(), q.end());
+    Search2History hist_with_require = history[node.node_index];
+    hist_with_require.constraints.push_back({
+        .require = true,
+        .edge = best_constraint.edge,
+        .step_count = static_cast<int>(best_constraint.zero_error_steps.size()),
+    });
+    history.push_back(hist_with_require);
     next_node_index += 1;
   }
 
