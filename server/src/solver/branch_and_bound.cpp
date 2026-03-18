@@ -21,6 +21,61 @@
 
 namespace vats5 {
 
+using PartitionStartSteps = std::unordered_map<
+    StopId,
+    std::unordered_map<StepPartitionId, std::vector<Step>>>;
+
+PartitionStartSteps ComputePartitionStartSteps(
+    const StepPathsAdjacencyList& completed
+) {
+  PartitionStartSteps partition_start_steps;
+  for (const Step& step : completed.AllMergedSteps()) {
+    if (step.is_flex) {
+      partition_start_steps[step.destination.stop][step.destination.partition]
+          .push_back(
+              Step::PrimitiveFlex(
+                  step.destination.stop,
+                  step.destination.stop,
+                  0,
+                  step.destination.trip,
+                  step.destination.partition
+              )
+          );
+    } else {
+      partition_start_steps[step.destination.stop][step.destination.partition]
+          .push_back(
+              Step::PrimitiveScheduled(
+                  step.destination.stop,
+                  step.destination.stop,
+                  step.destination.time,
+                  step.destination.time,
+                  step.destination.trip,
+                  step.destination.partition
+              )
+          );
+    }
+  }
+  for (auto& [_, stop_steps] : partition_start_steps) {
+    for (auto& [_, steps] : stop_steps) {
+      SortSteps(steps);
+      MakeMinimalCover(steps);
+    }
+  }
+  return partition_start_steps;
+}
+
+using StepsBetween =
+    std::unordered_map<std::pair<StopId, TarelState>, std::vector<Step>>;
+
+StepsBetween ComputeStepsBetween(const StepPathsAdjacencyList& completed) {
+  StepsBetween steps_between;
+  for (const Step& step : completed.AllMergedSteps()) {
+    TarelState tarel_dest{step.destination.stop, step.destination.partition};
+    steps_between[{step.origin.stop, tarel_dest}].push_back(step);
+  }
+  return steps_between;
+}
+
 std::string ConstraintRequireEdge::Debug(const ProblemState& state) const {
   return "[require " + state.StopName(a) + " -> " + state.StopName(b) + "]";
 }
@@ -380,6 +435,95 @@ BranchAndBoundResult BranchAndBoundSolve(
         }
       }
     }
+
+    PartitionStartSteps partition_start_steps =
+        ComputePartitionStartSteps(completed);
+    StepsBetween steps_between = ComputeStepsBetween(completed);
+
+    // We try to find the branch constraint that maximizes the min lb of the
+    // children. We can't do it exactly so we do some approximation.
+    //
+    // The tradeoff here is that if we take more steps, the child where we
+    // forbid the steps gets bigger but the child where we require at least one
+    // of the steps gets smaller.
+    //
+    // Forbidding steps increases the bound of all routes that use those steps
+    // by the smallest error of the remaining steps on that route. e.g. if we
+    // forbid all the zero-error steps from (x,p)->(y,q), then we increase the
+    // bound of the routes by the amount of the smallest nonzero error
+    // (x,p)->(y,q).
+    //
+    // Requiring steps increases the bound of ??? by ???. But like I hope that
+    // if we require a very small number of steps then we'll be able to quickly
+    // disprove the branch because this is extremely constraining and the
+    // constraint propagates outwards quickly.
+    //
+    // So our approximation for now is to find the edge on lb_result.tour_edges
+    // that has the smallest number of zero-error steps, breaking ties by the
+    // smallest nonzero error.
+    struct EdgeErrorSummary {
+      int zero_error_count;
+      int smallest_nonzero_error;
+      TarelEdge edge;
+
+      bool BetterThan(const EdgeErrorSummary& other) {
+        if (zero_error_count < other.zero_error_count) {
+          return true;
+        }
+        return smallest_nonzero_error > other.smallest_nonzero_error;
+      }
+    };
+    EdgeErrorSummary best_constraint{
+        .zero_error_count = std::numeric_limits<int>::max(),
+        .smallest_nonzero_error = 0,
+    };
+
+    std::cout << "\n";
+    for (const TarelEdge& e : lb_result.tour_edges) {
+      std::cout << "Investigating " << e.Debug(state) << "\n";
+      std::vector<Step> e_steps = PairwiseMergedSteps(
+          partition_start_steps[e.origin.stop][e.origin.partition],
+          steps_between[{e.origin.stop, e.destination}]
+      );
+
+      std::map<int, int> error_histogram;
+      for (const Step& e_step : e_steps) {
+        int error = e_step.DurationSeconds() - e.weight;
+        assert(error >= 0);
+        error_histogram[error] += 1;
+      }
+
+      for (const auto& [error, count] : error_histogram) {
+        std::cout << "  " << TimeSinceServiceStart{error} << ": " << count
+                  << "\n";
+      }
+
+      int smallest_nonzero_error = std::numeric_limits<int>::max();
+      if (error_histogram.size() > 1) {
+        auto second_it = error_histogram.begin();
+        ++second_it;
+        smallest_nonzero_error = second_it->first;
+      }
+
+      assert(error_histogram[0] > 0);
+      EdgeErrorSummary error_summary{
+          .zero_error_count = error_histogram[0],
+          .smallest_nonzero_error = smallest_nonzero_error,
+          .edge = e,
+      };
+
+      if (error_summary.BetterThan(best_constraint)) {
+        best_constraint = error_summary;
+      }
+    }
+
+    std::cout << "Best constraint " << best_constraint.edge.Debug(state)
+              << "\n";
+    std::cout << "  zero_error_count: " << best_constraint.zero_error_count
+              << "\n";
+    std::cout << "  smallest_nonzero_error: "
+              << TimeSinceServiceStart{best_constraint.smallest_nonzero_error}
+              << "\n";
 
     std::vector<Step> primitive_steps;
     for (const TarelEdge& e : lb_result.tour_edges) {

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "solver/branch_and_bound.h"
+#include "solver/branch_and_bound2.h"
 #include "solver/search_event.h"
 #include "solver/tarel_graph.h"
 
@@ -60,8 +61,10 @@ int main(int argc, char* argv[]) {
   };
 
   auto start = std::chrono::steady_clock::now();
-  auto result =
-      BranchAndBoundSolve(state, &std::cerr, std::nullopt, max_iter, on_event);
+  // auto result =
+  //     BranchAndBoundSolve(state, &std::cerr, std::nullopt, max_iter,
+  //     on_event);
+  auto result = BranchAndBound2Solve(state);
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =
@@ -75,17 +78,17 @@ int main(int argc, char* argv[]) {
 
   std::cout << "\nBest duration: " << TimeSinceServiceStart{result.best_ub}
             << "\n";
-  if (!result.best_paths.empty()) {
-    const auto& path = result.best_paths[0];
-    std::vector<StopId> tour;
-    path.VisitAllStops([&](StopId stop) {
-      ExpandStop(stop, result.original_edges, tour);
-    });
-    std::cout << "Tour (" << tour.size() << " stops):\n";
-    for (StopId stop : tour) {
-      std::cout << "  " << state.StopName(stop) << "\n";
-    }
-  }
+  // if (!result.best_paths.empty()) {
+  //   const auto& path = result.best_paths[0];
+  //   std::vector<StopId> tour;
+  //   path.VisitAllStops([&](StopId stop) {
+  //     ExpandStop(stop, result.original_edges, tour);
+  //   });
+  //   std::cout << "Tour (" << tour.size() << " stops):\n";
+  //   for (StopId stop : tour) {
+  //     std::cout << "  " << state.StopName(stop) << "\n";
+  //   }
+  // }
 
   std::cout << "\nConcorde solves (" << solves.size() << "):\n";
   for (int i = 0; i < static_cast<int>(solves.size()); ++i) {

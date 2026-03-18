@@ -466,7 +466,7 @@ InitializeProblemStateResult InitializeProblemState(
 }
 
 std::string TarelState::Debug(const ProblemState& state) const {
-  return state.StopName(stop) + " " + state.PartitionName(partition);
+  return state.StopName(stop) + " (" + state.PartitionName(partition) + ")";
 }
 
 std::string TarelEdge::Debug(const ProblemState& state) const {
@@ -932,12 +932,11 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
+    const StepPathsAdjacencyList& completed,
     std::optional<int> ub,
     std::ostream* tsp_log,
     const SearchEventCallback& on_event
 ) {
-  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
-
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
@@ -975,6 +974,16 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   }
 
   return result;
+}
+
+std::optional<TspTourResult> ComputeTarelLowerBound(
+    const ProblemState& state,
+    std::optional<int> ub,
+    std::ostream* tsp_log,
+    const SearchEventCallback& on_event
+) {
+  StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+  return ComputeTarelLowerBound(state, completed, ub, tsp_log, on_event);
 }
 
 void WriteTarelSummary(

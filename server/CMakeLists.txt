@@ -118,6 +118,11 @@ add_library(branch_and_bound STATIC src/solver/branch_and_bound.cpp)
 target_link_libraries(branch_and_bound PUBLIC tarel_graph tour_paths)
 target_include_directories(branch_and_bound PUBLIC src)
 
+# Create branch_and_bound2 library target
+add_library(branch_and_bound2 STATIC src/solver/branch_and_bound2.cpp)
+target_link_libraries(branch_and_bound2 PUBLIC tarel_graph)
+target_include_directories(branch_and_bound2 PUBLIC src)
+
 # Create tour_paths library target
 add_library(tour_paths STATIC src/solver/tour_paths.cpp)
 target_link_libraries(tour_paths PUBLIC steps_adjacency_list)
@@ -184,7 +189,7 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 
 # Add benchmark_bnb tool
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
-target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
+target_link_libraries(benchmark_bnb PUBLIC branch_and_bound branch_and_bound2 CLI11::CLI11)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)

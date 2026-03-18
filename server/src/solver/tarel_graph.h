@@ -422,6 +422,14 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
+    const StepPathsAdjacencyList& completed,
+    std::optional<int> ub = std::nullopt,
+    std::ostream* tsp_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
+);
+
+std::optional<TspTourResult> ComputeTarelLowerBound(
+    const ProblemState& state,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
     const SearchEventCallback& on_event = nullptr
