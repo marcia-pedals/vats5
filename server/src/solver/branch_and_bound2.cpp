@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <nlohmann/detail/conversions/to_chars.hpp>
 #include <unordered_map>
 
 #include "solver/data.h"
@@ -239,6 +240,17 @@ Search2State RequireSteps(
       std::vector<Step> merged_steps = PairwiseMergedSteps(steps, b_to_x);
       for (Step merged_step : merged_steps) {
         merged_step.origin.stop = ab;
+
+        // If the step goes to END, we don't want the normal behavior where we
+        // take the partition of the latest non-flex step, because it doesn't
+        // make sense to have a partition on END.
+        //
+        // TODO: Figure out if this makes sense and is reasonable, of if it's a
+        // crazy hack.
+        if (merged_step.destination.stop == problem.boundary.end) {
+          merged_step.destination.partition = StepPartitionId::NONE;
+        }
+
         path_group_to_x.push_back(Path{merged_step, {merged_step}});
       }
       completed.adjacent[ab].push_back(std::move(path_group_to_x));
@@ -253,6 +265,17 @@ Search2State RequireSteps(
       std::vector<Step> merged_steps = PairwiseMergedSteps(x_to_a, steps);
       for (Step merged_step : merged_steps) {
         merged_step.destination.stop = ab;
+
+        // If the step goes to END, we don't want the normal behavior where we
+        // take the partition of the latest non-flex step, because it doesn't
+        // make sense to have a partition on END.
+        //
+        // TODO: Figure out if this makes sense and is reasonable, of if it's a
+        // crazy hack.
+        if (merged_step.destination.stop == problem.boundary.end) {
+          merged_step.destination.partition = StepPartitionId::NONE;
+        }
+
         path_group_to_ab.push_back(Path{merged_step, {merged_step}});
       }
       completed.adjacent[x].push_back(std::move(path_group_to_ab));
