@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
   // auto result =
   //     BranchAndBoundSolve(state, &std::cerr, std::nullopt, max_iter,
   //     on_event);
-  auto result = BranchAndBound2Solve(state);
+  auto result = BranchAndBound2Solve(state, on_event);
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =

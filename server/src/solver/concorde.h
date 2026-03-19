@@ -3,6 +3,7 @@
 #include <exception>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -61,7 +62,8 @@ struct ConcordeSolution {
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub = std::nullopt,
-    std::ostream* tsp_log = nullptr
+    std::ostream* tsp_log = nullptr,
+    std::span<const StopId> initial_tour = {}
 );
 
 }  // namespace vats5

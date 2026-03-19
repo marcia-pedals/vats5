@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <unordered_set>
 
 namespace vats5 {
@@ -313,6 +314,48 @@ TEST(ConcordeTest, Simple5NodeATSP) {
 
 RC_GTEST_PROP(ConcordeTest, UniquePermutationTour_BruteForce, ()) {
   CheckUniquePermutationTour(*rc::gen::inRange(2, 5));
+}
+
+// Test that passing an initial tour to Concorde actually causes it to use that
+// tour. We verify by checking Concorde's output for the initial tour's cost.
+TEST(ConcordeTest, InitialTour) {
+  // 5-node complete graph where forward edges are cheap and others expensive.
+  // w(i, (i+1)%5) = 1, all other edges = 50
+  std::vector<WeightedEdge> edges;
+  for (int i = 0; i < 5; ++i) {
+    for (int j = 0; j < 5; ++j) {
+      if (i != j) {
+        int weight = (j == (i + 1) % 5) ? 1 : 50;
+        edges.push_back(WeightedEdge{StopId{i}, StopId{j}, weight});
+      }
+    }
+  }
+
+  RelaxedAdjacencyList relaxed = MakeRelaxedAdjacencyListFromEdges(edges);
+
+  // Provide a sub-optimal initial tour: 0->4->3->2->1->0
+  // Cost = 50+50+50+50+50 = 250
+  // Doubled-graph cost = 250 + 5*11000 = 55250
+  std::vector<StopId> initial_tour = {
+      StopId{0}, StopId{4}, StopId{3}, StopId{2}, StopId{1}
+  };
+
+  std::ostringstream log;
+  std::optional<ConcordeSolution> solution =
+      SolveTspWithConcorde(relaxed, std::nullopt, &log, initial_tour);
+  ASSERT_TRUE(solution.has_value());
+
+  // Optimal tour is 0->1->2->3->4->0 = 5.
+  EXPECT_EQ(solution->optimal_value, 5);
+
+  // Concorde should log that it received our initial tour. The doubled-graph
+  // cost of our tour is 250 + 5*11000 = 55250. Concorde prints the starting
+  // bound from the provided tour.
+  std::string output = log.str();
+  EXPECT_TRUE(output.find("55250") != std::string::npos)
+      << "Expected Concorde output to reference the initial tour cost "
+         "(55250 in doubled graph). Output:\n"
+      << output;
 }
 
 }  // namespace vats5

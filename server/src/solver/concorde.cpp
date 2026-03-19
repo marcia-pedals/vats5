@@ -17,6 +17,7 @@
 #include <numeric>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 
@@ -314,11 +315,25 @@ std::vector<StopId> ValidateAndExtractTour(
   return tour;
 }
 
+// Write an initial tour file for Concorde's -t option.
+// Converts original stop tour to doubled-graph node order.
+void OutputInitialTour(
+    std::ostream& out, std::span<const StopId> original_tour
+) {
+  int doubled_n = static_cast<int>(original_tour.size()) * 2;
+  out << doubled_n << "\n";
+  for (const StopId& stop : original_tour) {
+    out << (stop.v * 2) << " " << (stop.v * 2 + 1) << " ";
+  }
+  out << "\n";
+}
+
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    int seed
+    int seed,
+    std::span<const StopId> initial_tour
 ) {
   DoubledGraphWeights weights(relaxed);
   int n = weights.NumStops();
@@ -341,6 +356,13 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   {
     std::ofstream out(problem_path);
     OutputConcordeTsp(out, weights);
+  }
+
+  // Write initial tour file if provided
+  std::string tour_path = temp_dir + "/tour";
+  if (!initial_tour.empty()) {
+    std::ofstream out(tour_path);
+    OutputInitialTour(out, initial_tour);
   }
 
   std::optional<int> concorde_ub;
@@ -384,33 +406,24 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     if (chdir(temp_dir.c_str()) != 0) {
       _exit(127);
     }
+    std::vector<const char*> args;
+    args.push_back("concorde");
+    args.push_back("-s");
+    args.push_back(seed_str.c_str());
     if (concorde_ub.has_value()) {
-      execlp(
-          "concorde",
-          "concorde",
-          "-s",
-          seed_str.c_str(),
-          "-u",
-          ub_str.c_str(),
-          "-x",
-          "-o",
-          "solution",
-          "problem",
-          nullptr
-      );
-    } else {
-      execlp(
-          "concorde",
-          "concorde",
-          "-s",
-          seed_str.c_str(),
-          "-x",
-          "-o",
-          "solution",
-          "problem",
-          nullptr
-      );
+      args.push_back("-u");
+      args.push_back(ub_str.c_str());
     }
+    if (!initial_tour.empty()) {
+      args.push_back("-t");
+      args.push_back("tour");
+    }
+    args.push_back("-x");
+    args.push_back("-o");
+    args.push_back("solution");
+    args.push_back("problem");
+    args.push_back(nullptr);
+    execvp("concorde", const_cast<char* const*>(args.data()));
     _exit(127);
   }
 
@@ -503,7 +516,8 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    std::ostream* tsp_log,
+    std::span<const StopId> initial_tour
 ) {
   if (relaxed.NumStops() < kBruteForceThreshold) {
     return SolveTspBruteForce(relaxed, ub);
@@ -514,7 +528,7 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
   for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
     try {
       return SolveTspWithConcordeImpl(
-          relaxed, ub, tsp_log, kBaseSeed + attempt - 1
+          relaxed, ub, tsp_log, kBaseSeed + attempt - 1, initial_tour
       );
     } catch (const InvalidTourStructure&) {
       // Don't retry - indicates insufficient kInterVertexOffset or a bug, not

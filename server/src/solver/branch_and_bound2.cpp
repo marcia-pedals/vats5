@@ -91,6 +91,7 @@ struct Search2Constraint {
   bool require;
   TarelEdge edge;
   int step_count;
+  int step_rep;
 };
 
 struct Search2History {
@@ -299,7 +300,112 @@ Search2State RequireSteps(
   };
 }
 
-BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
+struct ReqTreeNode;
+
+struct ReqTreeEdge {
+  TarelState a;
+  TarelState b;
+  int step_rep;
+  std::unique_ptr<ReqTreeNode> node;
+};
+
+struct ReqTreeNode {
+  std::string title;
+  int count = 0;
+  std::vector<ReqTreeEdge> children = {};
+  std::map<std::pair<TarelState, TarelState>, int> forbid_count = {};
+};
+
+void IncrementReqTree(
+    const ProblemState& state,
+    ReqTreeNode& node,
+    std::span<const Search2Constraint> constraints
+) {
+  node.count += 1;
+
+  auto head_constraint = std::find_if(
+      constraints.begin(),
+      constraints.end(),
+      [](const Search2Constraint& constraint) { return constraint.require; }
+  );
+  if (head_constraint == constraints.end()) {
+    if (!constraints.empty()) {
+      const Search2Constraint& latest_fbd = *(constraints.end() - 1);
+      assert(!latest_fbd.require);
+      node.forbid_count[{
+          latest_fbd.edge.origin, latest_fbd.edge.destination
+      }] += 1;
+    }
+    return;
+  }
+
+  auto it = std::find_if(
+      node.children.begin(), node.children.end(), [&](const ReqTreeEdge& edge) {
+        return (
+            edge.a == head_constraint->edge.origin &&
+            edge.b == head_constraint->edge.destination &&
+            edge.step_rep == head_constraint->step_rep
+        );
+      }
+  );
+  if (it == node.children.end()) {
+    std::string title;
+    if (true) {
+      // If we're simply adding one more step along the previous constraint,
+      // omit that to simplify the title.
+      // TODO: More robust way of identifying this condition.
+      title = "-> " + head_constraint->edge.destination.Debug(state);
+    } else {
+      title = head_constraint->edge.origin.Debug(state) + " -> " +
+              head_constraint->edge.destination.Debug(state);
+    }
+
+    node.children.push_back({
+        .a = head_constraint->edge.origin,
+        .b = head_constraint->edge.destination,
+        .step_rep = head_constraint->step_rep,
+        .node = std::make_unique<ReqTreeNode>(title),
+    });
+    it = node.children.end() - 1;
+  }
+  IncrementReqTree(
+      state,
+      *it->node,
+      constraints.subspan(head_constraint - constraints.begin() + 1)
+  );
+
+  // Maintain descending sort by count: the child at `it` may need to move left.
+  auto dest =
+      std::find_if(node.children.begin(), it, [&](const ReqTreeEdge& edge) {
+        return edge.node->count < it->node->count;
+      });
+  if (dest != it) {
+    std::rotate(dest, it, it + 1);
+  }
+}
+
+void PrintReqTree(const ReqTreeNode& node, int depth = 0) {
+  if (node.count <= 1) {
+    return;
+  }
+  std::string indent(2 * depth, ' ');
+
+  int total_forbid_count = 0;
+  for (const auto& [_, count] : node.forbid_count) {
+    total_forbid_count += count;
+  }
+
+  std::cout << indent << node.title << ": " << node.count << " ("
+            << total_forbid_count << " forbids / " << node.forbid_count.size()
+            << " edges)\n";
+  for (const ReqTreeEdge& edge : node.children) {
+    PrintReqTree(*edge.node, depth + 1);
+  }
+}
+
+BranchAndBound2Result BranchAndBound2Solve(
+    const ProblemState& initial_state, const SearchEventCallback& on_event
+) {
   int next_node_index = 0;
   std::vector<Search2History> history;
   std::vector<Search2Node> q;
@@ -315,6 +421,9 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
 
   int iter_count = 0;
   int best_ub = std::numeric_limits<int>::max();
+  ReqTreeNode req_tree_root({
+      .title = "root",
+  });
   while (!q.empty()) {
     std::pop_heap(q.begin(), q.end());
     Search2Node node = std::move(q.back());
@@ -330,26 +439,32 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
       break;
     }
 
-    for (const Search2Constraint& c : history[node.node_index].constraints) {
-      std::cout << "  ";
-      if (c.require) {
-        std::cout << "REQ";
-      } else {
-        std::cout << "FBD";
-      }
-      std::cout << " " << c.edge.Debug(node.state->problem) << " - "
-                << c.step_count << "\n";
-    }
+    IncrementReqTree(
+        node.state->problem, req_tree_root, history[node.node_index].constraints
+    );
+    PrintReqTree(req_tree_root);
+
+    // for (const Search2Constraint& c : history[node.node_index].constraints) {
+    //   std::cout << "  ";
+    //   if (c.require) {
+    //     std::cout << "REQ";
+    //   } else {
+    //     std::cout << "FBD";
+    //   }
+    //   std::cout << " " << c.edge.Debug(node.state->problem) << " - "
+    //             << c.step_count << "\n";
+    // }
 
     std::optional<TspTourResult> lb_result = ComputeTarelLowerBound(
         node.state->problem,
         node.state->completed,
         std::nullopt,  // TODO: UB
         nullptr,       // TODO: out file
-        nullptr        // TODO: search event callback
+        on_event
     );
     if (!lb_result.has_value()) {
-      std::cout << "  infeasible from tarel\n";
+      std::cout << "  infeasible from tarel"
+                << " (best " << TimeSinceServiceStart{best_ub} << ")\n";
       continue;
     }
     std::cout << "  delta-lb: "
@@ -377,6 +492,9 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
         if (feasible_path.DurationSeconds() < best_ub) {
           best_ub = feasible_path.DurationSeconds();
         }
+        std::cout << "  feasible path: "
+                  << TimeSinceServiceStart{feasible_path.DurationSeconds()}
+                  << " (best " << TimeSinceServiceStart{best_ub} << ")\n";
       }
     }
 
@@ -423,9 +541,9 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
         .smallest_nonzero_error = 0,
     };
 
-    std::cout << "\n";
+    // std::cout << "\n";
     for (const TarelEdge& e : lb_result->tour_edges) {
-      std::cout << "Investigating " << e.Debug(node.state->problem) << "\n";
+      // std::cout << "Investigating " << e.Debug(node.state->problem) << "\n";
       std::vector<StepProvenance> prov;
       std::vector<Step> e_steps = PairwiseMergedSteps(
           partition_start_steps[e.origin.stop][e.origin.partition],
@@ -433,13 +551,13 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
           &prov
       );
 
-      std::cout
-          << "  partition starts: "
-          << partition_start_steps[e.origin.stop][e.origin.partition].size()
-          << "\n"
-          << "  steps between: "
-          << steps_between[{e.origin.stop, e.destination}].size() << "\n"
-          << "  merged: " << e_steps.size() << "\n";
+      // std::cout
+      //     << "  partition starts: "
+      //     << partition_start_steps[e.origin.stop][e.origin.partition].size()
+      //     << "\n"
+      //     << "  steps between: "
+      //     << steps_between[{e.origin.stop, e.destination}].size() << "\n"
+      //     << "  merged: " << e_steps.size() << "\n";
 
       std::vector<Step> zero_error_steps;
       std::map<int, int> error_histogram;
@@ -455,10 +573,10 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
         }
       }
 
-      for (const auto& [error, count] : error_histogram) {
-        std::cout << "  " << TimeSinceServiceStart{error} << ": " << count
-                  << "\n";
-      }
+      // for (const auto& [error, count] : error_histogram) {
+      //   std::cout << "  " << TimeSinceServiceStart{error} << ": " << count
+      //             << "\n";
+      // }
 
       int smallest_nonzero_error = std::numeric_limits<int>::max();
       if (error_histogram.size() > 1) {
@@ -506,6 +624,11 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
         .require = false,
         .edge = best_constraint.edge,
         .step_count = static_cast<int>(best_constraint.zero_error_steps.size()),
+        .step_rep = std::ranges::min_element(
+                        best_constraint.zero_error_steps,
+                        {},
+                        [](const Step& step) { return step.origin.time; }
+        )->origin.time.seconds,
     });
     history.push_back(hist_with_forbid);
     next_node_index += 1;
@@ -527,6 +650,11 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
         .require = true,
         .edge = best_constraint.edge,
         .step_count = static_cast<int>(best_constraint.zero_error_steps.size()),
+        .step_rep = std::ranges::min_element(
+                        best_constraint.zero_error_steps,
+                        {},
+                        [](const Step& step) { return step.origin.time; }
+        )->origin.time.seconds,
     });
     history.push_back(hist_with_require);
     next_node_index += 1;

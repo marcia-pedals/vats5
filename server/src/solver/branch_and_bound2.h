@@ -7,6 +7,8 @@ struct BranchAndBound2Result {
   int best_ub;
 };
 
-BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state);
+BranchAndBound2Result BranchAndBound2Solve(
+    const ProblemState& initial_state, const SearchEventCallback& on_event
+);
 
 }  // namespace vats5
