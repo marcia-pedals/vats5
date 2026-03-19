@@ -5,6 +5,7 @@
 #include <memory>
 #include <nlohmann/detail/conversions/to_chars.hpp>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "solver/data.h"
 #include "solver/step_merge.h"
@@ -78,6 +79,7 @@ struct Search2Node {
   int lb;
   int node_index;
   std::unique_ptr<Search2State> state;
+  std::optional<std::vector<TarelState>> initial_path;
 
   bool operator<(const Search2Node& other) const {
     if (lb == other.lb) {
@@ -147,7 +149,12 @@ Search2State ForbidSteps(
 
 // TODOOOO: Preserve the Path-iness instead of collapsing things into
 // single-step paths.
-Search2State RequireSteps(
+struct RequireResult {
+  Search2State state;
+  TarelState new_vertex;
+};
+
+RequireResult RequireSteps(
     const Search2State& state,
     const TarelEdge& edge,
     const std::vector<Step>& steps
@@ -155,8 +162,11 @@ Search2State RequireSteps(
   assert(steps.size() > 0);
   StopId a = edge.origin.stop;
   StopId b = edge.destination.stop;
+  StepPartitionId b_part = steps[0].destination.partition;
   for (const Step& step : steps) {
-    assert(step.origin.stop == a && step.destination.stop == b);
+    assert(step.origin.stop == a);
+    assert(step.destination.stop == b);
+    assert(step.destination.partition == b_part);
   }
 
   // Copy parts of `state` that we're gonna be mutating.
@@ -189,6 +199,11 @@ Search2State RequireSteps(
   // Steps from b to x, grouped by x.
   std::unordered_map<StopId, std::vector<Step>> b_to_xs;
   for (const Step& s : completed.AllMergedSteps()) {
+    if ((s.origin.stop == a && s.destination.stop == b) ||
+        (s.origin.stop == b && s.destination.stop == a)) {
+      continue;
+    }
+
     if (s.destination.stop == a) {
       x_to_as[s.origin.stop].push_back(s);
     }
@@ -211,6 +226,10 @@ Search2State RequireSteps(
     });
   }
 
+  // ab should only have 1 partition. Below, we assert that it does and
+  // initialize this to whatever that partition is.
+  StepPartitionId ab_part;
+
   // There are 2 things that "ab" could represent:
   // 1. You are at "a" and you're gonna leave via "b".
   // 2. You are at "b" and you've arrived via "a".
@@ -226,15 +245,27 @@ Search2State RequireSteps(
   if (problem.boundary.start == ab) {
     // Do (1).
 
+    // Because "a" is START, it should only have one partition. We record what
+    // partition it is here, and assert that there is only one.
+    std::optional<StepPartitionId> a_part;
+
     // The steps to ab are: The steps to a.
     for (const auto& [x, x_to_a] : x_to_as) {
       std::vector<Path> path_group_to_ab;
       for (Step x_to_a_step : x_to_a) {
         x_to_a_step.destination.stop = ab;
         path_group_to_ab.push_back(Path{x_to_a_step, {x_to_a_step}});
+
+        if (a_part.has_value()) {
+          assert(x_to_a_step.destination.partition == *a_part);
+        } else {
+          a_part = x_to_a_step.destination.partition;
+        }
       }
       completed.adjacent[x].push_back(std::move(path_group_to_ab));
     }
+    assert(a_part.has_value());
+    ab_part = *a_part;
 
     // The steps from ab are: The steps a->b merged with the steps from b.
     for (const auto& [x, b_to_x] : b_to_xs) {
@@ -261,12 +292,15 @@ Search2State RequireSteps(
   } else {
     // Do (2).
 
+    ab_part = b_part;
+
     // The steps to ab are: The steps to a merged with the steps a->b.
     for (const auto& [x, x_to_a] : x_to_as) {
       std::vector<Path> path_group_to_ab;
       std::vector<Step> merged_steps = PairwiseMergedSteps(x_to_a, steps);
       for (Step merged_step : merged_steps) {
         merged_step.destination.stop = ab;
+        assert(merged_step.destination.partition == ab_part);
 
         // If the step goes to END, we don't want the normal behavior where we
         // take the partition of the latest non-flex step, because it doesn't
@@ -294,9 +328,31 @@ Search2State RequireSteps(
     }
   }
 
-  return Search2State{
-      .problem = std::move(problem),
-      .completed = std::move(completed),
+  // int best_in_ab = std::numeric_limits<int>::max();
+  // int best_out_ab = std::numeric_limits<int>::max();
+  // for (const Step& step : completed.AllMergedSteps()) {
+  //   assert(step.origin.stop != a);
+  //   assert(step.origin.stop != b);
+  //   assert(step.destination.stop != a);
+  //   assert(step.destination.stop != b);
+
+  //   if (step.destination.stop == ab && step.DurationSeconds() < best_in_ab) {
+  //     best_in_ab = step.DurationSeconds();
+  //   }
+  //   if (step.origin.stop == ab && step.DurationSeconds() < best_out_ab) {
+  //     best_out_ab = step.DurationSeconds();
+  //   }
+  // }
+  // std::cout << "Best in ab: " << best_in_ab << "\n";
+  // std::cout << "Best out ab: " << best_out_ab << "\n";
+
+  return RequireResult{
+      .state =
+          Search2State{
+              .problem = std::move(problem),
+              .completed = std::move(completed),
+          },
+      .new_vertex = TarelState(ab, ab_part),
   };
 }
 
@@ -458,8 +514,10 @@ BranchAndBound2Result BranchAndBound2Solve(
     std::optional<TspTourResult> lb_result = ComputeTarelLowerBound(
         node.state->problem,
         node.state->completed,
-        std::nullopt,  // TODO: UB
-        nullptr,       // TODO: out file
+        best_ub < std::numeric_limits<int>::max() ? std::optional(best_ub)
+                                                  : std::nullopt,
+        // &std::cout,
+        nullptr,  // TODO: out file
         on_event
     );
     if (!lb_result.has_value()) {
@@ -598,6 +656,13 @@ BranchAndBound2Result BranchAndBound2Solve(
       }
     }
 
+    std::vector<TarelState> lb_tarel_path;
+    assert(lb_result->tour_edges.size() > 0);
+    lb_tarel_path.push_back(lb_result->tour_edges[0].origin);
+    for (const TarelEdge& edge : lb_result->tour_edges) {
+      lb_tarel_path.push_back(edge.destination);
+    }
+
     // std::cout << "Best constraint "
     //           << best_constraint.edge.Debug(node.state->problem) << "\n";
     // std::cout << "  zero_error_count: " << best_constraint.zero_error_count
@@ -616,6 +681,7 @@ BranchAndBound2Result BranchAndBound2Solve(
                 best_constraint.edge,
                 best_constraint.zero_error_steps
             )),
+            .initial_path = lb_tarel_path,
         }
     );
     std::push_heap(q.begin(), q.end());
@@ -633,15 +699,80 @@ BranchAndBound2Result BranchAndBound2Solve(
     history.push_back(hist_with_forbid);
     next_node_index += 1;
 
+    RequireResult require_result = RequireSteps(
+        *node.state, best_constraint.edge, best_constraint.zero_error_steps
+    );
+    std::unique_ptr<Search2State> require_state =
+        std::make_unique<Search2State>(std::move(require_result.state));
+
+    std::vector<TarelState> lb_tarel_path_reqd = lb_tarel_path;
+    auto a_it = std::find_if(
+        lb_tarel_path_reqd.begin(),
+        lb_tarel_path_reqd.end(),
+        [&](const TarelState& state) {
+          return state.stop == best_constraint.edge.origin.stop;
+        }
+    );
+    assert(a_it < lb_tarel_path_reqd.end() - 1);
+    assert((a_it + 1)->stop == best_constraint.edge.destination.stop);
+    *a_it = require_result.new_vertex;
+    lb_tarel_path_reqd.erase(a_it + 1);
+
+    // {
+    //   StopId ab =
+    //   StopId{static_cast<int>(require_state->problem.stop_infos.size()) - 1};
+    //   auto require_state_edges = MakeTarelEdges(require_state->completed);
+
+    //   std::vector<TarelEdge> new_tarel_tour = lb_result->tour_edges;
+    //   auto ab_it = std::find_if(new_tarel_tour.begin(), new_tarel_tour.end(),
+    //   [&](const TarelEdge& edge) {
+    //     return edge.origin == best_constraint.edge.origin && edge.destination
+    //     == best_constraint.edge.destination;
+    //   });
+    //   assert(ab_it != new_tarel_tour.end());
+
+    //   int new_tarel_weight = 0;
+    //   for (auto it = new_tarel_tour.begin(); it < new_tarel_tour.end(); ++it)
+    //   {
+    //     if (it == ab_it) {
+    //       // Intentionally skip.
+    //     } else if (ab_it > new_tarel_tour.begin() && it == ab_it - 1) {
+    //       auto new_edge_it = std::find_if(require_state_edges.begin(),
+    //       require_state_edges.end(), [&](const TarelEdge& edge) {
+    //         // I think that there is only one ab partition by construction,
+    //         but I'm not sure.
+    //         // TODO: Verify.
+    //         return edge.origin == it->origin && edge.destination.stop == ab;
+    //       });
+    //       assert(new_edge_it != require_state_edges.end());
+    //       new_tarel_weight += new_edge_it->weight;
+    //     } else if (ab_it + 1 < new_tarel_tour.end() && it == ab_it + 1) {
+    //       auto new_edge_it = std::find_if(require_state_edges.begin(),
+    //       require_state_edges.end(), [&](const TarelEdge& edge) {
+    //         // I think that there is only one ab partition by construction,
+    //         but I'm not sure.
+    //         // TODO: Verify.
+    //         return edge.origin.stop == ab && edge.destination ==
+    //         it->destination;
+    //       });
+    //       assert(new_edge_it != require_state_edges.end());
+    //       new_tarel_weight += new_edge_it->weight;
+    //     } else {
+    //       new_tarel_weight += it->weight;
+    //     }
+    //   }
+
+    //   std::cout << "  new REQ tour tarel weight delta: " <<
+    //   TimeSinceServiceStart{new_tarel_weight - lb_result->optimal_value} <<
+    //   "\n";
+    // }
+
     q.push_back(
         Search2Node{
             .lb = std::max(node.lb, lb_result->optimal_value),
             .node_index = next_node_index,
-            .state = std::make_unique<Search2State>(RequireSteps(
-                *node.state,
-                best_constraint.edge,
-                best_constraint.zero_error_steps
-            )),
+            .state = std::move(require_state),
+            .initial_path = lb_tarel_path_reqd,
         }
     );
     std::push_heap(q.begin(), q.end());

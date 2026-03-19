@@ -836,6 +836,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     );
   }
   if (!solution.has_value()) {
+    std::cout << "noconcorde\n";
     return std::nullopt;
   }
 
@@ -956,6 +957,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   }
   for (StopId rep : state.required.GroupRepresentatives()) {
     if (!representatives_in_graph.contains(rep)) {
+      std::cout << "norep\n";
       return std::nullopt;
     }
   }
@@ -964,6 +966,7 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
       remap.edges, graph, state.boundary, ub, tsp_log, on_event
   );
   if (!result.has_value()) {
+    std::cout << "notsp\n";
     return std::nullopt;
   }
 

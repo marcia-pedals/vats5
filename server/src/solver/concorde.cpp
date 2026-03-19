@@ -466,6 +466,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     // TODO: Consider whether this is really infeasible always or if there are
     // error cases we should detect and fail for.
     cleanup_temp();
+    std::cout << "concorde notopt\n";
     return std::nullopt;
   }
   int raw_optimal_value =
@@ -474,6 +475,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   if (ub.has_value() && raw_optimal_value >= concorde_ub) {
     // Cleanup temp directory before returning
     cleanup_temp();
+    std::cout << "concorde above ub\n";
     return std::nullopt;
   }
 
@@ -489,6 +491,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // actually there is a feasible solution. Seems unlikely to matter in
   // practice, because kForbiddenEdgeCost is so big.
   if (DoubledTourUsesForbiddenEdge(doubled_tour, weights)) {
+    std::cout << "forbidden edge (raw opt: " << raw_optimal_value << ")\n";
     // Cleanup temp directory before returning
     cleanup_temp();
     return std::nullopt;
