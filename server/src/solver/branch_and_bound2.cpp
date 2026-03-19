@@ -10,6 +10,7 @@
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
+#include "solver/tour_paths.h"
 
 namespace vats5 {
 
@@ -324,6 +325,11 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
               << TimeSinceServiceStart{node.lb} << " (" << (q.size() + 1)
               << " active)\n";
 
+    if (node.lb >= best_ub) {
+      std::cout << "  search terminated: lb >= ub\n";
+      break;
+    }
+
     for (const Search2Constraint& c : history[node.node_index].constraints) {
       std::cout << "  ";
       if (c.require) {
@@ -349,6 +355,30 @@ BranchAndBound2Result BranchAndBound2Solve(const ProblemState& initial_state) {
     std::cout << "  delta-lb: "
               << TimeSinceServiceStart{lb_result->optimal_value - node.lb}
               << "\n";
+
+    {
+      // Make an upper bound by actually following the LB path.
+      std::vector<StopId> stop_sequence;
+      stop_sequence.push_back(lb_result->tour_edges[0].origin.stop);
+      for (const auto& edge : lb_result->tour_edges) {
+        stop_sequence.push_back(edge.destination.stop);
+      }
+      std::vector<Path> feasible_paths = ComputeMinimalFeasiblePathsAlong(
+          stop_sequence, node.state->completed
+      );
+      if (feasible_paths.size() > 0) {
+        const Path& feasible_path = *std::min_element(
+            feasible_paths.begin(),
+            feasible_paths.end(),
+            [](const Path& a, const Path& b) {
+              return a.DurationSeconds() < b.DurationSeconds();
+            }
+        );
+        if (feasible_path.DurationSeconds() < best_ub) {
+          best_ub = feasible_path.DurationSeconds();
+        }
+      }
+    }
 
     PartitionStartSteps partition_start_steps =
         ComputePartitionStartSteps(node.state->completed);
