@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <ostream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -417,7 +418,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const ProblemBoundary& boundary,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    std::span<const StopId> initial_tour = {}
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
@@ -425,14 +427,16 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const StepPathsAdjacencyList& completed,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    std::span<const TarelState> initial_tour = {}
 );
 
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    std::span<const TarelState> initial_tour = {}
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

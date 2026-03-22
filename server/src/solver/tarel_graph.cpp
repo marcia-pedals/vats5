@@ -803,7 +803,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const ProblemBoundary& boundary,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    std::span<const StopId> initial_tour
 ) {
   // Solve TSP!!!!
   if (tsp_log) {
@@ -818,7 +819,10 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
   auto concorde_start = std::chrono::steady_clock::now();
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(
-      MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), atsp_ub, tsp_log
+      MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges),
+      atsp_ub,
+      tsp_log,
+      initial_tour
   );
   auto concorde_end = std::chrono::steady_clock::now();
   if (on_event) {
@@ -936,11 +940,50 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const StepPathsAdjacencyList& completed,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    std::span<const TarelState> initial_tour
 ) {
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
+
+  // Remap initial_tour from original TarelStates to StopIds in the TSP graph.
+  // Each entry in initial_tour is one stop (with a specific partition). The TSP
+  // graph may have multiple partitions per stop. We expand each stop by
+  // visiting all its partitions in cycle order, starting from the entry
+  // partition and incrementing by 1 until we loop back.
+  std::vector<StopId> remapped_initial_tour;
+  if (!initial_tour.empty()) {
+    // Build inverse of mapped_to_original: original -> remapped.
+    std::unordered_map<TarelState, TarelState> original_to_mapped;
+    for (const auto& [mapped, original] : remap.mapped_to_original) {
+      original_to_mapped[original] = mapped;
+    }
+    bool ok = true;
+    for (const TarelState& ts : initial_tour) {
+      auto mapped_it = original_to_mapped.find(ts);
+      if (mapped_it == original_to_mapped.end()) {
+        ok = false;
+        break;
+      }
+      TarelState remapped_state = mapped_it->second;
+      auto num_it = graph.num_states_by_stop.find(remapped_state.stop);
+      if (num_it == graph.num_states_by_stop.end()) {
+        ok = false;
+        break;
+      }
+      int num_partitions = num_it->second;
+      for (int i = 0; i < num_partitions; ++i) {
+        StepPartitionId p{(remapped_state.partition.v + i) % num_partitions};
+        auto id_it = graph.id_by_state.find(TarelState{remapped_state.stop, p});
+        assert(id_it != graph.id_by_state.end());
+        remapped_initial_tour.push_back(id_it->second);
+      }
+    }
+    if (!ok || remapped_initial_tour.size() != graph.state_by_id.size()) {
+      remapped_initial_tour.clear();
+    }
+  }
 
   // Check that at least one representative from each group of required stops
   // appears in `graph`.
@@ -963,7 +1006,13 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
   }
 
   std::optional<TspTourResult> result = SolveTspAndExtractTour(
-      remap.edges, graph, state.boundary, ub, tsp_log, on_event
+      remap.edges,
+      graph,
+      state.boundary,
+      ub,
+      tsp_log,
+      on_event,
+      remapped_initial_tour
   );
   if (!result.has_value()) {
     std::cout << "notsp\n";
@@ -983,10 +1032,13 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    std::span<const TarelState> initial_tour
 ) {
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
-  return ComputeTarelLowerBound(state, completed, ub, tsp_log, on_event);
+  return ComputeTarelLowerBound(
+      state, completed, ub, tsp_log, on_event, initial_tour
+  );
 }
 
 void WriteTarelSummary(

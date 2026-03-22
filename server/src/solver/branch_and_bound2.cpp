@@ -511,6 +511,10 @@ BranchAndBound2Result BranchAndBound2Solve(
     //             << c.step_count << "\n";
     // }
 
+    std::vector<TarelState> initial_tour_vec;
+    if (node.initial_path.has_value()) {
+      initial_tour_vec = *node.initial_path;
+    }
     std::optional<TspTourResult> lb_result = ComputeTarelLowerBound(
         node.state->problem,
         node.state->completed,
@@ -518,7 +522,8 @@ BranchAndBound2Result BranchAndBound2Solve(
                                                   : std::nullopt,
         // &std::cout,
         nullptr,  // TODO: out file
-        on_event
+        on_event,
+        initial_tour_vec
     );
     if (!lb_result.has_value()) {
       std::cout << "  infeasible from tarel"
