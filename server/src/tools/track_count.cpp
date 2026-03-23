@@ -4,6 +4,7 @@
 #include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -279,34 +280,36 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
     }
   }
 
-  for (int k = 0; k < step_states.size(); ++k) {
-    const std::unordered_map<StopId, StepState>& step_state_k = step_states[k];
-    int max_smear = 0;
-    TimeSinceServiceStart min_t{std::numeric_limits<int>::max()}, max_t{0};
-    for (const auto& [s, step_state] : step_state_k) {
-      if (step_state.arrival_times.size() == 0) {
-        continue;
-      }
-      int smear = step_state.arrival_times.back().seconds -
-                  step_state.arrival_times[0].seconds;
-      max_smear = std::max(max_smear, smear);
-      min_t = std::min(min_t, step_state.arrival_times[0]);
-      max_t = std::max(max_t, step_state.arrival_times.back());
-    }
-    std::cout << "k = " << k << "\n"
-              << "  [" << min_t << ", " << max_t << "] (difference "
-              << TimeSinceServiceStart{max_t.seconds - min_t.seconds} << ")\n"
-              << "  max smear " << TimeSinceServiceStart{max_smear} << "\n";
-  }
+  // for (int k = 0; k < step_states.size(); ++k) {
+  //   const std::unordered_map<StopId, StepState>& step_state_k =
+  //   step_states[k]; int max_smear = 0; TimeSinceServiceStart
+  //   min_t{std::numeric_limits<int>::max()}, max_t{0}; for (const auto& [s,
+  //   step_state] : step_state_k) {
+  //     if (step_state.arrival_times.size() == 0) {
+  //       continue;
+  //     }
+  //     int smear = step_state.arrival_times.back().seconds -
+  //                 step_state.arrival_times[0].seconds;
+  //     max_smear = std::max(max_smear, smear);
+  //     min_t = std::min(min_t, step_state.arrival_times[0]);
+  //     max_t = std::max(max_t, step_state.arrival_times.back());
+  //   }
+  //   std::cout << "k = " << k << "\n"
+  //             << "  [" << min_t << ", " << max_t << "] (difference "
+  //             << TimeSinceServiceStart{max_t.seconds - min_t.seconds} <<
+  //             ")\n"
+  //             << "  max smear " << TimeSinceServiceStart{max_smear} << "\n";
+  // }
 
   return step_states;
 }
 
-void DoTSP(
+std::optional<TspTourResult> DoTSP(
     const StepsAdjacencyList& completed,
     const RequiredStops& required,
     const ProblemBoundary& boundary,
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states
+    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    int ub_rel
 ) {
   // Convention:
   // StepPartitionId::NONE is the partition for START and END.
@@ -389,12 +392,33 @@ void DoTSP(
   TarelStateRemapResult remap = RemapTarelStates(edges, required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, boundary);
 
+  // Check that at least one representative from each group of required stops
+  // appears in `graph`.
+  //
+  // This is necessary for correctness because the above construction can omit
+  // stops from `graph`, and if it does, then the TSP on `graph` will give a
+  // solution that does not reach all the stops. (Specifically, stops that don't
+  // appear as both origins and destinations are omitted).
+  std::unordered_set<StopId> representatives_in_graph;
+  for (const TarelState& tarel_state : graph.state_by_id) {
+    representatives_in_graph.insert(required.Representative(tarel_state.stop));
+  }
+  for (StopId rep : required.GroupRepresentatives()) {
+    if (!representatives_in_graph.contains(rep)) {
+      return std::nullopt;
+    }
+  }
+
   std::optional<TspTourResult> result = SolveTspAndExtractTour(
-      remap.edges, graph, boundary, std::nullopt, nullptr, nullptr
+      remap.edges,
+      graph,
+      boundary,
+      ub_rel == -1 ? std::nullopt : std::optional(ub_rel),
+      nullptr,
+      nullptr
   );
   if (!result.has_value()) {
-    std::cout << "No result\n";
-    return;
+    return std::nullopt;
   }
 
   // Map `result` states back to original states.
@@ -403,7 +427,7 @@ void DoTSP(
     edge.destination = remap.mapped_to_original.at(edge.destination);
   }
 
-  std::cout << "Opt: " << TimeSinceServiceStart{result->optimal_value} << "\n";
+  return result;
 }
 
 int main(int argc, char* argv[]) {
@@ -461,11 +485,6 @@ int main(int argc, char* argv[]) {
 
   StopId stop = FindStopByGtfsId(problem, gtfs_stop_id_str);
 
-  if (time_str.empty()) {
-    PrintDepartures(problem, stop);
-    return 0;
-  }
-
   int lb_rel = -1;
   if (!lb_str.empty()) {
     lb_rel = TimeSinceServiceStart::Parse(lb_str).seconds;
@@ -476,19 +495,84 @@ int main(int argc, char* argv[]) {
     ub_rel = TimeSinceServiceStart::Parse(ub_str).seconds;
   }
 
+  // Collect departure times to iterate over.
+  std::vector<TimeSinceServiceStart> departure_times;
+  if (time_str.empty()) {
+    // Gather all distinct departure times from this stop.
+    std::set<TimeSinceServiceStart> times_set;
+    for (const auto& group : problem.minimal.GetGroups(stop)) {
+      for (const auto& step : problem.minimal.GetSteps(group)) {
+        times_set.insert(step.origin_time);
+      }
+    }
+    departure_times.assign(times_set.begin(), times_set.end());
+  } else {
+    departure_times.push_back(TimeSinceServiceStart::Parse(time_str));
+  }
+
   StepsAdjacencyList completed =
       MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
-  std::vector<std::unordered_map<StopId, StepState>> step_states =
-      ComputeStepStates(
-          completed,
-          problem.required,
-          problem.boundary,
-          stop,
-          TimeSinceServiceStart::Parse(time_str),
-          lb_rel,
-          ub_rel
-      );
-  DoTSP(completed, problem.required, problem.boundary, step_states);
+
+  for (const TimeSinceServiceStart& t0 : departure_times) {
+    std::cout << t0.ToString() << ": ";
+    std::vector<std::unordered_map<StopId, StepState>> step_states =
+        ComputeStepStates(
+            completed,
+            problem.required,
+            problem.boundary,
+            stop,
+            t0,
+            lb_rel,
+            ub_rel
+        );
+    std::optional<TspTourResult> result = DoTSP(
+        completed, problem.required, problem.boundary, step_states, ub_rel
+    );
+    if (result.has_value()) {
+      std::cout << TimeSinceServiceStart{result->optimal_value} << "\n";
+
+      TimeSinceServiceStart t_relaxed = t0;
+      TimeSinceServiceStart t_actual = t0;
+      std::cout << "  " << problem.StopName(result->tour_edges[0].origin.stop)
+                << " @ " << t_relaxed << " / " << t_actual << "\n";
+      for (int i = 1; i + 1 < result->tour_edges.size(); ++i) {
+        const TarelEdge& edge = result->tour_edges[i];
+        t_relaxed.seconds += edge.weight;
+
+        bool found = false;
+        for (const StepGroup& g : completed.GetGroups(edge.origin.stop)) {
+          if (g.destination_stop != edge.destination.stop) {
+            continue;
+          }
+          std::span<const AdjacencyListStep> group_steps =
+              completed.GetSteps(g);
+          size_t t_next_i = FindDepartureAtOrAfter(completed, g, t_actual);
+          assert(t_next_i < group_steps.size());
+          t_actual = group_steps[t_next_i].destination_time;
+          found = true;
+          break;
+        }
+        assert(found);
+
+        std::cout << "  " << problem.StopName(edge.destination.stop) << " @ "
+                  << t_relaxed << " / " << t_actual << "\n";
+      }
+
+      int ub_actual = t_actual.seconds - t0.seconds;
+      std::cout << "  ub actual: " << TimeSinceServiceStart{ub_actual} << "\n";
+      if (ub_rel == -1) {
+        ub_rel = ub_actual;
+      }
+      ub_rel = std::min(ub_rel, ub_actual);
+
+      // TODO: Because of periodicity, paths departing at other times that
+      // follow the same sequence might also be pretty good or even better, so
+      // we should consider them!!
+
+    } else {
+      std::cout << "No result\n";
+    }
+  }
 
   return 0;
 }
