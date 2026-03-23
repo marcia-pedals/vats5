@@ -96,7 +96,7 @@ struct RequiredStops {
   // Whether stop is required.
   bool Contains(StopId stop) const;
 
-  // Number of required stops.
+  // Number of required stop groups.
   size_t size() const;
 
   bool operator==(const RequiredStops&) const = default;

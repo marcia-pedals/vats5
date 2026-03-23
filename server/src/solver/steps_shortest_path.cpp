@@ -52,10 +52,14 @@ struct FrontierEntryComparator {
 // steps.size() if none found.
 // Precondition: `steps` contains only fixed-schedule steps (no flex).
 size_t FindDepartureAtOrAfter(
-    std::span<const AdjacencyListStep> steps,
-    std::span<const int16_t> departure_times_div10,
+    const StepsAdjacencyList& adjacency_list,
+    const StepGroup& group,
     TimeSinceServiceStart t
 ) {
+  std::span<const AdjacencyListStep> steps = adjacency_list.GetSteps(group);
+  std::span<const int16_t> departure_times_div10 =
+      adjacency_list.GetDepartureTimes(group);
+
   if (steps.empty()) {
     return steps.size();
   }
@@ -322,12 +326,9 @@ std::vector<Step> FindShortestPathsAtTime(
       {
         std::span<const AdjacencyListStep> group_steps =
             adjacency_list.GetSteps(step_group);
-        std::span<const int16_t> group_departure_times =
-            adjacency_list.GetDepartureTimes(step_group);
 
-        size_t next_step_idx = FindDepartureAtOrAfter(
-            group_steps, group_departure_times, current_time
-        );
+        size_t next_step_idx =
+            FindDepartureAtOrAfter(adjacency_list, step_group, current_time);
         if (next_step_idx >= group_steps.size()) {
           continue;
         }

@@ -186,6 +186,14 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
 target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 
+# Add precise_times tool
+add_executable(precise_times src/tools/precise_times.cpp)
+target_link_libraries(precise_times PUBLIC tarel_graph CLI11::CLI11)
+
+# Add track_count tool
+add_executable(track_count src/tools/track_count.cpp)
+target_link_libraries(track_count PUBLIC tarel_graph CLI11::CLI11)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
