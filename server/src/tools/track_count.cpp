@@ -138,17 +138,16 @@ struct StepState {
   }
 };
 
-void ComputeStepStates(
-    const ProblemState& problem,
+std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
+    const StepsAdjacencyList& completed,
+    const RequiredStops& required,
+    const ProblemBoundary& boundary,
     StopId s0,
     TimeSinceServiceStart t0,
     int lb_rel,
     int ub_rel
 ) {
-  assert(problem.required.size() >= 4);
-
-  auto graph =
-      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+  assert(required.size() >= 4);
 
   // TODO: Consider whether we can tighten these up enough to be useful.
   // ExitStats exit_stats = ComputeExitStats(graph, problem.boundary);
@@ -165,7 +164,7 @@ void ComputeStepStates(
 
   TimeSinceServiceStart t_ub;
   if (ub_rel < 0) {
-    for (const Step& step : graph.AllSteps()) {
+    for (const Step& step : completed.AllSteps()) {
       t_ub = std::max(t_ub, step.destination.time);
     }
   } else {
@@ -187,7 +186,7 @@ void ComputeStepStates(
     step_states.push_back(std::move(step_state_0));
   }
 
-  for (int k = 1; k <= problem.required.size() - 3; ++k) {
+  for (int k = 1; k <= static_cast<int>(required.size()) - 3; ++k) {
     step_states.push_back({});
     std::unordered_map<StopId, StepState>& step_state_k =
         *(step_states.end() - 1);
@@ -195,14 +194,18 @@ void ComputeStepStates(
         *(step_states.end() - 2);
 
     for (const auto& [s_cur, step_state_cur] : step_state_kminus1) {
-      for (const StepGroup& g_next : graph.GetGroups(s_cur)) {
+      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
         StopId s_next = g_next.destination_stop;
+        if (s_next == boundary.start || s_next == boundary.end) {
+          continue;
+        }
+
         for (const TimeSinceServiceStart& t_cur :
              step_state_cur.arrival_times) {
           // TODO: Deal with flex steps.
           std::span<const AdjacencyListStep> group_steps =
-              graph.GetSteps(g_next);
-          size_t t_next_i = FindDepartureAtOrAfter(graph, g_next, t_cur);
+              completed.GetSteps(g_next);
+          size_t t_next_i = FindDepartureAtOrAfter(completed, g_next, t_cur);
           if (t_next_i >= group_steps.size()) {
             continue;
           }
@@ -238,8 +241,12 @@ void ComputeStepStates(
     for (auto& [s_cur, step_state_cur] : step_state_k) {
       StepState step_state_cur_filtered;
 
-      for (const StepGroup& g_next : graph.GetGroups(s_cur)) {
+      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
         StopId s_next = g_next.destination_stop;
+        if (s_next == boundary.start || s_next == boundary.end) {
+          continue;
+        }
+
         auto step_state_next_it = step_state_kplus1.find(s_next);
         if (step_state_next_it == step_state_kplus1.end()) {
           continue;
@@ -250,8 +257,8 @@ void ComputeStepStates(
              step_state_cur.arrival_times) {
           // TODO: Deal with flex steps.
           std::span<const AdjacencyListStep> group_steps =
-              graph.GetSteps(g_next);
-          size_t t_next_i = FindDepartureAtOrAfter(graph, g_next, t_cur);
+              completed.GetSteps(g_next);
+          size_t t_next_i = FindDepartureAtOrAfter(completed, g_next, t_cur);
           if (t_next_i >= group_steps.size()) {
             continue;
           }
@@ -291,6 +298,112 @@ void ComputeStepStates(
               << TimeSinceServiceStart{max_t.seconds - min_t.seconds} << ")\n"
               << "  max smear " << TimeSinceServiceStart{max_smear} << "\n";
   }
+
+  return step_states;
+}
+
+void DoTSP(
+    const StepsAdjacencyList& completed,
+    const RequiredStops& required,
+    const ProblemBoundary& boundary,
+    const std::vector<std::unordered_map<StopId, StepState>>& step_states
+) {
+  // Convention:
+  // StepPartitionId::NONE is the partition for START and END.
+  // StepPartitionId{k} is the partition for where you arrive after the k-th
+  // step:
+  // - StepPartitionId{0} is the first partition you get to after START.
+  // - StepPartitionId{required.size() - 3} is the last partition after stepping
+  // to END.
+  std::vector<TarelEdge> edges;
+
+  // END->START edge.
+  TarelState start_state{boundary.start, StepPartitionId::NONE};
+  TarelState end_state{boundary.end, StepPartitionId::NONE};
+  edges.push_back({
+      .origin = end_state,
+      .destination = start_state,
+      .weight = 0,
+  });
+
+  // Entry (START->*) edges.
+  for (const auto& [s, step_state] : step_states[0]) {
+    edges.push_back({
+        .origin = start_state,
+        .destination = TarelState{s, StepPartitionId{0}},
+        .weight = 0,
+    });
+  }
+
+  // Exit (*->END) edges.
+  for (const auto& [s, step_state] : step_states.back()) {
+    edges.push_back({
+        .origin =
+            TarelState{
+                s, StepPartitionId{static_cast<int>(required.size()) - 3}
+            },
+        .destination = end_state,
+        .weight = 0,
+    });
+  }
+
+  // Inter-stop edges.
+  for (int k = 1; k <= required.size() - 3; ++k) {
+    const std::unordered_map<StopId, StepState>& step_state_kminus1 =
+        step_states[k - 1];
+
+    for (const auto& [s_cur, step_state_cur] : step_state_kminus1) {
+      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
+        StopId s_next = g_next.destination_stop;
+        if (s_next == boundary.start || s_next == boundary.end) {
+          continue;
+        }
+
+        int best_dur = std::numeric_limits<int>::max();
+        for (const TimeSinceServiceStart& t_cur :
+             step_state_cur.arrival_times) {
+          // TODO: Deal with flex steps.
+          std::span<const AdjacencyListStep> group_steps =
+              completed.GetSteps(g_next);
+          size_t t_next_i = FindDepartureAtOrAfter(completed, g_next, t_cur);
+          if (t_next_i >= group_steps.size()) {
+            continue;
+          }
+          TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
+          int dur = t_next.seconds - t_cur.seconds;
+          best_dur = std::min(best_dur, dur);
+        }
+
+        if (best_dur < std::numeric_limits<int>::max()) {
+          edges.push_back({
+              .origin = TarelState{s_cur, StepPartitionId{k - 1}},
+              .destination = TarelState{s_next, StepPartitionId{k}},
+              .weight = best_dur,
+          });
+        }
+      }
+    }
+  }
+
+  // SOLVE!!!
+  TarelStateRemapResult remap = RemapTarelStates(edges, required);
+  TspGraphData graph = MakeTspGraphEdges(remap.edges, boundary);
+
+  std::optional<TspTourResult> result = SolveTspAndExtractTour(
+      remap.edges, graph, boundary, std::nullopt, nullptr, nullptr
+  );
+  if (!result.has_value()) {
+    std::cout << "No result\n";
+    return;
+  }
+
+  // Map `result` states back to original states.
+  for (TarelEdge& edge : result->tour_edges) {
+    edge.origin = remap.mapped_to_original.at(edge.origin);
+    edge.destination = remap.mapped_to_original.at(edge.destination);
+  }
+
+  std::cout << "Opt: " << TimeSinceServiceStart{result->optimal_value} << "\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -363,9 +476,19 @@ int main(int argc, char* argv[]) {
     ub_rel = TimeSinceServiceStart::Parse(ub_str).seconds;
   }
 
-  ComputeStepStates(
-      problem, stop, TimeSinceServiceStart::Parse(time_str), lb_rel, ub_rel
-  );
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+  std::vector<std::unordered_map<StopId, StepState>> step_states =
+      ComputeStepStates(
+          completed,
+          problem.required,
+          problem.boundary,
+          stop,
+          TimeSinceServiceStart::Parse(time_str),
+          lb_rel,
+          ub_rel
+      );
+  DoTSP(completed, problem.required, problem.boundary, step_states);
 
   return 0;
 }
