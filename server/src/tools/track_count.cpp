@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -197,63 +198,70 @@ void PropagateStepStatesForwards(
   }
 }
 
-// Deletes states from `step_states[k]` that do not lead to anything in
-// `step_states[k + 1]`.
-void FilterStepStatesBackwards(
-    const StepsAdjacencyList& completed,
-    const ProblemBoundary& boundary,
-    std::vector<std::unordered_map<StopId, StepState>>& step_states,
-    int k
+// Deletes states from `step_states[k + 1]` that do not come from anything in
+// `step_states[k]`.
+void FilterStepStatesForwards(
+    std::vector<std::unordered_map<StopId, StepState>>& step_states, int k
 ) {
   assert(k >= 0);
   assert(k + 1 < step_states.size());
 
-  for (auto& [s_cur, step_state_cur] : step_states[k]) {
-    StepState step_state_cur_filtered;
-
-    for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
-      StopId s_next = g_next.destination_stop;
-      if (s_next == boundary.start || s_next == boundary.end) {
-        continue;
-      }
-
-      auto step_state_next_it = step_states[k + 1].find(s_next);
-      if (step_state_next_it == step_states[k + 1].end()) {
-        continue;
-      }
-      const StepState& step_state_next = step_state_next_it->second;
-
-      for (const ArrivalTimeState& ats : step_state_cur.states) {
-        // TODO: Deal with flex steps.
-        std::span<const AdjacencyListStep> group_steps =
-            completed.GetSteps(g_next);
-        size_t t_next_i =
-            FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
-        if (t_next_i >= group_steps.size()) {
-          continue;
-        }
-        TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
-        auto it = std::find_if(
-            step_state_next.states.begin(),
-            step_state_next.states.end(),
-            [&](const ArrivalTimeState& next_ats) {
-              return next_ats.arrival_time == t_next;
-            }
+  // arrival_times[s] is all the arrival times to s that come from something in
+  // step_states[k].
+  std::unordered_map<StopId, std::unordered_set<TimeSinceServiceStart>>
+      arrival_times;
+  for (const auto& [s_cur, step_state_cur] : step_states[k]) {
+    for (const ArrivalTimeState& ats : step_state_cur.states) {
+      for (const OnwardsStep& onwards : ats.onwards) {
+        arrival_times[onwards.destination].insert(
+            TimeSinceServiceStart{ats.arrival_time.seconds + onwards.duration}
         );
-        if (it != step_state_next.states.end()) {
-          step_state_cur_filtered.states.push_back(
-              {.arrival_time = ats.arrival_time}
-          );
-        }
       }
     }
+  }
 
-    step_state_cur_filtered.SortAndDedupe();
-    step_state_cur = std::move(step_state_cur_filtered);
+  for (auto& [s_next, step_state_next] : step_states[k + 1]) {
+    const std::unordered_set<TimeSinceServiceStart>& arrival_times_next =
+        arrival_times[s_next];
+    std::erase_if(step_state_next.states, [&](const ArrivalTimeState& ats) {
+      return !arrival_times_next.contains(ats.arrival_time);
+    });
+  }
+}
+
+// Deletes states from `step_states[k]` that do not lead to anything in
+// `step_states[k + 1]`.
+void FilterStepStatesBackwards(
+    std::vector<std::unordered_map<StopId, StepState>>& step_states, int k
+) {
+  assert(k >= 0);
+  assert(k + 1 < step_states.size());
+
+  // arrival_times[s] is all the arrival times to s in step_states[k + 1].
+  std::unordered_map<StopId, std::unordered_set<TimeSinceServiceStart>>
+      arrival_times;
+  for (const auto& [s_next, step_state_next] : step_states[k + 1]) {
+    for (const ArrivalTimeState& ats : step_state_next.states) {
+      arrival_times[s_next].insert(ats.arrival_time);
+    }
+  }
+
+  for (auto& [s_cur, step_state_cur] : step_states[k]) {
+    for (ArrivalTimeState& ats : step_state_cur.states) {
+      std::erase_if(ats.onwards, [&](const OnwardsStep& onwards) {
+        return !arrival_times[onwards.destination].contains(
+            TimeSinceServiceStart{ats.arrival_time.seconds + onwards.duration}
+        );
+      });
+    }
+    std::erase_if(step_state_cur.states, [](const ArrivalTimeState& ats) {
+      return ats.onwards.size() == 0;
+    });
   }
 }
 
 // Recomputes all the `.onwards` fields in `step_states_k`.
+// TODO: Probably put this inside the "propagate forwards helper".
 void RecomputeOnwardsSteps(
     const StepsAdjacencyList& completed,
     const ProblemBoundary& boundary,
@@ -261,6 +269,7 @@ void RecomputeOnwardsSteps(
 ) {
   for (auto& [s_cur, step_state_cur] : step_states_k) {
     for (auto& ats : step_state_cur.states) {
+      ats.onwards.clear();
       for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
         StopId s_next = g_next.destination_stop;
         if (s_next == boundary.start || s_next == boundary.end) {
@@ -340,14 +349,14 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
     });
   }
 
+  for (int k = 0; k < step_states.size(); ++k) {
+    RecomputeOnwardsSteps(completed, boundary, step_states[k]);
+  }
+
   // Now go backwardsly and filter any arrival times that do not lead to actual
   // arrival times that we have.
   for (int k = static_cast<int>(step_states.size()) - 2; k >= 0; --k) {
-    FilterStepStatesBackwards(completed, boundary, step_states, k);
-  }
-
-  for (int k = 0; k < step_states.size(); ++k) {
-    RecomputeOnwardsSteps(completed, boundary, step_states[k]);
+    FilterStepStatesBackwards(step_states, k);
   }
 
   // for (int k = 0; k < step_states.size(); ++k) {
@@ -749,6 +758,29 @@ int main(int argc, char* argv[]) {
               return ats.arrival_time == analysis.first_btaat;
             }
         );
+
+        // TODO: Factor out / share these bound computations.
+        TimeSinceServiceStart t_lb = t0;
+        if (lb_rel >= 0) {
+          t_lb.seconds = t0.seconds + lb_rel;
+        }
+        TimeSinceServiceStart t_ub;
+        if (ub_rel < 0) {
+          for (const Step& step : completed.AllSteps()) {
+            t_ub = std::max(t_ub, step.destination.time);
+          }
+        } else {
+          t_ub.seconds = t0.seconds + ub_rel;
+        }
+
+        for (int k = analysis.first_btaat_k;
+             k < static_cast<int>(problem.required.size()) - 3;
+             ++k) {
+          FilterStepStatesForwards(step_states, k);
+        }
+        for (int k = static_cast<int>(step_states.size()) - 2; k >= 0; --k) {
+          FilterStepStatesBackwards(step_states, k);
+        }
 
         result = DoTSP(
             completed, problem.required, problem.boundary, step_states, ub_rel
