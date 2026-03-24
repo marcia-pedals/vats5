@@ -304,6 +304,33 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
   return step_states;
 }
 
+struct TarelStatePairHash {
+  size_t operator()(const std::pair<TarelState, TarelState>& p) const {
+    size_t h1 = std::hash<TarelState>{}(p.first);
+    size_t h2 = std::hash<TarelState>{}(p.second);
+    return h1 ^
+           (h2 * 0x9e3779b97f4a7c15ULL + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+
+void DeduplicateEdges(std::vector<TarelEdge>& edges) {
+  std::unordered_map<std::pair<TarelState, TarelState>, int, TarelStatePairHash>
+      best;
+  for (const TarelEdge& e : edges) {
+    auto [it, inserted] =
+        best.try_emplace(std::make_pair(e.origin, e.destination), e.weight);
+    if (!inserted) {
+      it->second = std::min(it->second, e.weight);
+    }
+  }
+  edges.clear();
+  for (const auto& [key, weight] : best) {
+    edges.push_back(
+        {.origin = key.first, .destination = key.second, .weight = weight}
+    );
+  }
+}
+
 std::optional<TspTourResult> DoTSP(
     const StepsAdjacencyList& completed,
     const RequiredStops& required,
@@ -311,6 +338,8 @@ std::optional<TspTourResult> DoTSP(
     const std::vector<std::unordered_map<StopId, StepState>>& step_states,
     int ub_rel
 ) {
+  constexpr int kMaxStep = 5;
+
   // Convention:
   // StepPartitionId::NONE is the partition for START and END.
   // StepPartitionId{k} is the partition for where you arrive after the k-th
@@ -343,7 +372,10 @@ std::optional<TspTourResult> DoTSP(
     edges.push_back({
         .origin =
             TarelState{
-                s, StepPartitionId{static_cast<int>(required.size()) - 3}
+                s,
+                StepPartitionId{
+                    std::min(static_cast<int>(required.size()) - 3, kMaxStep)
+                }
             },
         .destination = end_state,
         .weight = 0,
@@ -379,14 +411,18 @@ std::optional<TspTourResult> DoTSP(
 
         if (best_dur < std::numeric_limits<int>::max()) {
           edges.push_back({
-              .origin = TarelState{s_cur, StepPartitionId{k - 1}},
-              .destination = TarelState{s_next, StepPartitionId{k}},
+              .origin =
+                  TarelState{s_cur, StepPartitionId{std::min(k - 1, kMaxStep)}},
+              .destination =
+                  TarelState{s_next, StepPartitionId{std::min(k, kMaxStep)}},
               .weight = best_dur,
           });
         }
       }
     }
   }
+
+  DeduplicateEdges(edges);
 
   // SOLVE!!!
   TarelStateRemapResult remap = RemapTarelStates(edges, required);
@@ -414,7 +450,8 @@ std::optional<TspTourResult> DoTSP(
       graph,
       boundary,
       ub_rel == -1 ? std::nullopt : std::optional(ub_rel),
-      nullptr,
+      &std::cout,
+      // nullptr,
       nullptr
   );
   if (!result.has_value()) {
