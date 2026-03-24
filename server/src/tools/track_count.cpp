@@ -155,6 +155,135 @@ struct StepState {
   }
 };
 
+// Propagates `step_states[k]` into `step_states[k + 1]`, replacing it.
+void PropagateStepStatesForwards(
+    const StepsAdjacencyList& completed,
+    const ProblemBoundary& boundary,
+    const TimeSinceServiceStart t_ub,
+    std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    int k
+) {
+  assert(k >= 0);
+  assert(k + 1 < step_states.size());
+  step_states[k + 1].clear();
+
+  for (const auto& [s_cur, step_state_cur] : step_states[k]) {
+    for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
+      StopId s_next = g_next.destination_stop;
+      if (s_next == boundary.start || s_next == boundary.end) {
+        continue;
+      }
+
+      for (const ArrivalTimeState& ats : step_state_cur.states) {
+        // TODO: Deal with flex steps.
+        std::span<const AdjacencyListStep> group_steps =
+            completed.GetSteps(g_next);
+        size_t t_next_i =
+            FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
+        if (t_next_i >= group_steps.size()) {
+          continue;
+        }
+        TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
+        if (t_next > t_ub) {
+          continue;
+        }
+        step_states[k + 1][s_next].states.push_back({.arrival_time = t_next});
+      }
+    }
+  }
+
+  for (auto& [_, step_state] : step_states[k + 1]) {
+    step_state.SortAndDedupe();
+  }
+}
+
+// Deletes states from `step_states[k]` that do not lead to anything in
+// `step_states[k + 1]`.
+void FilterStepStatesBackwards(
+    const StepsAdjacencyList& completed,
+    const ProblemBoundary& boundary,
+    std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    int k
+) {
+  assert(k >= 0);
+  assert(k + 1 < step_states.size());
+
+  for (auto& [s_cur, step_state_cur] : step_states[k]) {
+    StepState step_state_cur_filtered;
+
+    for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
+      StopId s_next = g_next.destination_stop;
+      if (s_next == boundary.start || s_next == boundary.end) {
+        continue;
+      }
+
+      auto step_state_next_it = step_states[k + 1].find(s_next);
+      if (step_state_next_it == step_states[k + 1].end()) {
+        continue;
+      }
+      const StepState& step_state_next = step_state_next_it->second;
+
+      for (const ArrivalTimeState& ats : step_state_cur.states) {
+        // TODO: Deal with flex steps.
+        std::span<const AdjacencyListStep> group_steps =
+            completed.GetSteps(g_next);
+        size_t t_next_i =
+            FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
+        if (t_next_i >= group_steps.size()) {
+          continue;
+        }
+        TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
+        auto it = std::find_if(
+            step_state_next.states.begin(),
+            step_state_next.states.end(),
+            [&](const ArrivalTimeState& next_ats) {
+              return next_ats.arrival_time == t_next;
+            }
+        );
+        if (it != step_state_next.states.end()) {
+          step_state_cur_filtered.states.push_back(
+              {.arrival_time = ats.arrival_time}
+          );
+        }
+      }
+    }
+
+    step_state_cur_filtered.SortAndDedupe();
+    step_state_cur = std::move(step_state_cur_filtered);
+  }
+}
+
+// Recomputes all the `.onwards` fields in `step_states_k`.
+void RecomputeOnwardsSteps(
+    const StepsAdjacencyList& completed,
+    const ProblemBoundary& boundary,
+    std::unordered_map<StopId, StepState>& step_states_k
+) {
+  for (auto& [s_cur, step_state_cur] : step_states_k) {
+    for (auto& ats : step_state_cur.states) {
+      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
+        StopId s_next = g_next.destination_stop;
+        if (s_next == boundary.start || s_next == boundary.end) {
+          continue;
+        }
+
+        size_t t_next_i =
+            FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
+        std::span<const AdjacencyListStep> group_steps =
+            completed.GetSteps(g_next);
+        if (t_next_i >= group_steps.size()) {
+          continue;
+        }
+        TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
+        ats.onwards.push_back(
+            {.destination = s_next,
+             .duration = t_next.seconds - ats.arrival_time.seconds}
+        );
+      }
+    }
+  }
+}
+
 std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
     const StepsAdjacencyList& completed,
     const RequiredStops& required,
@@ -195,49 +324,13 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
   // stops then we need k+1=n-2 <=> k=n-3. (-2 because we ignore boundary
   // stops).
   // TODO: Handle boundary stops more elegantly.
-  std::vector<std::unordered_map<StopId, StepState>> step_states;
+  std::vector<std::unordered_map<StopId, StepState>> step_states(
+      static_cast<int>(required.size()) - 2
+  );
 
-  {
-    std::unordered_map<StopId, StepState> step_state_0;
-    step_state_0[s0].states.push_back({.arrival_time = t0});
-    step_states.push_back(std::move(step_state_0));
-  }
-
-  for (int k = 1; k <= static_cast<int>(required.size()) - 3; ++k) {
-    step_states.push_back({});
-    std::unordered_map<StopId, StepState>& step_state_k =
-        *(step_states.end() - 1);
-    const std::unordered_map<StopId, StepState>& step_state_kminus1 =
-        *(step_states.end() - 2);
-
-    for (const auto& [s_cur, step_state_cur] : step_state_kminus1) {
-      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
-        StopId s_next = g_next.destination_stop;
-        if (s_next == boundary.start || s_next == boundary.end) {
-          continue;
-        }
-
-        for (const ArrivalTimeState& ats : step_state_cur.states) {
-          // TODO: Deal with flex steps.
-          std::span<const AdjacencyListStep> group_steps =
-              completed.GetSteps(g_next);
-          size_t t_next_i =
-              FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
-          if (t_next_i >= group_steps.size()) {
-            continue;
-          }
-          TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
-          if (t_next > t_ub) {
-            continue;
-          }
-          step_state_k[s_next].states.push_back({.arrival_time = t_next});
-        }
-      }
-    }
-
-    for (auto& [_, step_state] : step_state_k) {
-      step_state.SortAndDedupe();
-    }
+  step_states[0][s0].states.push_back({.arrival_time = t0});
+  for (int k = 0; k < static_cast<int>(required.size()) - 3; ++k) {
+    PropagateStepStatesForwards(completed, boundary, t_ub, step_states, k);
   }
 
   // Anything arriving at the end before t_lb is too good to be true.
@@ -250,87 +343,11 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
   // Now go backwardsly and filter any arrival times that do not lead to actual
   // arrival times that we have.
   for (int k = static_cast<int>(step_states.size()) - 2; k >= 0; --k) {
-    std::unordered_map<StopId, StepState>& step_state_k = step_states[k];
-    const std::unordered_map<StopId, StepState>& step_state_kplus1 =
-        step_states[k + 1];
-
-    for (auto& [s_cur, step_state_cur] : step_state_k) {
-      StepState step_state_cur_filtered;
-
-      for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
-        StopId s_next = g_next.destination_stop;
-        if (s_next == boundary.start || s_next == boundary.end) {
-          continue;
-        }
-
-        auto step_state_next_it = step_state_kplus1.find(s_next);
-        if (step_state_next_it == step_state_kplus1.end()) {
-          continue;
-        }
-        const StepState& step_state_next = step_state_next_it->second;
-
-        for (const ArrivalTimeState& ats : step_state_cur.states) {
-          // TODO: Deal with flex steps.
-          std::span<const AdjacencyListStep> group_steps =
-              completed.GetSteps(g_next);
-          size_t t_next_i =
-              FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
-          if (t_next_i >= group_steps.size()) {
-            continue;
-          }
-          TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
-          auto it = std::find_if(
-              step_state_next.states.begin(),
-              step_state_next.states.end(),
-              [&](const ArrivalTimeState& next_ats) {
-                return next_ats.arrival_time == t_next;
-              }
-          );
-          if (it != step_state_next.states.end()) {
-            step_state_cur_filtered.states.push_back(
-                {.arrival_time = ats.arrival_time}
-            );
-          }
-        }
-      }
-
-      step_state_cur_filtered.SortAndDedupe();
-      step_state_cur = std::move(step_state_cur_filtered);
-    }
+    FilterStepStatesBackwards(completed, boundary, step_states, k);
   }
 
-  // Compute onwards steps for each (k, stop, arrival_time).
-  // For the last step level there are no onwards steps.
-  for (int k = 0; k < static_cast<int>(step_states.size()) - 1; ++k) {
-    const std::unordered_map<StopId, StepState>& step_state_kplus1 =
-        step_states[k + 1];
-
-    for (auto& [s_cur, step_state_cur] : step_states[k]) {
-      for (auto& ats : step_state_cur.states) {
-        for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
-          StopId s_next = g_next.destination_stop;
-          if (s_next == boundary.start || s_next == boundary.end) {
-            continue;
-          }
-          if (!step_state_kplus1.contains(s_next)) {
-            continue;
-          }
-
-          size_t t_next_i =
-              FindDepartureAtOrAfter(completed, g_next, ats.arrival_time);
-          std::span<const AdjacencyListStep> group_steps =
-              completed.GetSteps(g_next);
-          if (t_next_i >= group_steps.size()) {
-            continue;
-          }
-          TimeSinceServiceStart t_next = group_steps[t_next_i].destination_time;
-          ats.onwards.push_back(
-              {.destination = s_next,
-               .duration = t_next.seconds - ats.arrival_time.seconds}
-          );
-        }
-      }
-    }
+  for (int k = 0; k < step_states.size(); ++k) {
+    RecomputeOnwardsSteps(completed, boundary, step_states[k]);
   }
 
   // for (int k = 0; k < step_states.size(); ++k) {
@@ -510,6 +527,109 @@ std::optional<TspTourResult> DoTSP(
   return result;
 }
 
+struct TourAnalysis {
+  int first_btaat_k = -1;
+  TimeSinceServiceStart first_btaat;
+  TarelEdge first_btaat_edge;
+  TimeSinceServiceStart t_relaxed;
+  TimeSinceServiceStart t_actual;
+};
+
+TourAnalysis AnalyzeTour(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    const TspTourResult& result,
+    TimeSinceServiceStart t0
+) {
+  TourAnalysis a;
+  a.t_relaxed = t0;
+  a.t_actual = t0;
+
+  std::cout << "  " << problem.StopName(result.tour_edges[1].origin.stop)
+            << " @ " << a.t_relaxed << " / " << a.t_actual << "\n";
+  for (int i = 1; i + 1 < result.tour_edges.size(); ++i) {
+    const TarelEdge& edge = result.tour_edges[i];
+    a.t_relaxed.seconds += edge.weight;
+
+    int dur_actual;
+    bool found = false;
+    for (const StepGroup& g : completed.GetGroups(edge.origin.stop)) {
+      if (g.destination_stop != edge.destination.stop) {
+        continue;
+      }
+      std::span<const AdjacencyListStep> group_steps = completed.GetSteps(g);
+      size_t t_next_i = FindDepartureAtOrAfter(completed, g, a.t_actual);
+      assert(t_next_i < group_steps.size());
+      dur_actual =
+          group_steps[t_next_i].destination_time.seconds - a.t_actual.seconds;
+      found = true;
+      break;
+    }
+    assert(found);
+    a.t_actual.seconds += dur_actual;
+
+    {
+      const StepState& from_o = step_states[i - 1].at(edge.origin.stop);
+
+      std::map<int, int> dur_hist;
+
+      int better_than_actual_dur = dur_actual;
+      TimeSinceServiceStart better_than_actual_arrival_time;
+
+      for (const ArrivalTimeState& ats : from_o.states) {
+        for (const OnwardsStep& onwards : ats.onwards) {
+          if (onwards.destination == edge.destination.stop) {
+            dur_hist[onwards.duration] += 1;
+
+            if (onwards.duration < better_than_actual_dur) {
+              better_than_actual_dur = onwards.duration;
+              better_than_actual_arrival_time = ats.arrival_time;
+            }
+
+            break;
+          }
+        }
+      }
+
+      if (better_than_actual_dur < dur_actual) {
+        std::cout << "    BTAAT: " << better_than_actual_arrival_time << "\n";
+        if (a.first_btaat_k == -1) {
+          a.first_btaat_k = i - 1;
+          a.first_btaat = better_than_actual_arrival_time;
+          a.first_btaat_edge = edge;
+        }
+      }
+
+      for (const auto& [dur, count] : dur_hist) {
+        std::cout << "    " << TimeSinceServiceStart{dur} << ": " << count;
+        if (dur == dur_actual) {
+          std::cout << " ****";
+        }
+        std::cout << "\n";
+      }
+    }
+
+    std::cout << "  " << problem.StopName(edge.destination.stop) << " @ "
+              << a.t_relaxed << " / " << a.t_actual << "\n";
+  }
+
+  std::cout << "  ubs: "
+            << TimeSinceServiceStart{a.t_relaxed.seconds - t0.seconds} << " / "
+            << TimeSinceServiceStart{a.t_actual.seconds - t0.seconds} << "\n";
+
+  if (a.first_btaat_k != -1) {
+    std::cout << "  First BTAAT:\n"
+              << "    step " << a.first_btaat_k << "\n"
+              << "    edge " << problem.StopName(a.first_btaat_edge.origin.stop)
+              << " -> " << problem.StopName(a.first_btaat_edge.destination.stop)
+              << "\n"
+              << "    arrival time " << a.first_btaat << "\n";
+  }
+
+  return a;
+}
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Track count tool"};
 
@@ -611,107 +731,39 @@ int main(int argc, char* argv[]) {
     if (result.has_value()) {
       std::cout << TimeSinceServiceStart{result->optimal_value} << "\n";
 
-      int first_btaat_k = -1;
-      TimeSinceServiceStart first_btaat;
-      TarelEdge first_btaat_edge;
+      std::cout << "==== ORIGINAL PROBLEM ====\n";
+      TourAnalysis analysis =
+          AnalyzeTour(problem, completed, step_states, *result, t0);
 
-      TimeSinceServiceStart t_relaxed = t0;
-      TimeSinceServiceStart t_actual = t0;
-      std::cout << "  " << problem.StopName(result->tour_edges[1].origin.stop)
-                << " @ " << t_relaxed << " / " << t_actual << "\n";
-      for (int i = 1; i + 1 < result->tour_edges.size(); ++i) {
-        const TarelEdge& edge = result->tour_edges[i];
-        t_relaxed.seconds += edge.weight;
-
-        int dur_actual;
-        bool found = false;
-        for (const StepGroup& g : completed.GetGroups(edge.origin.stop)) {
-          if (g.destination_stop != edge.destination.stop) {
-            continue;
-          }
-          std::span<const AdjacencyListStep> group_steps =
-              completed.GetSteps(g);
-          size_t t_next_i = FindDepartureAtOrAfter(completed, g, t_actual);
-          assert(t_next_i < group_steps.size());
-          dur_actual =
-              group_steps[t_next_i].destination_time.seconds - t_actual.seconds;
-          found = true;
+      for (int forbid_iter = 0; forbid_iter < 100; ++forbid_iter) {
+        if (analysis.first_btaat_k == -1) {
+          std::cout << "NO BTAAT, BREAKING!\n";
           break;
         }
-        assert(found);
-        t_actual.seconds += dur_actual;
 
-        {
-          const StepState& from_o = step_states[i - 1][edge.origin.stop];
-
-          std::map<int, int> dur_hist;
-
-          int better_than_actual_dur = dur_actual;
-          TimeSinceServiceStart better_than_actual_arrival_time;
-
-          for (const ArrivalTimeState& ats : from_o.states) {
-            for (const OnwardsStep& onwards : ats.onwards) {
-              if (onwards.destination == edge.destination.stop) {
-                dur_hist[onwards.duration] += 1;
-
-                if (onwards.duration < better_than_actual_dur) {
-                  better_than_actual_dur = onwards.duration;
-                  better_than_actual_arrival_time = ats.arrival_time;
-                }
-
-                break;
-              }
+        std::erase_if(
+            step_states[analysis.first_btaat_k]
+                       [analysis.first_btaat_edge.origin.stop]
+                           .states,
+            [&](const ArrivalTimeState& ats) {
+              return ats.arrival_time == analysis.first_btaat;
             }
-          }
+        );
 
-          if (better_than_actual_dur < dur_actual) {
-            std::cout << "    BTAAT: " << better_than_actual_arrival_time
-                      << "\n";
-            if (first_btaat_k == -1) {
-              first_btaat_k = i - 1;
-              first_btaat = better_than_actual_arrival_time;
-              first_btaat_edge = edge;
-            }
-          }
+        result = DoTSP(
+            completed, problem.required, problem.boundary, step_states, ub_rel
+        );
 
-          for (const auto& [dur, count] : dur_hist) {
-            std::cout << "    " << TimeSinceServiceStart{dur} << ": " << count;
-            if (dur == dur_actual) {
-              std::cout << " ****";
-            }
-            std::cout << "\n";
-          }
+        if (result.has_value()) {
+          std::cout << "==== FORBID PROBLEM " << forbid_iter << " ====\n";
+          analysis = AnalyzeTour(problem, completed, step_states, *result, t0);
+        } else {
+          std::cout << "No solution???\n";
+          break;
         }
-
-        std::cout << "  " << problem.StopName(edge.destination.stop) << " @ "
-                  << t_relaxed << " / " << t_actual << "\n";
       }
 
-      std::cout << "  First BTAAT:\n"
-                << "    step " << first_btaat_k << "\n"
-                << "    edge " << problem.StopName(first_btaat_edge.origin.stop)
-                << " -> " << problem.StopName(first_btaat_edge.destination.stop)
-                << "\n"
-                << "    arrival time " << first_btaat << "\n";
-
-      std::optional<TspTourResult> result_forbid = DoTSP(
-          completed, problem.required, problem.boundary, step_states, ub_rel
-      );
-      if (result_forbid.has_value()) {
-        std::cout << "  Forbid LB: "
-                  << TimeSinceServiceStart{result_forbid->optimal_value}
-                  << "\n";
-      }
-
-      std::erase_if(
-          step_states[first_btaat_k][first_btaat_edge.origin.stop].states,
-          [&](const ArrivalTimeState& ats) {
-            return ats.arrival_time == first_btaat;
-          }
-      );
-
-      int ub_actual = t_actual.seconds - t0.seconds;
-      std::cout << "  ub actual: " << TimeSinceServiceStart{ub_actual} << "\n";
+      int ub_actual = analysis.t_actual.seconds - t0.seconds;
       if (ub_rel == -1) {
         ub_rel = ub_actual;
       }
