@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <ostream>
 #include <stdexcept>
@@ -86,6 +87,12 @@ struct TimeSinceServiceStart {
   }
 
   std::string ToString() const {
+    if (seconds == std::numeric_limits<int>::min()) {
+      return "-inf";
+    }
+    if (seconds == std::numeric_limits<int>::max()) {
+      return "inf";
+    }
     std::string prefix = seconds < 0 ? "-" : "";
     int abs_seconds = seconds < 0 ? -seconds : seconds;
     int hours = abs_seconds / 3600;

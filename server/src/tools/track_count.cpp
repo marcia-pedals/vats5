@@ -1,5 +1,6 @@
 #include <CLI/CLI.hpp>
 #include <cassert>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -418,7 +419,7 @@ std::optional<TspTourResult> DoTSP(
     const std::vector<std::unordered_map<StopId, StepState>>& step_states,
     int ub_rel
 ) {
-  constexpr int kMaxStep = 20;
+  constexpr int kMaxStep = 5;
 
   // Convention:
   // StepPartitionId::NONE is the partition for START and END.
@@ -541,6 +542,9 @@ struct TourAnalysis {
   int first_btaat_k = -1;
   TimeSinceServiceStart first_btaat;
   TarelEdge first_btaat_edge;
+  TimeSinceServiceStart first_btaat_good_a;
+  TimeSinceServiceStart first_btaat_good_b;
+
   TimeSinceServiceStart t_relaxed;
   TimeSinceServiceStart t_actual;
 };
@@ -552,49 +556,93 @@ TourAnalysis AnalyzeTour(
     const TspTourResult& result,
     TimeSinceServiceStart t0
 ) {
-  TourAnalysis a;
-  a.t_relaxed = t0;
-  a.t_actual = t0;
+  TourAnalysis analysis;
+  analysis.t_relaxed = t0;
+  analysis.t_actual = t0;
 
   std::cout << "  " << problem.StopName(result.tour_edges[1].origin.stop)
-            << " @ " << a.t_relaxed << " / " << a.t_actual << "\n";
+            << " @ " << analysis.t_relaxed << " / " << analysis.t_actual
+            << "\n";
   for (int i = 1; i + 1 < result.tour_edges.size(); ++i) {
     const TarelEdge& edge = result.tour_edges[i];
-    a.t_relaxed.seconds += edge.weight;
+    analysis.t_relaxed.seconds += edge.weight;
 
+    const StepState& from_o = step_states[i - 1].at(edge.origin.stop);
+
+    // TODO: This lookup is pretty subtle and delicate.
+    // Explain it. Make it more robust. (e.g. when not-found, exit immediately
+    // instead of setting a huge dur). Think about whether it's actually
+    // correct.
     int dur_actual;
     bool found = false;
-    for (const StepGroup& g : completed.GetGroups(edge.origin.stop)) {
-      if (g.destination_stop != edge.destination.stop) {
+    for (const ArrivalTimeState& ats : from_o.states) {
+      if (ats.arrival_time < analysis.t_actual) {
         continue;
       }
-      std::span<const AdjacencyListStep> group_steps = completed.GetSteps(g);
-      size_t t_next_i = FindDepartureAtOrAfter(completed, g, a.t_actual);
-      assert(t_next_i < group_steps.size());
-      dur_actual =
-          group_steps[t_next_i].destination_time.seconds - a.t_actual.seconds;
-      found = true;
-      break;
+      for (const OnwardsStep& onwards : ats.onwards) {
+        if (onwards.destination == edge.destination.stop) {
+          dur_actual = onwards.duration +
+                       (ats.arrival_time.seconds - analysis.t_actual.seconds);
+          found = true;
+          break;
+        }
+      }
+      if (found == true) {
+        break;
+      }
     }
-    assert(found);
-    a.t_actual.seconds += dur_actual;
+    if (!found) {
+      dur_actual = std::numeric_limits<int>::max() - analysis.t_actual.seconds;
+    }
+
+    // NOTE: This commented-out code is wrong because it doesn't take into
+    // account that we might have forbidden certain arrival times in this
+    // branch.
+    // int dur_actual;
+    // bool found = false;
+    // for (const StepGroup& g : completed.GetGroups(edge.origin.stop)) {
+    //   if (g.destination_stop != edge.destination.stop) {
+    //     continue;
+    //   }
+    //   std::span<const AdjacencyListStep> group_steps = completed.GetSteps(g);
+    //   size_t t_next_i = FindDepartureAtOrAfter(completed, g,
+    //   analysis.t_actual); assert(t_next_i < group_steps.size()); dur_actual =
+    //       group_steps[t_next_i].destination_time.seconds -
+    //       analysis.t_actual.seconds;
+    //   found = true;
+    //   break;
+    // }
+    // assert(found);
 
     {
-      const StepState& from_o = step_states[i - 1].at(edge.origin.stop);
-
-      std::map<int, int> dur_hist;
+      std::map<int, std::vector<TimeSinceServiceStart>> dur_hist;
 
       int better_than_actual_dur = dur_actual;
       TimeSinceServiceStart better_than_actual_arrival_time;
 
+      // The biggest a < t_actual such that dur(a) < dur_actual.
+      TimeSinceServiceStart good_a{std::numeric_limits<int>::min()};
+
+      // The smallest b > t_actual such that dur(b) < dur_actual.
+      TimeSinceServiceStart good_b{std::numeric_limits<int>::max()};
+
       for (const ArrivalTimeState& ats : from_o.states) {
         for (const OnwardsStep& onwards : ats.onwards) {
           if (onwards.destination == edge.destination.stop) {
-            dur_hist[onwards.duration] += 1;
+            dur_hist[onwards.duration].push_back(ats.arrival_time);
 
             if (onwards.duration < better_than_actual_dur) {
               better_than_actual_dur = onwards.duration;
               better_than_actual_arrival_time = ats.arrival_time;
+            }
+
+            if (ats.arrival_time < analysis.t_actual &&
+                ats.arrival_time > good_a && onwards.duration < dur_actual) {
+              good_a = ats.arrival_time;
+            }
+            if (ats.arrival_time > analysis.t_actual &&
+                ats.arrival_time < good_b && onwards.duration < dur_actual) {
+              good_b = ats.arrival_time;
             }
 
             break;
@@ -602,17 +650,34 @@ TourAnalysis AnalyzeTour(
         }
       }
 
+      std::cout << "    good region: (" << good_a << ", " << good_b << ")\n";
+
       if (better_than_actual_dur < dur_actual) {
         std::cout << "    BTAAT: " << better_than_actual_arrival_time << "\n";
-        if (a.first_btaat_k == -1) {
-          a.first_btaat_k = i - 1;
-          a.first_btaat = better_than_actual_arrival_time;
-          a.first_btaat_edge = edge;
+        if (analysis.first_btaat_k == -1) {
+          analysis.first_btaat_k = i - 1;
+          analysis.first_btaat = better_than_actual_arrival_time;
+          analysis.first_btaat_edge = edge;
+          assert(
+              good_a.seconds > std::numeric_limits<int>::min() ||
+              good_b.seconds < std::numeric_limits<int>::max()
+          );
+          analysis.first_btaat_good_a = good_a;
+          analysis.first_btaat_good_b = good_b;
         }
       }
 
-      for (const auto& [dur, count] : dur_hist) {
-        std::cout << "    " << TimeSinceServiceStart{dur} << ": " << count;
+      for (const auto& [dur, arrivals] : dur_hist) {
+        std::cout << "    " << TimeSinceServiceStart{dur} << ": ";
+        if (arrivals.size() <= 3) {
+          for (size_t j = 0; j < arrivals.size(); ++j) {
+            if (j > 0) std::cout << ", ";
+            std::cout << arrivals[j];
+          }
+        } else {
+          std::cout << arrivals.front() << ", ..., " << arrivals.back() << " ("
+                    << arrivals.size() << ")";
+        }
         if (dur == dur_actual) {
           std::cout << " ****";
         }
@@ -620,24 +685,31 @@ TourAnalysis AnalyzeTour(
       }
     }
 
+    analysis.t_actual.seconds += dur_actual;
     std::cout << "  " << problem.StopName(edge.destination.stop) << " @ "
-              << a.t_relaxed << " / " << a.t_actual << "\n";
+              << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   }
 
   std::cout << "  ubs: "
-            << TimeSinceServiceStart{a.t_relaxed.seconds - t0.seconds} << " / "
-            << TimeSinceServiceStart{a.t_actual.seconds - t0.seconds} << "\n";
+            << TimeSinceServiceStart{analysis.t_relaxed.seconds - t0.seconds}
+            << " / "
+            << TimeSinceServiceStart{analysis.t_actual.seconds - t0.seconds}
+            << "\n";
 
-  if (a.first_btaat_k != -1) {
+  if (analysis.first_btaat_k != -1) {
     std::cout << "  First BTAAT:\n"
-              << "    step " << a.first_btaat_k << "\n"
-              << "    edge " << problem.StopName(a.first_btaat_edge.origin.stop)
-              << " -> " << problem.StopName(a.first_btaat_edge.destination.stop)
+              << "    step " << analysis.first_btaat_k << "\n"
+              << "    edge "
+              << problem.StopName(analysis.first_btaat_edge.origin.stop)
+              << " -> "
+              << problem.StopName(analysis.first_btaat_edge.destination.stop)
               << "\n"
-              << "    arrival time " << a.first_btaat << "\n";
+              << "    arrival time " << analysis.first_btaat << "\n"
+              << "    good region (" << analysis.first_btaat_good_a << ", "
+              << analysis.first_btaat_good_b << ")\n";
   }
 
-  return a;
+  return analysis;
 }
 
 int main(int argc, char* argv[]) {
@@ -756,7 +828,18 @@ int main(int argc, char* argv[]) {
                        [analysis.first_btaat_edge.origin.stop]
                            .states,
             [&](const ArrivalTimeState& ats) {
-              return ats.arrival_time == analysis.first_btaat;
+              // Just remove the worst offender:
+              // return ats.arrival_time == analysis.first_btaat;
+
+              // Try out the good region.
+              // return ats.arrival_time <= analysis.first_btaat_good_a ||
+              // ats.arrival_time >= analysis.first_btaat_good_b;
+
+              // Try out the first bad region.
+              return ats.arrival_time > analysis.first_btaat_good_a;
+
+              // Try out the last bad region.
+              // return ats.arrival_time < analysis.first_btaat_good_b;
             }
         );
 
