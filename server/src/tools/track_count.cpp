@@ -162,6 +162,7 @@ void PropagateStepStatesForwards(
     const ProblemBoundary& boundary,
     const TimeSinceServiceStart t_ub,
     std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    StopId s0,
     int k
 ) {
   assert(k >= 0);
@@ -171,7 +172,7 @@ void PropagateStepStatesForwards(
   for (const auto& [s_cur, step_state_cur] : step_states[k]) {
     for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
       StopId s_next = g_next.destination_stop;
-      if (s_next == boundary.start || s_next == boundary.end) {
+      if (s_next == boundary.start || s_next == boundary.end || s_next == s0) {
         continue;
       }
 
@@ -339,7 +340,7 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
 
   step_states[0][s0].states.push_back({.arrival_time = t0});
   for (int k = 0; k < static_cast<int>(required.size()) - 3; ++k) {
-    PropagateStepStatesForwards(completed, boundary, t_ub, step_states, k);
+    PropagateStepStatesForwards(completed, boundary, t_ub, step_states, s0, k);
   }
 
   // Anything arriving at the end before t_lb is too good to be true.
