@@ -1,4 +1,5 @@
 #include <CLI/CLI.hpp>
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <fstream>
@@ -6,6 +7,7 @@
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -419,7 +421,7 @@ std::optional<TspTourResult> DoTSP(
     const std::vector<std::unordered_map<StopId, StepState>>& step_states,
     int ub_rel
 ) {
-  constexpr int kMaxStep = 5;
+  constexpr int kMaxStep = 20;
 
   // Convention:
   // StepPartitionId::NONE is the partition for START and END.
@@ -560,9 +562,9 @@ TourAnalysis AnalyzeTour(
   analysis.t_relaxed = t0;
   analysis.t_actual = t0;
 
-  std::cout << "  " << problem.StopName(result.tour_edges[1].origin.stop)
-            << " @ " << analysis.t_relaxed << " / " << analysis.t_actual
-            << "\n";
+  std::cout << "  " << result.tour_edges[1].origin.partition.v << ". "
+            << problem.StopName(result.tour_edges[1].origin.stop) << " @ "
+            << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   for (int i = 1; i + 1 < result.tour_edges.size(); ++i) {
     const TarelEdge& edge = result.tour_edges[i];
     analysis.t_relaxed.seconds += edge.weight;
@@ -686,7 +688,8 @@ TourAnalysis AnalyzeTour(
     }
 
     analysis.t_actual.seconds += dur_actual;
-    std::cout << "  " << problem.StopName(edge.destination.stop) << " @ "
+    std::cout << "  " << edge.destination.partition.v << ". "
+              << problem.StopName(edge.destination.stop) << " @ "
               << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   }
 
@@ -710,6 +713,211 @@ TourAnalysis AnalyzeTour(
   }
 
   return analysis;
+}
+
+struct BnbNode {
+  int lb;
+  std::vector<std::string> constraints;
+  std::vector<std::unordered_map<StopId, StepState>> step_states;
+  bool operator<(const BnbNode& other) const { return lb > other.lb; }
+};
+
+int Bnb(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    StopId s0,
+    TimeSinceServiceStart t0,
+    int lb_rel,
+    int ub_rel
+) {
+  std::vector<BnbNode> q;
+  auto PushQ =
+      [&](int lb,
+          std::vector<std::string> constraints,
+          std::vector<std::unordered_map<StopId, StepState>> step_states) {
+        q.emplace_back(lb, std::move(constraints), std::move(step_states));
+        std::push_heap(q.begin(), q.end());
+      };
+
+  PushQ(
+      0,
+      {},
+      std::move(ComputeStepStates(
+          completed, problem.required, problem.boundary, s0, t0, lb_rel, ub_rel
+      ))
+  );
+
+  int iter_count = 0;
+  int best_ub = ub_rel;
+  while (q.size() > 0) {
+    iter_count += 1;
+
+    std::pop_heap(q.begin(), q.end());
+    BnbNode cur = std::move(q.back());
+    q.pop_back();
+
+    std::cout << "iter " << iter_count << ": take "
+              << TimeSinceServiceStart{cur.lb} << " (" << (q.size() + 1)
+              << " active)\n";
+    for (const std::string& constraint : cur.constraints) {
+      std::cout << "  - " << constraint << "\n";
+    }
+
+    if (cur.lb > best_ub) {
+      std::cout << "  terminated: smallest lb >= best_ub\n";
+      return best_ub;
+    }
+
+    std::optional<TspTourResult> result = DoTSP(
+        completed, problem.required, problem.boundary, cur.step_states, ub_rel
+    );
+    if (!result.has_value()) {
+      std::cout << "  pruned: no TSP result\n";
+      continue;
+    }
+    std::cout << "  new lb: " << TimeSinceServiceStart{result->optimal_value}
+              << "\n";
+
+    TourAnalysis analysis =
+        AnalyzeTour(problem, completed, cur.step_states, *result, t0);
+    best_ub = std::min(best_ub, analysis.t_actual.seconds - t0.seconds);
+    if (result->optimal_value >= best_ub) {
+      std::cout << "  pruned: lb >= best_ub\n";
+      continue;
+    }
+
+    // There must be a BTAAT cuz otherwise the lb would equal the ub.
+    assert(analysis.first_btaat_k != -1);
+
+    // Branch: First BAD region.
+    {
+      std::vector<std::string> branch_constraints = cur.constraints;
+      std::stringstream constraint;
+      constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
+                 << " @ " << analysis.first_btaat_k
+                 << " <= " << analysis.first_btaat_good_a;
+      branch_constraints.push_back(constraint.str());
+
+      std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
+          cur.step_states;
+      std::erase_if(
+          branch_step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                                .states,
+          [&](const ArrivalTimeState& ats) {
+            return ats.arrival_time > analysis.first_btaat_good_a;
+          }
+      );
+      for (int k = analysis.first_btaat_k; k + 1 < branch_step_states.size();
+           ++k) {
+        FilterStepStatesForwards(branch_step_states, k);
+      }
+      // std::cout << "    let's watch " << branch_constraints.back() << "\n";
+      // std::cout << "    before backprop:\n";
+      // for (const ArrivalTimeState& ats :
+      // branch_step_states[analysis.first_btaat_k][analysis.first_btaat_edge.origin.stop].states)
+      // {
+      //   for (const OnwardsStep& onwards : ats.onwards) {
+      //     if (onwards.destination ==
+      //     analysis.first_btaat_edge.destination.stop) {
+      //       std::cout << "      " << ats.arrival_time << "\n";
+      //     }
+      //   }
+      // }
+      for (int k = branch_step_states.size() - 2; k >= 0; --k) {
+        FilterStepStatesBackwards(branch_step_states, k);
+      }
+      // std::cout << "    after backprop:\n";
+      // for (const ArrivalTimeState& ats :
+      // branch_step_states[analysis.first_btaat_k][analysis.first_btaat_edge.origin.stop].states)
+      // {
+      //   for (const OnwardsStep& onwards : ats.onwards) {
+      //     if (onwards.destination ==
+      //     analysis.first_btaat_edge.destination.stop) {
+      //       std::cout << "      " << ats.arrival_time << "\n";
+      //     }
+      //   }
+      // }
+
+      PushQ(
+          result->optimal_value,
+          std::move(branch_constraints),
+          std::move(branch_step_states)
+      );
+    }
+
+    // Branch: GOOD region.
+    {
+      std::vector<std::string> branch_constraints = cur.constraints;
+      std::stringstream constraint;
+      constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
+                 << " @ " << analysis.first_btaat_k << " ("
+                 << analysis.first_btaat_good_a << ", "
+                 << analysis.first_btaat_good_b << ")";
+      branch_constraints.push_back(constraint.str());
+
+      std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
+          cur.step_states;
+      std::erase_if(
+          branch_step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                                .states,
+          [&](const ArrivalTimeState& ats) {
+            return ats.arrival_time <= analysis.first_btaat_good_a ||
+                   ats.arrival_time >= analysis.first_btaat_good_b;
+          }
+      );
+      for (int k = analysis.first_btaat_k; k + 1 < branch_step_states.size();
+           ++k) {
+        FilterStepStatesForwards(branch_step_states, k);
+      }
+      for (int k = branch_step_states.size() - 2; k >= 0; --k) {
+        FilterStepStatesBackwards(branch_step_states, k);
+      }
+
+      PushQ(
+          result->optimal_value,
+          std::move(branch_constraints),
+          std::move(branch_step_states)
+      );
+    }
+
+    // Branch: Second BAD region.
+    {
+      std::vector<std::string> branch_constraints = cur.constraints;
+      std::stringstream constraint;
+      constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
+                 << " @ " << analysis.first_btaat_k
+                 << " >= " << analysis.first_btaat_good_b;
+      branch_constraints.push_back(constraint.str());
+
+      std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
+          cur.step_states;
+      std::erase_if(
+          branch_step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                                .states,
+          [&](const ArrivalTimeState& ats) {
+            return ats.arrival_time < analysis.first_btaat_good_b;
+          }
+      );
+      for (int k = analysis.first_btaat_k; k + 1 < branch_step_states.size();
+           ++k) {
+        FilterStepStatesForwards(branch_step_states, k);
+      }
+      for (int k = branch_step_states.size() - 2; k >= 0; --k) {
+        FilterStepStatesBackwards(branch_step_states, k);
+      }
+
+      PushQ(
+          result->optimal_value,
+          std::move(branch_constraints),
+          std::move(branch_step_states)
+      );
+    }
+  }
+
+  return best_ub;
 }
 
 int main(int argc, char* argv[]) {
@@ -796,102 +1004,15 @@ int main(int argc, char* argv[]) {
       MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
 
   for (const TimeSinceServiceStart& t0 : departure_times) {
-    std::cout << t0.ToString() << ": ";
-    std::vector<std::unordered_map<StopId, StepState>> step_states =
-        ComputeStepStates(
-            completed,
-            problem.required,
-            problem.boundary,
-            stop,
-            t0,
-            lb_rel,
-            ub_rel
-        );
-    std::optional<TspTourResult> result = DoTSP(
-        completed, problem.required, problem.boundary, step_states, ub_rel
-    );
-    if (result.has_value()) {
-      std::cout << TimeSinceServiceStart{result->optimal_value} << "\n";
+    std::cout << t0.ToString() << "\n";
+    int best_ub = Bnb(problem, completed, stop, t0, lb_rel, ub_rel);
+    std::cout << "  FINAL UB: " << TimeSinceServiceStart{best_ub} << "\n";
 
-      std::cout << "==== ORIGINAL PROBLEM ====\n";
-      TourAnalysis analysis =
-          AnalyzeTour(problem, completed, step_states, *result, t0);
+    // TODO: Can decrease ub if we found a better ub.
 
-      for (int forbid_iter = 0; forbid_iter < 100; ++forbid_iter) {
-        if (analysis.first_btaat_k == -1) {
-          std::cout << "NO BTAAT, BREAKING!\n";
-          break;
-        }
-
-        std::erase_if(
-            step_states[analysis.first_btaat_k]
-                       [analysis.first_btaat_edge.origin.stop]
-                           .states,
-            [&](const ArrivalTimeState& ats) {
-              // Just remove the worst offender:
-              // return ats.arrival_time == analysis.first_btaat;
-
-              // Try out the good region.
-              // return ats.arrival_time <= analysis.first_btaat_good_a ||
-              // ats.arrival_time >= analysis.first_btaat_good_b;
-
-              // Try out the first bad region.
-              return ats.arrival_time > analysis.first_btaat_good_a;
-
-              // Try out the last bad region.
-              // return ats.arrival_time < analysis.first_btaat_good_b;
-            }
-        );
-
-        // TODO: Factor out / share these bound computations.
-        TimeSinceServiceStart t_lb = t0;
-        if (lb_rel >= 0) {
-          t_lb.seconds = t0.seconds + lb_rel;
-        }
-        TimeSinceServiceStart t_ub;
-        if (ub_rel < 0) {
-          for (const Step& step : completed.AllSteps()) {
-            t_ub = std::max(t_ub, step.destination.time);
-          }
-        } else {
-          t_ub.seconds = t0.seconds + ub_rel;
-        }
-
-        for (int k = analysis.first_btaat_k;
-             k < static_cast<int>(problem.required.size()) - 3;
-             ++k) {
-          FilterStepStatesForwards(step_states, k);
-        }
-        for (int k = static_cast<int>(step_states.size()) - 2; k >= 0; --k) {
-          FilterStepStatesBackwards(step_states, k);
-        }
-
-        result = DoTSP(
-            completed, problem.required, problem.boundary, step_states, ub_rel
-        );
-
-        if (result.has_value()) {
-          std::cout << "==== FORBID PROBLEM " << forbid_iter << " ====\n";
-          analysis = AnalyzeTour(problem, completed, step_states, *result, t0);
-        } else {
-          std::cout << "No solution???\n";
-          break;
-        }
-      }
-
-      int ub_actual = analysis.t_actual.seconds - t0.seconds;
-      if (ub_rel == -1) {
-        ub_rel = ub_actual;
-      }
-      ub_rel = std::min(ub_rel, ub_actual);
-
-      // TODO: Because of periodicity, paths departing at other times that
-      // follow the same sequence might also be pretty good or even better, so
-      // we should consider them!!
-
-    } else {
-      std::cout << "No result\n";
-    }
+    // TODO: Because of periodicity, paths departing at other times that
+    // follow the same sequence might also be pretty good or even better, so
+    // we should consider them!!
   }
 
   return 0;
