@@ -466,6 +466,56 @@ void DeduplicateEdges(std::vector<TarelEdge>& edges) {
   }
 }
 
+struct ForcedAffix {
+  std::vector<StopId> sequence;
+  std::vector<TimeSinceServiceStart> arrival_times;
+  std::vector<TarelEdge> edges;
+
+  int DurationSeconds() const {
+    int result = 0;
+    for (const TarelEdge& edge : edges) {
+      result += edge.weight;
+    }
+    return result;
+  }
+};
+
+ForcedAffix ComputeForcedPrefix(
+    const ProblemBoundary& boundary,
+    const std::vector<std::unordered_map<StopId, StepState>>& step_states
+) {
+  ForcedAffix result;
+
+  for (int k = 0; k < step_states.size(); ++k) {
+    assert(step_states[k].size() > 0);
+    if (step_states[k].size() > 1) {
+      break;
+    }
+    const auto& [stop, step_state] = *step_states[k].begin();
+    result.sequence.push_back(stop);
+    assert(step_state.states.size() > 0);
+    result.arrival_times.push_back(step_state.states[0].arrival_time);
+  }
+
+  if (result.sequence.size() > 0) {
+    StopId prev_s = boundary.start;
+    TimeSinceServiceStart prev_t = result.arrival_times.front();
+    for (int i = 0; i < result.sequence.size(); ++i) {
+      result.edges.push_back(
+          TarelEdge{
+              .origin = TarelState{prev_s, StepPartitionId{i - 1}},
+              .destination = TarelState{result.sequence[i], StepPartitionId{i}},
+              .weight = result.arrival_times[i].seconds - prev_t.seconds,
+          }
+      );
+      prev_s = result.sequence[i];
+      prev_t = result.arrival_times[i];
+    }
+  }
+
+  return result;
+}
+
 constexpr int kMaxStep = 5;
 
 std::optional<TspTourResult> DoTSP(
@@ -475,59 +525,24 @@ std::optional<TspTourResult> DoTSP(
     const std::vector<std::unordered_map<StopId, StepState>>& step_states,
     int ub_rel
 ) {
-  std::vector<StopId> forced_prefix_sequence;
-  std::vector<TimeSinceServiceStart> forced_prefix_arrival_times;
-  for (int k = 0; k < step_states.size(); ++k) {
-    assert(step_states[k].size() > 0);
-    if (step_states[k].size() > 1) {
-      break;
-    }
-    const auto& [stop, step_state] = *step_states[k].begin();
-    forced_prefix_sequence.push_back(stop);
-    if (step_state.states.size() == 0) {
-      // TODO: Think about whether this is an expected condition and whether we
-      // can detect it earlier.
+  for (const std::unordered_map<StopId, StepState>& step_state : step_states) {
+    // TODO: Think about whether this is an expected condition and whether we
+    // can/should detect it earlier.
+    if (step_state.size() == 0) {
       return std::nullopt;
     }
-    forced_prefix_arrival_times.push_back(step_state.states[0].arrival_time);
   }
 
-  std::vector<TarelEdge> forced_prefix_edges;
-  if (forced_prefix_sequence.size() > 0) {
-    StopId prev_s = boundary.start;
-    TimeSinceServiceStart prev_t = forced_prefix_arrival_times.front();
-    for (int i = 0; i < forced_prefix_sequence.size(); ++i) {
-      forced_prefix_edges.push_back(
-          TarelEdge{
-              .origin = TarelState{prev_s, StepPartitionId{i - 1}},
-              .destination =
-                  TarelState{forced_prefix_sequence[i], StepPartitionId{i}},
-              .weight = forced_prefix_arrival_times[i].seconds - prev_t.seconds,
-          }
-      );
-      prev_s = forced_prefix_sequence[i];
-      prev_t = forced_prefix_arrival_times[i];
-    }
-  }
+  ForcedAffix forced_prefix = ComputeForcedPrefix(boundary, step_states);
 
-  int forced_prefix_dur = 0;
-  for (const TarelEdge& forced_prefix_edge : forced_prefix_edges) {
-    forced_prefix_dur += forced_prefix_edge.weight;
-  }
-  assert(
-      forced_prefix_arrival_times.size() == 0 ||
-      forced_prefix_dur == forced_prefix_arrival_times.back().seconds -
-                               forced_prefix_arrival_times.front().seconds
-  );
-
-  if (forced_prefix_sequence.size() == step_states.size()) {
+  if (forced_prefix.sequence.size() == step_states.size()) {
     return TspTourResult{
-        .optimal_value = forced_prefix_dur,
-        .tour_edges = forced_prefix_edges,
+        .optimal_value = forced_prefix.DurationSeconds(),
+        .tour_edges = forced_prefix.edges,
     };
   }
 
-  int first_unforced_k = forced_prefix_sequence.size();
+  int first_unforced_k = forced_prefix.sequence.size();
 
   auto ClampedPartition = [&](int step) -> StepPartitionId {
     return StepPartitionId{std::min(step, first_unforced_k + kMaxStep)};
@@ -610,7 +625,7 @@ std::optional<TspTourResult> DoTSP(
   // solution that does not reach all the stops. (Specifically, stops that don't
   // appear as both origins and destinations are omitted).
   std::unordered_set<StopId> representatives_in_graph;
-  for (StopId s : forced_prefix_sequence) {
+  for (StopId s : forced_prefix.sequence) {
     representatives_in_graph.insert(s);
   }
   for (const TarelState& tarel_state : graph.state_by_id) {
@@ -642,14 +657,14 @@ std::optional<TspTourResult> DoTSP(
   }
 
   // Insert the forced prefix into things.
-  if (forced_prefix_edges.size() > 0) {
-    result->tour_edges[0].origin = forced_prefix_edges.back().destination;
+  if (forced_prefix.edges.size() > 0) {
+    result->tour_edges[0].origin = forced_prefix.edges.back().destination;
     result->tour_edges.insert(
         result->tour_edges.begin(),
-        forced_prefix_edges.begin(),
-        forced_prefix_edges.end()
+        forced_prefix.edges.begin(),
+        forced_prefix.edges.end()
     );
-    result->optimal_value += forced_prefix_dur;
+    result->optimal_value += forced_prefix.DurationSeconds();
   }
 
   return result;
