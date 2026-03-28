@@ -593,10 +593,11 @@ std::optional<TspTourResult> DoTSP(
 
   int first_unforced_k = forced_prefix.sequence.size();
 
-  ForcedAffix forced_suffix =
-      ComputeForcedAffix(AffixDirection::kSuffix, boundary, step_states);
+  // ForcedAffix forced_suffix =
+  //     ComputeForcedAffix(AffixDirection::kSuffix, boundary, step_states);
 
-  int last_unforced_k = step_states.size() - 1 - forced_suffix.sequence.size();
+  int last_unforced_k = step_states.size() + 1;
+  assert(last_unforced_k == required.size() - 1);
 
   auto ClampedPartition = [&](int step) -> StepPartitionId {
     if (step <= first_unforced_k + kMaxStep ||
@@ -685,15 +686,14 @@ std::optional<TspTourResult> DoTSP(
   for (StopId s : forced_prefix.sequence) {
     representatives_in_graph.insert(s);
   }
-  for (StopId s : forced_suffix.sequence) {
-    representatives_in_graph.insert(s);
-  }
+  // for (StopId s : forced_suffix.sequence) {
+  //   representatives_in_graph.insert(s);
+  // }
   for (const TarelState& tarel_state : graph.state_by_id) {
     representatives_in_graph.insert(required.Representative(tarel_state.stop));
   }
   for (StopId rep : required.GroupRepresentatives()) {
     if (!representatives_in_graph.contains(rep)) {
-      std::cout << "not everything in graph\n";
       return std::nullopt;
     }
   }
@@ -708,7 +708,6 @@ std::optional<TspTourResult> DoTSP(
       nullptr
   );
   if (!result.has_value()) {
-    std::cout << "tsp no result\n";
     return std::nullopt;
   }
 
