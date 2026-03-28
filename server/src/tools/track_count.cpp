@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <numbers>
 #include <set>
 #include <sstream>
 #include <string>
@@ -469,48 +470,86 @@ void DeduplicateEdges(std::vector<TarelEdge>& edges) {
 struct ForcedAffix {
   std::vector<StopId> sequence;
   std::vector<TimeSinceServiceStart> arrival_times;
-  std::vector<TarelEdge> edges;
 
-  int DurationSeconds() const {
-    int result = 0;
-    for (const TarelEdge& edge : edges) {
-      result += edge.weight;
-    }
-    return result;
-  }
+  // In case of empty sequence, there is a START->END edge of weight 0.
+  // In case of nonempty sequence, the edges are:
+  // START->a1: weight 0
+  // a1->a2
+  // ...
+  // a(n-1)->an
+  // an->END: weight 0
+  //
+  // Note that when concatenating with other paths, you have to "merge" the
+  // boundary edges and compute what the weight is for the merged boundary edge.
+  std::vector<TarelEdge> edges;
 };
 
-ForcedAffix ComputeForcedPrefix(
+enum class AffixDirection { kPrefix, kSuffix };
+
+ForcedAffix ComputeForcedAffix(
+    AffixDirection direction,
     const ProblemBoundary& boundary,
     const std::vector<std::unordered_map<StopId, StepState>>& step_states
 ) {
+  TarelState start_state{boundary.start, StepPartitionId::NONE};
+  TarelState end_state{boundary.end, StepPartitionId::NONE};
+
+  int affix_start, affix_end;
+  if (direction == AffixDirection::kPrefix) {
+    affix_start = 0;
+    affix_end = 0;
+    while (affix_end < step_states.size() &&
+           step_states[affix_end].size() == 1) {
+      ++affix_end;
+    }
+  } else {
+    affix_end = step_states.size();
+    affix_start = affix_end;
+    while (affix_start > 0 && step_states[affix_start - 1].size() == 1) {
+      --affix_start;
+    }
+
+    if (affix_start == 0) {
+      // Break symmetry: If the whole sequence is forced, then treat it as a
+      // prefix with no affix:
+      affix_start = affix_end;
+    }
+  }
+
   ForcedAffix result;
 
-  for (int k = 0; k < step_states.size(); ++k) {
-    assert(step_states[k].size() > 0);
-    if (step_states[k].size() > 1) {
-      break;
-    }
+  for (int k = affix_start; k < affix_end; ++k) {
+    assert(step_states[k].size() == 1);
     const auto& [stop, step_state] = *step_states[k].begin();
     result.sequence.push_back(stop);
+
+    // Oh no with a suffix there is not a single known arrival time!!
+    // However we could compute the min-weight a bit more precisely than taking
+    // all the mins?? Like we can DP it if we know the ending sequence!!! Yay
+    // for precision.
+    // TODO(Saturday): Maybe start here and then finish up the suffix-append in
+    // DoTSP. (That maybe should also be included in the DP??).
     assert(step_state.states.size() > 0);
     result.arrival_times.push_back(step_state.states[0].arrival_time);
   }
 
-  if (result.sequence.size() > 0) {
-    StopId prev_s = boundary.start;
-    TimeSinceServiceStart prev_t = result.arrival_times.front();
-    for (int i = 0; i < result.sequence.size(); ++i) {
-      result.edges.push_back(
-          TarelEdge{
-              .origin = TarelState{prev_s, StepPartitionId{i - 1}},
-              .destination = TarelState{result.sequence[i], StepPartitionId{i}},
-              .weight = result.arrival_times[i].seconds - prev_t.seconds,
-          }
-      );
-      prev_s = result.sequence[i];
-      prev_t = result.arrival_times[i];
+  for (int i = 0; i < result.sequence.size() + 1; ++i) {
+    int k = affix_start + i;
+    TarelState origin =
+        i == 0 ? start_state
+               : TarelState{result.sequence[i - 1], StepPartitionId{k - 1}};
+    TarelState destination =
+        i == result.sequence.size()
+            ? end_state
+            : TarelState{result.sequence[i], StepPartitionId{k}};
+    int weight;
+    if (i == 0 || i == result.sequence.size()) {
+      weight = 0;
+    } else {
+      weight =
+          result.arrival_times[i].seconds - result.arrival_times[i - 1].seconds;
     }
+    result.edges.emplace_back(origin, destination, weight);
   }
 
   return result;
@@ -525,6 +564,9 @@ std::optional<TspTourResult> DoTSP(
     const std::vector<std::unordered_map<StopId, StepState>>& step_states,
     int ub_rel
 ) {
+  TarelState start_state{boundary.start, StepPartitionId::NONE};
+  TarelState end_state{boundary.end, StepPartitionId::NONE};
+
   for (const std::unordered_map<StopId, StepState>& step_state : step_states) {
     // TODO: Think about whether this is an expected condition and whether we
     // can/should detect it earlier.
@@ -533,19 +575,36 @@ std::optional<TspTourResult> DoTSP(
     }
   }
 
-  ForcedAffix forced_prefix = ComputeForcedPrefix(boundary, step_states);
+  ForcedAffix forced_prefix =
+      ComputeForcedAffix(AffixDirection::kPrefix, boundary, step_states);
 
+  // When the whole sequence is forced, we put it all in the prefix, so there is
+  // no need to compute or check the suffix.
   if (forced_prefix.sequence.size() == step_states.size()) {
+    int duration = 0;
+    for (const TarelEdge& edge : forced_prefix.edges) {
+      duration += edge.weight;
+    }
     return TspTourResult{
-        .optimal_value = forced_prefix.DurationSeconds(),
-        .tour_edges = forced_prefix.edges,
+        .optimal_value = duration,
+        .tour_edges = std::move(forced_prefix.edges),
     };
   }
 
   int first_unforced_k = forced_prefix.sequence.size();
 
+  ForcedAffix forced_suffix =
+      ComputeForcedAffix(AffixDirection::kSuffix, boundary, step_states);
+
+  int last_unforced_k = step_states.size() - 1 - forced_suffix.sequence.size();
+
   auto ClampedPartition = [&](int step) -> StepPartitionId {
-    return StepPartitionId{std::min(step, first_unforced_k + kMaxStep)};
+    if (step <= first_unforced_k + kMaxStep ||
+        step >= last_unforced_k - kMaxStep) {
+      return StepPartitionId{step};
+    } else {
+      return StepPartitionId{first_unforced_k + kMaxStep};
+    }
   };
 
   // Convention:
@@ -558,8 +617,6 @@ std::optional<TspTourResult> DoTSP(
   std::vector<TarelEdge> edges;
 
   // END->START edge.
-  TarelState start_state{boundary.start, StepPartitionId::NONE};
-  TarelState end_state{boundary.end, StepPartitionId::NONE};
   edges.push_back({
       .origin = end_state,
       .destination = start_state,
@@ -567,7 +624,7 @@ std::optional<TspTourResult> DoTSP(
   });
 
   // Insert all the edges!!!!
-  for (int k = first_unforced_k; k < required.size() - 1; ++k) {
+  for (int k = first_unforced_k; k < last_unforced_k; ++k) {
     const std::unordered_map<StopId, StepState>& step_state_kminus1 =
         step_states[k - 1];
 
@@ -628,6 +685,9 @@ std::optional<TspTourResult> DoTSP(
   for (StopId s : forced_prefix.sequence) {
     representatives_in_graph.insert(s);
   }
+  for (StopId s : forced_suffix.sequence) {
+    representatives_in_graph.insert(s);
+  }
   for (const TarelState& tarel_state : graph.state_by_id) {
     representatives_in_graph.insert(required.Representative(tarel_state.stop));
   }
@@ -656,15 +716,46 @@ std::optional<TspTourResult> DoTSP(
     edge.destination = remap.mapped_to_original.at(edge.destination);
   }
 
-  // Insert the forced prefix into things.
-  if (forced_prefix.edges.size() > 0) {
-    result->tour_edges[0].origin = forced_prefix.edges.back().destination;
+  // Insert forced affixes into things.
+  if (forced_prefix.sequence.size() > 0) {
+    // The first step from a forced prefix must have only one possible arrival
+    // time because we know when it started!!
+    const std::vector<ArrivalTimeState> atss =
+        step_states[first_unforced_k]
+            .at(result->tour_edges.front().destination.stop)
+            .states;
+    assert(atss.size() == 1);
+    result->tour_edges.front().weight =
+        atss[0].arrival_time.seconds -
+        forced_prefix.arrival_times.back().seconds;
+    result->tour_edges.front().origin = forced_prefix.edges.back().origin;
     result->tour_edges.insert(
         result->tour_edges.begin(),
         forced_prefix.edges.begin(),
-        forced_prefix.edges.end()
+        forced_prefix.edges.end() - 1
     );
-    result->optimal_value += forced_prefix.DurationSeconds();
+  }
+  if (forced_suffix.sequence.size() > 0) {
+    const std::vector<ArrivalTimeState> atss =
+        step_states[last_unforced_k]
+            .at(result->tour_edges.back().origin.stop)
+            .states;
+    int min_weight = std::numeric_limits<int>::max();
+    for (const ArrivalTimeState& ats : atss) {
+      for (const OnwardsStep& onwards : ats.onwards) {
+        if (onwards.destination == forced_suffix.sequence.front()) {
+          min_weight = std::min(min_weight, onwards.duration);
+        }
+      }
+    }
+    result->tour_edges.back().weight = min_weight;
+  }
+
+  // Recompute optimal value cuz we might have added some edges and modified
+  // some edge weights.
+  result->optimal_value = 0;
+  for (TarelEdge& edge : result->tour_edges) {
+    result->optimal_value += edge.weight;
   }
 
   return result;
@@ -946,16 +1037,53 @@ int Bnb(
     int first_unknown_stop_cardinality =
         cur.step_states[first_unknown_stop_k].size();
 
+    int last_unknown_stop_k = cur.step_states.size() - 1;
+    while (last_unknown_stop_k >= 0 &&
+           cur.step_states[last_unknown_stop_k].size() == 1) {
+      last_unknown_stop_k -= 1;
+    }
+    assert(last_unknown_stop_k >= 0);
+
     std::cout << "iter " << iter_count << ": take "
               << TimeSinceServiceStart{cur.lb} << " (" << (q.size() + 1)
               << " active)\n";
     for (const std::string& constraint : cur.constraints) {
       std::cout << "  - " << constraint << "\n";
     }
-    for (int i = first_unknown_stop_k;
-         i < first_unknown_stop_k + 10 && i < cur.step_states.size();
-         ++i) {
-      std::cout << "  + " << i << ": " << cur.step_states[i].size() << "\n";
+    for (int k = std::max(0, first_unknown_stop_k - 1);
+         k <= std::min(
+                  last_unknown_stop_k + 1,
+                  static_cast<int>(cur.step_states.size()) - 1
+              );
+         ++k) {
+      if (k <= first_unknown_stop_k + kMaxStep ||
+          k >= last_unknown_stop_k - kMaxStep) {
+        TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
+            max_at{std::numeric_limits<int>::min()};
+        for (const auto& [s, states] : cur.step_states[k]) {
+          for (const auto& ats : states.states) {
+            min_at = std::min(ats.arrival_time, min_at);
+            max_at = std::max(ats.arrival_time, max_at);
+          }
+        }
+
+        std::cout << "  + " << k << ": ";
+        if (cur.step_states[k].size() == 1) {
+          std::cout << problem.StopName(cur.step_states[k].begin()->first);
+        } else {
+          std::cout << cur.step_states[k].size();
+        }
+
+        std::cout << " [";
+        if (min_at == max_at) {
+          std::cout << min_at;
+        } else {
+          std::cout << min_at << ", " << max_at;
+        }
+        std::cout << "]\n";
+      } else if (k == first_unknown_stop_k + kMaxStep + 1) {
+        std::cout << "  + ...\n";
+      }
     }
 
     if (cur.lb > best_ub) {
@@ -988,6 +1116,114 @@ int Bnb(
     // There must be a BTAAT cuz otherwise the lb would equal the ub.
     // TODO: Reconsider what happens when kMaxStep.
     // assert(analysis.first_btaat_k != -1);
+
+    // Branch on what is the last stop.
+    {
+      int constraint_k = last_unknown_stop_k;
+      StopId constraint_s = result->tour_edges[constraint_k].destination.stop;
+
+      // Branch: Require s@k.
+      {
+        std::vector<std::string> branch_constraints = cur.constraints;
+        std::stringstream constraint;
+        constraint << "Require " << problem.StopName(constraint_s) << " @ "
+                   << constraint_k;
+        branch_constraints.push_back(constraint.str());
+        PushQ(
+            result->optimal_value,
+            cur.forced_prefix_size + 1,
+            std::move(branch_constraints),
+            std::move(
+                RequireStopStep(cur.step_states, constraint_k, constraint_s)
+            )
+        );
+      }
+
+      // Branch: Forbid s@k.
+      {
+        std::vector<std::string> branch_constraints = cur.constraints;
+        std::stringstream constraint;
+        constraint << "Forbid " << problem.StopName(constraint_s) << " @ "
+                   << constraint_k;
+        branch_constraints.push_back(constraint.str());
+        PushQ(
+            result->optimal_value,
+            cur.forced_prefix_size + 1,
+            std::move(branch_constraints),
+            std::move(
+                ForbidStopStep(cur.step_states, constraint_k, constraint_s)
+            )
+        );
+      }
+    }
+    continue;
+
+    // Branch halfway between possible times of last step.
+    {
+      int branch_k = cur.step_states.size() - 4;
+
+      TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
+          max_at{std::numeric_limits<int>::min()};
+      for (const auto& [s, states] : cur.step_states[branch_k]) {
+        for (const auto& ats : states.states) {
+          min_at = std::min(ats.arrival_time, min_at);
+          max_at = std::max(ats.arrival_time, max_at);
+        }
+      }
+
+      TimeSinceServiceStart branch_at{min_at.seconds / 2 + max_at.seconds / 2};
+
+      // Branch: t < branch_at.
+      {
+        std::vector<std::string> branch_constraints = cur.constraints;
+        std::stringstream constraint;
+        constraint << "* @ " << branch_k << " < " << branch_at;
+        branch_constraints.push_back(constraint.str());
+
+        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
+            cur.step_states;
+        for (auto& [s, states] : branch_step_states[branch_k]) {
+          std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
+            return ats.arrival_time >= branch_at;
+          });
+        }
+
+        FilterStepStatesSweep(branch_step_states, branch_k);
+
+        PushQ(
+            result->optimal_value,
+            cur.forced_prefix_size,
+            std::move(branch_constraints),
+            std::move(branch_step_states)
+        );
+      }
+
+      // Branch: t >= branch_at.
+      {
+        std::vector<std::string> branch_constraints = cur.constraints;
+        std::stringstream constraint;
+        constraint << "* @ " << branch_k << " >= " << branch_at;
+        branch_constraints.push_back(constraint.str());
+
+        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
+            cur.step_states;
+        for (auto& [s, states] : branch_step_states[branch_k]) {
+          std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
+            return ats.arrival_time < branch_at;
+          });
+        }
+
+        FilterStepStatesSweep(branch_step_states, branch_k);
+
+        PushQ(
+            result->optimal_value,
+            cur.forced_prefix_size,
+            std::move(branch_constraints),
+            std::move(branch_step_states)
+        );
+      }
+    }
+    continue;
 
     // TODO: Think about whether this is an appropriate condition for when we
     // need to require/forbid s@k.
