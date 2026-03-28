@@ -309,6 +309,64 @@ void FilterStepStatesBackwards(BnbState& state, int k) {
   });
 }
 
+// TODO(Sunday): Proceed with implementing this.
+//
+// Then start messing with branching strategies
+// - require stops at start and at end or near start near end
+// - constrain time ranges at start and at end or near start near end
+//
+// my guess is that there are huge improvements available constraining things
+// near the end cuz we have such a large range of possible times around the end
+// if we constrain to subsets of the times:
+// - low times can't actually be reached so these branches get quickly pruned
+// (but how do they get pruned? need to make sure they get pruned well!)
+// - mid times are quite realistic and require a lot of exploration, but having
+// a small time range around the end makes the LB tighter around the end
+// - high times at the end increase the LB by virtue of being high
+//
+// then also there are improvements available by constraining stops near the
+// start and end, because for some reason it is "obvious" which ones these
+// should be
+//
+// but are these enough? We will see, but I am guessing that no it will not be
+// enough because as we start working towards the middle we don't get enough
+// tightening to avoid basically looking at "all reasonable tours" and there are
+// a lot of reasonable tours.
+//
+// i have this other idea of tightening the step time ranges using the tsp
+// solver to answer "what is the least possible amount of time you can spend
+// making k steps"
+//
+// if we can answer this then we can tighten the min time at each step forwards
+// from the beginning and we can also tighten the max time at each step
+// backwards from the end.
+//
+// can we answer this?
+// well, up to a smallish k (<10ish), yes: build up a graph like we normally do
+// up to k, and then have a final partition where the weights between everything
+// is 0.
+// also for a k near the end (within 10ish), we can build up a normal smeared
+// graph for the first j<k steps, then switch to a countdown and have the
+// weights become 0 somewhere in the countdown
+//
+// hmmmm, not convinced this will give us much improvement on existing bounds
+// because with small and with large k you can really save a lot of time by
+// ending yourself up in an unreasonable spot
+//
+// so perhaps we are gonna need to rely on near-start/near-end constraints
+// constraining things enough that we can make progress
+//
+// oh also I have the "min error DP" idea that might actually tighten the LB in
+// this context. so I should try that.
+// this might even make it possible to have fruitful branches in the smear
+// region:
+// - e.g. if there's a stop that always has a good txfer time, constrain it to a
+// particular range of steps so that the "min error DP" can't use it over and
+// over
+// - or if there's a time range when all txfers are good, constrain that you
+// only spend M steps in that time range so the "min error DP" can't
+// unrealistically spend all its time in that range
+
 void CombineForcedSteps(BnbState& state) {
   std::vector<std::unordered_map<StopId, StepState>> result_states;
   result_states.reserve(state.step_states.size());
@@ -673,9 +731,9 @@ TourAnalysis AnalyzeTour(
   //     << TimeSinceServiceStart{edge.weight} << "\n";
   // }
 
-  // std::cout << "  " << result.tour_edges[0].origin.partition.v << ". "
-  //           << problem.StopName(result.tour_edges[0].origin.stop) << " @ "
-  //           << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
+  std::cout << "  " << result.tour_edges[0].origin.partition.v << ". "
+            << problem.StopName(result.tour_edges[0].origin.stop) << " @ "
+            << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   for (int i = 0; i < result.tour_edges.size(); ++i) {
     const TarelEdge& edge = result.tour_edges[i];
     analysis.t_relaxed.seconds += edge.weight;
@@ -785,9 +843,9 @@ TourAnalysis AnalyzeTour(
     }
 
     analysis.t_actual.seconds += dur_actual;
-    // std::cout << "  " << edge.destination.partition.v << ". "
-    //           << problem.StopName(edge.destination.stop) << " @ "
-    //           << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
+    std::cout << "  " << edge.destination.partition.v << ". "
+              << problem.StopName(edge.destination.stop) << " @ "
+              << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   }
 
   std::cout << "  ubs: "
