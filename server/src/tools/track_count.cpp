@@ -693,6 +693,7 @@ std::optional<TspTourResult> DoTSP(
   }
   for (StopId rep : required.GroupRepresentatives()) {
     if (!representatives_in_graph.contains(rep)) {
+      std::cout << "not everything in graph\n";
       return std::nullopt;
     }
   }
@@ -707,6 +708,7 @@ std::optional<TspTourResult> DoTSP(
       nullptr
   );
   if (!result.has_value()) {
+    std::cout << "tsp no result\n";
     return std::nullopt;
   }
 
@@ -735,21 +737,21 @@ std::optional<TspTourResult> DoTSP(
         forced_prefix.edges.end() - 1
     );
   }
-  if (forced_suffix.sequence.size() > 0) {
-    const std::vector<ArrivalTimeState> atss =
-        step_states[last_unforced_k]
-            .at(result->tour_edges.back().origin.stop)
-            .states;
-    int min_weight = std::numeric_limits<int>::max();
-    for (const ArrivalTimeState& ats : atss) {
-      for (const OnwardsStep& onwards : ats.onwards) {
-        if (onwards.destination == forced_suffix.sequence.front()) {
-          min_weight = std::min(min_weight, onwards.duration);
-        }
-      }
-    }
-    result->tour_edges.back().weight = min_weight;
-  }
+  // if (forced_suffix.sequence.size() > 0) {
+  //   const std::vector<ArrivalTimeState> atss =
+  //       step_states[last_unforced_k]
+  //           .at(result->tour_edges.back().origin.stop)
+  //           .states;
+  //   int min_weight = std::numeric_limits<int>::max();
+  //   for (const ArrivalTimeState& ats : atss) {
+  //     for (const OnwardsStep& onwards : ats.onwards) {
+  //       if (onwards.destination == forced_suffix.sequence.front()) {
+  //         min_weight = std::min(min_weight, onwards.duration);
+  //       }
+  //     }
+  //   }
+  //   result->tour_edges.back().weight = min_weight;
+  // }
 
   // Recompute optimal value cuz we might have added some edges and modified
   // some edge weights.
@@ -981,7 +983,6 @@ std::vector<std::unordered_map<StopId, StepState>> ForbidStopStep(
 
 struct BnbNode {
   int lb;
-  int forced_prefix_size;
   std::vector<std::string> constraints;
   std::vector<std::unordered_map<StopId, StepState>> step_states;
   bool operator<(const BnbNode& other) const { return lb > other.lb; }
@@ -998,21 +999,14 @@ int Bnb(
   std::vector<BnbNode> q;
   auto PushQ =
       [&](int lb,
-          int forced_prefix_size,
           std::vector<std::string> constraints,
           std::vector<std::unordered_map<StopId, StepState>> step_states) {
-        q.emplace_back(
-            lb,
-            forced_prefix_size,
-            std::move(constraints),
-            std::move(step_states)
-        );
+        q.emplace_back(lb, std::move(constraints), std::move(step_states));
         std::push_heap(q.begin(), q.end());
       };
 
   PushQ(
       0,
-      1,
       {},
       std::move(ComputeStepStates(
           completed, problem.required, problem.boundary, s0, t0, lb_rel, ub_rel
@@ -1131,7 +1125,6 @@ int Bnb(
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size + 1,
             std::move(branch_constraints),
             std::move(
                 RequireStopStep(cur.step_states, constraint_k, constraint_s)
@@ -1148,7 +1141,6 @@ int Bnb(
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size + 1,
             std::move(branch_constraints),
             std::move(
                 ForbidStopStep(cur.step_states, constraint_k, constraint_s)
@@ -1192,7 +1184,6 @@ int Bnb(
 
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(branch_step_states)
         );
@@ -1217,7 +1208,6 @@ int Bnb(
 
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(branch_step_states)
         );
@@ -1245,7 +1235,6 @@ int Bnb(
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size + 1,
             std::move(branch_constraints),
             std::move(
                 RequireStopStep(cur.step_states, constraint_k, constraint_s)
@@ -1262,7 +1251,6 @@ int Bnb(
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size + 1,
             std::move(branch_constraints),
             std::move(
                 ForbidStopStep(cur.step_states, constraint_k, constraint_s)
@@ -1282,7 +1270,6 @@ int Bnb(
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(
                 ForbidStopStep(cur.step_states, constraint_k, constraint_s)
@@ -1319,7 +1306,6 @@ int Bnb(
 
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(branch_step_states)
         );
@@ -1350,7 +1336,6 @@ int Bnb(
 
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(branch_step_states)
         );
@@ -1382,7 +1367,6 @@ int Bnb(
 
         PushQ(
             result->optimal_value,
-            cur.forced_prefix_size,
             std::move(branch_constraints),
             std::move(branch_step_states)
         );
