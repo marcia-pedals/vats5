@@ -161,23 +161,29 @@ struct StepState {
   }
 };
 
-// Propagates `step_states[k]` into `step_states[k + 1]`, replacing it.
+struct BnbState {
+  std::vector<std::unordered_map<StopId, StepState>> step_states;
+  ProblemBoundary boundary;
+};
+
+// Propagates `state.step_states[k]` into `state.step_states[k + 1]`, replacing
+// it.
 void PropagateStepStatesForwards(
     const StepsAdjacencyList& completed,
-    const ProblemBoundary& boundary,
     const TimeSinceServiceStart t_ub,
-    std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    BnbState& state,
     StopId s0,
     int k
 ) {
   assert(k >= 0);
-  assert(k + 1 < step_states.size());
-  step_states[k + 1].clear();
+  assert(k + 1 < state.step_states.size());
+  state.step_states[k + 1].clear();
 
-  for (const auto& [s_cur, step_state_cur] : step_states[k]) {
+  for (const auto& [s_cur, step_state_cur] : state.step_states[k]) {
     for (const StepGroup& g_next : completed.GetGroups(s_cur)) {
       StopId s_next = g_next.destination_stop;
-      if (s_next == boundary.start || s_next == boundary.end || s_next == s0) {
+      if (s_next == state.boundary.start || s_next == state.boundary.end ||
+          s_next == s0) {
         continue;
       }
 
@@ -194,29 +200,29 @@ void PropagateStepStatesForwards(
         if (t_next > t_ub) {
           continue;
         }
-        step_states[k + 1][s_next].states.push_back({.arrival_time = t_next});
+        state.step_states[k + 1][s_next].states.push_back(
+            {.arrival_time = t_next}
+        );
       }
     }
   }
 
-  for (auto& [_, step_state] : step_states[k + 1]) {
+  for (auto& [_, step_state] : state.step_states[k + 1]) {
     step_state.SortAndDedupe();
   }
 }
 
-// Deletes states from `step_states[k + 1]` that do not come from anything in
-// `step_states[k]`.
-void FilterStepStatesForwards(
-    std::vector<std::unordered_map<StopId, StepState>>& step_states, int k
-) {
+// Deletes states from `state.step_states[k + 1]` that do not come from
+// anything in `state.step_states[k]`.
+void FilterStepStatesForwards(BnbState& state, int k) {
   assert(k >= 0);
-  assert(k + 1 < step_states.size());
+  assert(k + 1 < state.step_states.size());
 
   // arrival_times[s] is all the arrival times to s that come from something in
-  // step_states[k].
+  // state.step_states[k].
   std::unordered_map<StopId, std::unordered_set<TimeSinceServiceStart>>
       arrival_times;
-  for (const auto& [s_cur, step_state_cur] : step_states[k]) {
+  for (const auto& [s_cur, step_state_cur] : state.step_states[k]) {
     for (const ArrivalTimeState& ats : step_state_cur.states) {
       for (const OnwardsStep& onwards : ats.onwards) {
         arrival_times[onwards.destination].insert(
@@ -226,7 +232,7 @@ void FilterStepStatesForwards(
     }
   }
 
-  for (auto& [s_next, step_state_next] : step_states[k + 1]) {
+  for (auto& [s_next, step_state_next] : state.step_states[k + 1]) {
     const std::unordered_set<TimeSinceServiceStart>& arrival_times_next =
         arrival_times[s_next];
     std::erase_if(step_state_next.states, [&](const ArrivalTimeState& ats) {
@@ -234,29 +240,27 @@ void FilterStepStatesForwards(
     });
   }
 
-  std::erase_if(step_states[k + 1], [](const auto& pair) {
+  std::erase_if(state.step_states[k + 1], [](const auto& pair) {
     return pair.second.states.size() == 0;
   });
 }
 
-// Deletes states from `step_states[k]` that do not lead to anything in
-// `step_states[k + 1]`.
-void FilterStepStatesBackwards(
-    std::vector<std::unordered_map<StopId, StepState>>& step_states, int k
-) {
+// Deletes states from `state.step_states[k]` that do not lead to anything in
+// `state.step_states[k + 1]`.
+void FilterStepStatesBackwards(BnbState& state, int k) {
   assert(k >= 0);
-  assert(k + 1 < step_states.size());
+  assert(k + 1 < state.step_states.size());
 
-  // arrival_times[s] is all the arrival times to s in step_states[k + 1].
+  // arrival_times[s] is all the arrival times to s in state.step_states[k + 1].
   std::unordered_map<StopId, std::unordered_set<TimeSinceServiceStart>>
       arrival_times;
-  for (const auto& [s_next, step_state_next] : step_states[k + 1]) {
+  for (const auto& [s_next, step_state_next] : state.step_states[k + 1]) {
     for (const ArrivalTimeState& ats : step_state_next.states) {
       arrival_times[s_next].insert(ats.arrival_time);
     }
   }
 
-  for (auto& [s_cur, step_state_cur] : step_states[k]) {
+  for (auto& [s_cur, step_state_cur] : state.step_states[k]) {
     for (ArrivalTimeState& ats : step_state_cur.states) {
       std::erase_if(ats.onwards, [&](const OnwardsStep& onwards) {
         return !arrival_times[onwards.destination].contains(
@@ -269,35 +273,33 @@ void FilterStepStatesBackwards(
     });
   }
 
-  std::erase_if(step_states[k], [](const auto& pair) {
+  std::erase_if(state.step_states[k], [](const auto& pair) {
     return pair.second.states.size() == 0;
   });
 }
 
 // Sweeps a forwards filter from k0 to the end and then a backwards filter to
 // the start.
-void FilterStepStatesSweep(
-    std::vector<std::unordered_map<StopId, StepState>>& step_states, int k0
-) {
-  for (int k = k0; k + 1 < step_states.size(); ++k) {
-    FilterStepStatesForwards(step_states, k);
+void FilterStepStatesSweep(BnbState& state, int k0) {
+  for (int k = k0; k + 1 < state.step_states.size(); ++k) {
+    FilterStepStatesForwards(state, k);
   }
-  for (int k = step_states.size() - 2; k >= 0; --k) {
-    FilterStepStatesBackwards(step_states, k);
+  for (int k = state.step_states.size() - 2; k >= 0; --k) {
+    FilterStepStatesBackwards(state, k);
   }
 
   std::unordered_set<StopId> known_step_stops;
-  for (int i = 0; i < step_states.size(); ++i) {
-    if (step_states[i].size() == 1) {
-      known_step_stops.insert(step_states[i].begin()->first);
+  for (int i = 0; i < state.step_states.size(); ++i) {
+    if (state.step_states[i].size() == 1) {
+      known_step_stops.insert(state.step_states[i].begin()->first);
     }
   }
   bool changed_anything = false;
-  for (int i = 0; i < step_states.size(); ++i) {
-    if (step_states[i].size() == 1) {
+  for (int i = 0; i < state.step_states.size(); ++i) {
+    if (state.step_states[i].size() == 1) {
       continue;
     }
-    auto erased_n = std::erase_if(step_states[i], [&](const auto& pair) {
+    auto erased_n = std::erase_if(state.step_states[i], [&](const auto& pair) {
       return known_step_stops.contains(pair.first);
     });
     changed_anything |= erased_n > 0;
@@ -305,11 +307,11 @@ void FilterStepStatesSweep(
 
   // TODO: Loop until everything stops changing?
   if (changed_anything) {
-    for (int k = 0; k + 1 < step_states.size(); ++k) {
-      FilterStepStatesForwards(step_states, k);
+    for (int k = 0; k + 1 < state.step_states.size(); ++k) {
+      FilterStepStatesForwards(state, k);
     }
-    for (int k = step_states.size() - 2; k >= 0; --k) {
-      FilterStepStatesBackwards(step_states, k);
+    for (int k = state.step_states.size() - 2; k >= 0; --k) {
+      FilterStepStatesBackwards(state, k);
     }
   }
 
@@ -350,7 +352,7 @@ void RecomputeOnwardsSteps(
   }
 }
 
-std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
+BnbState ComputeStepStates(
     const StepsAdjacencyList& completed,
     const RequiredStops& required,
     const ProblemBoundary& boundary,
@@ -383,42 +385,43 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
     t_ub.seconds = t0.seconds + ub_rel;
   }
 
-  // step_states[0]: Base case, s0@t0
-  // step_states[k]: All possible states after making k steps.
+  BnbState state;
+  state.boundary = boundary;
+
+  // state.step_states[0]: Base case, s0@t0
+  // state.step_states[k]: All possible states after making k steps.
   //
   // Note that at step_states[k] we have visited k+1 stops, so if there are n
   // stops then we need k+1=n-2 <=> k=n-3. (-2 because we ignore boundary
   // stops).
   // TODO: Handle boundary stops more elegantly.
-  std::vector<std::unordered_map<StopId, StepState>> step_states(
-      static_cast<int>(required.size()) - 2
-  );
+  state.step_states.resize(static_cast<int>(required.size()) - 2);
 
-  step_states[0][s0].states.push_back({.arrival_time = t0});
+  state.step_states[0][s0].states.push_back({.arrival_time = t0});
   for (int k = 0; k < static_cast<int>(required.size()) - 3; ++k) {
-    PropagateStepStatesForwards(completed, boundary, t_ub, step_states, s0, k);
+    PropagateStepStatesForwards(completed, t_ub, state, s0, k);
   }
 
   // Anything arriving at the end before t_lb is too good to be true.
-  for (auto& [s, step_state] : step_states.back()) {
+  for (auto& [s, step_state] : state.step_states.back()) {
     std::erase_if(step_state.states, [&](const ArrivalTimeState& ats) {
       return ats.arrival_time < t_lb;
     });
   }
 
-  for (int k = 0; k < step_states.size(); ++k) {
-    RecomputeOnwardsSteps(completed, boundary, step_states[k]);
+  for (int k = 0; k < state.step_states.size(); ++k) {
+    RecomputeOnwardsSteps(completed, state.boundary, state.step_states[k]);
   }
 
   // Now go backwardsly and filter any arrival times that do not lead to actual
   // arrival times that we have.
-  for (int k = static_cast<int>(step_states.size()) - 2; k >= 0; --k) {
-    FilterStepStatesBackwards(step_states, k);
+  for (int k = static_cast<int>(state.step_states.size()) - 2; k >= 0; --k) {
+    FilterStepStatesBackwards(state, k);
   }
 
-  // for (int k = 0; k < step_states.size(); ++k) {
+  // for (int k = 0; k < state.step_states.size(); ++k) {
   //   const std::unordered_map<StopId, StepState>& step_state_k =
-  //   step_states[k]; int max_smear = 0; TimeSinceServiceStart
+  //   state.step_states[k]; int max_smear = 0; TimeSinceServiceStart
   //   min_t{std::numeric_limits<int>::max()}, max_t{0}; for (const auto& [s,
   //   step_state] : step_state_k) {
   //     if (step_state.arrival_times.size() == 0) {
@@ -437,7 +440,7 @@ std::vector<std::unordered_map<StopId, StepState>> ComputeStepStates(
   //             << "  max smear " << TimeSinceServiceStart{max_smear} << "\n";
   // }
 
-  return step_states;
+  return state;
 }
 
 struct TarelStatePairHash {
@@ -487,25 +490,23 @@ struct ForcedAffix {
 enum class AffixDirection { kPrefix, kSuffix };
 
 ForcedAffix ComputeForcedAffix(
-    AffixDirection direction,
-    const ProblemBoundary& boundary,
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states
+    AffixDirection direction, const BnbState& state
 ) {
-  TarelState start_state{boundary.start, StepPartitionId::NONE};
-  TarelState end_state{boundary.end, StepPartitionId::NONE};
+  TarelState start_state{state.boundary.start, StepPartitionId::NONE};
+  TarelState end_state{state.boundary.end, StepPartitionId::NONE};
 
   int affix_start, affix_end;
   if (direction == AffixDirection::kPrefix) {
     affix_start = 0;
     affix_end = 0;
-    while (affix_end < step_states.size() &&
-           step_states[affix_end].size() == 1) {
+    while (affix_end < state.step_states.size() &&
+           state.step_states[affix_end].size() == 1) {
       ++affix_end;
     }
   } else {
-    affix_end = step_states.size();
+    affix_end = state.step_states.size();
     affix_start = affix_end;
-    while (affix_start > 0 && step_states[affix_start - 1].size() == 1) {
+    while (affix_start > 0 && state.step_states[affix_start - 1].size() == 1) {
       --affix_start;
     }
 
@@ -519,8 +520,8 @@ ForcedAffix ComputeForcedAffix(
   ForcedAffix result;
 
   for (int k = affix_start; k < affix_end; ++k) {
-    assert(step_states[k].size() == 1);
-    const auto& [stop, step_state] = *step_states[k].begin();
+    assert(state.step_states[k].size() == 1);
+    const auto& [stop, step_state] = *state.step_states[k].begin();
     result.sequence.push_back(stop);
 
     // Oh no with a suffix there is not a single known arrival time!!
@@ -560,10 +561,11 @@ constexpr int kMaxStep = 5;
 std::optional<TspTourResult> DoTSP(
     const StepsAdjacencyList& completed,
     const RequiredStops& required,
-    const ProblemBoundary& boundary,
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    const BnbState& state,
     int ub_rel
 ) {
+  const auto& boundary = state.boundary;
+  const auto& step_states = state.step_states;
   TarelState start_state{boundary.start, StepPartitionId::NONE};
   TarelState end_state{boundary.end, StepPartitionId::NONE};
 
@@ -576,7 +578,7 @@ std::optional<TspTourResult> DoTSP(
   }
 
   ForcedAffix forced_prefix =
-      ComputeForcedAffix(AffixDirection::kPrefix, boundary, step_states);
+      ComputeForcedAffix(AffixDirection::kPrefix, state);
 
   // When the whole sequence is forced, we put it all in the prefix, so there is
   // no need to compute or check the suffix.
@@ -594,7 +596,7 @@ std::optional<TspTourResult> DoTSP(
   int first_unforced_k = forced_prefix.sequence.size();
 
   // ForcedAffix forced_suffix =
-  //     ComputeForcedAffix(AffixDirection::kSuffix, boundary, step_states);
+  //     ComputeForcedAffix(AffixDirection::kSuffix, state);
 
   int last_unforced_k = step_states.size() + 1;
   assert(last_unforced_k == required.size() - 1);
@@ -776,10 +778,11 @@ struct TourAnalysis {
 TourAnalysis AnalyzeTour(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
+    const BnbState& state,
     const TspTourResult& result,
     TimeSinceServiceStart t0
 ) {
+  const auto& step_states = state.step_states;
   TourAnalysis analysis;
   analysis.t_relaxed = t0;
   analysis.t_actual = t0;
@@ -950,32 +953,30 @@ TourAnalysis AnalyzeTour(
   return analysis;
 }
 
-std::vector<std::unordered_map<StopId, StepState>> RequireStopStep(
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
-    int k,
-    StopId s
-) {
-  std::vector<std::unordered_map<StopId, StepState>> result = step_states;
-  std::erase_if(result[k], [&](const auto& pair) { return pair.first != s; });
+BnbState RequireStopStep(const BnbState& state, int k, StopId s) {
+  BnbState result = state;
+  std::erase_if(result.step_states[k], [&](const auto& pair) {
+    return pair.first != s;
+  });
   // TODO: This could instead be another pass that realizes that a certain step
   // has a single stop and then delete that stop from all the other steps.
-  for (int i = 0; i < result.size(); ++i) {
+  for (int i = 0; i < result.step_states.size(); ++i) {
     if (i == k) {
       continue;
     }
-    std::erase_if(result[i], [&](const auto& pair) { return pair.first == s; });
+    std::erase_if(result.step_states[i], [&](const auto& pair) {
+      return pair.first == s;
+    });
   }
   FilterStepStatesSweep(result, k);
   return result;
 }
 
-std::vector<std::unordered_map<StopId, StepState>> ForbidStopStep(
-    const std::vector<std::unordered_map<StopId, StepState>>& step_states,
-    int k,
-    StopId s
-) {
-  std::vector<std::unordered_map<StopId, StepState>> result = step_states;
-  std::erase_if(result[k], [&](const auto& pair) { return pair.first == s; });
+BnbState ForbidStopStep(const BnbState& state, int k, StopId s) {
+  BnbState result = state;
+  std::erase_if(result.step_states[k], [&](const auto& pair) {
+    return pair.first == s;
+  });
   FilterStepStatesSweep(result, k);
   return result;
 }
@@ -983,7 +984,7 @@ std::vector<std::unordered_map<StopId, StepState>> ForbidStopStep(
 struct BnbNode {
   int lb;
   std::vector<std::string> constraints;
-  std::vector<std::unordered_map<StopId, StepState>> step_states;
+  BnbState state;
   bool operator<(const BnbNode& other) const { return lb > other.lb; }
 };
 
@@ -997,19 +998,17 @@ int Bnb(
 ) {
   std::vector<BnbNode> q;
   auto PushQ =
-      [&](int lb,
-          std::vector<std::string> constraints,
-          std::vector<std::unordered_map<StopId, StepState>> step_states) {
-        q.emplace_back(lb, std::move(constraints), std::move(step_states));
+      [&](int lb, std::vector<std::string> constraints, BnbState state) {
+        q.emplace_back(lb, std::move(constraints), std::move(state));
         std::push_heap(q.begin(), q.end());
       };
 
   PushQ(
       0,
       {},
-      std::move(ComputeStepStates(
+      ComputeStepStates(
           completed, problem.required, problem.boundary, s0, t0, lb_rel, ub_rel
-      ))
+      )
   );
 
   int iter_count = 0;
@@ -1022,17 +1021,17 @@ int Bnb(
     q.pop_back();
 
     int first_unknown_stop_k = 0;
-    while (first_unknown_stop_k < cur.step_states.size() &&
-           cur.step_states[first_unknown_stop_k].size() == 1) {
+    while (first_unknown_stop_k < cur.state.step_states.size() &&
+           cur.state.step_states[first_unknown_stop_k].size() == 1) {
       first_unknown_stop_k += 1;
     }
-    assert(first_unknown_stop_k < cur.step_states.size());
+    assert(first_unknown_stop_k < cur.state.step_states.size());
     int first_unknown_stop_cardinality =
-        cur.step_states[first_unknown_stop_k].size();
+        cur.state.step_states[first_unknown_stop_k].size();
 
-    int last_unknown_stop_k = cur.step_states.size() - 1;
+    int last_unknown_stop_k = cur.state.step_states.size() - 1;
     while (last_unknown_stop_k >= 0 &&
-           cur.step_states[last_unknown_stop_k].size() == 1) {
+           cur.state.step_states[last_unknown_stop_k].size() == 1) {
       last_unknown_stop_k -= 1;
     }
     assert(last_unknown_stop_k >= 0);
@@ -1046,14 +1045,14 @@ int Bnb(
     for (int k = std::max(0, first_unknown_stop_k - 1);
          k <= std::min(
                   last_unknown_stop_k + 1,
-                  static_cast<int>(cur.step_states.size()) - 1
+                  static_cast<int>(cur.state.step_states.size()) - 1
               );
          ++k) {
       if (k <= first_unknown_stop_k + kMaxStep ||
           k >= last_unknown_stop_k - kMaxStep) {
         TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
             max_at{std::numeric_limits<int>::min()};
-        for (const auto& [s, states] : cur.step_states[k]) {
+        for (const auto& [s, states] : cur.state.step_states[k]) {
           for (const auto& ats : states.states) {
             min_at = std::min(ats.arrival_time, min_at);
             max_at = std::max(ats.arrival_time, max_at);
@@ -1061,10 +1060,12 @@ int Bnb(
         }
 
         std::cout << "  + " << k << ": ";
-        if (cur.step_states[k].size() == 1) {
-          std::cout << problem.StopName(cur.step_states[k].begin()->first);
+        if (cur.state.step_states[k].size() == 1) {
+          std::cout << problem.StopName(
+              cur.state.step_states[k].begin()->first
+          );
         } else {
-          std::cout << cur.step_states[k].size();
+          std::cout << cur.state.step_states[k].size();
         }
 
         std::cout << " [";
@@ -1084,9 +1085,8 @@ int Bnb(
       return best_ub;
     }
 
-    std::optional<TspTourResult> result = DoTSP(
-        completed, problem.required, problem.boundary, cur.step_states, ub_rel
-    );
+    std::optional<TspTourResult> result =
+        DoTSP(completed, problem.required, cur.state, ub_rel);
     if (!result.has_value()) {
       std::cout << "  pruned: no TSP result\n";
       continue;
@@ -1099,7 +1099,7 @@ int Bnb(
     }
 
     TourAnalysis analysis =
-        AnalyzeTour(problem, completed, cur.step_states, *result, t0);
+        AnalyzeTour(problem, completed, cur.state, *result, t0);
     best_ub = std::min(best_ub, analysis.t_actual.seconds - t0.seconds);
     if (result->optimal_value >= best_ub) {
       std::cout << "  pruned: lb >= cur_ub\n";
@@ -1125,9 +1125,7 @@ int Bnb(
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(
-                RequireStopStep(cur.step_states, constraint_k, constraint_s)
-            )
+            RequireStopStep(cur.state, constraint_k, constraint_s)
         );
       }
 
@@ -1141,9 +1139,7 @@ int Bnb(
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(
-                ForbidStopStep(cur.step_states, constraint_k, constraint_s)
-            )
+            ForbidStopStep(cur.state, constraint_k, constraint_s)
         );
       }
     }
@@ -1151,11 +1147,11 @@ int Bnb(
 
     // Branch halfway between possible times of last step.
     {
-      int branch_k = cur.step_states.size() - 4;
+      int branch_k = cur.state.step_states.size() - 4;
 
       TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
           max_at{std::numeric_limits<int>::min()};
-      for (const auto& [s, states] : cur.step_states[branch_k]) {
+      for (const auto& [s, states] : cur.state.step_states[branch_k]) {
         for (const auto& ats : states.states) {
           min_at = std::min(ats.arrival_time, min_at);
           max_at = std::max(ats.arrival_time, max_at);
@@ -1171,20 +1167,19 @@ int Bnb(
         constraint << "* @ " << branch_k << " < " << branch_at;
         branch_constraints.push_back(constraint.str());
 
-        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
-            cur.step_states;
-        for (auto& [s, states] : branch_step_states[branch_k]) {
+        BnbState branch_state = cur.state;
+        for (auto& [s, states] : branch_state.step_states[branch_k]) {
           std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
             return ats.arrival_time >= branch_at;
           });
         }
 
-        FilterStepStatesSweep(branch_step_states, branch_k);
+        FilterStepStatesSweep(branch_state, branch_k);
 
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(branch_step_states)
+            std::move(branch_state)
         );
       }
 
@@ -1195,20 +1190,19 @@ int Bnb(
         constraint << "* @ " << branch_k << " >= " << branch_at;
         branch_constraints.push_back(constraint.str());
 
-        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
-            cur.step_states;
-        for (auto& [s, states] : branch_step_states[branch_k]) {
+        BnbState branch_state = cur.state;
+        for (auto& [s, states] : branch_state.step_states[branch_k]) {
           std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
             return ats.arrival_time < branch_at;
           });
         }
 
-        FilterStepStatesSweep(branch_step_states, branch_k);
+        FilterStepStatesSweep(branch_state, branch_k);
 
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(branch_step_states)
+            std::move(branch_state)
         );
       }
     }
@@ -1235,9 +1229,7 @@ int Bnb(
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(
-                RequireStopStep(cur.step_states, constraint_k, constraint_s)
-            )
+            RequireStopStep(cur.state, constraint_k, constraint_s)
         );
       }
 
@@ -1251,9 +1243,7 @@ int Bnb(
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(
-                ForbidStopStep(cur.step_states, constraint_k, constraint_s)
-            )
+            ForbidStopStep(cur.state, constraint_k, constraint_s)
         );
       }
     } else {
@@ -1270,14 +1260,12 @@ int Bnb(
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(
-                ForbidStopStep(cur.step_states, constraint_k, constraint_s)
-            )
+            ForbidStopStep(cur.state, constraint_k, constraint_s)
         );
       }
 
-      std::vector<std::unordered_map<StopId, StepState>> require_step_states =
-          RequireStopStep(cur.step_states, constraint_k, constraint_s);
+      BnbState require_state =
+          RequireStopStep(cur.state, constraint_k, constraint_s);
 
       // Branch: First BAD region, and require the stop.
       // TODO: Think harder about whether I can omit branch for BAD region in
@@ -1291,22 +1279,22 @@ int Bnb(
                    << " <= " << analysis.first_btaat_good_a;
         branch_constraints.push_back(constraint.str());
 
-        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
-            require_step_states;
+        BnbState branch_state = require_state;
         std::erase_if(
-            branch_step_states[analysis.first_btaat_k]
-                              [analysis.first_btaat_edge.origin.stop]
-                                  .states,
+            branch_state
+                .step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                .states,
             [&](const ArrivalTimeState& ats) {
               return ats.arrival_time > analysis.first_btaat_good_a;
             }
         );
-        FilterStepStatesSweep(branch_step_states, analysis.first_btaat_k);
+        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
 
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(branch_step_states)
+            std::move(branch_state)
         );
       }
 
@@ -1320,23 +1308,23 @@ int Bnb(
                    << analysis.first_btaat_good_b << ")";
         branch_constraints.push_back(constraint.str());
 
-        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
-            require_step_states;
+        BnbState branch_state = require_state;
         std::erase_if(
-            branch_step_states[analysis.first_btaat_k]
-                              [analysis.first_btaat_edge.origin.stop]
-                                  .states,
+            branch_state
+                .step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                .states,
             [&](const ArrivalTimeState& ats) {
               return ats.arrival_time <= analysis.first_btaat_good_a ||
                      ats.arrival_time >= analysis.first_btaat_good_b;
             }
         );
-        FilterStepStatesSweep(branch_step_states, analysis.first_btaat_k);
+        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
 
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(branch_step_states)
+            std::move(branch_state)
         );
       }
 
@@ -1352,22 +1340,22 @@ int Bnb(
                    << " >= " << analysis.first_btaat_good_b;
         branch_constraints.push_back(constraint.str());
 
-        std::vector<std::unordered_map<StopId, StepState>> branch_step_states =
-            require_step_states;
+        BnbState branch_state = require_state;
         std::erase_if(
-            branch_step_states[analysis.first_btaat_k]
-                              [analysis.first_btaat_edge.origin.stop]
-                                  .states,
+            branch_state
+                .step_states[analysis.first_btaat_k]
+                            [analysis.first_btaat_edge.origin.stop]
+                .states,
             [&](const ArrivalTimeState& ats) {
               return ats.arrival_time < analysis.first_btaat_good_b;
             }
         );
-        FilterStepStatesSweep(branch_step_states, analysis.first_btaat_k);
+        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
 
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            std::move(branch_step_states)
+            std::move(branch_state)
         );
       }
     }
@@ -1465,23 +1453,18 @@ int main(int argc, char* argv[]) {
   //     departure_times[0], lb_rel, ub_rel
   // );
 
-  auto PrintTsp =
-      [&](
-          const std::vector<std::unordered_map<StopId, StepState>>& step_states
-      ) {
-        std::optional<TspTourResult> result = DoTSP(
-            completed, problem.required, problem.boundary, step_states, ub_rel
-        );
-        if (!result.has_value()) {
-          std::cout << "  pruned: no TSP result\n";
-          return;
-        }
-        std::cout << "  new lb: "
-                  << TimeSinceServiceStart{result->optimal_value} << "\n";
-        TourAnalysis analysis = AnalyzeTour(
-            problem, completed, step_states, *result, departure_times[0]
-        );
-      };
+  auto PrintTsp = [&](const BnbState& state) {
+    std::optional<TspTourResult> result =
+        DoTSP(completed, problem.required, state, ub_rel);
+    if (!result.has_value()) {
+      std::cout << "  pruned: no TSP result\n";
+      return;
+    }
+    std::cout << "  new lb: " << TimeSinceServiceStart{result->optimal_value}
+              << "\n";
+    TourAnalysis analysis =
+        AnalyzeTour(problem, completed, state, *result, departure_times[0]);
+  };
 
   // std::cout << "BASE\n";
   // PrintTsp(step_states_base);
