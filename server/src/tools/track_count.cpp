@@ -487,75 +487,6 @@ struct ForcedAffix {
   std::vector<TarelEdge> edges;
 };
 
-enum class AffixDirection { kPrefix, kSuffix };
-
-ForcedAffix ComputeForcedAffix(
-    AffixDirection direction, const BnbState& state
-) {
-  TarelState start_state{state.boundary.start, StepPartitionId::NONE};
-  TarelState end_state{state.boundary.end, StepPartitionId::NONE};
-
-  int affix_start, affix_end;
-  if (direction == AffixDirection::kPrefix) {
-    affix_start = 0;
-    affix_end = 0;
-    while (affix_end < state.step_states.size() &&
-           state.step_states[affix_end].size() == 1) {
-      ++affix_end;
-    }
-  } else {
-    affix_end = state.step_states.size();
-    affix_start = affix_end;
-    while (affix_start > 0 && state.step_states[affix_start - 1].size() == 1) {
-      --affix_start;
-    }
-
-    if (affix_start == 0) {
-      // Break symmetry: If the whole sequence is forced, then treat it as a
-      // prefix with no affix:
-      affix_start = affix_end;
-    }
-  }
-
-  ForcedAffix result;
-
-  for (int k = affix_start; k < affix_end; ++k) {
-    assert(state.step_states[k].size() == 1);
-    const auto& [stop, step_state] = *state.step_states[k].begin();
-    result.sequence.push_back(stop);
-
-    // Oh no with a suffix there is not a single known arrival time!!
-    // However we could compute the min-weight a bit more precisely than taking
-    // all the mins?? Like we can DP it if we know the ending sequence!!! Yay
-    // for precision.
-    // TODO(Saturday): Maybe start here and then finish up the suffix-append in
-    // DoTSP. (That maybe should also be included in the DP??).
-    assert(step_state.states.size() > 0);
-    result.arrival_times.push_back(step_state.states[0].arrival_time);
-  }
-
-  for (int i = 0; i < result.sequence.size() + 1; ++i) {
-    int k = affix_start + i;
-    TarelState origin =
-        i == 0 ? start_state
-               : TarelState{result.sequence[i - 1], StepPartitionId{k - 1}};
-    TarelState destination =
-        i == result.sequence.size()
-            ? end_state
-            : TarelState{result.sequence[i], StepPartitionId{k}};
-    int weight;
-    if (i == 0 || i == result.sequence.size()) {
-      weight = 0;
-    } else {
-      weight =
-          result.arrival_times[i].seconds - result.arrival_times[i - 1].seconds;
-    }
-    result.edges.emplace_back(origin, destination, weight);
-  }
-
-  return result;
-}
-
 constexpr int kMaxStep = 5;
 
 std::optional<TspTourResult> DoTSP(
@@ -577,36 +508,13 @@ std::optional<TspTourResult> DoTSP(
     }
   }
 
-  ForcedAffix forced_prefix =
-      ComputeForcedAffix(AffixDirection::kPrefix, state);
-
-  // When the whole sequence is forced, we put it all in the prefix, so there is
-  // no need to compute or check the suffix.
-  if (forced_prefix.sequence.size() == step_states.size()) {
-    int duration = 0;
-    for (const TarelEdge& edge : forced_prefix.edges) {
-      duration += edge.weight;
-    }
-    return TspTourResult{
-        .optimal_value = duration,
-        .tour_edges = std::move(forced_prefix.edges),
-    };
-  }
-
-  int first_unforced_k = forced_prefix.sequence.size();
-
-  // ForcedAffix forced_suffix =
-  //     ComputeForcedAffix(AffixDirection::kSuffix, state);
-
-  int last_unforced_k = step_states.size() + 1;
-  assert(last_unforced_k == required.size() - 1);
+  int last_k = step_states.size() + 1;
 
   auto ClampedPartition = [&](int step) -> StepPartitionId {
-    if (step <= first_unforced_k + kMaxStep ||
-        step >= last_unforced_k - kMaxStep) {
+    if (step <= kMaxStep || step >= last_k - kMaxStep) {
       return StepPartitionId{step};
     } else {
-      return StepPartitionId{first_unforced_k + kMaxStep};
+      return StepPartitionId{kMaxStep};
     }
   };
 
@@ -626,20 +534,24 @@ std::optional<TspTourResult> DoTSP(
       .weight = 0,
   });
 
-  // Insert all the edges!!!!
-  for (int k = first_unforced_k; k < last_unforced_k; ++k) {
+  // START->* edges.
+  for (const auto& [s, step_state] : step_states.front()) {
+    edges.push_back({
+        .origin = start_state,
+        .destination = TarelState{s, ClampedPartition(0)},
+        .weight = 0,
+    });
+  }
+
+  // Insert all the other edges!!!!
+  for (int k = 1; k < last_k; ++k) {
     const std::unordered_map<StopId, StepState>& step_state_kminus1 =
         step_states[k - 1];
 
     for (const auto& [s_cur, step_state_cur] : step_state_kminus1) {
-      TarelState origin;
-      if (k == first_unforced_k) {
-        origin = TarelState{boundary.start, StepPartitionId::NONE};
-      } else {
-        origin = TarelState{s_cur, ClampedPartition(k - 1)};
-      }
+      TarelState origin = TarelState{s_cur, ClampedPartition(k - 1)};
 
-      if (k == required.size() - 2) {
+      if (k == last_k - 1) {
         edges.push_back({
             .origin = origin,
             .destination = TarelState{boundary.end, StepPartitionId::NONE},
@@ -685,12 +597,6 @@ std::optional<TspTourResult> DoTSP(
   // solution that does not reach all the stops. (Specifically, stops that don't
   // appear as both origins and destinations are omitted).
   std::unordered_set<StopId> representatives_in_graph;
-  for (StopId s : forced_prefix.sequence) {
-    representatives_in_graph.insert(s);
-  }
-  // for (StopId s : forced_suffix.sequence) {
-  //   representatives_in_graph.insert(s);
-  // }
   for (const TarelState& tarel_state : graph.state_by_id) {
     representatives_in_graph.insert(required.Representative(tarel_state.stop));
   }
@@ -717,48 +623,6 @@ std::optional<TspTourResult> DoTSP(
   for (TarelEdge& edge : result->tour_edges) {
     edge.origin = remap.mapped_to_original.at(edge.origin);
     edge.destination = remap.mapped_to_original.at(edge.destination);
-  }
-
-  // Insert forced affixes into things.
-  if (forced_prefix.sequence.size() > 0) {
-    // The first step from a forced prefix must have only one possible arrival
-    // time because we know when it started!!
-    const std::vector<ArrivalTimeState> atss =
-        step_states[first_unforced_k]
-            .at(result->tour_edges.front().destination.stop)
-            .states;
-    assert(atss.size() == 1);
-    result->tour_edges.front().weight =
-        atss[0].arrival_time.seconds -
-        forced_prefix.arrival_times.back().seconds;
-    result->tour_edges.front().origin = forced_prefix.edges.back().origin;
-    result->tour_edges.insert(
-        result->tour_edges.begin(),
-        forced_prefix.edges.begin(),
-        forced_prefix.edges.end() - 1
-    );
-  }
-  // if (forced_suffix.sequence.size() > 0) {
-  //   const std::vector<ArrivalTimeState> atss =
-  //       step_states[last_unforced_k]
-  //           .at(result->tour_edges.back().origin.stop)
-  //           .states;
-  //   int min_weight = std::numeric_limits<int>::max();
-  //   for (const ArrivalTimeState& ats : atss) {
-  //     for (const OnwardsStep& onwards : ats.onwards) {
-  //       if (onwards.destination == forced_suffix.sequence.front()) {
-  //         min_weight = std::min(min_weight, onwards.duration);
-  //       }
-  //     }
-  //   }
-  //   result->tour_edges.back().weight = min_weight;
-  // }
-
-  // Recompute optimal value cuz we might have added some edges and modified
-  // some edge weights.
-  result->optimal_value = 0;
-  for (TarelEdge& edge : result->tour_edges) {
-    result->optimal_value += edge.weight;
   }
 
   return result;
