@@ -614,7 +614,7 @@ void DeduplicateEdges(std::vector<TarelEdge>& edges) {
   }
 }
 
-constexpr int kMaxStep = 4;
+constexpr int kMaxStep = 6;
 
 std::optional<TspTourResult> DoTSP(
     const StepsAdjacencyList& completed, const BnbState& state, int ub_rel
@@ -636,6 +636,7 @@ std::optional<TspTourResult> DoTSP(
 
   auto ClampedPartition = [&](int step) -> StepPartitionId {
     if (step <= kMaxStep || step >= n - kMaxStep) {
+      // if (step <= kMaxStep) {
       return StepPartitionId{step};
     } else {
       return StepPartitionId{kMaxStep};
@@ -763,9 +764,9 @@ TourAnalysis AnalyzeTour(
   //     << TimeSinceServiceStart{edge.weight} << "\n";
   // }
 
-  std::cout << "  " << result.tour_edges[0].origin.partition.v << ". "
-            << problem.StopName(result.tour_edges[0].origin.stop) << " @ "
-            << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
+  // std::cout << "  " << result.tour_edges[0].origin.partition.v << ". "
+  //           << problem.StopName(result.tour_edges[0].origin.stop) << " @ "
+  //           << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   for (int i = 0; i < result.tour_edges.size(); ++i) {
     const TarelEdge& edge = result.tour_edges[i];
     analysis.t_relaxed.seconds += edge.weight;
@@ -875,9 +876,9 @@ TourAnalysis AnalyzeTour(
     }
 
     analysis.t_actual.seconds += dur_actual;
-    std::cout << "  " << edge.destination.partition.v << ". "
-              << problem.StopName(edge.destination.stop) << " @ "
-              << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
+    // std::cout << "  " << edge.destination.partition.v << ". "
+    //           << problem.StopName(edge.destination.stop) << " @ "
+    //           << analysis.t_relaxed << " / " << analysis.t_actual << "\n";
   }
 
   std::cout << "  ubs: "
@@ -1012,10 +1013,15 @@ int Bnb(
         }
 
         std::cout << "  + " << k << ": ";
-        if (cur.state.step_states[k].size() == 1) {
-          std::cout << problem.StopName(
-              cur.state.step_states[k].begin()->first
-          );
+        if (cur.state.step_states[k].size() <= 3) {
+          int print_count = 0;
+          for (const auto& [s, _] : cur.state.step_states[k]) {
+            if (print_count > 0) {
+              std::cout << " | ";
+            }
+            print_count += 1;
+            std::cout << problem.StopName(s);
+          }
         } else {
           std::cout << cur.state.step_states[k].size();
         }
@@ -1064,22 +1070,27 @@ int Bnb(
     // TODO: Reconsider what happens when kMaxStep.
     // assert(analysis.first_btaat_k != -1);
 
-    // Branch on what is the last stop.
-    {
-      int constraint_k = static_cast<int>(cur.state.step_states.size()) - 2;
-      StopId constraint_s = result->tour_edges[constraint_k].origin.stop;
+    int small_cardinality_k = 1;
+    while (small_cardinality_k + 1 < cur.state.step_states.size() &&
+           cur.state.step_states[small_cardinality_k].size() > 5) {
+      small_cardinality_k += 1;
+    }
+
+    // Branch on the small cardinality step if there is one.
+    if (small_cardinality_k + 1 < cur.state.step_states.size()) {
+      StopId constraint_s = result->tour_edges[small_cardinality_k].origin.stop;
 
       // Branch: Require s@k.
       {
         std::vector<std::string> branch_constraints = cur.constraints;
         std::stringstream constraint;
         constraint << "Require " << problem.StopName(constraint_s) << " @ "
-                   << constraint_k;
+                   << small_cardinality_k;
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            RequireStopStep(cur.state, constraint_k, constraint_s)
+            RequireStopStep(cur.state, small_cardinality_k, constraint_s)
         );
       }
 
@@ -1088,20 +1099,52 @@ int Bnb(
         std::vector<std::string> branch_constraints = cur.constraints;
         std::stringstream constraint;
         constraint << "Forbid " << problem.StopName(constraint_s) << " @ "
-                   << constraint_k;
+                   << small_cardinality_k;
         branch_constraints.push_back(constraint.str());
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            ForbidStopStep(cur.state, constraint_k, constraint_s)
+            ForbidStopStep(cur.state, small_cardinality_k, constraint_s)
         );
       }
+      continue;
     }
-    continue;
 
-    // Branch halfway between possible times of last step.
+    // Branch halfway between possible times of a step.
     {
-      int branch_k = cur.state.step_states.size() - 4;
+      // int branch_k = cur.state.step_states.size() - 1;
+      // while (branch_k > 0) {
+      int branch_k = 0;
+      while (branch_k < cur.state.step_states.size()) {
+        bool has_onwards_disagreement = false;
+        for (const auto& [s, states] : cur.state.step_states[branch_k]) {
+          std::unordered_map<StopId, int> onwards_dur;
+          for (const ArrivalTimeState& ats : states.states) {
+            for (const OnwardsStep& onwards : ats.onwards) {
+              auto [it, inserted] = onwards_dur.try_emplace(
+                  onwards.destination, onwards.duration
+              );
+              if (it->second != onwards.duration) {
+                has_onwards_disagreement = true;
+                break;
+              }
+            }
+            if (has_onwards_disagreement) {
+              break;
+            }
+          }
+          if (has_onwards_disagreement) {
+            break;
+          }
+        }
+        if (has_onwards_disagreement) {
+          break;
+        }
+        branch_k += 1;
+        // branch_k -= 1;
+      }
+      // assert(branch_k > 0);
+      assert(branch_k < cur.state.step_states.size());
 
       TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
           max_at{std::numeric_limits<int>::min()};
@@ -1130,8 +1173,14 @@ int Bnb(
 
         FilterStepStatesSweep(branch_state, branch_k);
 
+        TimeSinceServiceStart min_last_at = branch_state.step_states.back()
+                                                .begin()
+                                                ->second.states.front()
+                                                .arrival_time;
+        int min_last_at_lb = min_last_at.seconds - t0.seconds;
+
         PushQ(
-            result->optimal_value,
+            std::max(cur.lb, std::max(result->optimal_value, min_last_at_lb)),
             std::move(branch_constraints),
             std::move(branch_state)
         );
@@ -1153,8 +1202,14 @@ int Bnb(
 
         FilterStepStatesSweep(branch_state, branch_k);
 
+        TimeSinceServiceStart min_last_at = branch_state.step_states.back()
+                                                .begin()
+                                                ->second.states.front()
+                                                .arrival_time;
+        int min_last_at_lb = min_last_at.seconds - t0.seconds;
+
         PushQ(
-            result->optimal_value,
+            std::max(cur.lb, std::max(result->optimal_value, min_last_at_lb)),
             std::move(branch_constraints),
             std::move(branch_state)
         );
