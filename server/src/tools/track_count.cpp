@@ -163,7 +163,13 @@ struct StepState {
 
 struct BnbState {
   std::vector<std::unordered_map<StopId, StepState>> step_states;
+
+  // forced_after[i] is a sequence of stops that happen along the path from
+  // step_states[i] to step_states[i+1].
+  std::vector<std::vector<StopId>> forced_after;
+
   ProblemBoundary boundary;
+  RequiredStops required;
 };
 
 TimeSinceServiceStart GetTNext(
@@ -172,7 +178,12 @@ TimeSinceServiceStart GetTNext(
     TimeSinceServiceStart t_cur
 ) {
   TimeSinceServiceStart t_next_flex{std::numeric_limits<int>::max()};
-  if (g_next.flex_step.has_value()) {
+  // TODO: Handle duration>0 flex steps.
+  // (It would be correct to simply delete the FlexDurationSections() == 0 here,
+  // but that slows things down so much. I hope there is some optimization we
+  // can do to handle them better.)
+  if (g_next.flex_step.has_value() &&
+      g_next.flex_step->FlexDurationSeconds() == 0) {
     t_next_flex.seconds =
         t_cur.seconds + g_next.flex_step->FlexDurationSeconds();
   }
@@ -228,17 +239,18 @@ void PropagateStepStatesForwards(
             }
         );
         if (k + 1 < state.step_states.size()) {
-          state.step_states[k + 1][s_next].states.push_back(
-              {.arrival_time = t_next}
+          auto& vec = state.step_states[k + 1][s_next].states;
+          ArrivalTimeState entry{.arrival_time = t_next};
+          auto it = std::lower_bound(
+              vec.begin(), vec.end(), entry, [](const auto& a, const auto& b) {
+                return a.arrival_time < b.arrival_time;
+              }
           );
+          if (it == vec.end() || it->arrival_time != t_next) {
+            vec.insert(it, std::move(entry));
+          }
         }
       }
-    }
-  }
-
-  if (k + 1 < state.step_states.size()) {
-    for (auto& [_, step_state] : state.step_states[k + 1]) {
-      step_state.SortAndDedupe();
     }
   }
 }
@@ -371,6 +383,9 @@ void CombineForcedSteps(BnbState& state) {
   std::vector<std::unordered_map<StopId, StepState>> result_states;
   result_states.reserve(state.step_states.size());
 
+  std::vector<std::vector<StopId>> result_forced_after;
+  result_forced_after.reserve(state.forced_after.size());
+
   // Sweep forwards pushing states into `result_states`, combining with prev
   // when it is a forced stop state.
   for (int i = 0; i < state.step_states.size(); ++i) {
@@ -384,13 +399,23 @@ void CombineForcedSteps(BnbState& state) {
       state.step_states[i].size() != 1
     ) {
       result_states.push_back(std::move(state.step_states[i]));
+      result_forced_after.push_back(std::move(state.forced_after[i]));
       continue;
     }
 
     // Ok we have a size==1 state and it's not at the beginning or the end.
     const auto& [forced_s, forced_state] = *state.step_states[i].begin();
+    state.required.EraseGroup(forced_s);
 
     // So we want to modify the prev state to represent arriving at forced_s.
+    auto& prev_forced_after = result_forced_after.back();
+    prev_forced_after.reserve(1 + state.forced_after[i].size());
+    prev_forced_after.push_back(forced_s);
+    prev_forced_after.insert(
+        prev_forced_after.end(),
+        state.forced_after[i].begin(),
+        state.forced_after[i].end()
+    );
     for (auto& [prev_s, prev_state] : result_states.back()) {
       int forced_ats_i = 0;
       for (ArrivalTimeState& prev_ats : prev_state.states) {
@@ -427,6 +452,7 @@ void CombineForcedSteps(BnbState& state) {
   }
 
   state.step_states = std::move(result_states);
+  state.forced_after = std::move(result_forced_after);
 }
 
 // Sweeps a forwards filter from k0 to the end and then a backwards filter to
@@ -505,6 +531,7 @@ BnbState ComputeStepStates(
 
   BnbState state;
   state.boundary = boundary;
+  state.required = required;
 
   // state.step_states[0]: Base case, START@t0.
   //
@@ -515,9 +542,11 @@ BnbState ComputeStepStates(
   //
   // state.step_states[n-1]: END@{tf1, tf2, ..., tfx}.
   state.step_states.resize(required.size());
+  state.forced_after.resize(required.size());
 
   state.step_states[0][boundary.start].states.push_back({.arrival_time = t0});
   for (int k = 0; k < state.step_states.size(); ++k) {
+    std::cout << "prop " << k << "\n";
     PropagateStepStatesForwards(completed, t_ub, state, s0, k);
   }
 
@@ -585,15 +614,13 @@ void DeduplicateEdges(std::vector<TarelEdge>& edges) {
   }
 }
 
-constexpr int kMaxStep = 6;
+constexpr int kMaxStep = 4;
 
 std::optional<TspTourResult> DoTSP(
-    const StepsAdjacencyList& completed,
-    const RequiredStops& required,
-    const BnbState& state,
-    int ub_rel
+    const StepsAdjacencyList& completed, const BnbState& state, int ub_rel
 ) {
   const auto& boundary = state.boundary;
+  const auto& required = state.required;
   const auto& step_states = state.step_states;
 
   for (const std::unordered_map<StopId, StepState>& step_state : step_states) {
@@ -960,9 +987,6 @@ int Bnb(
   int best_ub = ub_rel;
   while (q.size() > 0) {
     iter_count += 1;
-    if (iter_count >= 2) {
-      return best_ub;
-    }
 
     std::pop_heap(q.begin(), q.end());
     BnbNode cur = std::move(q.back());
@@ -970,36 +994,14 @@ int Bnb(
 
     CombineForcedSteps(cur.state);
 
-    int first_unknown_stop_k = 0;
-    while (first_unknown_stop_k < cur.state.step_states.size() &&
-           cur.state.step_states[first_unknown_stop_k].size() == 1) {
-      first_unknown_stop_k += 1;
-    }
-    assert(first_unknown_stop_k < cur.state.step_states.size());
-    int first_unknown_stop_cardinality =
-        cur.state.step_states[first_unknown_stop_k].size();
-
-    int last_unknown_stop_k = cur.state.step_states.size() - 1;
-    while (last_unknown_stop_k >= 0 &&
-           cur.state.step_states[last_unknown_stop_k].size() == 1) {
-      last_unknown_stop_k -= 1;
-    }
-    assert(last_unknown_stop_k >= 0);
-
     std::cout << "iter " << iter_count << ": take "
               << TimeSinceServiceStart{cur.lb} << " (" << (q.size() + 1)
               << " active)\n";
     for (const std::string& constraint : cur.constraints) {
       std::cout << "  - " << constraint << "\n";
     }
-    for (int k = std::max(0, first_unknown_stop_k - 1);
-         k <= std::min(
-                  last_unknown_stop_k + 1,
-                  static_cast<int>(cur.state.step_states.size()) - 1
-              );
-         ++k) {
-      if (k <= first_unknown_stop_k + kMaxStep ||
-          k >= last_unknown_stop_k - kMaxStep) {
+    for (int k = 0; k + 1 <= cur.state.step_states.size(); ++k) {
+      if (k <= kMaxStep || k + kMaxStep >= cur.state.step_states.size()) {
         TimeSinceServiceStart min_at{std::numeric_limits<int>::max()},
             max_at{std::numeric_limits<int>::min()};
         for (const auto& [s, states] : cur.state.step_states[k]) {
@@ -1017,15 +1019,18 @@ int Bnb(
         } else {
           std::cout << cur.state.step_states[k].size();
         }
-
         std::cout << " [";
         if (min_at == max_at) {
           std::cout << min_at;
         } else {
           std::cout << min_at << ", " << max_at;
         }
-        std::cout << "]\n";
-      } else if (k == first_unknown_stop_k + kMaxStep + 1) {
+        std::cout << "]";
+        for (StopId fa : cur.state.forced_after[k]) {
+          std::cout << " -> " << problem.StopName(fa);
+        }
+        std::cout << "\n";
+      } else if (k == kMaxStep + 1) {
         std::cout << "  + ...\n";
       }
     }
@@ -1035,8 +1040,7 @@ int Bnb(
       return best_ub;
     }
 
-    std::optional<TspTourResult> result =
-        DoTSP(completed, problem.required, cur.state, ub_rel);
+    std::optional<TspTourResult> result = DoTSP(completed, cur.state, ub_rel);
     if (!result.has_value()) {
       std::cout << "  pruned: no TSP result\n";
       continue;
@@ -1062,7 +1066,7 @@ int Bnb(
 
     // Branch on what is the last stop.
     {
-      int constraint_k = last_unknown_stop_k;
+      int constraint_k = static_cast<int>(cur.state.step_states.size()) - 2;
       StopId constraint_s = result->tour_edges[constraint_k].origin.stop;
 
       // Branch: Require s@k.
@@ -1161,12 +1165,13 @@ int Bnb(
     // TODO: Think about whether this is an appropriate condition for when we
     // need to require/forbid s@k.
     if (
-        first_unknown_stop_cardinality < 5 || analysis.first_btaat_k == -1 ||
-        analysis.first_btaat_k >=
-            first_unknown_stop_k + kMaxStep  // TODO: Off-by-1?
+        false
+        // first_unknown_stop_cardinality < 5 || analysis.first_btaat_k == -1 ||
+        // analysis.first_btaat_k >=
+        //     first_unknown_stop_k + kMaxStep  // TODO: Off-by-1?
     ) {
       // Branches: Require/forbid s@k.
-      int constraint_k = first_unknown_stop_k;
+      int constraint_k = 1;
       StopId constraint_s = result->tour_edges[constraint_k].destination.stop;
 
       // Branch: Require s@k.
@@ -1405,8 +1410,7 @@ int main(int argc, char* argv[]) {
   // );
 
   auto PrintTsp = [&](const BnbState& state) {
-    std::optional<TspTourResult> result =
-        DoTSP(completed, problem.required, state, ub_rel);
+    std::optional<TspTourResult> result = DoTSP(completed, state, ub_rel);
     if (!result.has_value()) {
       std::cout << "  pruned: no TSP result\n";
       return;
