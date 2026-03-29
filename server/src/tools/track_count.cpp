@@ -370,58 +370,63 @@ void FilterStepStatesBackwards(BnbState& state, int k) {
 void CombineForcedSteps(BnbState& state) {
   std::vector<std::unordered_map<StopId, StepState>> result_states;
   result_states.reserve(state.step_states.size());
-  result_states.push_back(std::move(state.step_states[0]));
 
-  for (int k = 1; k < state.step_states.size(); ++k) {
-    if (state.step_states[k].size() > 1) {
-      result_states.push_back(std::move(state.step_states[k]));
+  // Sweep forwards pushing states into `result_states`, combining with prev
+  // when it is a forced stop state.
+  for (int i = 0; i < state.step_states.size(); ++i) {
+    if (
+      // First state can't be combined with prev because there is no prev.
+      i == 0 ||
+      // Don't want to combine last state with prev so that we always have a
+      // 1-state END at the end.
+      i + 1 == state.step_states.size() ||
+      // Don't combine >1 size states.
+      state.step_states[i].size() != 1
+    ) {
+      result_states.push_back(std::move(state.step_states[i]));
       continue;
     }
 
-    // We're adding a forced step state, so instead of pushing it as a result,
-    // update the onwardses of the prev states to go through it.
-    const StopId s_add = state.step_states[k].begin()->first;
-    const StepState& state_add = state.step_states[k].begin()->second;
+    // Ok we have a size==1 state and it's not at the beginning or the end.
+    const auto& [forced_s, forced_state] = *state.step_states[i].begin();
 
-    for (auto& [s_prev, state_prev] : result_states.back()) {
+    // So we want to modify the prev state to represent arriving at forced_s.
+    for (auto& [prev_s, prev_state] : result_states.back()) {
+      int forced_ats_i = 0;
+      for (ArrivalTimeState& prev_ats : prev_state.states) {
+        assert(prev_ats.onwards.size() == 1);
+        OnwardsStep prev_onwards = prev_ats.onwards.front();
+        assert(prev_onwards.destination == forced_s);
+        prev_ats.onwards.clear();
+
+        while (forced_ats_i < forced_state.states.size() &&
+               forced_state.states[forced_ats_i].arrival_time.seconds <
+                   prev_ats.arrival_time.seconds + prev_onwards.duration) {
+          forced_ats_i += 1;
+        }
+        assert(forced_ats_i < forced_state.states.size());
+        assert(
+            forced_state.states[forced_ats_i].arrival_time.seconds ==
+            prev_ats.arrival_time.seconds + prev_onwards.duration
+        );
+
+        prev_ats.onwards.reserve(
+            forced_state.states[forced_ats_i].onwards.size()
+        );
+        for (const OnwardsStep& forced_onwards :
+             forced_state.states[forced_ats_i].onwards) {
+          prev_ats.onwards.push_back(
+              OnwardsStep{
+                  .destination = forced_onwards.destination,
+                  .duration = prev_onwards.duration + forced_onwards.duration,
+              }
+          );
+        }
+      }
     }
   }
 
-  //   if (result_states.back().size() > 1) {
-  //     result_states.push_back(std::move(state.step_states[k]));
-  //     continue;
-  //   }
-
-  //   // The prev result state has a single stop, so we can merge it with the
-  //   current state.
-
-  //   // First move the information out of the prev result state and clear the
-  //   prev result state. StopId s_prev = result_states.back().begin()->first;
-  //   StepState state_prev = std::move(result_states.back().begin()->second);
-  //   result_states.back().clear();
-
-  //   // Then build it back up again by combining with the current state.
-  //   for (const auto& [s_cur, state_cur] : state.step_states[k]) {
-  //     int ats_cur_i = 0;
-
-  //     StepState& state_result = result_states.back()[s_cur];
-  //     for (const ArrivalTimeState& ats_prev : state_prev.states) {
-  //       for (const OnwardsStep& onwards_prev : ats_prev.onwards) {
-  //         if (onwards_prev.destination == s_cur) {
-  //           TimeSinceServiceStart onwards_at{ats_prev.arrival_time.seconds +
-  //           onwards_prev.duration}; while (ats_cur_i <
-  //           state_cur.states.size() &&
-  //           state_cur.states[ats_cur_i].arrival_time < onwards_at) {
-  //             ats_cur_i += 1;
-  //           }
-  //           assert(ats_cur_i < state_cur.states.size() &&
-  //           state_cur.states[ats_cur_i].arrival_time == onwards_at);
-
-  //           break;
-  //         }
-  //       }
-  //     }
-  //   }
+  state.step_states = std::move(result_states);
 }
 
 // Sweeps a forwards filter from k0 to the end and then a backwards filter to
@@ -955,13 +960,15 @@ int Bnb(
   int best_ub = ub_rel;
   while (q.size() > 0) {
     iter_count += 1;
-    // if (iter_count >= 2) {
-    //   return best_ub;
-    // }
+    if (iter_count >= 2) {
+      return best_ub;
+    }
 
     std::pop_heap(q.begin(), q.end());
     BnbNode cur = std::move(q.back());
     q.pop_back();
+
+    CombineForcedSteps(cur.state);
 
     int first_unknown_stop_k = 0;
     while (first_unknown_stop_k < cur.state.step_states.size() &&
