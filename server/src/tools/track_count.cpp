@@ -13,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include "solver/data.h"
@@ -668,7 +669,6 @@ BnbState ComputeStepStates(
 
   state.step_states[0][boundary.start].states.push_back({.arrival_time = t0});
   for (int k = 0; k < state.step_states.size(); ++k) {
-    std::cout << "prop " << k << "\n";
     PropagateStepStatesForwards(completed, t_ub, state, s0, k);
   }
 
@@ -1057,37 +1057,167 @@ std::string ApproxBnbStateSizeMB(const BnbState& state) {
   return oss.str();
 }
 
-BnbState RequireStopStep(const BnbState& state, int k, StopId s) {
-  BnbState result = state;
-  std::erase_if(result.step_states[k], [&](const auto& pair) {
-    return pair.first != s;
-  });
-  // TODO: This could instead be another pass that realizes that a certain step
-  // has a single stop and then delete that stop from all the other steps.
-  for (int i = 0; i < result.step_states.size(); ++i) {
-    if (i == k) {
-      continue;
-    }
-    std::erase_if(result.step_states[i], [&](const auto& pair) {
-      return pair.first == s;
-    });
-  }
-  FilterStepStatesSweep(result, k);
-  return result;
-}
+struct RequireStopAtStep {
+  StopId stop;
+  int k;
 
-BnbState ForbidStopStep(const BnbState& state, int k, StopId s) {
-  BnbState result = state;
-  std::erase_if(result.step_states[k], [&](const auto& pair) {
-    return pair.first == s;
-  });
-  FilterStepStatesSweep(result, k);
-  return result;
-}
+  void Apply(BnbState& state) const {
+    std::erase_if(state.step_states[k], [&](const auto& pair) {
+      return pair.first != stop;
+    });
+    // TODO: This could instead be another pass that realizes that a certain
+    // step has a single stop and then delete that stop from all the other
+    // steps.
+    for (int i = 0; i < state.step_states.size(); ++i) {
+      if (i == k) {
+        continue;
+      }
+      std::erase_if(state.step_states[i], [&](const auto& pair) {
+        return pair.first == stop;
+      });
+    }
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << "Require " << problem.StopName(stop) << " @ " << k;
+    return ss.str();
+  }
+};
+
+struct ForbidStopAtStep {
+  StopId stop;
+  int k;
+
+  void Apply(BnbState& state) const {
+    std::erase_if(state.step_states[k], [&](const auto& pair) {
+      return pair.first == stop;
+    });
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << "Forbid " << problem.StopName(stop) << " @ " << k;
+    return ss.str();
+  }
+};
+
+struct TimeUpperBound {
+  int k;
+  TimeSinceServiceStart time;
+
+  void Apply(BnbState& state) const {
+    for (auto& [s, states] : state.step_states[k]) {
+      std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
+        return ats.arrival_time >= time;
+      });
+    }
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << "* @ " << k << " < " << time;
+    return ss.str();
+  }
+};
+
+struct TimeLowerBound {
+  int k;
+  TimeSinceServiceStart time;
+
+  void Apply(BnbState& state) const {
+    for (auto& [s, states] : state.step_states[k]) {
+      std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
+        return ats.arrival_time < time;
+      });
+    }
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << "* @ " << k << " >= " << time;
+    return ss.str();
+  }
+};
+
+struct StopTimeUpperBound {
+  StopId stop;
+  int k;
+  TimeSinceServiceStart time;
+
+  void Apply(BnbState& state) const {
+    std::erase_if(
+        state.step_states[k][stop].states,
+        [&](const ArrivalTimeState& ats) { return ats.arrival_time > time; }
+    );
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << problem.StopName(stop) << " @ " << k << " <= " << time;
+    return ss.str();
+  }
+};
+
+struct StopTimeRange {
+  StopId stop;
+  int k;
+  TimeSinceServiceStart a;
+  TimeSinceServiceStart b;
+
+  void Apply(BnbState& state) const {
+    std::erase_if(
+        state.step_states[k][stop].states, [&](const ArrivalTimeState& ats) {
+          return ats.arrival_time <= a || ats.arrival_time >= b;
+        }
+    );
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << problem.StopName(stop) << " @ " << k << " (" << a << ", " << b << ")";
+    return ss.str();
+  }
+};
+
+struct StopTimeLowerBound {
+  StopId stop;
+  int k;
+  TimeSinceServiceStart time;
+
+  void Apply(BnbState& state) const {
+    std::erase_if(
+        state.step_states[k][stop].states,
+        [&](const ArrivalTimeState& ats) { return ats.arrival_time < time; }
+    );
+    FilterStepStatesSweep(state, k);
+  }
+
+  std::string ToString(const ProblemState& problem) const {
+    std::stringstream ss;
+    ss << problem.StopName(stop) << " @ " << k << " >= " << time;
+    return ss.str();
+  }
+};
+
+using BnbConstraint = std::variant<
+    RequireStopAtStep,
+    ForbidStopAtStep,
+    TimeUpperBound,
+    TimeLowerBound,
+    StopTimeUpperBound,
+    StopTimeRange,
+    StopTimeLowerBound>;
 
 struct BnbNode {
   int lb;
-  std::vector<std::string> constraints;
+  std::vector<BnbConstraint> constraints;
   BnbState state;
   bool operator<(const BnbNode& other) const { return lb > other.lb; }
 };
@@ -1102,7 +1232,7 @@ int Bnb(
 ) {
   std::vector<BnbNode> q;
   auto PushQ =
-      [&](int lb, std::vector<std::string> constraints, BnbState state) {
+      [&](int lb, std::vector<BnbConstraint> constraints, BnbState state) {
         std::cout << "  PushQ: " << ApproxBnbStateSizeMB(state) << "\n";
         q.emplace_back(lb, std::move(constraints), std::move(state));
         std::push_heap(q.begin(), q.end());
@@ -1153,8 +1283,13 @@ int Bnb(
     std::cout << "iter " << iter_count << ": take "
               << TimeSinceServiceStart{cur.lb} << " (" << (q.size() + 1)
               << " active)\n";
-    for (const std::string& constraint : cur.constraints) {
-      std::cout << "  - " << constraint << "\n";
+    for (const BnbConstraint& constraint : cur.constraints) {
+      std::cout << "  - "
+                << std::visit(
+                       [&](const auto& c) { return c.ToString(problem); },
+                       constraint
+                   )
+                << "\n";
     }
     for (int k = 0; k + 1 <= cur.state.step_states.size(); ++k) {
       if (k <= kMaxStep || k + kMaxStep >= cur.state.step_states.size()) {
@@ -1237,29 +1372,33 @@ int Bnb(
 
       // Branch: Require s@k.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "Require " << problem.StopName(constraint_s) << " @ "
-                   << small_cardinality_k;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(
+            RequireStopAtStep{constraint_s, small_cardinality_k}
+        );
+        BnbState branch_state = cur.state;
+        RequireStopAtStep{constraint_s, small_cardinality_k}.Apply(
+            branch_state
+        );
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            RequireStopStep(cur.state, small_cardinality_k, constraint_s)
+            std::move(branch_state)
         );
       }
 
       // Branch: Forbid s@k.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "Forbid " << problem.StopName(constraint_s) << " @ "
-                   << small_cardinality_k;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(
+            ForbidStopAtStep{constraint_s, small_cardinality_k}
+        );
+        BnbState branch_state = cur.state;
+        ForbidStopAtStep{constraint_s, small_cardinality_k}.Apply(branch_state);
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            ForbidStopStep(cur.state, small_cardinality_k, constraint_s)
+            std::move(branch_state)
         );
       }
       continue;
@@ -1314,19 +1453,11 @@ int Bnb(
 
       // Branch: t < branch_at.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "* @ " << branch_k << " < " << branch_at;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(TimeUpperBound{branch_k, branch_at});
 
         BnbState branch_state = cur.state;
-        for (auto& [s, states] : branch_state.step_states[branch_k]) {
-          std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
-            return ats.arrival_time >= branch_at;
-          });
-        }
-
-        FilterStepStatesSweep(branch_state, branch_k);
+        TimeUpperBound{branch_k, branch_at}.Apply(branch_state);
 
         TimeSinceServiceStart min_last_at = branch_state.step_states.back()
                                                 .begin()
@@ -1343,19 +1474,11 @@ int Bnb(
 
       // Branch: t >= branch_at.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "* @ " << branch_k << " >= " << branch_at;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(TimeLowerBound{branch_k, branch_at});
 
         BnbState branch_state = cur.state;
-        for (auto& [s, states] : branch_state.step_states[branch_k]) {
-          std::erase_if(states.states, [&](const ArrivalTimeState& ats) {
-            return ats.arrival_time < branch_at;
-          });
-        }
-
-        FilterStepStatesSweep(branch_state, branch_k);
+        TimeLowerBound{branch_k, branch_at}.Apply(branch_state);
 
         TimeSinceServiceStart min_last_at = branch_state.step_states.back()
                                                 .begin()
@@ -1386,29 +1509,31 @@ int Bnb(
 
       // Branch: Require s@k.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "Require " << problem.StopName(constraint_s) << " @ "
-                   << constraint_k;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(
+            RequireStopAtStep{constraint_s, constraint_k}
+        );
+        BnbState branch_state = cur.state;
+        RequireStopAtStep{constraint_s, constraint_k}.Apply(branch_state);
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            RequireStopStep(cur.state, constraint_k, constraint_s)
+            std::move(branch_state)
         );
       }
 
       // Branch: Forbid s@k.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "Forbid " << problem.StopName(constraint_s) << " @ "
-                   << constraint_k;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(
+            ForbidStopAtStep{constraint_s, constraint_k}
+        );
+        BnbState branch_state = cur.state;
+        ForbidStopAtStep{constraint_s, constraint_k}.Apply(branch_state);
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            ForbidStopStep(cur.state, constraint_k, constraint_s)
+            std::move(branch_state)
         );
       }
     } else {
@@ -1417,44 +1542,37 @@ int Bnb(
 
       // Branch: Forbid the stop.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << "Forbid " << problem.StopName(constraint_s) << " @ "
-                   << constraint_k;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        branch_constraints.push_back(
+            ForbidStopAtStep{constraint_s, constraint_k}
+        );
+        BnbState branch_state = cur.state;
+        ForbidStopAtStep{constraint_s, constraint_k}.Apply(branch_state);
         PushQ(
             result->optimal_value,
             std::move(branch_constraints),
-            ForbidStopStep(cur.state, constraint_k, constraint_s)
+            std::move(branch_state)
         );
       }
 
-      BnbState require_state =
-          RequireStopStep(cur.state, constraint_k, constraint_s);
+      BnbState require_state = cur.state;
+      RequireStopAtStep{constraint_s, constraint_k}.Apply(require_state);
 
       // Branch: First BAD region, and require the stop.
       // TODO: Think harder about whether I can omit branch for BAD region in
       // the -inf case.
       if (analysis.first_btaat_good_a.seconds !=
           std::numeric_limits<int>::min()) {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
-                   << " @ " << analysis.first_btaat_k
-                   << " <= " << analysis.first_btaat_good_a;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        StopTimeUpperBound stop_constraint{
+            analysis.first_btaat_edge.origin.stop,
+            analysis.first_btaat_k,
+            analysis.first_btaat_good_a
+        };
+        branch_constraints.push_back(stop_constraint);
 
         BnbState branch_state = require_state;
-        std::erase_if(
-            branch_state
-                .step_states[analysis.first_btaat_k]
-                            [analysis.first_btaat_edge.origin.stop]
-                .states,
-            [&](const ArrivalTimeState& ats) {
-              return ats.arrival_time > analysis.first_btaat_good_a;
-            }
-        );
-        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
+        stop_constraint.Apply(branch_state);
 
         PushQ(
             result->optimal_value,
@@ -1465,26 +1583,17 @@ int Bnb(
 
       // Branch: GOOD region, and require the stop.
       {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
-                   << " @ " << analysis.first_btaat_k << " ("
-                   << analysis.first_btaat_good_a << ", "
-                   << analysis.first_btaat_good_b << ")";
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        StopTimeRange range_constraint{
+            analysis.first_btaat_edge.origin.stop,
+            analysis.first_btaat_k,
+            analysis.first_btaat_good_a,
+            analysis.first_btaat_good_b
+        };
+        branch_constraints.push_back(range_constraint);
 
         BnbState branch_state = require_state;
-        std::erase_if(
-            branch_state
-                .step_states[analysis.first_btaat_k]
-                            [analysis.first_btaat_edge.origin.stop]
-                .states,
-            [&](const ArrivalTimeState& ats) {
-              return ats.arrival_time <= analysis.first_btaat_good_a ||
-                     ats.arrival_time >= analysis.first_btaat_good_b;
-            }
-        );
-        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
+        range_constraint.Apply(branch_state);
 
         PushQ(
             result->optimal_value,
@@ -1498,24 +1607,16 @@ int Bnb(
       // the inf case.
       if (analysis.first_btaat_good_b.seconds !=
           std::numeric_limits<int>::max()) {
-        std::vector<std::string> branch_constraints = cur.constraints;
-        std::stringstream constraint;
-        constraint << problem.StopName(analysis.first_btaat_edge.origin.stop)
-                   << " @ " << analysis.first_btaat_k
-                   << " >= " << analysis.first_btaat_good_b;
-        branch_constraints.push_back(constraint.str());
+        std::vector<BnbConstraint> branch_constraints = cur.constraints;
+        StopTimeLowerBound stop_constraint{
+            analysis.first_btaat_edge.origin.stop,
+            analysis.first_btaat_k,
+            analysis.first_btaat_good_b
+        };
+        branch_constraints.push_back(stop_constraint);
 
         BnbState branch_state = require_state;
-        std::erase_if(
-            branch_state
-                .step_states[analysis.first_btaat_k]
-                            [analysis.first_btaat_edge.origin.stop]
-                .states,
-            [&](const ArrivalTimeState& ats) {
-              return ats.arrival_time < analysis.first_btaat_good_b;
-            }
-        );
-        FilterStepStatesSweep(branch_state, analysis.first_btaat_k);
+        stop_constraint.Apply(branch_state);
 
         PushQ(
             result->optimal_value,
