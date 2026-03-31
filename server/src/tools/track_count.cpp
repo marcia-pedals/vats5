@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -140,13 +141,126 @@ struct OnwardsStep {
   int duration;
 };
 
+struct OnwardsDuration {
+  int duration;  // -1 = no connection to this destination
+};
+
 struct ArrivalTimeState {
   TimeSinceServiceStart arrival_time;
-  std::vector<OnwardsStep> onwards;
+  std::vector<OnwardsDuration> onwards;  // indexed by StepState::destinations
+};
+
+struct StepState;
+
+class OnwardsStepsView {
+ public:
+  OnwardsStepsView(
+      const std::vector<StopId>& destinations,
+      const std::vector<OnwardsDuration>& onwards
+  )
+      : destinations_(destinations), onwards_(onwards) {}
+
+  class Iterator {
+   public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = OnwardsStep;
+    using difference_type = std::ptrdiff_t;
+    using pointer = void;
+    using reference = OnwardsStep;
+
+    Iterator(
+        const std::vector<StopId>& destinations,
+        const std::vector<OnwardsDuration>& onwards,
+        size_t index
+    )
+        : destinations_(destinations), onwards_(onwards), index_(index) {
+      SkipInvalid();
+    }
+
+    OnwardsStep operator*() const {
+      return OnwardsStep{
+          .destination = destinations_[index_],
+          .duration = onwards_[index_].duration,
+      };
+    }
+
+    Iterator& operator++() {
+      ++index_;
+      SkipInvalid();
+      return *this;
+    }
+
+    Iterator operator++(int) {
+      Iterator tmp = *this;
+      ++(*this);
+      return tmp;
+    }
+
+    bool operator==(const Iterator& other) const {
+      return index_ == other.index_;
+    }
+    bool operator!=(const Iterator& other) const { return !(*this == other); }
+
+   private:
+    void SkipInvalid() {
+      while (index_ < destinations_.size() &&
+             (index_ >= onwards_.size() || onwards_[index_].duration == -1)) {
+        ++index_;
+      }
+    }
+
+    const std::vector<StopId>& destinations_;
+    const std::vector<OnwardsDuration>& onwards_;
+    size_t index_;
+  };
+
+  Iterator begin() const { return Iterator(destinations_, onwards_, 0); }
+  Iterator end() const {
+    return Iterator(destinations_, onwards_, destinations_.size());
+  }
+
+ private:
+  const std::vector<StopId>& destinations_;
+  const std::vector<OnwardsDuration>& onwards_;
 };
 
 struct StepState {
+  std::vector<StopId> destinations;
   std::vector<ArrivalTimeState> states;
+
+  OnwardsStepsView OnwardsSteps(const ArrivalTimeState& ats) const {
+    return OnwardsStepsView(destinations, ats.onwards);
+  }
+
+  void AddOnwards(ArrivalTimeState& ats, StopId dest, int duration) {
+    auto it = std::find(destinations.begin(), destinations.end(), dest);
+    size_t idx;
+    if (it == destinations.end()) {
+      idx = destinations.size();
+      destinations.push_back(dest);
+    } else {
+      idx = static_cast<size_t>(it - destinations.begin());
+    }
+    if (idx >= ats.onwards.size()) {
+      ats.onwards.resize(idx + 1, OnwardsDuration{.duration = -1});
+    }
+    ats.onwards[idx].duration = duration;
+  }
+
+  void ClearOnwards(ArrivalTimeState& ats) const {
+    for (auto& od : ats.onwards) {
+      od.duration = -1;
+    }
+  }
+
+  bool HasAnyOnwards(const ArrivalTimeState& ats) const {
+    for (size_t i = 0; i < ats.onwards.size() && i < destinations.size(); ++i) {
+      if (ats.onwards[i].duration != -1) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   void SortAndDedupe() {
     std::sort(states.begin(), states.end(), [](const auto& a, const auto& b) {
@@ -232,11 +346,8 @@ void PropagateStepStatesForwards(
         if (t_next > t_ub) {
           continue;
         }
-        ats.onwards.push_back(
-            OnwardsStep{
-                .destination = s_next,
-                .duration = t_next.seconds - ats.arrival_time.seconds,
-            }
+        step_state_cur.AddOnwards(
+            ats, s_next, t_next.seconds - ats.arrival_time.seconds
         );
         if (k + 1 < state.step_states.size()) {
           auto& vec = state.step_states[k + 1][s_next].states;
@@ -267,7 +378,7 @@ void FilterStepStatesForwards(BnbState& state, int k) {
       arrival_times;
   for (const auto& [s_cur, step_state_cur] : state.step_states[k]) {
     for (const ArrivalTimeState& ats : step_state_cur.states) {
-      for (const OnwardsStep& onwards : ats.onwards) {
+      for (OnwardsStep onwards : step_state_cur.OnwardsSteps(ats)) {
         arrival_times[onwards.destination].insert(
             TimeSinceServiceStart{ats.arrival_time.seconds + onwards.duration}
         );
@@ -305,15 +416,26 @@ void FilterStepStatesBackwards(BnbState& state, int k) {
 
   for (auto& [s_cur, step_state_cur] : state.step_states[k]) {
     for (ArrivalTimeState& ats : step_state_cur.states) {
-      std::erase_if(ats.onwards, [&](const OnwardsStep& onwards) {
-        return !arrival_times[onwards.destination].contains(
-            TimeSinceServiceStart{ats.arrival_time.seconds + onwards.duration}
-        );
-      });
+      for (size_t i = 0;
+           i < ats.onwards.size() && i < step_state_cur.destinations.size();
+           ++i) {
+        if (ats.onwards[i].duration == -1) {
+          continue;
+        }
+        if (!arrival_times[step_state_cur.destinations[i]].contains(
+                TimeSinceServiceStart{
+                    ats.arrival_time.seconds + ats.onwards[i].duration
+                }
+            )) {
+          ats.onwards[i].duration = -1;
+        }
+      }
     }
-    std::erase_if(step_state_cur.states, [](const ArrivalTimeState& ats) {
-      return ats.onwards.size() == 0;
-    });
+    std::erase_if(
+        step_state_cur.states, [&step_state_cur](const ArrivalTimeState& ats) {
+          return !step_state_cur.HasAnyOnwards(ats);
+        }
+    );
   }
 
   std::erase_if(state.step_states[k], [](const auto& pair) {
@@ -419,10 +541,14 @@ void CombineForcedSteps(BnbState& state) {
     for (auto& [prev_s, prev_state] : result_states.back()) {
       int forced_ats_i = 0;
       for (ArrivalTimeState& prev_ats : prev_state.states) {
-        assert(prev_ats.onwards.size() == 1);
-        OnwardsStep prev_onwards = prev_ats.onwards.front();
+        auto prev_onwards_view = prev_state.OnwardsSteps(prev_ats);
+        auto prev_onwards_it = prev_onwards_view.begin();
+        assert(prev_onwards_it != prev_onwards_view.end());
+        OnwardsStep prev_onwards = *prev_onwards_it;
+        ++prev_onwards_it;
+        assert(prev_onwards_it == prev_onwards_view.end());
         assert(prev_onwards.destination == forced_s);
-        prev_ats.onwards.clear();
+        prev_state.ClearOnwards(prev_ats);
 
         while (forced_ats_i < forced_state.states.size() &&
                forced_state.states[forced_ats_i].arrival_time.seconds <
@@ -435,16 +561,12 @@ void CombineForcedSteps(BnbState& state) {
             prev_ats.arrival_time.seconds + prev_onwards.duration
         );
 
-        prev_ats.onwards.reserve(
-            forced_state.states[forced_ats_i].onwards.size()
-        );
-        for (const OnwardsStep& forced_onwards :
-             forced_state.states[forced_ats_i].onwards) {
-          prev_ats.onwards.push_back(
-              OnwardsStep{
-                  .destination = forced_onwards.destination,
-                  .duration = prev_onwards.duration + forced_onwards.duration,
-              }
+        for (OnwardsStep forced_onwards :
+             forced_state.OnwardsSteps(forced_state.states[forced_ats_i])) {
+          prev_state.AddOnwards(
+              prev_ats,
+              forced_onwards.destination,
+              prev_onwards.duration + forced_onwards.duration
           );
         }
       }
@@ -667,7 +789,7 @@ std::optional<TspTourResult> DoTSP(
       // Collect best duration per destination across all arrival times.
       std::unordered_map<StopId, int> best_dur_by_dest;
       for (const ArrivalTimeState& ats : step_state_cur.states) {
-        for (const OnwardsStep& onwards : ats.onwards) {
+        for (OnwardsStep onwards : step_state_cur.OnwardsSteps(ats)) {
           auto [it, inserted] = best_dur_by_dest.try_emplace(
               onwards.destination, onwards.duration
           );
@@ -783,7 +905,7 @@ TourAnalysis AnalyzeTour(
         if (ats.arrival_time < analysis.t_actual) {
           continue;
         }
-        for (const OnwardsStep& onwards : ats.onwards) {
+        for (OnwardsStep onwards : from_o_it->second.OnwardsSteps(ats)) {
           if (onwards.destination == edge.destination.stop) {
             dur_actual = onwards.duration +
                          (ats.arrival_time.seconds - analysis.t_actual.seconds);
@@ -814,7 +936,7 @@ TourAnalysis AnalyzeTour(
 
       if (found) {
         for (const ArrivalTimeState& ats : from_o_it->second.states) {
-          for (const OnwardsStep& onwards : ats.onwards) {
+          for (OnwardsStep onwards : from_o_it->second.OnwardsSteps(ats)) {
             if (onwards.destination == edge.destination.stop) {
               dur_hist[onwards.duration].push_back(ats.arrival_time);
 
@@ -903,6 +1025,38 @@ TourAnalysis AnalyzeTour(
   return analysis;
 }
 
+std::string ApproxBnbStateSizeMB(const BnbState& state) {
+  size_t bytes = sizeof(BnbState);
+
+  for (const auto& step_map : state.step_states) {
+    bytes += sizeof(step_map);
+    for (const auto& [stop, step_state] : step_map) {
+      bytes += sizeof(stop) + sizeof(step_state);
+      bytes += step_state.destinations.capacity() * sizeof(StopId);
+      for (const ArrivalTimeState& ats : step_state.states) {
+        bytes += sizeof(ats);
+        bytes += ats.onwards.capacity() * sizeof(OnwardsDuration);
+      }
+      bytes += step_state.states.capacity() * sizeof(ArrivalTimeState);
+    }
+    // Rough estimate for unordered_map bucket overhead.
+    bytes += step_map.bucket_count() * sizeof(void*);
+  }
+
+  for (const auto& forced : state.forced_after) {
+    bytes += sizeof(forced) + forced.capacity() * sizeof(StopId);
+  }
+
+  bytes += state.required.representative.bucket_count() * sizeof(void*);
+  bytes +=
+      state.required.representative.size() * (sizeof(StopId) + sizeof(StopId));
+
+  double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(2) << mb << " MB";
+  return oss.str();
+}
+
 BnbState RequireStopStep(const BnbState& state, int k, StopId s) {
   BnbState result = state;
   std::erase_if(result.step_states[k], [&](const auto& pair) {
@@ -949,6 +1103,7 @@ int Bnb(
   std::vector<BnbNode> q;
   auto PushQ =
       [&](int lb, std::vector<std::string> constraints, BnbState state) {
+        std::cout << "  PushQ: " << ApproxBnbStateSizeMB(state) << "\n";
         q.emplace_back(lb, std::move(constraints), std::move(state));
         std::push_heap(q.begin(), q.end());
       };
@@ -1120,7 +1275,7 @@ int Bnb(
         for (const auto& [s, states] : cur.state.step_states[branch_k]) {
           std::unordered_map<StopId, int> onwards_dur;
           for (const ArrivalTimeState& ats : states.states) {
-            for (const OnwardsStep& onwards : ats.onwards) {
+            for (OnwardsStep onwards : states.OnwardsSteps(ats)) {
               auto [it, inserted] = onwards_dur.try_emplace(
                   onwards.destination, onwards.duration
               );
