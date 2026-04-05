@@ -76,6 +76,7 @@
             nodejs
             pre-commit
             sqlite
+            (python3.withPackages (ps: with ps; [ matplotlib notebook ]))
           ] ++ [
             concorde
           ];

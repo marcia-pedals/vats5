@@ -194,6 +194,10 @@ target_link_libraries(precise_times PUBLIC tarel_graph CLI11::CLI11)
 add_executable(track_count src/tools/track_count.cpp)
 target_link_libraries(track_count PUBLIC tarel_graph CLI11::CLI11)
 
+# Add refiner tool
+add_executable(refiner src/tools/refiner.cpp)
+target_link_libraries(refiner PUBLIC tarel_graph CLI11::CLI11)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
