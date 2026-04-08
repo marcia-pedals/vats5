@@ -379,13 +379,12 @@ struct EmbiggenState {
   std::vector<StopId> path;
   std::vector<PairStep> steps;
 
-  // a_origin_times[i] is the time that steps[i] gets to (and departs -- these
-  // are the same because of how we do things) "a".
+  // b_times[i] is the time that steps[i] gets to "b".
   //
   // Note that duplicates are quite expected because multiple actual times
   // starting at path[0] may be forced to wait for the same departure from a
   // when they do finally get to a.
-  std::vector<TimeSinceServiceStart> a_origin_times;
+  std::vector<TimeSinceServiceStart> b_times;
 
   bool operator<(const EmbiggenState& other) const {
     return allowed_embiggen > other.allowed_embiggen;
@@ -401,10 +400,10 @@ struct EmbiggenState {
     return min_dur_i;
   }
 
-  int MinDurIWithoutAOT(TimeSinceServiceStart aot) const {
+  int MinDurIWithoutBT(TimeSinceServiceStart bt) const {
     int min_dur_i = -1;
     for (int i = 0; i < steps.size(); ++i) {
-      if (a_origin_times[i] == aot) {
+      if (b_times[i] == bt) {
         continue;
       }
       if (min_dur_i == -1 || steps[i].duration < steps[min_dur_i].duration) {
@@ -417,10 +416,10 @@ struct EmbiggenState {
 
 struct EmbiggenResult {
   int embiggening;
-  TimeSinceServiceStart min_dur_aot;
+  TimeSinceServiceStart min_dur_bt;
 };
 
-EmbiggenResult LocalEmbiggenIterative(
+std::optional<EmbiggenResult> LocalEmbiggenIterative(
     const ProblemState& problem, const RefinerState& state, StopId a, StopId b
 ) {
   auto ab_it = state.pairs.find({a, b});
@@ -429,84 +428,87 @@ EmbiggenResult LocalEmbiggenIterative(
 
   std::vector<EmbiggenState> q;
 
-  auto CombineAndPush =
-      [&](const std::vector<PairStep>& xy,
-          const std::vector<PairStep>& yz,
-          int path_relaxed_weight,
-          const std::vector<StopId> path,
-          const std::vector<TimeSinceServiceStart> a_origin_times,
-          bool a_in_xy) {
-        if (xy.size() == 0 || yz.size() == 0) {
-          // If there is no path, there is no need to push anything.
-          return;
-        }
+  auto CombineAndPush = [&](const std::vector<PairStep>& xy,
+                            const std::vector<PairStep>& yz,
+                            int path_relaxed_weight,
+                            const std::vector<StopId> path,
+                            const std::vector<TimeSinceServiceStart> b_times,
+                            bool b_in_xy) {
+    if (xy.size() == 0 || yz.size() == 0) {
+      // If there is no path, there is no need to push anything.
+      return;
+    }
 
-        if (a_in_xy) {
-          assert(a_origin_times.size() == xy.size());
-        } else {
-          assert(a_origin_times.size() == yz.size());
-        }
+    if (b_in_xy) {
+      assert(b_times.size() == xy.size());
+    } else {
+      assert(b_times.size() == yz.size());
+    }
 
-        std::vector<PairStep> new_steps;
-        std::vector<TimeSinceServiceStart> new_a_origin_times;
-        {
-          int new_steps_size_estimate = std::max(xy.size(), yz.size());
-          new_steps.reserve(new_steps_size_estimate);
-          new_a_origin_times.reserve(new_steps_size_estimate);
-        }
+    std::vector<PairStep> new_steps;
+    std::vector<TimeSinceServiceStart> new_b_times;
+    {
+      int new_steps_size_estimate = std::max(xy.size(), yz.size());
+      new_steps.reserve(new_steps_size_estimate);
+      new_b_times.reserve(new_steps_size_estimate);
+    }
 
-        int min_duration = std::numeric_limits<int>::max();
-        int yz_i = 0;
-        for (int xy_i = 0; xy_i < xy.size(); ++xy_i) {
-          while (yz_i < yz.size() &&
-                 yz[yz_i].origin_time < xy[xy_i].DestinationTime()) {
-            yz_i += 1;
-          }
-          if (yz_i == yz.size()) {
-            // TODO: Can I assert that this only happens when the yz step has
-            // been ub truncated? Cuz that's the only time I expect this to
-            // happen.
-            break;
-          }
-          assert(xy[xy_i].DestinationTime() == yz[yz_i].origin_time);
-          int combined_dur = xy[xy_i].duration + yz[yz_i].duration;
-          new_steps.push_back({
-              xy[xy_i].origin_time,
-              combined_dur,
-          });
-          if (a_in_xy) {
-            new_a_origin_times.push_back(a_origin_times[xy_i]);
-          } else {
-            new_a_origin_times.push_back(a_origin_times[yz_i]);
-          }
-          min_duration = std::min(min_duration, combined_dur);
-        }
+    int min_duration = std::numeric_limits<int>::max();
+    int yz_i = 0;
+    for (int xy_i = 0; xy_i < xy.size(); ++xy_i) {
+      while (yz_i < yz.size() &&
+             yz[yz_i].origin_time < xy[xy_i].DestinationTime()) {
+        yz_i += 1;
+      }
+      if (yz_i == yz.size()) {
+        // TODO: Can I assert that this only happens when the next yz step
+        // has been ub truncated? Cuz that's the only time I expect this to
+        // happen.
+        //
+        // (Careful, if we delete yz steps at the end, then this could
+        // happen at a time much earlier than the ub truncation. It's only
+        // the "next not-deleted yz step" that is gonna be ub-truncated.)
+        break;
+      }
+      assert(xy[xy_i].DestinationTime() == yz[yz_i].origin_time);
+      int combined_dur = xy[xy_i].duration + yz[yz_i].duration;
+      new_steps.push_back({
+          xy[xy_i].origin_time,
+          combined_dur,
+      });
+      if (b_in_xy) {
+        new_b_times.push_back(b_times[xy_i]);
+      } else {
+        new_b_times.push_back(b_times[yz_i]);
+      }
+      min_duration = std::min(min_duration, combined_dur);
+    }
 
-        if (new_steps.size() == 0) {
-          // If there is no path, there is no need to push anything.
-          // TODO: Can this happen? Might want to assert that it doesn't, or
-          // that it only happens in certain situations.
-          return;
-        }
-        assert(min_duration < std::numeric_limits<int>::max());
+    if (new_steps.size() == 0) {
+      // If there is no path, there is no need to push anything.
+      // TODO: Can this happen? Might want to assert that it doesn't, or
+      // that it only happens in certain situations.
+      return;
+    }
+    assert(min_duration < std::numeric_limits<int>::max());
 
-        q.push_back(
-            EmbiggenState{
-                .allowed_embiggen = min_duration - path_relaxed_weight,
-                .path_relaxed_weight = path_relaxed_weight,
-                .path = path,
-                .steps = std::move(new_steps),
-                .a_origin_times = std::move(new_a_origin_times),
-            }
-        );
-        std::push_heap(q.begin(), q.end());
-      };
+    q.push_back(
+        EmbiggenState{
+            .allowed_embiggen = min_duration - path_relaxed_weight,
+            .path_relaxed_weight = path_relaxed_weight,
+            .path = path,
+            .steps = std::move(new_steps),
+            .b_times = std::move(new_b_times),
+        }
+    );
+    std::push_heap(q.begin(), q.end());
+  };
 
   {
-    std::vector<TimeSinceServiceStart> initial_a_origin_times;
-    initial_a_origin_times.reserve(ab.steps.size());
+    std::vector<TimeSinceServiceStart> initial_b_times;
+    initial_b_times.reserve(ab.steps.size());
     for (const PairStep& step : ab.steps) {
-      initial_a_origin_times.push_back(step.origin_time);
+      initial_b_times.push_back(step.DestinationTime());
     }
     q.push_back(
         EmbiggenState{
@@ -514,7 +516,7 @@ EmbiggenResult LocalEmbiggenIterative(
             .path_relaxed_weight = ab.RelaxedWeight(),
             .path = {a, b},
             .steps = ab.steps,
-            .a_origin_times = std::move(initial_a_origin_times),
+            .b_times = std::move(initial_b_times),
         }
     );
   }
@@ -523,11 +525,14 @@ EmbiggenResult LocalEmbiggenIterative(
   // improving the bound in the remaining iterations.
   // We could even (maybe) prioritize over all edges and only spend effort on
   // the ones that have the most improveable bound.
-  for (int iter = 0; iter < 1000; ++iter) {
+  for (int iter = 0; iter < 100; ++iter) {
     // The queue should never become empty because we can keep extending until a
     // full tour, and we early-return if we find a full tour on top of the
     // queue.
-    assert(q.size() > 0);
+    // assert(q.size() > 0);
+    if (q.size() == 0) {
+      return std::nullopt;
+    }
 
     std::pop_heap(q.begin(), q.end());
     EmbiggenState cur = std::move(q.back());
@@ -583,7 +588,7 @@ EmbiggenResult LocalEmbiggenIterative(
             tos_it->second.steps,
             cur.path_relaxed_weight + tos_it->second.RelaxedWeight(),
             new_path,
-            cur.a_origin_times,
+            cur.b_times,
             true
         );
       }
@@ -613,7 +618,7 @@ EmbiggenResult LocalEmbiggenIterative(
             cur.steps,
             cur.path_relaxed_weight + froms_it->second.RelaxedWeight(),
             new_path,
-            cur.a_origin_times,
+            cur.b_times,
             false
         );
       }
@@ -623,7 +628,7 @@ EmbiggenResult LocalEmbiggenIterative(
   const EmbiggenState& front = q.front();
   return EmbiggenResult{
       .embiggening = front.allowed_embiggen,
-      .min_dur_aot = front.a_origin_times[front.MinDurI()],
+      .min_dur_bt = front.b_times[front.MinDurI()],
   };
 
   // int allowed_embiggen = q.front().allowed_embiggen;
@@ -704,52 +709,81 @@ EmbiggenResult LocalEmbiggenIterative(
   // return allowed_embiggen;
 }
 
-int LocalEmbiggen(RefinerState& state, StopId a, StopId b) {
-  PairSteps ab = state.pairs[{a, b}];
-  if (ab.steps.size() == 0) {
-    return 0;
+// Require that all steps arriving at sr arrive at tr.
+void RequireStopTime(RefinerState& rs, StopId sr, TimeSinceServiceStart tr) {
+  for (auto& [pair, pair_steps] : rs.pairs) {
+    if (pair.second == sr) {
+      for (PairStep& step : pair_steps.steps) {
+        if (step.DestinationTime() <= tr) {
+          step.duration = tr.seconds - step.origin_time.seconds;
+        }
+      }
+      std::erase_if(pair_steps.steps, [&](const PairStep& step) {
+        return step.DestinationTime() > tr;
+      });
+    }
   }
 
-  // Consider all x->a->b.
-  int allowed_embiggen = std::numeric_limits<int>::max();
-  for (StopId x : state.stops) {
-    if (x == a || x == b) {
-      continue;
-    }
+  std::erase_if(rs.pairs, [](const auto kv) {
+    return kv.second.steps.size() == 0;
+  });
+}
 
-    const PairSteps& xa = state.pairs[{x, a}];
-    if (xa.steps.size() == 0) {
-      continue;
-    }
-
-    // The current relaxed weight of x->a->b;
-    int relaxed_weight = xa.RelaxedWeight() + ab.RelaxedWeight();
-
-    // The best possible x->a->b duration.
-    int actual_best_dur = std::numeric_limits<int>::max();
-    int ab_i = 0;
-    for (int xa_i = 0; xa_i < xa.steps.size(); ++xa_i) {
-      while (ab_i < ab.steps.size() &&
-             ab.steps[ab_i].origin_time < xa.steps[xa_i].DestinationTime()) {
-        ab_i += 1;
-      }
-      if (ab_i == ab.steps.size()) {
-        // TODO: Can I assert that this only happens when the ab step has been
-        // ub truncated? Cuz that's the only time I expect this to happen.
-        continue;
-      }
-      assert(ab.steps[ab_i].origin_time == xa.steps[xa_i].DestinationTime());
-      actual_best_dur = std::min(
-          actual_best_dur, ab.steps[ab_i].duration + xa.steps[xa_i].duration
+// Forbid all steps that arrive sf@tf.
+void ForbidStopTime(RefinerState& rs, StopId sf, TimeSinceServiceStart tf) {
+  for (auto& [pair, pair_steps] : rs.pairs) {
+    if (pair.second == sf) {
+      auto next_dest_it = std::ranges::upper_bound(
+          pair_steps.steps, tf, {}, [](const PairStep& step) {
+            return step.DestinationTime();
+          }
       );
+      if (next_dest_it == pair_steps.steps.end()) {
+        std::erase_if(pair_steps.steps, [&](const PairStep& step) {
+          return step.DestinationTime() == tf;
+        });
+      } else {
+        for (PairStep& step : pair_steps.steps) {
+          if (step.DestinationTime() == tf) {
+            step.duration = next_dest_it->DestinationTime().seconds -
+                            step.origin_time.seconds;
+          }
+        }
+      }
     }
-
-    assert(actual_best_dur >= relaxed_weight);
-    allowed_embiggen =
-        std::min(allowed_embiggen, actual_best_dur - relaxed_weight);
   }
 
-  return allowed_embiggen;
+  std::erase_if(rs.pairs, [](const auto kv) {
+    return kv.second.steps.size() == 0;
+  });
+}
+
+std::optional<TspTourResult> DoRefinedTSP(
+    const ProblemState& problem, const RefinerState& rs, int ub_rel
+) {
+  RefinerState rs_refined = rs;
+  int last_lb = 0;
+
+  while (true) {
+    std::optional<TspTourResult> result = DoTSP(problem, rs_refined, ub_rel);
+    if (!result.has_value() || result->optimal_value == last_lb) {
+      return result;
+    }
+    last_lb = result->optimal_value;
+    for (int embiggen_i = 0; embiggen_i < result->tour_edges.size();
+         ++embiggen_i) {
+      const TarelEdge& edge = result->tour_edges[embiggen_i];
+      std::pair<StopId, StopId> edge_pair(
+          edge.origin.stop, edge.destination.stop
+      );
+      std::optional<EmbiggenResult> embiggen = LocalEmbiggenIterative(
+          problem, rs_refined, edge_pair.first, edge_pair.second
+      );
+      if (embiggen.has_value() && embiggen->embiggening > 0) {
+        rs_refined.pairs[edge_pair].local_embiggening += embiggen->embiggening;
+      }
+    }
+  }
 }
 
 int main(int argc, char* argv[]) {
@@ -818,7 +852,15 @@ int main(int argc, char* argv[]) {
 
   RefinerState rs = MakeRefinerState(problem, completed, s0, t0, ub_rel);
 
+  std::vector<StopId> alpha_sorted_stops;
   for (StopId s : problem.required.GroupRepresentatives()) {
+    alpha_sorted_stops.push_back(s);
+  }
+  std::ranges::sort(alpha_sorted_stops, {}, [&](StopId s) {
+    return problem.StopName(s);
+  });
+
+  for (StopId s : alpha_sorted_stops) {
     std::set<TimeSinceServiceStart> arrival_times_set;
 
     for (const auto& [pair, pair_steps] : rs.pairs) {
@@ -853,29 +895,70 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
   }
 
-  // for (StopId a : rs.stops) {
-  //   for (StopId b : rs.stops) {
-  //     if (a == b) {
-  //       continue;
-  //     }
-
-  //     // int once_local_embiggen = LocalEmbiggen(rs, a, b);
-  //     int iter_local_embiggen = LocalEmbiggenIterative(problem, rs, a, b);
-
-  //     std::cout
-  //       << problem.StopName(a) << " -> " << problem.StopName(b) << ": "
-  //       << TimeSinceServiceStart{iter_local_embiggen} << "\n";
-
-  //     if (iter_local_embiggen > 0) {
-  //       rs.pairs[{a, b}].local_embiggening += iter_local_embiggen;
-  //     }
-
-  //     // assert(iter_local_embiggen == once_local_embiggen);
+  // for (StopId s : alpha_sorted_stops) {
+  //   auto ps_it = rs.pairs.find({s0, s});
+  //   if (ps_it == rs.pairs.end()) {
+  //     continue;
+  //   }
+  //   std::vector<PairStep>& steps = ps_it->second.steps;
+  //   std::cout << "s0 -> " << problem.StopName(s) << ": " << steps.size() << "
+  //   steps\n"; for (PairStep step : steps) {
+  //     std::cout << "  " << step.origin_time << " -> " <<
+  //     step.DestinationTime() << "\n";
   //   }
   // }
 
-  int last_lb = 0;
+  std::optional<TspTourResult> result = DoRefinedTSP(problem, rs, ub_rel);
+  if (!result.has_value()) {
+    std::cout << "no result\n";
+    return 0;
+  }
+  TourAnalysis analysis = AnalyzeTour(problem, rs, *result, t0, false);
+  std::cout << "result: " << TimeSinceServiceStart{analysis.val_relaxed}
+            << " / " << TimeSinceServiceStart{analysis.val_actual} << "\n";
 
+  // TODO(Wed): Think more about this improvement curve.
+  std::vector<int> improvement_curve;
+  for (const TarelEdge& branch_edge : result->tour_edges) {
+    auto groups = completed.GetGroups(branch_edge.origin.stop);
+    auto group_it =
+        std::find_if(groups.begin(), groups.end(), [&](const StepGroup& g) {
+          return g.destination_stop == branch_edge.destination.stop;
+        });
+    assert(group_it != groups.end());
+    const StepGroup& group = *group_it;
+
+    // TODO: Deal with flex steps?
+    auto steps = completed.GetSteps(group);
+    std::vector<int> group_durs;
+    group_durs.reserve(steps.size());
+    for (const AdjacencyListStep& step : steps) {
+      group_durs.push_back(
+          step.destination_time.seconds - step.origin_time.seconds
+      );
+    }
+
+    if (group_durs.size() > 1) {
+      std::ranges::sort(group_durs);
+      if (improvement_curve.size() < group_durs.size() - 1) {
+        improvement_curve.resize(group_durs.size() - 1, 0);
+      }
+      for (int i = 1; i < group_durs.size(); ++i) {
+        improvement_curve[i - 1] =
+            std::max(improvement_curve[i - 1], group_durs[i] - group_durs[0]);
+      }
+    }
+  }
+
+  std::cout << "improvement curve:\n";
+  for (int i = 0; i < improvement_curve.size() && i < 100; ++i) {
+    std::cout << i << ": " << TimeSinceServiceStart{improvement_curve[i]}
+              << "\n";
+  }
+
+  return 0;
+
+  int last_lb = 0;
   while (true) {
     std::optional<TspTourResult> result = DoTSP(problem, rs, ub_rel);
     if (!result.has_value()) {
@@ -884,6 +967,75 @@ int main(int argc, char* argv[]) {
     }
     if (result->optimal_value == last_lb) {
       break;
+      // if (forced_prefix_count + 1 == result->tour_edges.size()) {
+      //   std::cout << "done\n";
+      //   break;
+      // }
+      // last_lb = 0;
+
+      // const TarelEdge& force_edge = result->tour_edges[forced_prefix_count +
+      // 1]; const std::pair<StopId, StopId> force_edge_pair =
+      // {force_edge.origin.stop, force_edge.destination.stop};
+
+      // {
+      //   std::cout
+      //     << "LB converged, forbidding "
+      //     << problem.StopName(force_edge.origin.stop)
+      //     << " -> "
+      //     << problem.StopName(force_edge.destination.stop)
+      //     << "\n";
+      //   std::erase_if(rs.pairs, [&](const auto& victim) {
+      //     return victim.first == force_edge_pair;
+      //   });
+      // }
+
+      // {
+      //   forced_prefix_count += 1;
+      //   std::cout
+      //     << "LB converged, forcing "
+      //     << problem.StopName(force_edge.origin.stop)
+      //     << " -> "
+      //     << problem.StopName(force_edge.destination.stop)
+      //     << "\n";
+
+      //   std::erase_if(rs.pairs, [&](const auto& victim) {
+      //     std::pair<StopId, StopId> victim_edge = victim.first;
+      //     if (victim_edge.first == force_edge.origin.stop &&
+      //     victim_edge.second != force_edge.destination.stop) {
+      //       return true;
+      //     }
+      //     if (victim_edge.second == force_edge.destination.stop &&
+      //     victim_edge.first != force_edge.origin.stop) {
+      //       return true;
+      //     }
+      //     return false;
+      //   });
+
+      //   PairSteps& force_edge_steps = rs.pairs.at(force_edge_pair);
+      //   assert(force_edge_steps.steps.size() == 1);
+      //   assert(force_edge_steps.local_embiggening == 0);
+      //   TimeSinceServiceStart force_edge_dest_time =
+      //   force_edge_steps.steps[0].DestinationTime();
+
+      //   for (auto& [pair, pair_steps] : rs.pairs) {
+      //     if (pair.first == force_edge.destination.stop) {
+      //       std::erase_if(pair_steps.steps, [&](const PairStep& step) {
+      //         return step.origin_time != force_edge_dest_time;
+      //       });
+      //       pair_steps.local_embiggening = 0;
+      //     } else {
+      //       // TODO: `pair_steps.steps.size() > 1` is a hacky way of
+      //       excluding forced-prefix steps from this deletion. if
+      //       (pair_steps.steps.size() > 1) {
+      //         std::erase_if(pair_steps.steps, [&](const PairStep& step) {
+      //           return step.origin_time <= force_edge_dest_time;
+      //         });
+      //       }
+      //     }
+      //   }
+      // }
+
+      continue;
     }
     last_lb = result->optimal_value;
 
@@ -891,34 +1043,116 @@ int main(int argc, char* argv[]) {
     std::cout << "result: " << TimeSinceServiceStart{analysis.val_relaxed}
               << " / " << TimeSinceServiceStart{analysis.val_actual} << "\n";
 
-    for (const TarelEdge& edge : result->tour_edges) {
-      EmbiggenResult embiggen = LocalEmbiggenIterative(
-          problem, rs, edge.origin.stop, edge.destination.stop
+    for (int embiggen_i = 0; embiggen_i < result->tour_edges.size();
+         ++embiggen_i) {
+      const TarelEdge& edge = result->tour_edges[embiggen_i];
+      std::pair<StopId, StopId> edge_pair(
+          edge.origin.stop, edge.destination.stop
       );
-      if (embiggen.embiggening > 0) {
-        rs.pairs[{edge.origin.stop, edge.destination.stop}].local_embiggening +=
-            embiggen.embiggening;
+      std::optional<EmbiggenResult> embiggen = LocalEmbiggenIterative(
+          problem, rs, edge_pair.first, edge_pair.second
+      );
+      if (embiggen.has_value() && embiggen->embiggening > 0) {
+        rs.pairs[edge_pair].local_embiggening += embiggen->embiggening;
       }
 
-      {
-        RefinerState rs_forbid = rs;
-        PairSteps& rs_forbid_pair_steps =
-            rs_forbid.pairs.at({edge.origin.stop, edge.destination.stop});
-        // ohno i need to repropagate everything...
-        std::erase_if(rs_forbid_pair_steps.steps, [&](const PairStep& ps) {
-          return ps.origin_time == embiggen.min_dur_aot;
-        });
-        if (rs_forbid_pair_steps.steps.size() > 0) {
-          EmbiggenResult embiggen_forbid = LocalEmbiggenIterative(
-              problem, rs_forbid, edge.origin.stop, edge.destination.stop
-          );
-          std::cout << problem.StopName(edge.origin.stop) << " -> "
-                    << problem.StopName(edge.destination.stop) << ": "
-                    << TimeSinceServiceStart{embiggen.embiggening} << " => "
-                    << TimeSinceServiceStart{embiggen_forbid.embiggening}
-                    << "\n";
-        }
-      }
+      // {
+      //   std::cout
+      //     << problem.StopName(edge.origin.stop) << " -> " <<
+      //     problem.StopName(edge.destination.stop) << "\n";
+
+      //   int orig_rlxw = rs.pairs[edge_pair].RelaxedWeight();
+      //   std::cout << "  before: "
+      //     << TimeSinceServiceStart{orig_rlxw -
+      //     rs.pairs[edge_pair].local_embiggening}
+      //     << " + " <<
+      //     TimeSinceServiceStart{rs.pairs[edge_pair].local_embiggening}
+      //     << " = " << TimeSinceServiceStart{orig_rlxw} << "\n";
+
+      //   RefinerState rs_forbid = rs;
+      //   ForbidStopTime(rs_forbid, edge.destination.stop,
+      //   embiggen.min_dur_bt); rs_forbid.pairs[edge_pair].local_embiggening =
+      //   0;
+
+      //   if (rs_forbid.pairs[edge_pair].steps.size() > 0) {
+      //     EmbiggenResult embiggen_forbid = LocalEmbiggenIterative(
+      //         problem, rs_forbid, edge.origin.stop, edge.destination.stop
+      //     );
+      //     rs_forbid.pairs[edge_pair].local_embiggening =
+      //     embiggen_forbid.embiggening;
+
+      //     int forbid_rlxw = rs_forbid.pairs[edge_pair].RelaxedWeight();
+      //     std::cout << "  after:  "
+      //       << TimeSinceServiceStart{forbid_rlxw -
+      //       rs_forbid.pairs[edge_pair].local_embiggening}
+      //       << " + " <<
+      //       TimeSinceServiceStart{rs_forbid.pairs[edge_pair].local_embiggening}
+      //       << " = " << TimeSinceServiceStart{forbid_rlxw} << "\n";
+      //     std::cout << "  improvement: " << TimeSinceServiceStart{forbid_rlxw
+      //     - orig_rlxw} << "\n";
+      //   } else {
+      //     std::cout << "  after: no steps\n";
+      //     std::cout << "  improvement: inf\n";
+      //   }
+      // }
+
+      // {
+      //   RefinerState rs_forbid = rs;
+      //   PairSteps& rs_forbid_pair_steps =
+      //       rs_forbid.pairs.at({edge.origin.stop, edge.destination.stop});
+      //   rs_forbid_pair_steps.local_embiggening = 0;
+      //   if (rs_forbid_pair_steps.steps.size() > 1) {
+      //     std::cout
+      //       << problem.StopName(edge.origin.stop) << " -> " <<
+      //       problem.StopName(edge.destination.stop) << "\n";
+
+      //     auto forbidden_step_it =
+      //     std::find_if(rs_forbid_pair_steps.steps.begin(),
+      //     rs_forbid_pair_steps.steps.end(), [&](const PairStep& ps) {
+      //       return ps.origin_time == embiggen.min_dur_aot;
+      //     });
+      //     assert(forbidden_step_it != rs_forbid_pair_steps.steps.end());
+      //     std::cout << "  forbidden step: " << forbidden_step_it->origin_time
+      //     << " -> " << forbidden_step_it->DestinationTime() << "\n";
+
+      //     // TODO: In principle I think this can happen but I don't know how
+      //     to handle it! assert(forbidden_step_it + 1 !=
+      //     rs_forbid_pair_steps.steps.end());
+
+      //     // TODO: Am I actually allowed to push forbidden_step_it forwards
+      //     until we get the next dest time?: std::cout << "  next step: " <<
+      //     (forbidden_step_it + 1)->DestinationTime() << "\n";
+
+      //     int next_dest_inc = (forbidden_step_it +
+      //     1)->DestinationTime().seconds -
+      //     forbidden_step_it->DestinationTime().seconds;
+      //     forbidden_step_it->duration += next_dest_inc;
+      //     EmbiggenResult embiggen_forbid = LocalEmbiggenIterative(
+      //         problem, rs_forbid, edge.origin.stop, edge.destination.stop
+      //     );
+      //     rs_forbid_pair_steps.local_embiggening =
+      //     embiggen_forbid.embiggening;
+
+      //     int orig_rlxw = rs.pairs[{edge.origin.stop,
+      //     edge.destination.stop}].RelaxedWeight(); int forbid_rlxw =
+      //     rs_forbid_pair_steps.RelaxedWeight();
+
+      //     std::cout << "  before: "
+      //       << TimeSinceServiceStart{orig_rlxw - rs.pairs[{edge.origin.stop,
+      //       edge.destination.stop}].local_embiggening}
+      //       << " + " << TimeSinceServiceStart{rs.pairs[{edge.origin.stop,
+      //       edge.destination.stop}].local_embiggening}
+      //       << " = " << TimeSinceServiceStart{orig_rlxw} << "\n";
+      //     std::cout << "  after:  "
+      //       << TimeSinceServiceStart{forbid_rlxw -
+      //       rs_forbid_pair_steps.local_embiggening}
+      //       << " + " <<
+      //       TimeSinceServiceStart{rs_forbid_pair_steps.local_embiggening}
+      //       << " = " << TimeSinceServiceStart{forbid_rlxw} << "\n";
+      //     std::cout << "  improvement: " << TimeSinceServiceStart{forbid_rlxw
+      //     - orig_rlxw} << "\n";
+      //   }
+      // }
     }
 
     // if (!analysis.worst_edge.has_value()) {
