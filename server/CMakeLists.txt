@@ -51,6 +51,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+FetchContent_Declare(
+  highs
+  GIT_REPOSITORY https://github.com/ERGO-Code/HiGHS.git
+  GIT_TAG        v1.14.0
+)
+FetchContent_MakeAvailable(highs)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
@@ -196,7 +203,7 @@ target_link_libraries(track_count PUBLIC tarel_graph CLI11::CLI11)
 
 # Add refiner tool
 add_executable(refiner src/tools/refiner.cpp)
-target_link_libraries(refiner PUBLIC tarel_graph CLI11::CLI11)
+target_link_libraries(refiner PUBLIC tarel_graph highs CLI11::CLI11)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
@@ -291,4 +298,9 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
 target_link_libraries(tour_paths_test PUBLIC gunit tour_paths steps_shortest_path)
 add_test(NAME tour_paths_test COMMAND tour_paths_test)
+
+# Add HiGHS LP solver test executable
+add_executable(highs_test src/solver/highs_test.cpp)
+target_link_libraries(highs_test PUBLIC gunit highs)
+add_test(NAME highs_test COMMAND highs_test)
 

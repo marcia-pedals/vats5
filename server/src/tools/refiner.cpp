@@ -1,3 +1,4 @@
+#include <Highs.h>
 #include <crow/http_parser_merged.h>
 
 #include <CLI/CLI.hpp>
@@ -5,6 +6,7 @@
 #include <asio/any_completion_handler.hpp>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -786,6 +788,116 @@ std::optional<TspTourResult> DoRefinedTSP(
   }
 }
 
+struct LPEmbiggenConstraint {
+  std::vector<int> edge_indexes;
+  std::vector<StopId> path;
+  std::vector<PairStep> steps;
+};
+
+std::vector<LPEmbiggenConstraint> ExpandConstraint(
+    const RefinerState& state,
+    const std::vector<PlainEdge>& edges,
+    const LPEmbiggenConstraint& constraint
+) {}
+
+void LPEmbiggen(
+    const ProblemState& problem,
+    const RefinerState& state,
+    const std::vector<PlainEdge>& edges
+) {
+  Highs highs;
+
+  // Set up variables and objective!!
+  // Each edge weight is a variable.
+  // The objective is to maximize the sum of the edge weights.
+  highs.changeObjectiveSense(ObjSense::kMaximize);
+  for (int i = 0; i < edges.size(); ++i) {
+    highs.addVar(0.0, kHighsInf);
+    highs.changeColCost(i, 1.0);
+  }
+
+  // Set up constraints!!
+  std::vector<LPEmbiggenConstraint> constraints;
+  constraints.reserve(edges.size());
+  for (int i = 0; i < edges.size(); ++i) {
+    const PlainEdge& edge = edges[i];
+    constraints.push_back({
+        .edge_indexes = {i},
+        .path = {edge.a, edge.b},
+        .steps = state.pairs.at({edge.a, edge.b}).steps,
+    });
+  }
+
+  std::vector<double> all_ones(edges.size(), 1.0);
+  for (const LPEmbiggenConstraint& constraint : constraints) {
+    auto min_dur_it = std::ranges::min_element(
+        constraint.steps, {}, [](const PairStep& step) { return step.duration; }
+    );
+    if (min_dur_it == constraint.steps.end()) {
+      // There are no achievable steps along this path, so it doesn't constrain
+      // anything!
+      continue;
+    }
+    int min_dur = min_dur_it->duration;
+    highs.addRow(
+        -kHighsInf,
+        min_dur,
+        static_cast<HighsInt>(constraint.edge_indexes.size()),
+        constraint.edge_indexes.data(),
+        all_ones.data()
+    );
+  }
+
+  highs.run();
+  std::cout
+      << "objective value: "
+      << TimeSinceServiceStart{static_cast<int>(highs.getObjectiveValue())}
+      << "\n";
+  const auto& solution = highs.getSolution();
+
+  struct Row {
+    std::string edge;
+    std::string min_dur;
+    std::string sol_val;
+    std::string diff;
+  };
+  std::vector<Row> rows;
+  rows.reserve(edges.size());
+  size_t w_edge = 4, w_min = 7, w_sol = 8, w_diff = 4;  // header widths
+  for (int i = 0; i < edges.size(); ++i) {
+    const PlainEdge& edge = edges[i];
+    const std::vector<PairStep>& edge_steps =
+        state.pairs.at({edge.a, edge.b}).steps;
+    auto min_dur_it = std::ranges::min_element(
+        edge_steps, {}, [](const PairStep& step) { return step.duration; }
+    );
+    int min_dur = min_dur_it == edge_steps.end()
+                      ? std::numeric_limits<int>::max()
+                      : min_dur_it->duration;
+    int sol_val = static_cast<int>(solution.col_value[i]);
+    Row row{
+        .edge = problem.StopName(edge.a) + "->" + problem.StopName(edge.b),
+        .min_dur = TimeSinceServiceStart{min_dur}.ToString(),
+        .sol_val = TimeSinceServiceStart{sol_val}.ToString(),
+        .diff = TimeSinceServiceStart{sol_val - min_dur}.ToString(),
+    };
+    w_edge = std::max(w_edge, row.edge.size());
+    w_min = std::max(w_min, row.min_dur.size());
+    w_sol = std::max(w_sol, row.sol_val.size());
+    w_diff = std::max(w_diff, row.diff.size());
+    rows.push_back(std::move(row));
+  }
+
+  std::cout << std::left << std::setw(w_edge) << "edge" << "  "
+            << std::setw(w_min) << "min dur" << "  " << std::setw(w_sol)
+            << "solution" << "  " << std::setw(w_diff) << "diff" << "\n";
+  for (const Row& row : rows) {
+    std::cout << std::setw(w_edge) << row.edge << "  " << std::setw(w_min)
+              << row.min_dur << "  " << std::setw(w_sol) << row.sol_val << "  "
+              << std::setw(w_diff) << row.diff << "\n";
+  }
+}
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Refiner tool"};
 
@@ -908,7 +1020,7 @@ int main(int argc, char* argv[]) {
   //   }
   // }
 
-  std::optional<TspTourResult> result = DoRefinedTSP(problem, rs, ub_rel);
+  std::optional<TspTourResult> result = DoTSP(problem, rs, ub_rel);
   if (!result.has_value()) {
     std::cout << "no result\n";
     return 0;
@@ -917,7 +1029,15 @@ int main(int argc, char* argv[]) {
   std::cout << "result: " << TimeSinceServiceStart{analysis.val_relaxed}
             << " / " << TimeSinceServiceStart{analysis.val_actual} << "\n";
 
-  // TODO(Wed): Think more about this improvement curve.
+  std::vector<PlainEdge> embiggen_edges;
+  embiggen_edges.reserve(result->tour_edges.size());
+  for (const TarelEdge& edge : result->tour_edges) {
+    embiggen_edges.push_back({edge.origin.stop, edge.destination.stop});
+  }
+  LPEmbiggen(problem, rs, embiggen_edges);
+
+  return 0;
+
   std::vector<int> improvement_curve;
   for (const TarelEdge& branch_edge : result->tour_edges) {
     auto groups = completed.GetGroups(branch_edge.origin.stop);
