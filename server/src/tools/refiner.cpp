@@ -5,15 +5,21 @@
 #include <algorithm>
 #include <asio/any_completion_handler.hpp>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
+#include "lp_data/HConst.h"
+#include "lp_data/HighsStatus.h"
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -788,71 +794,979 @@ std::optional<TspTourResult> DoRefinedTSP(
   }
 }
 
+std::vector<PairStep> CombinedSteps(
+    const std::vector<PairStep>& xy, const std::vector<PairStep>& yz, int ub_rel
+) {
+  if (xy.size() == 0 || yz.size() == 0) {
+    return {};
+  }
+
+  std::vector<PairStep> new_steps;
+  {
+    int new_steps_size_estimate = std::max(xy.size(), yz.size());
+    new_steps.reserve(new_steps_size_estimate);
+  }
+
+  int yz_i = 0;
+  for (int xy_i = 0; xy_i < xy.size(); ++xy_i) {
+    while (yz_i < yz.size() &&
+           yz[yz_i].origin_time < xy[xy_i].DestinationTime()) {
+      yz_i += 1;
+    }
+    if (yz_i == yz.size()) {
+      // TODO: Maybe assert this only happens when the next yz step has been
+      // ub truncated?
+      break;
+    }
+    assert(xy[xy_i].DestinationTime() == yz[yz_i].origin_time);
+    int new_step_dur = xy[xy_i].duration + yz[yz_i].duration;
+    if (new_step_dur <= ub_rel) {
+      new_steps.push_back({xy[xy_i].origin_time, new_step_dur});
+    }
+  }
+
+  return new_steps;
+}
+
 struct LPEmbiggenConstraint {
-  std::vector<int> edge_indexes;
   std::vector<StopId> path;
   std::vector<PairStep> steps;
+
+  // -1 if this constraint doesn't have any variables.
+  // Otherwise, the index of the HiGHs constraint.
+  int highs_index = -1;
+
+  // 0 = non-binding
+  // 1 = binding
+  // 2 = deleted
+  int status = 0;
+
+  // TODO: Maybe enforce that `min_dur` and `constant_weight` are always valid
+  // instead of initializing them during "Set up constraints!!".
+
+  // The minimum duration of `steps`.
+  int min_dur = 0;
+
+  // The weight of all the non-variable edges in this constraint.
+  int constant_weight = 0;
+
+  std::string DebugString(const ProblemState& problem) const {
+    std::ostringstream stream;
+    for (int i = 0; i < path.size(); ++i) {
+      if (i > 0) {
+        stream << " -> ";
+      }
+      stream << problem.StopName(path[i]);
+    }
+    return stream.str();
+  }
 };
 
-std::vector<LPEmbiggenConstraint> ExpandConstraint(
+bool PathMergeAllowed(
+    const ProblemState& problem,
     const RefinerState& state,
-    const std::vector<PlainEdge>& edges,
-    const LPEmbiggenConstraint& constraint
-) {}
+    const std::vector<StopId>& xy,
+    const std::vector<StopId>& yz
+) {
+  assert(xy.size() > 1);
+  assert(yz.size() > 1);
+  assert(xy.back() == yz.front());
+
+  std::unordered_set<StopId> xy_visited;
+  for (StopId s : xy) {
+    xy_visited.insert(s);
+  }
+  for (int i = 1; i < yz.size(); ++i) {
+    if (xy_visited.contains(yz[i])) {
+      return false;
+    }
+  }
+
+  // If it goes from START to END, it must hit everything.
+  int combined_length = xy.size() + yz.size() - 1;
+  if (xy.front() == problem.boundary.start &&
+      yz.back() == problem.boundary.end &&
+      combined_length < state.stops.size()) {
+    return false;
+  }
+
+  return true;
+};
+
+struct ConstraintExpansionInfo {
+  int constraint_index;
+  bool forwards;
+  int improvement;
+};
+
+std::vector<ConstraintExpansionInfo> EvaluateConstraintExpansions(
+    const ProblemState& problem,
+    const RefinerState& state,
+    int ub_rel,
+    const std::vector<LPEmbiggenConstraint>& constraints,
+    const HighsSolution& solution
+) {
+  int binding_count = 0;
+  for (int i = 0; i < solution.row_dual.size(); ++i) {
+    if (solution.row_dual[i] > 0) {
+      binding_count += 1;
+    }
+  }
+
+  std::vector<ConstraintExpansionInfo> result;
+  result.reserve(2 * binding_count);
+
+  auto ConstraintWeight = [&](const LPEmbiggenConstraint& c) -> int {
+    if (c.highs_index == -1) {
+      return c.constant_weight;
+    }
+    int weight = c.constant_weight + solution.row_value[c.highs_index];
+    assert(weight <= c.min_dur);
+    return weight;
+  };
+
+  auto ComputeImprovement = [&](const LPEmbiggenConstraint& xy,
+                                const LPEmbiggenConstraint& yz) -> int {
+    int xy_weight = ConstraintWeight(xy);
+    int yz_weight = ConstraintWeight(yz);
+    std::vector<PairStep> merged_steps =
+        CombinedSteps(xy.steps, yz.steps, ub_rel);
+    auto min_dur_it = std::ranges::min_element(
+        merged_steps, {}, [](const PairStep& step) { return step.duration; }
+    );
+    if (min_dur_it == merged_steps.end()) {
+      return std::numeric_limits<int>::max();
+    }
+    int min_dur = min_dur_it->duration;
+    assert(min_dur >= xy_weight + yz_weight);
+    return min_dur - xy_weight - yz_weight;
+  };
+
+  for (int constraint_index = 0; constraint_index < constraints.size();
+       ++constraint_index) {
+    const LPEmbiggenConstraint& victim = constraints[constraint_index];
+
+    // Only consider binding victims.
+    if (victim.highs_index == -1 ||
+        solution.row_dual[victim.highs_index] == 0) {
+      continue;
+    }
+
+    // Binding means that the row value is equal to its upper bound.
+    assert(
+        solution.row_value[victim.highs_index] ==
+        victim.min_dur - victim.constant_weight
+    );
+
+    // Consider forwards expansion, if allowed.
+    if (victim.path.back() != problem.boundary.end) {
+      int worst_improvement = std::numeric_limits<int>::max();
+      for (const LPEmbiggenConstraint& merge_constraint : constraints) {
+        if (victim.path.back() != merge_constraint.path.front() ||
+            !PathMergeAllowed(
+                problem, state, victim.path, merge_constraint.path
+            )) {
+          continue;
+        }
+        worst_improvement = std::min(
+            worst_improvement, ComputeImprovement(victim, merge_constraint)
+        );
+      }
+      result.push_back(
+          ConstraintExpansionInfo{
+              .constraint_index = constraint_index,
+              .forwards = true,
+              .improvement = worst_improvement,
+          }
+      );
+    }
+
+    // Consider backwards expansion, if allowed.
+    if (victim.path.front() != problem.boundary.start) {
+      int worst_improvement = std::numeric_limits<int>::max();
+      for (const LPEmbiggenConstraint& merge_constraint : constraints) {
+        if (merge_constraint.path.back() != victim.path.front() ||
+            !PathMergeAllowed(
+                problem, state, merge_constraint.path, victim.path
+            )) {
+          continue;
+        }
+        worst_improvement = std::min(
+            worst_improvement, ComputeImprovement(merge_constraint, victim)
+        );
+      }
+      result.push_back(
+          ConstraintExpansionInfo{
+              .constraint_index = constraint_index,
+              .forwards = false,
+              .improvement = worst_improvement,
+          }
+      );
+    }
+  }
+
+  assert(result.size() <= 2 * binding_count);
+  std::ranges::sort(result, {}, [](const ConstraintExpansionInfo& info) {
+    return -info.improvement;
+  });
+  return result;
+}
+
+void ExpandConstraint(
+    const ProblemState& problem,
+    const RefinerState& state,
+    int ub_rel,
+    const std::vector<LPEmbiggenConstraint>& constraints,
+    const LPEmbiggenConstraint& constraint,
+    bool forwards,
+    std::vector<LPEmbiggenConstraint>& result
+) {
+  auto CombineAndPush = [&](const std::vector<PairStep>& xy,
+                            const std::vector<PairStep>& yz,
+                            const std::vector<StopId> path) -> void {
+    std::vector<PairStep> new_steps = CombinedSteps(xy, yz, ub_rel);
+    if (new_steps.size() == 0) {
+      // If there is no path, there is no need to push anything.
+      // TODO: Can this happen? Might want to assert that it doesn't, or
+      // that it only happens in certain situations.
+      return;
+    }
+    result.push_back(
+        LPEmbiggenConstraint{
+            .path = path,
+            .steps = new_steps,
+        }
+    );
+  };
+
+  if (forwards) {
+    assert(constraint.path.back() != problem.boundary.end);
+    for (const LPEmbiggenConstraint& candidate : constraints) {
+      if (constraint.path.back() != candidate.path.front() ||
+          !PathMergeAllowed(problem, state, constraint.path, candidate.path)) {
+        continue;
+      }
+      // ALLOWED MERGE, DO IT!!!!
+      std::vector<StopId> new_path;
+      new_path.reserve(constraint.path.size() + candidate.path.size() - 1);
+      new_path.insert(
+          new_path.end(), constraint.path.begin(), constraint.path.end()
+      );
+      new_path.insert(
+          new_path.end(), candidate.path.begin() + 1, candidate.path.end()
+      );
+      CombineAndPush(constraint.steps, candidate.steps, new_path);
+    }
+  } else {
+    assert(constraint.path.front() != problem.boundary.start);
+    for (const LPEmbiggenConstraint& candidate : constraints) {
+      if (candidate.path.back() != constraint.path.front() ||
+          !PathMergeAllowed(problem, state, candidate.path, constraint.path)) {
+        continue;
+      }
+      // ALLOWED MERGE, DO IT!!!!
+      std::vector<StopId> new_path;
+      new_path.reserve(candidate.path.size() + constraint.path.size() - 1);
+      new_path.insert(
+          new_path.end(), candidate.path.begin(), candidate.path.end()
+      );
+      new_path.insert(
+          new_path.end(), constraint.path.begin() + 1, constraint.path.end()
+      );
+      CombineAndPush(candidate.steps, constraint.steps, new_path);
+    }
+  }
+}
+
+struct AffixTreeNode {
+  // 0 = intermediate node
+  // 1 = constrained node
+  // 2 = implied node
+  int status = 0;
+
+  std::unordered_map<StopId, AffixTreeNode> children;
+};
+
+void MarkImplications(
+    const ProblemState& problem,
+    const RefinerState& state,
+    int ub_rel,
+    const LPEmbiggenConstraint& constraint_cur,
+    AffixTreeNode& node_cur,
+    bool forwards,
+    int& out_implication_count
+) {
+  std::unordered_set<StopId> path_stops;
+  for (StopId s : constraint_cur.path) {
+    path_stops.insert(s);
+  }
+
+  std::unordered_set<StopId> unvisited_children;
+  for (const auto& [s, _] : node_cur.children) {
+    unvisited_children.insert(s);
+  }
+
+  bool all_children_are_constrained_or_implied = true;
+  for (StopId next_s : state.stops) {
+    if (path_stops.contains(next_s) ||
+        (forwards && next_s == problem.boundary.start) ||
+        (forwards && next_s == problem.boundary.end &&
+         constraint_cur.path.front() == problem.boundary.start &&
+         constraint_cur.path.size() + 1 != state.stops.size()) ||
+        (!forwards && next_s == problem.boundary.end) ||
+        (!forwards && next_s == problem.boundary.start &&
+         constraint_cur.path.back() == problem.boundary.end &&
+         constraint_cur.path.size() + 1 != state.stops.size())) {
+      continue;
+    }
+
+    std::pair<StopId, StopId> extension;
+    if (forwards) {
+      extension = {constraint_cur.path.back(), next_s};
+    } else {
+      extension = {next_s, constraint_cur.path.front()};
+    }
+    auto next_steps_it = state.pairs.find(extension);
+    if (next_steps_it == state.pairs.end()) {
+      continue;
+    }
+
+    std::vector<PairStep> new_steps;
+    if (forwards) {
+      new_steps = CombinedSteps(
+          constraint_cur.steps, next_steps_it->second.steps, ub_rel
+      );
+    } else {
+      new_steps = CombinedSteps(
+          next_steps_it->second.steps, constraint_cur.steps, ub_rel
+      );
+    }
+    if (new_steps.size() == 0) {
+      continue;
+    }
+
+    unvisited_children.erase(next_s);
+
+    auto child_it = node_cur.children.find(next_s);
+    if (child_it == node_cur.children.end()) {
+      all_children_are_constrained_or_implied = false;
+    } else {
+      std::vector<StopId> new_path;
+      new_path.reserve(constraint_cur.path.size() + 1);
+      if (forwards) {
+        new_path.insert(
+            new_path.end(),
+            constraint_cur.path.begin(),
+            constraint_cur.path.end()
+        );
+        new_path.push_back(next_s);
+      } else {
+        new_path.push_back(next_s);
+        new_path.insert(
+            new_path.end(),
+            constraint_cur.path.begin(),
+            constraint_cur.path.end()
+        );
+      }
+
+      LPEmbiggenConstraint new_constraint{
+          .path = std::move(new_path),
+          .steps = std::move(new_steps),
+      };
+
+      MarkImplications(
+          problem,
+          state,
+          ub_rel,
+          new_constraint,
+          child_it->second,
+          forwards,
+          out_implication_count
+      );
+      if (child_it->second.status == 0) {
+        all_children_are_constrained_or_implied = false;
+      }
+    }
+  }
+
+  if (unvisited_children.size() > 0) {
+    std::cout << "Unvisited children! ";
+    for (StopId s : unvisited_children) {
+      std::cout << problem.StopName(s) << ", ";
+    }
+    std::cout << "\n";
+    assert(false);
+  }
+
+  // TODO: Think harder about node_cur.children.size()>0 condition.
+  if (all_children_are_constrained_or_implied && node_cur.children.size() > 0) {
+    // std::cout << "Implied constraint: ";
+    // for (int i = 0; i < constraint_cur.path.size(); ++i) {
+    //   if (i > 0) {
+    //     std::cout << " -> ";
+    //   }
+    //   int disp_i = forwards ? i : constraint_cur.path.size() - 1 - i;
+    //   std::cout << problem.StopName(constraint_cur.path[disp_i]);
+    // }
+    // if (node_cur.status == 1) {
+    //   std::cout << " (REDUNDANT!)";
+    // }
+    // std::cout << "\n";
+    node_cur.status = 2;
+    out_implication_count += 1;
+  }
+}
+
+void ReverseAffixTree(
+    const AffixTreeNode& cur, std::vector<StopId>& path, AffixTreeNode& out_root
+) {
+  if (cur.status == 1 || cur.status == 2) {
+    AffixTreeNode* out_cur = &out_root;
+    for (int i = 0; i < path.size(); ++i) {
+      out_cur = &out_cur->children[path[path.size() - 1 - i]];
+    }
+    assert(out_cur->status == 0);
+    out_cur->status = 1;
+  }
+  for (const auto& [s, child] : cur.children) {
+    path.push_back(s);
+    ReverseAffixTree(child, path, out_root);
+    path.pop_back();
+  }
+}
+
+// void MarkRedundantConstraints(
+//   const ProblemState& problem,
+//   const RefinerState& state,
+//   const AffixTreeNode& cur,
+//   std::vector<StopId>& path,
+//   std::vector<LPEmbiggenConstraint>& constraints,
+//   bool forwards
+// ) {
+//   if (cur.terminating_constraint_index != -1 && path.size() <
+//   state.stops.size()) {
+//     std::unordered_set<StopId> path_stops;
+//     for (StopId s : path) {
+//       path_stops.insert(s);
+//     }
+
+//     // TODO: What about stops that like can't be reached because none of the
+//     steps exist or are within the ub? std::unordered_set<StopId>
+//     required_stops; for (const auto& [pair, _] : state.pairs) {
+//       if (
+//         forwards && pair.first == path.back() &&
+//         !path_stops.contains(pair.second)
+//         && (path.size() + 1 == state.stops.size() || path.front() !=
+//         problem.boundary.start || pair.second != problem.boundary.end)
+//       ) {
+//         required_stops.insert(pair.second);
+//       }
+//       if (
+//         !forwards && pair.second == path.back() &&
+//         !path_stops.contains(pair.first)
+//         && (path.size() + 1 == state.stops.size() || path.front() !=
+//         problem.boundary.end || pair.first != problem.boundary.start)
+//       ) {
+//         required_stops.insert(pair.first);
+//       }
+//     }
+
+//     std::unordered_set<StopId> accounted_stops;
+//     for (const auto& [s, child] : cur.children) {
+//       accounted_stops.insert(s);
+//     }
+
+//     for (StopId s : accounted_stops) {
+//       if (!required_stops.contains(s)) {
+//         std::cout << "accounted but not required: " << problem.StopName(s) <<
+//         "\n"; std::cout << "  path: "; for (StopId sp : path) {
+//           std::cout << problem.StopName(sp) << ", ";
+//         }
+//         std::cout << "\n";
+//         assert(false);
+//       }
+//     }
+
+//     if (accounted_stops.size() == required_stops.size()) {
+//       std::cout << "Redundant: ";
+//       for (int i = 0; i < path.size(); ++i) {
+//         if (i > 0) {
+//           std::cout << " -> ";
+//         }
+//         int disp_i = forwards ? i : path.size() - 1 - i;
+//         std::cout << problem.StopName(path[disp_i]);
+//       }
+//       std::cout << "\n";
+//       constraints[cur.terminating_constraint_index].status = 2;
+//     }
+//   }
+
+//   // Visit all children.
+//   for (const auto& [s, child] : cur.children) {
+//     path.push_back(s);
+//     MarkRedundantConstraints(problem, state, child, path, constraints,
+//     forwards); path.pop_back();
+//   }
+// }
 
 void LPEmbiggen(
     const ProblemState& problem,
     const RefinerState& state,
+    int ub_rel,
     const std::vector<PlainEdge>& edges
 ) {
-  Highs highs;
-
-  // Set up variables and objective!!
-  // Each edge weight is a variable.
-  // The objective is to maximize the sum of the edge weights.
-  highs.changeObjectiveSense(ObjSense::kMaximize);
-  for (int i = 0; i < edges.size(); ++i) {
-    highs.addVar(0.0, kHighsInf);
-    highs.changeColCost(i, 1.0);
-  }
-
-  // Set up constraints!!
   std::vector<LPEmbiggenConstraint> constraints;
-  constraints.reserve(edges.size());
+
+  // Initialize one constraint per edge, starting with `edges` in order and then
+  // all the other ones.
+  constraints.reserve(state.pairs.size());
+  std::unordered_set<std::pair<StopId, StopId>> pushed_pairs;
   for (int i = 0; i < edges.size(); ++i) {
-    const PlainEdge& edge = edges[i];
+    const PlainEdge& edge = edges[edges.size() - 1 - i];
     constraints.push_back({
-        .edge_indexes = {i},
         .path = {edge.a, edge.b},
         .steps = state.pairs.at({edge.a, edge.b}).steps,
     });
+    pushed_pairs.insert({edge.a, edge.b});
   }
-
-  std::vector<double> all_ones(edges.size(), 1.0);
-  for (const LPEmbiggenConstraint& constraint : constraints) {
-    auto min_dur_it = std::ranges::min_element(
-        constraint.steps, {}, [](const PairStep& step) { return step.duration; }
-    );
-    if (min_dur_it == constraint.steps.end()) {
-      // There are no achievable steps along this path, so it doesn't constrain
-      // anything!
+  for (const auto& [pair, pair_steps] : state.pairs) {
+    if (pushed_pairs.contains(pair)) {
       continue;
     }
-    int min_dur = min_dur_it->duration;
-    highs.addRow(
-        -kHighsInf,
-        min_dur,
-        static_cast<HighsInt>(constraint.edge_indexes.size()),
-        constraint.edge_indexes.data(),
-        all_ones.data()
-    );
+    constraints.push_back({
+        .path = {pair.first, pair.second},
+        .steps = pair_steps.steps,
+    });
   }
 
-  highs.run();
-  std::cout
-      << "objective value: "
-      << TimeSinceServiceStart{static_cast<int>(highs.getObjectiveValue())}
-      << "\n";
+  Highs highs;
+  highs.setOptionValue("output_flag", false);
+
+  int prev_objective_value = 0;
+  std::vector<int> prev_soln;
+
+  // Give each edge an unreasonable (but not infinite) max weight so that the
+  // edges get unreasonable but not infinite weight when there is a bug that
+  // makes the problem unbounded above. Looking at which edges have unreasonable
+  // weight can help debug.
+  const double kUnreasonableEdgeWeight = 100 * 3600;
+
+  const int iter_count = 100;
+  for (int iter_idx = 0; iter_idx < iter_count; ++iter_idx) {
+    // TODO: Can we modify the existing model instead of completely clearing it?
+    // Is this faster?
+    highs.clearModel();
+
+    // Set up variables and objective!!
+    // Each edge weight is a variable.
+    // The objective is to maximize the sum of the edge weights.
+    highs.changeObjectiveSense(ObjSense::kMaximize);
+    std::unordered_map<PlainEdge, int> variable_edge_index;
+    variable_edge_index.reserve(edges.size());
+    for (int i = 0; i < edges.size(); ++i) {
+      const std::vector<PairStep>& pair_steps =
+          state.pairs.at({edges[i].a, edges[i].b}).steps;
+      auto min_dur_it = std::ranges::min_element(
+          pair_steps, {}, [](const PairStep& step) { return step.duration; }
+      );
+      assert(min_dur_it != pair_steps.end());
+
+      variable_edge_index[edges[i]] = i;
+      highs.addVar(0.0, kUnreasonableEdgeWeight);
+      // highs.addVar(min_dur_it->duration, kUnreasonableEdgeWeight);
+      highs.changeColCost(i, 1.0);
+    }
+
+    // Set up constraints!!
+    int next_highs_index = 0;
+    std::vector<double> all_ones(edges.size(), 1.0);
+    for (LPEmbiggenConstraint& constraint : constraints) {
+      constraint.constant_weight = 0;
+      std::vector<int> variable_indexes;
+      for (int i = 0; i + 1 < constraint.path.size(); ++i) {
+        auto variable_index_it = variable_edge_index.find(
+            PlainEdge(constraint.path[i], constraint.path[i + 1])
+        );
+        if (variable_index_it == variable_edge_index.end()) {
+          constraint.constant_weight +=
+              state.pairs.at({constraint.path[i], constraint.path[i + 1]})
+                  .RelaxedWeight();
+        } else {
+          variable_indexes.push_back(variable_index_it->second);
+        }
+      }
+
+      auto min_dur_it = std::ranges::min_element(
+          constraint.steps, {}, [](const PairStep& step) {
+            return step.duration;
+          }
+      );
+      assert(min_dur_it != constraint.steps.end());
+      constraint.min_dur = min_dur_it->duration;
+
+      if (variable_indexes.size() == 0) {
+        constraint.highs_index = -1;
+        continue;
+      }
+      constraint.highs_index = next_highs_index;
+      next_highs_index += 1;
+
+      assert(constraint.min_dur - constraint.constant_weight >= 0);
+
+      highs.addRow(
+          -kHighsInf,
+          constraint.min_dur - constraint.constant_weight,
+          static_cast<HighsInt>(variable_indexes.size()),
+          variable_indexes.data(),
+          all_ones.data()
+      );
+    }
+
+    // TODO: This doesn't detect unbounded problem.
+    auto status = highs.run();
+    assert(status == HighsStatus::kOk);
+
+    const auto& solution = highs.getSolution();
+    int obj_val = static_cast<int>(highs.getObjectiveValue());
+    std::cout << "iter " << iter_idx
+              << " objective value: " << TimeSinceServiceStart{obj_val} << "\n";
+
+    // Check that all paths' durations exceed their relaxed graph weights in the
+    // previous solution.
+    if (prev_soln.size() > 0) {
+      for (const LPEmbiggenConstraint& constraint : constraints) {
+        int relaxed_weight = 0;
+        for (int i = 0; i + 1 < constraint.path.size(); ++i) {
+          auto variable_index_it = variable_edge_index.find(
+              PlainEdge(constraint.path[i], constraint.path[i + 1])
+          );
+          if (variable_index_it == variable_edge_index.end()) {
+            relaxed_weight +=
+                state.pairs.at({constraint.path[i], constraint.path[i + 1]})
+                    .RelaxedWeight();
+          } else {
+            relaxed_weight += prev_soln[variable_index_it->second];
+          }
+        }
+
+        auto min_dur_it = std::ranges::min_element(
+            constraint.steps, {}, [](const PairStep& step) {
+              return step.duration;
+            }
+        );
+        assert(min_dur_it != constraint.steps.end());
+        int min_dur = min_dur_it->duration;
+
+        if (relaxed_weight > min_dur) {
+          std::cout << "violating path\n";
+          for (int i = 0; i + 1 < constraint.path.size(); ++i) {
+            std::cout << problem.StopName(constraint.path[i]) << " -> "
+                      << problem.StopName(constraint.path[i + 1]) << ": ";
+
+            auto variable_index_it = variable_edge_index.find(
+                PlainEdge(constraint.path[i], constraint.path[i + 1])
+            );
+            if (variable_index_it == variable_edge_index.end()) {
+              std::cout
+                  << TimeSinceServiceStart{state.pairs
+                                               .at(
+                                                   {constraint.path[i],
+                                                    constraint.path[i + 1]}
+                                               )
+                                               .RelaxedWeight()}
+                  << " (const)";
+            } else {
+              std::cout
+                  << TimeSinceServiceStart{prev_soln[variable_index_it->second]}
+                  << " (var)";
+            }
+
+            std::cout << "\n";
+          }
+
+          std::cout << "relaxed: " << TimeSinceServiceStart{relaxed_weight}
+                    << "\n"
+                    << "actual: " << TimeSinceServiceStart{min_dur} << "\n";
+
+          assert(false);
+        }
+      }
+    }
+
+    assert(obj_val >= prev_objective_value);
+
+    prev_objective_value = obj_val;
+    prev_soln.clear();
+    prev_soln.reserve(edges.size());
+    for (int i = 0; i < edges.size(); ++i) {
+      prev_soln.push_back(static_cast<int>(solution.col_value[i]));
+    }
+
+    // Expand constraint(s) for the next iter.
+    if (iter_idx + 1 < iter_count) {
+      // Expand all constraints that are binding on the edge_expand edge.
+      std::vector<LPEmbiggenConstraint> new_constraints;
+      const int edge_expand = 2;
+      for (LPEmbiggenConstraint& constraint : constraints) {
+        if (constraint.highs_index == -1 ||
+            solution.row_dual[constraint.highs_index] == 0) {
+          continue;
+        }
+      }
+
+      // std::vector<ConstraintExpansionInfo> expansion_infos =
+      // EvaluateConstraintExpansions(problem, state, ub_rel, constraints,
+      // solution); for (int i = 0; i < std::min(5,
+      // static_cast<int>(expansion_infos.size())); ++i) {
+      //   const ConstraintExpansionInfo& info = expansion_infos[i];
+      //   const LPEmbiggenConstraint& constraint =
+      //   constraints[info.constraint_index]; std::cout << "  Expand " <<
+      //   constraint.DebugString(problem) << " " << (info.forwards ? "forwards"
+      //   : "backwards") << ": " << TimeSinceServiceStart{info.improvement} <<
+      //   "\n";
+      // }
+      // assert(expansion_infos.size() > 0);
+      // const ConstraintExpansionInfo& best_expansion = expansion_infos[0];
+
+      // std::vector<LPEmbiggenConstraint> new_constraints;
+      // ExpandConstraint(problem, state, ub_rel, constraints,
+      // constraints[best_expansion.constraint_index], best_expansion.forwards,
+      // new_constraints); constraints.erase(constraints.begin() +
+      // best_expansion.constraint_index); constraints.insert(constraints.end(),
+      // new_constraints.begin(), new_constraints.end()); // TODO: Can
+      // move-insert?
+
+      // int binding_count = 0;
+      // for (int i = 0; i < next_highs_index; ++i) {
+      //   if (solution.row_dual[i] > 0) {
+      //     binding_count += 1;
+      //   }
+      // }
+      // std::cout << "  binding constraints: " << binding_count << "\n";
+
+      // for (LPEmbiggenConstraint& constraint : constraints) {
+      //   if (constraint.highs_index == -1 ||
+      //   solution.row_dual[constraint.highs_index] == 0) {
+      //     constraint.status = 0;
+      //   } else {
+      //     constraint.status = 1;
+      //   }
+      // }
+      // ExpandConstraints(problem, state, ub_rel, constraints);
+
+      // int pre_erase_size = constraints.size();
+      // std::set<std::vector<StopId>> seen_paths;
+      // std::erase_if(constraints, [&](const LPEmbiggenConstraint& constraint)
+      // {
+      //   auto [_, inserted] = seen_paths.insert(constraint.path);
+      //   return !inserted;
+      // });
+      // int post_erase_size = constraints.size();
+      // std::cout << "  expanded to: " << post_erase_size << " (erased " <<
+      // pre_erase_size - post_erase_size << ")\n";
+
+      // AffixTreeNode affix_tree;
+      // for (const LPEmbiggenConstraint& constraint : constraints) {
+      //   AffixTreeNode* cur = &affix_tree;
+      //   for (int i = 0; i < constraint.path.size(); ++i) {
+      //     cur = &cur->children[constraint.path[i]];
+      //   }
+      //   assert(cur->status == 0);
+      //   cur->status = 1;
+      // }
+
+      // bool forwards = true;
+      // for (int implication_round = 0; implication_round < 2;
+      // ++implication_round) {
+      //   std::cout << "Implication round " << implication_round << "\n";
+      //   int implication_count = 0;
+      //   for (auto& [a, a_child] : affix_tree.children) {
+      //     for (auto& [b, ab_child] : a_child.children) {
+      //       LPEmbiggenConstraint ab_constraint;
+      //       if (forwards) {
+      //         ab_constraint.path = {a, b};
+      //         ab_constraint.steps = state.pairs.at({a, b}).steps;
+      //       } else {
+      //         ab_constraint.path = {b, a};
+      //         ab_constraint.steps = state.pairs.at({b, a}).steps;
+      //       }
+      //       MarkImplications(problem, state, ub_rel, ab_constraint, ab_child,
+      //       forwards, implication_count);
+      //     }
+      //   }
+      //   std::cout << "  implications: " << implication_count << "\n";
+
+      //   for (LPEmbiggenConstraint& constraint : constraints) {
+      //     AffixTreeNode* cur = &affix_tree;
+      //     for (int i = 0; i < constraint.path.size(); ++i) {
+      //       int index = forwards ? i : constraint.path.size() - 1 - i;
+      //       cur = &cur->children[constraint.path[index]];
+      //     }
+      //     if (cur->status == 2) {
+      //       constraint.status = 2;
+      //     }
+      //   }
+
+      //   AffixTreeNode affix_tree_reversed;
+      //   std::vector<StopId> path_scratch;
+      //   ReverseAffixTree(affix_tree, path_scratch, affix_tree_reversed);
+
+      //   forwards = !forwards;
+      //   affix_tree = std::move(affix_tree_reversed);
+      // }
+
+      // // for (auto& [a, a_child] : root_backwards.children) {
+      // //   for (auto& [b, ba_child] : a_child.children) {
+      // //     LPEmbiggenConstraint ba_constraint{
+      // //       .path={b, a},
+      // //       .steps=state.pairs.at({b, a}).steps,
+      // //     };
+      // //     MarkImplications(problem, state, ub_rel, ba_constraint,
+      // ba_child, false);
+      // //   }
+      // // }
+
+      // // for (int constraint_index = 0; constraint_index <
+      // constraints.size(); ++constraint_index) {
+      // //   LPEmbiggenConstraint& constraint = constraints[constraint_index];
+      // //   AffixTreeNode* cur_backwards = &root_backwards;
+      // //   for (int i = 0; i < constraint.path.size(); ++i) {
+      // //     cur_backwards =
+      // &cur_backwards->children.at(constraint.path[constraint.path.size() - 1
+      // - i]);
+      // //   }
+      // //   if (cur_backwards->status == 2) {
+      // //     constraint.status = 2;
+      // //   }
+      // // }
+
+      // for (const LPEmbiggenConstraint& constraint : constraints) {
+      //   if (constraint.status == 2) {
+      //     std::cout << "Deleting: " << constraint.DebugString(problem) <<
+      //     "\n";
+      //   }
+      // }
+
+      // std::erase_if(constraints, [](const LPEmbiggenConstraint& constraint) {
+      //   assert(constraint.status == 0 || constraint.status == 2);
+      //   return constraint.status == 2;
+      // });
+
+      // // AffixTreeNode forwards_root, backwards_root;
+      // // for (int constraint_index = 0; constraint_index <
+      // constraints.size(); ++constraint_index) {
+      // //   const LPEmbiggenConstraint& constraint =
+      // constraints[constraint_index];
+      // //   AffixTreeNode* cur_forwards = &forwards_root;
+      // //   AffixTreeNode* cur_backwards = &backwards_root;
+      // //   for (int i = 0; i < constraint.path.size(); ++i) {
+      // //     cur_forwards = &cur_forwards->children[constraint.path[i]];
+      // //     cur_backwards =
+      // &cur_backwards->children[constraint.path[constraint.path.size() - 1 -
+      // i]];
+      // //   }
+
+      // //   // If cur is already terminal, it means there is a duplicate
+      // constraint,
+      // //   // which we erase above!
+      // //   assert(cur_forwards->terminating_constraint_index == -1);
+      // //   assert(cur_backwards->terminating_constraint_index == -1);
+
+      // //   cur_forwards->terminating_constraint_index = constraint_index;
+      // //   cur_backwards->terminating_constraint_index = constraint_index;
+      // // }
+
+      // // TODO(SATURDAY):
+      // // - Figure out why erasing the backwards redundant constraints makes
+      // the problem unbounded.
+      // // - Maybe it has to do with the below todo about erasing one
+      // constraint makes others not be redundant any more.
+      // // - Can check this by doing another walk of the tree where we check
+      // that all the marked-redundant constraints are still redundant even not
+      // considering other marked-redundant constraints.
+      // // - Though now that I think about it, I think it is easy to prove that
+      // this can't happen, so this might not be it.
+      // // - I guess another approach I could take is to delete the constraints
+      // // one-by-one and see when does the problem become unbounded. Though I
+      // // guess it could be incorrect-but-still-bounded for a while so the
+      // // constraint that unbounds it might not be the "problem constraint" I
+      // // guess.
+      // // - OH LOOK ONLY A FEW EDGES ARE UNBOUNDED. LOOK MORE CLOSELY AT THOSE
+      // ON SAT!!
+
+      // // TODO: Consider whether erasing one redundant constraint can make a
+      // different one no longer be redundant.
+
+      // // std::vector<StopId> path_stack;
+      // // // MarkRedundantConstraints(problem, state, forwards_root,
+      // path_stack, constraints, true);
+      // // MarkRedundantConstraints(problem, state, backwards_root, path_stack,
+      // constraints, false);
+
+      // int post_dedund_size = constraints.size();
+      // std::cout << "  dedunded to: " << post_dedund_size << " (erased " <<
+      // post_erase_size - post_dedund_size << ")\n";
+
+      // // for (const PlainEdge& edge : edges) {
+      // //   std::cout << problem.StopName(edge.a) << " -> " <<
+      // problem.StopName(edge.b) << "\n";
+      // //   const AffixTreeNode& forwards_node =
+      // forwards_root.children[edge.a].children[edge.b];
+      // //   if (forwards_node.is_terminal) {
+      // //     std::cout << "  terminal\n";
+      // //   } else {
+      // //     std::cout << "  non-terminal?!\n";
+      // //   }
+      // //   std::cout << "  children: " << forwards_node.children.size() <<
+      // "\n";
+
+      // //   std::unordered_set<StopId> accounted_stops;
+      // //   accounted_stops.insert(edge.a);
+      // //   accounted_stops.insert(edge.b);
+      // //   for (const auto& [s, child] : forwards_node.children) {
+      // //     accounted_stops.insert(s);
+      // //   }
+      // //   // START is always "accounted" because START can never be a
+      // successor.
+      // //   accounted_stops.insert(problem.boundary.start);
+      // //   // END is "accounted" if we start at START and we haven't visited
+      // everything
+      // //   // else, because END can't be a successor in those cases.
+      // //   if (edge.a == problem.boundary.start && 3 < state.stops.size()) {
+      // //     accounted_stops.insert(problem.boundary.end);
+      // //   }
+
+      // //   std::cout << "  unaccounted stops: ";
+      // //   for (StopId s : state.stops) {
+      // //     if (!accounted_stops.contains(s)) {
+      // //       std::cout << problem.StopName(s) << ", ";
+      // //     }
+      // //   }
+      // //   std::cout << "\n";
+      // // }
+
+      // // int prefix_count = 0;
+      // // int suffix_count = 0;
+      // // for (int i = 0; i < constraints.size(); ++i) {
+      // //   const LPEmbiggenConstraint& c = constraints[i];
+
+      // //   // Search for constraints that c is a prefix of.
+      // //   for (int j = 0; j < constraints.size(); ++j) {
+      // //     if (j == i) {
+      // //       continue;
+      // //     }
+      // //     const LPEmbiggenConstraint& d = constraints[j];
+      // //     if (d.path.size() < c.path.size()) {
+      // //       continue;
+      // //     }
+      // //     bool prefix_match = true;
+      // //     for (int k = 0; k < c.path.size(); k++)
+
+      //   // }
+      // // }
+    }
+  }
+
   const auto& solution = highs.getSolution();
 
   struct Row {
@@ -1029,12 +1943,16 @@ int main(int argc, char* argv[]) {
   std::cout << "result: " << TimeSinceServiceStart{analysis.val_relaxed}
             << " / " << TimeSinceServiceStart{analysis.val_actual} << "\n";
 
+  for (const TarelEdge& edge : result->tour_edges) {
+    std::cout << problem.StopName(edge.destination.stop) << "\n";
+  }
+
   std::vector<PlainEdge> embiggen_edges;
   embiggen_edges.reserve(result->tour_edges.size());
   for (const TarelEdge& edge : result->tour_edges) {
     embiggen_edges.push_back({edge.origin.stop, edge.destination.stop});
   }
-  LPEmbiggen(problem, rs, embiggen_edges);
+  LPEmbiggen(problem, rs, ub_rel, embiggen_edges);
 
   return 0;
 
