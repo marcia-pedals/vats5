@@ -205,6 +205,10 @@ target_link_libraries(track_count PUBLIC tarel_graph CLI11::CLI11)
 add_executable(refiner src/tools/refiner.cpp)
 target_link_libraries(refiner PUBLIC tarel_graph highs CLI11::CLI11)
 
+# Add sbie tool
+add_executable(sbie src/tools/sbie.cpp)
+target_link_libraries(sbie PUBLIC tarel_graph CLI11::CLI11)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
