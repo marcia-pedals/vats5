@@ -6,6 +6,14 @@
 
 namespace vats5 {
 
+// Return index of the first fixed-schedule step departing >= `t`, or
+// group step count if none found.
+size_t FindDepartureAtOrAfter(
+    const StepsAdjacencyList& adjacency_list,
+    const StepGroup& group,
+    TimeSinceServiceStart t
+);
+
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(
