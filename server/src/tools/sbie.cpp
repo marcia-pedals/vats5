@@ -349,73 +349,36 @@ RefinerState GeneralizedMakeRefinerState(
     }
   }
 
-  return result;
-}
-
-RefinerState MakeRefinerState(
-    const ProblemState& problem,
-    const StepsAdjacencyList& completed,
-    StopId s0,
-    TimeSinceServiceStart t0,
-    int lb_rel,
-    int ub_rel
-) {
-  TimeSinceServiceStart t_ub{t0.seconds + ub_rel};
-  TimeSinceServiceStart t_lb{t0.seconds + lb_rel};
-
-  auto required_stop_reps = problem.required.GroupRepresentatives();
-
-  RefinerState result;
-  result.stops =
-      std::vector<StopId>(required_stop_reps.begin(), required_stop_reps.end());
-  result.pairs.reserve(problem.required.size() * problem.required.size());
-
-  std::unordered_set<std::pair<StopId, TimeSinceServiceStart>> visited;
-
-  std::vector<std::pair<StopId, TimeSinceServiceStart>> stack;
-  stack.push_back({problem.boundary.start, t0});
-
-  while (stack.size() > 0) {
-    auto [s, t] = stack.back();
-    stack.pop_back();
-
-    if (visited.contains({s, t})) {
-      continue;
-    }
-    visited.insert({s, t});
-
-    for (const StepGroup& g_next : completed.GetGroups(s)) {
-      StopId s_next = g_next.destination_stop;
-
-      if (
-        // START must go to s0.
-        (s == problem.boundary.start && s_next != s0) ||
-        // Never go back to s0.
-        (s != problem.boundary.start && s_next == s0) ||
-        // END may not go anywhere.
-        (s == problem.boundary.end) ||
-        // Don't go to current stop.
-        (s == s_next)
-      ) {
-        continue;
+  // Now delete steps that don't go anywhere.
+  // This happens because if we have a constraint that you get to s@t, then
+  // before that constraint we consider all the steps going anywhere <t, and
+  // some of those may go somewhere where they can then never get to s in time.
+  while (true) {
+    int iter_deleted = 0;
+    std::unordered_map<StopId, std::unordered_set<TimeSinceServiceStart>>
+        dep_times;
+    for (const auto& [p, ps] : result.pairs) {
+      for (const PairStep& step : ps.steps) {
+        dep_times[p.first].insert(step.origin_time);
+        if (p.second == problem.boundary.end) {
+          dep_times[p.second].insert(step.DestinationTime());
+        }
       }
-      auto [t_next, _] = GetTNext(completed, g_next, s, t);
-      if (t_next > t_ub || s_next == problem.boundary.end && t_next < t_lb) {
-        continue;
-      }
-      result.pairs[{s, s_next}].steps.push_back(
-          {t, t_next.seconds - t.seconds}
-      );
-      stack.push_back({s_next, t_next});
     }
-  }
-
-  for (auto& [_, pair] : result.pairs) {
-    std::ranges::sort(pair.steps, {}, [](const PairStep& ps) {
-      return ps.origin_time;
+    for (auto& [p, ps] : result.pairs) {
+      std::erase_if(ps.steps, [&](const PairStep& step) {
+        if (!dep_times[p.second].contains(step.DestinationTime())) {
+          iter_deleted += 1;
+          return true;
+        }
+        return false;
+      });
+    }
+    std::erase_if(result.pairs, [](const auto& p) {
+      return p.second.steps.size() == 0;
     });
-    for (size_t i = 0; i + 1 < pair.steps.size(); ++i) {
-      assert(pair.steps[i].origin_time != pair.steps[i + 1].origin_time);
+    if (iter_deleted == 0) {
+      break;
     }
   }
 
@@ -622,7 +585,7 @@ int LocalEmbiggenIterative(
     std::make_heap(q.begin(), q.end());
   }
 
-  for (int embiggen_round = 0; embiggen_round < 200; ++embiggen_round) {
+  for (int embiggen_round = 0; embiggen_round < 100; ++embiggen_round) {
     std::pop_heap(q.begin(), q.end());
     EmbiggenState cur = std::move(q.back());
     q.pop_back();
@@ -770,7 +733,7 @@ int LocalEmbiggenIterative(
     EmbiggenState cur = std::move(q.back());
     q.pop_back();
     for (const StepId& step : blocking_steps) {
-      extra_delta[step] = cur.delta - top_state.delta;
+      extra_delta[step] = cur.delta;
     }
 
     std::unordered_set<StepId> new_blocking_steps;
@@ -857,6 +820,10 @@ struct RefineResult {
   TspTourResult tour;
   std::unordered_map<StepId, int> accumulated_extra_delta;
   std::vector<std::pair<StopId, StopId>> refined_edges;
+  RefinerState refined_state;
+
+  TspTourResult best_tour;
+  int best_tour_ub;
 
   std::vector<std::pair<StepId, int>> SortedExtraDelta() const {
     std::vector<std::pair<StepId, int>> sorted_extra(
@@ -879,6 +846,8 @@ std::optional<RefineResult> DoRefine(
     const std::vector<std::pair<StopId, StopId>>& initial_refine_edges,
     bool print
 ) {
+  int best_tour_ub = std::numeric_limits<int>::max();
+  TspTourResult best_tour;
   RefinerState rs = state;
 
   using Clock = std::chrono::steady_clock;
@@ -888,54 +857,59 @@ std::optional<RefineResult> DoRefine(
   std::vector<std::pair<StopId, StopId>> refined_edges;
 
   // Refine the initial_refine_edges.
-  if (false) {
-    int acc_delta = 0;
-    std::unordered_map<StepId, int> accumulated_extra_delta;
-    auto embiggen_start = Clock::now();
-    for (const std::pair<StopId, StopId>& edge_pair : initial_refine_edges) {
-      auto ab_it = rs.pairs.find({edge_pair.first, edge_pair.second});
-      if (ab_it == rs.pairs.end() || ab_it->second.steps.size() == 0 ||
-          ab_it->second.RelaxedWeight() >= 24 * 3600) {
-        continue;
-      }
+  // {
+  //   int acc_delta = 0;
+  //   std::unordered_map<StepId, int> accumulated_extra_delta;
+  //   auto embiggen_start = Clock::now();
+  //   for (const std::pair<StopId, StopId>& edge_pair : initial_refine_edges) {
+  //     auto ab_it = rs.pairs.find({edge_pair.first, edge_pair.second});
+  //     if (ab_it == rs.pairs.end() || ab_it->second.steps.size() == 0 ||
+  //         ab_it->second.RelaxedWeight() >= 24 * 3600) {
+  //       continue;
+  //     }
 
-      // TODO: Consider whether it's correct and/or good to skip edges that have
-      // already been refined. One possible problem is that it might interfere
-      // with the accumulated_extra_delta. if (std::find(refined_edges.begin(),
-      // refined_edges.end(), edge_pair) != refined_edges.end()) {
-      //   continue;
-      // }
-      refined_edges.push_back(edge_pair);
+  //     // TODO: Consider whether it's correct and/or good to skip edges that
+  //     have
+  //     // already been refined. One possible problem is that it might
+  //     interfere
+  //     // with the accumulated_extra_delta. if
+  //     (std::find(refined_edges.begin(),
+  //     // refined_edges.end(), edge_pair) != refined_edges.end()) {
+  //     //   continue;
+  //     // }
+  //     refined_edges.push_back(edge_pair);
 
-      // const TarelEdge& edge = result->tour_edges[edge_i];
+  //     // const TarelEdge& edge = result->tour_edges[edge_i];
 
-      // TODO: Explain why it's disadvantageous to embiggen these edges.
-      // if (rs.pairs.at({edge.origin.stop, edge.destination.stop}).steps.size()
-      // == 1) {
-      //   continue;
-      // }
+  //     // TODO: Explain why it's disadvantageous to embiggen these edges.
+  //     // if (rs.pairs.at({edge.origin.stop,
+  //     edge.destination.stop}).steps.size()
+  //     // == 1) {
+  //     //   continue;
+  //     // }
 
-      int delta = LocalEmbiggenIterative(
-          problem,
-          rs,
-          ub_rel,
-          edge_pair.first,
-          edge_pair.second,
-          accumulated_extra_delta
-      );
-      // std::cout << edge_i << ". " << problem.StopName(edge.origin.stop) << "
-      // -> " << problem.StopName(edge.destination.stop) << ": " <<
-      // TimeSinceServiceStart{delta} << "\n";
-      if (delta > 0) {
-        rs.pairs.at(edge_pair).local_embiggening += delta;
-        acc_delta += delta;
-      }
-    }
-    total_embiggen_time += Clock::now() - embiggen_start;
-    if (print)
-      std::cout << "Initial Refinement Total Delta: "
-                << TimeSinceServiceStart{acc_delta} << "\n";
-  }
+  //     int delta = LocalEmbiggenIterative(
+  //         problem,
+  //         rs,
+  //         ub_rel,
+  //         edge_pair.first,
+  //         edge_pair.second,
+  //         accumulated_extra_delta
+  //     );
+  //     // std::cout << edge_i << ". " << problem.StopName(edge.origin.stop) <<
+  //     "
+  //     // -> " << problem.StopName(edge.destination.stop) << ": " <<
+  //     // TimeSinceServiceStart{delta} << "\n";
+  //     if (delta > 0) {
+  //       rs.pairs.at(edge_pair).local_embiggening += delta;
+  //       acc_delta += delta;
+  //     }
+  //   }
+  //   total_embiggen_time += Clock::now() - embiggen_start;
+  //   if (print)
+  //     std::cout << "Initial Refinement Total Delta: "
+  //               << TimeSinceServiceStart{acc_delta} << "\n";
+  // }
 
   int refine_round = 0;
   while (true) {
@@ -949,9 +923,14 @@ std::optional<RefineResult> DoRefine(
     if (!result.has_value()) {
       return std::nullopt;
     }
+    TourAnalysis analysis = AnalyzeTour(problem, rs, *result, t0, false);
+    if (analysis.val_actual < best_tour_ub) {
+      best_tour_ub = analysis.val_actual;
+      best_tour = *result;
+    }
     if (print)
       std::cout << "result: " << TimeSinceServiceStart{result->optimal_value}
-                << "\n";
+                << " / " << TimeSinceServiceStart{analysis.val_actual} << "\n";
     int acc_delta = 0;
 
     std::unordered_map<StepId, int> accumulated_extra_delta;
@@ -962,23 +941,7 @@ std::optional<RefineResult> DoRefine(
       std::pair<StopId, StopId> edge_pair = {
           edge.origin.stop, edge.destination.stop
       };
-
-      // TODO: Consider whether it's correct and/or good to skip edges that have
-      // already been refined. One possible problem is that it might interfere
-      // with the accumulated_extra_delta. if (std::find(refined_edges.begin(),
-      // refined_edges.end(), edge_pair) != refined_edges.end()) {
-      //   continue;
-      // }
       refined_edges.push_back(edge_pair);
-
-      // const TarelEdge& edge = result->tour_edges[edge_i];
-
-      // TODO: Explain why it's disadvantageous to embiggen these edges.
-      // if (rs.pairs.at({edge.origin.stop, edge.destination.stop}).steps.size()
-      // == 1) {
-      //   continue;
-      // }
-
       int delta = LocalEmbiggenIterative(
           problem,
           rs,
@@ -987,9 +950,6 @@ std::optional<RefineResult> DoRefine(
           edge.destination.stop,
           accumulated_extra_delta
       );
-      // std::cout << edge_i << ". " << problem.StopName(edge.origin.stop) << "
-      // -> " << problem.StopName(edge.destination.stop) << ": " <<
-      // TimeSinceServiceStart{delta} << "\n";
       if (delta > 0) {
         rs.pairs.at(edge_pair).local_embiggening += delta;
         acc_delta += delta;
@@ -1013,10 +973,29 @@ std::optional<RefineResult> DoRefine(
         std::cout << "Time in DoTSP: " << tsp_ms << " ms\n";
         std::cout << "Time in embiggen loop: " << embiggen_ms << " ms\n";
       }
+
+      std::unordered_map<StepId, int> reacc_extra_delta;
+      for (int edge_i = 0; edge_i < result->tour_edges.size(); ++edge_i) {
+        const TarelEdge& edge =
+            result->tour_edges[result->tour_edges.size() - 1 - edge_i];
+        int delta = LocalEmbiggenIterative(
+            problem,
+            rs,
+            ub_rel,
+            edge.origin.stop,
+            edge.destination.stop,
+            reacc_extra_delta
+        );
+        assert(delta <= 0);
+      }
+
       return RefineResult{
           .tour = std::move(*result),
-          .accumulated_extra_delta = std::move(accumulated_extra_delta),
-          .refined_edges = refined_edges
+          .accumulated_extra_delta = std::move(reacc_extra_delta),
+          .refined_edges = refined_edges,
+          .refined_state = rs,
+          .best_tour = best_tour,
+          .best_tour_ub = best_tour_ub,
       };
     }
   }
@@ -1139,6 +1118,7 @@ int main(int argc, char* argv[]) {
     std::vector<BranchConstraint> constraints;
     int require_count;
     std::vector<std::pair<StopId, StopId>> refined_edges;
+    std::unordered_map<std::pair<StopId, StopId>, int> parent_relaxed_weights;
     bool operator<(const SearchNode& other) const {
       return lb > other.lb;
       // return require_count < other.require_count;
@@ -1152,6 +1132,7 @@ int main(int argc, char* argv[]) {
       .constraints = {},
       .require_count = 0,
       .refined_edges = {},
+      .parent_relaxed_weights = {},
   }));
 
   while (q.size() > 0) {
@@ -1195,6 +1176,12 @@ int main(int argc, char* argv[]) {
     RefinerState rs = GeneralizedMakeRefinerState(
         problem, completed, known_steps, forbidden_steps, cur.lb, best_ub
     );
+    for (auto& [p, ps] : rs.pairs) {
+      int embiggening_from_parent = cur.parent_relaxed_weights[p] - ps.MinDur();
+      if (embiggening_from_parent > 0) {
+        ps.local_embiggening = embiggening_from_parent;
+      }
+    }
 
     // std::vector<Step> completed_steps_constrained = completed_steps;
     // std::erase_if(completed_steps_constrained, [&](const Step& step) {
@@ -1268,12 +1255,16 @@ int main(int argc, char* argv[]) {
       std::cout << "no result, pruning\n";
       continue;
     }
-    TourAnalysis analysis = AnalyzeTour(problem, rs, result->tour, t0, false);
-    if (analysis.val_actual < best_ub) {
-      std::cout << "Found new UB:\n";
-      AnalyzeTour(problem, rs, result->tour, t0, true);
-      best_ub = analysis.val_actual;
+    {
+      TourAnalysis analysis =
+          AnalyzeTour(problem, rs, result->best_tour, t0, false);
+      if (analysis.val_actual < best_ub) {
+        std::cout << "Found new UB:\n";
+        AnalyzeTour(problem, rs, result->best_tour, t0, true);
+        best_ub = analysis.val_actual;
+      }
     }
+    TourAnalysis analysis = AnalyzeTour(problem, rs, result->tour, t0, false);
     std::cout << "result: " << TimeSinceServiceStart{analysis.val_relaxed}
               << " / " << TimeSinceServiceStart{analysis.val_actual}
               << " (best " << TimeSinceServiceStart{best_ub} << ")\n";
@@ -1337,6 +1328,11 @@ int main(int argc, char* argv[]) {
               << TimeSinceServiceStart{sorted_extra_delta[0].second} << "\n";
     StepId next_step_id = sorted_extra_delta[0].first;
 
+    std::unordered_map<std::pair<StopId, StopId>, int> parent_relaxed_weights;
+    for (const auto& [p, ps] : result->refined_state.pairs) {
+      parent_relaxed_weights[p] = ps.RelaxedWeight();
+    }
+
     {
       SearchNode node_require = cur;
       node_require.lb = std::max(node_require.lb, result->tour.optimal_value);
@@ -1348,6 +1344,7 @@ int main(int argc, char* argv[]) {
       );
       node_require.require_count += 1;
       node_require.refined_edges = result->refined_edges;
+      node_require.parent_relaxed_weights = parent_relaxed_weights;
       q.push_back(std::move(node_require));
       std::push_heap(q.begin(), q.end());
     }
@@ -1362,6 +1359,7 @@ int main(int argc, char* argv[]) {
           }
       );
       node_forbid.refined_edges = result->refined_edges;
+      node_forbid.parent_relaxed_weights = parent_relaxed_weights;
       q.push_back(std::move(node_forbid));
       std::push_heap(q.begin(), q.end());
     }
