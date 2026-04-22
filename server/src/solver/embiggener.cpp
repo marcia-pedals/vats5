@@ -67,34 +67,35 @@ EmbiggenerState MakeEmbiggenerState(
     known_point_stops.insert(known.s);
   }
 
-  // DFS to find all steps along all paths that hit all the known_points.
+  using State =
+      std::pair<PointInstant, int>;  // (point, last_known_point_index)
 
-  std::unordered_set<std::pair<PointInstant, PointInstant>> result_steps;
+  struct Edge {
+    State to;
+    PointInstant from_point;
+    PointInstant to_point;
+  };
 
-  // 0 = not visited yet
-  // 1 = visited, and there is a path from it that hits all the known_points.
-  // 2 = visited, and there is not a path from it that hits all the
-  // known_points.
-  std::unordered_map<std::pair<PointInstant, int>, int> visited_state = {};
+  // Phase 1: Forward BFS to discover all reachable states and edges.
+  std::unordered_map<State, std::vector<Edge>> forward_edges;
+  std::unordered_set<State> discovered;
+  std::vector<State> worklist;
 
-  // Returns 1 or 2 based on whether or not there is a good path from cur, and
-  // also ensures all steps along all good paths from cur have been inserted
-  // into result_steps.
-  std::function<int(PointInstant, int)> DFS =
-      [&](PointInstant cur, int last_known_point_index) -> int {
-    if (last_known_point_index == known_points.size() - 1) {
-      return 1;
-    }
+  assert(known_points[0].t_lo == known_points[0].t_hi);
+  State initial{PointInstant{known_points[0].s, known_points[0].t_lo}, 0};
+  discovered.insert(initial);
+  worklist.push_back(initial);
 
-    int& result_state = visited_state[{cur, last_known_point_index}];
-    if (result_state != 0) {
-      return result_state;
+  for (size_t wi = 0; wi < worklist.size(); ++wi) {
+    auto [cur, last_known_point_index] = worklist[wi];
+
+    if (last_known_point_index == static_cast<int>(known_points.size()) - 1) {
+      continue;
     }
 
     const PointBound& next_known_point =
         known_points[last_known_point_index + 1];
 
-    bool has_good_path = false;
     for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
       StopId s_next = g_next.destination_stop;
       // We can only go to a known_point_stop if it is next_known_point.
@@ -111,20 +112,59 @@ EmbiggenerState MakeEmbiggenerState(
         // Time is out of bounds.
         continue;
       }
-      if (DFS(next,
-              last_known_point_index +
-                  (next.s == next_known_point.s ? 1 : 0)) == 1) {
-        result_steps.insert({cur, next});
-        has_good_path = 1;
+
+      int next_idx =
+          last_known_point_index + (next.s == next_known_point.s ? 1 : 0);
+      State next_state{next, next_idx};
+
+      forward_edges[worklist[wi]].push_back({next_state, cur, next});
+
+      if (!discovered.contains(next_state)) {
+        discovered.insert(next_state);
+        worklist.push_back(next_state);
       }
     }
+  }
 
-    result_state = has_good_path ? 1 : 2;
-    return result_state;
-  };
+  // Phase 2: Backward BFS from base-case states to find all states that
+  // have a good path (one that hits all remaining known_points and reaches
+  // END).
+  std::unordered_map<State, std::vector<State>> reverse_edges;
+  for (const auto& [from, edges] : forward_edges) {
+    for (const auto& edge : edges) {
+      reverse_edges[edge.to].push_back(from);
+    }
+  }
 
-  assert(known_points[0].t_lo == known_points[0].t_hi);
-  DFS(PointInstant{known_points[0].s, known_points[0].t_lo}, 0);
+  std::unordered_set<State> good_states;
+  std::vector<State> good_worklist;
+  for (const State& s : discovered) {
+    if (s.second == static_cast<int>(known_points.size()) - 1) {
+      good_states.insert(s);
+      good_worklist.push_back(s);
+    }
+  }
+  for (size_t gi = 0; gi < good_worklist.size(); ++gi) {
+    auto it = reverse_edges.find(good_worklist[gi]);
+    if (it == reverse_edges.end()) continue;
+    for (const State& parent : it->second) {
+      if (!good_states.contains(parent)) {
+        good_states.insert(parent);
+        good_worklist.push_back(parent);
+      }
+    }
+  }
+
+  // Phase 3: Collect result_steps — edges from good states to good children.
+  std::unordered_set<std::pair<PointInstant, PointInstant>> result_steps;
+  for (const auto& [from, edges] : forward_edges) {
+    if (!good_states.contains(from)) continue;
+    for (const auto& edge : edges) {
+      if (good_states.contains(edge.to)) {
+        result_steps.insert({edge.from_point, edge.to_point});
+      }
+    }
+  }
 
   std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
   result_edges.reserve(problem.required.size() * problem.required.size());
@@ -133,92 +173,6 @@ EmbiggenerState MakeEmbiggenerState(
     auto [a, b] = result_step;
     result_edges[PlainEdge{a.s, b.s}].steps.push_back(FlatStep{a.t, b.t});
   }
-
-  // // Map from dest to all origins that reach it.
-  // std::unordered_map<PointInstant, std::vector<PointInstant>> steps_back;
-
-  // auto ExtendEdges = [&](int known_point_index, PointBound a, PointBound b) {
-  //   std::vector<PointInstant> stack;
-  //   std::unordered_set<PointInstant> visited;
-
-  //   // Currently all points except the last one have t_lo == t_hi, so we only
-  //   // handle this case. If we want intervals for non-last points, then we'll
-  //   // have to handle that case by adding more to the stack.
-  //   assert(a.t_lo == a.t_hi);
-  //   stack.push_back(PointInstant{.s = a.s, .t = a.t_lo});
-
-  //   // DFS all steps from a.
-  //   while (stack.size() > 0) {
-  //     PointInstant cur = stack.back();
-  //     stack.pop_back();
-  //     if (visited.contains(cur) || cur.s == b.s) {
-  //       continue;
-  //     }
-  //     visited.insert(cur);
-  //     for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
-  //       StopId s_next = g_next.destination_stop;
-  //       // We can only go to a known_point_stop if it is b.
-  //       if (known_point_stops.contains(s_next) && s_next != b.s) {
-  //         continue;
-  //       }
-  //       auto [t_next, _] = GetTNext(
-  //           completed,
-  //           g_next,
-  //           cur.s,
-  //           cur.t,
-  //           options.include_nonzero_flex
-  //       );
-  //       if (t_next > b.t_hi || (s_next == b.s && t_next < b.t_lo) ||
-  //       forbidden_points.contains(PointInstant{s_next, t_next})) {
-  //         // Time is out of bounds.
-  //         continue;
-  //       }
-  //       steps_back[PointInstant{s_next, t_next}].push_back(
-  //           PointInstant{cur.s, cur.t}
-  //       );
-  //       stack.push_back(PointInstant{s_next, t_next});
-  //     }
-  //   }
-  // };
-
-  // for (int i = 0; i + 1 < known_points.size(); ++i) {
-  //   ExtendEdges(i, known_points[i], known_points[i + 1]);
-  // }
-
-  // // Get all the steps that eventually lead to END by doing a backwards DFS
-  // from
-  // // END. Steps that don't lead anywhere happen because the DFS in
-  // ExtendSteps
-  // // can't see whether a step will eventually reach the next known point
-  // within
-  // // its time bounds.
-  // std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
-  // result_edges.reserve(problem.required.size() * problem.required.size());
-  // {
-  //   std::vector<PointInstant> stack;
-  //   std::unordered_set<PointInstant> visited;
-
-  //   for (const auto& [dest, origins] : steps_back) {
-  //     if (dest.s == problem.boundary.end) {
-  //       stack.push_back(dest);
-  //     }
-  //   }
-
-  //   while (stack.size() > 0) {
-  //     PointInstant cur = stack.back();
-  //     stack.pop_back();
-  //     if (visited.contains(cur)) {
-  //       continue;
-  //     }
-  //     visited.insert(cur);
-  //     for (const PointInstant& origin : steps_back[cur]) {
-  //       result_edges[PlainEdge{origin.s, cur.s}].steps.push_back(
-  //           FlatStep{origin.t, cur.t}
-  //       );
-  //       stack.push_back(origin);
-  //     }
-  //   }
-  // }
 
   for (auto& [_, edge] : result_edges) {
     std::sort(

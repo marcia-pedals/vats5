@@ -2,12 +2,17 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
 
+#include <algorithm>
+#include <optional>
 #include <unordered_set>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
+#include "solver/test_util/problem_state_gen.h"
 
 namespace vats5 {
 namespace {
@@ -406,6 +411,154 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
           {{S_C, S_END}, Edge(FS(120, 120), FS(220, 220))},
       }
   );
+}
+
+// Follow a tour (START -> perm[0] -> ... -> perm[n-1] -> END) through an
+// EmbiggenerState. Returns the arrival times at each stop (including END), or
+// nullopt if the tour can't be completed.
+std::optional<std::vector<TimeSinceServiceStart>> FollowTour(
+    const EmbiggenerState& state,
+    StopId start,
+    StopId end,
+    const std::vector<StopId>& perm
+) {
+  std::vector<TimeSinceServiceStart> times;
+  TimeSinceServiceStart cur_time{0};
+  StopId cur_stop = start;
+
+  auto advance = [&](StopId next_stop) -> bool {
+    PlainEdge edge{cur_stop, next_stop};
+    auto it = state.edges.find(edge);
+    if (it == state.edges.end()) return false;
+    for (const FlatStep& step : it->second.steps) {
+      // Only follow steps that originate exactly at cur_time. If you get to a
+      // stop and there isn't a step at the current time but there is a stop at
+      // a later time, waiting is not allowed because TODO EXPLAIN.
+      // It has something to do with the "KnownForbiddenPartitioning" property
+      // -- when you partition a problem into a "known point" and "forbidden
+      // point" subproblem, we don't want the "forbidden point" subproblem to be
+      // able to do essentialy the same tour as the "known point" one by just
+      // waiting for a later step that does not violate the "forbidden point".
+      // This would technically be a tour that doesn't violate the "forbidden
+      // point", but there is no point in considering it because the tour in the
+      // "known point" subproblem is at least as good.
+      if (step.origin_time == cur_time) {
+        cur_time = step.destination_time;
+        times.push_back(cur_time);
+        cur_stop = next_stop;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  for (StopId s : perm) {
+    if (!advance(s)) return std::nullopt;
+  }
+  if (!advance(end)) return std::nullopt;
+  return times;
+}
+
+RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
+  ProblemState problem = *GenProblemState();
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+
+  StopId start = problem.boundary.start;
+  StopId end = problem.boundary.end;
+
+  // Base state with no intermediate known points or forbidden points.
+  std::vector<PointBound> base_known_points{
+      PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
+      PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
+  };
+  EmbiggenerState base_state =
+      MakeEmbiggenerState(problem, completed, base_known_points, {});
+
+  // Collect the group representatives (excluding boundary) for tour perms.
+  std::unordered_set<StopId> rep_set = problem.required.GroupRepresentatives();
+  rep_set.erase(start);
+  rep_set.erase(end);
+  std::vector<StopId> stops(rep_set.begin(), rep_set.end());
+  std::sort(stops.begin(), stops.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+
+  // Collect all arrival times at each tour stop in the base state.
+  std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
+  for (const auto& [edge, emb_edge] : base_state.edges) {
+    if (rep_set.contains(edge.b)) {
+      for (const FlatStep& step : emb_edge.steps) {
+        arrival_times[edge.b].push_back(step.destination_time);
+      }
+    }
+  }
+
+  // Generate an intermediate point: a tour stop at a time it actually
+  // gets arrived at in the base state.
+  StopId p_stop = *rc::gen::elementOf(stops);
+  RC_PRE(arrival_times.contains(p_stop) && !arrival_times[p_stop].empty());
+  TimeSinceServiceStart p_time = *rc::gen::elementOf(arrival_times[p_stop]);
+  PointInstant p{p_stop, p_time};
+  RC_LOG() << "p = (" << p_stop << ", " << p_time << ")\n";
+
+  // Sub-state where p is a known intermediate point.
+  std::vector<PointBound> known_kps{
+      PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
+      PointBound{p.s, p.t, p.t},
+      PointBound{end, p_time, TimeSinceServiceStart{100000}},
+  };
+  EmbiggenerState known_state =
+      MakeEmbiggenerState(problem, completed, known_kps, {});
+
+  // Sub-state where p is a forbidden point.
+  std::unordered_set<PointInstant> forbidden{p};
+  EmbiggenerState forbidden_state =
+      MakeEmbiggenerState(problem, completed, base_known_points, forbidden);
+
+  // Check partition property for all permutations of the tour stops.
+  do {
+    auto base_result = FollowTour(base_state, start, end, stops);
+    auto known_result = FollowTour(known_state, start, end, stops);
+    auto forbidden_result = FollowTour(forbidden_state, start, end, stops);
+
+    RC_LOG() << "  perm=[";
+    for (size_t i = 0; i < stops.size(); ++i) {
+      if (i > 0) RC_LOG() << ",";
+      RC_LOG() << stops[i];
+    }
+    RC_LOG() << "] base="
+             << (base_result ? std::to_string(base_result->back().seconds)
+                             : "FAIL")
+             << " known="
+             << (known_result ? std::to_string(known_result->back().seconds)
+                              : "FAIL")
+             << " forbidden="
+             << (forbidden_result
+                     ? std::to_string(forbidden_result->back().seconds)
+                     : "FAIL")
+             << "\n";
+
+    if (!base_result.has_value()) {
+      // If the base can't complete the tour, neither can the sub-states.
+      RC_ASSERT(!known_result.has_value());
+      RC_ASSERT(!forbidden_result.has_value());
+    } else {
+      bool known_matches = known_result == base_result;
+      bool forbidden_matches = forbidden_result == base_result;
+      // Exactly one sub-state matches the base timings.
+      RC_ASSERT(known_matches != forbidden_matches);
+      // The non-matching sub-state either fails or takes at least as long.
+      if (!known_matches && known_result.has_value()) {
+        RC_ASSERT(known_result->back() > base_result->back());
+      }
+      if (!forbidden_matches && forbidden_result.has_value()) {
+        RC_ASSERT(forbidden_result->back() > base_result->back());
+      }
+    }
+  } while (std::next_permutation(
+      stops.begin(), stops.end(), [](StopId a, StopId b) { return a.v < b.v; }
+  ));
 }
 
 }  // namespace

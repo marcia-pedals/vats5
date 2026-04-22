@@ -286,7 +286,7 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 
 # Add embiggener test executable
 add_executable(embiggener_test src/solver/embiggener_test.cpp)
-target_link_libraries(embiggener_test PUBLIC gunit embiggener)
+target_link_libraries(embiggener_test PUBLIC gunit embiggener problem_state_gen rapidcheck_gtest)
 add_test(NAME embiggener_test COMMAND embiggener_test)
 
 # Add tour_paths test executable
