@@ -13,12 +13,28 @@ struct FlatStep {
   int DurationSeconds() const {
     return destination_time.seconds - origin_time.seconds;
   }
+  bool operator==(const FlatStep&) const = default;
 };
 
 struct EmbiggenerEdge {
   std::vector<FlatStep> steps = {};
   int weight = 0;
+  bool operator==(const EmbiggenerEdge&) const = default;
 };
+
+inline std::ostream& operator<<(std::ostream& os, const FlatStep& value) {
+  return os << "FlatStep{" << value.origin_time.seconds << " -> "
+            << value.destination_time.seconds << "}";
+}
+
+inline std::ostream& operator<<(std::ostream& os, const EmbiggenerEdge& value) {
+  os << "EmbiggenerEdge{w=" << value.weight << ", steps=[";
+  for (size_t i = 0; i < value.steps.size(); ++i) {
+    if (i > 0) os << ", ";
+    os << value.steps[i];
+  }
+  return os << "]}";
+}
 
 struct EmbiggenerState {
   RequiredStops required;
@@ -70,11 +86,16 @@ struct std::hash<vats5::StepId> {
 
 namespace vats5 {
 
+struct EmbiggenerOptions {
+  bool include_nonzero_flex = false;
+};
+
 EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     std::vector<PointBound> known_points,
-    std::unordered_set<StepId> forbidden_steps
+    std::unordered_set<StepId> forbidden_steps,
+    EmbiggenerOptions options = {}
 );
 
 // A perfectly cromulent function.

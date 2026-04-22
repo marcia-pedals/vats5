@@ -15,16 +15,13 @@ std::pair<TimeSinceServiceStart, StepPartitionId> GetTNext(
     const StepGroup& g_next,
     StopId from_s,
     TimeSinceServiceStart t_cur,
-    const std::unordered_set<StepId>& forbidden_steps = {}
+    const std::unordered_set<StepId>& forbidden_steps = {},
+    bool include_nonzero_flex = false
 ) {
   StepPartitionId part_next_flex = StepPartitionId::NONE;
   TimeSinceServiceStart t_next_flex{std::numeric_limits<int>::max()};
-  // TODO: Handle duration>0 flex steps.
-  // (It would be correct to simply delete the FlexDurationSections() == 0 here,
-  // but that slows things down so much. I hope there is some optimization we
-  // can do to handle them better.)
   if (g_next.flex_step.has_value() &&
-      g_next.flex_step->FlexDurationSeconds() == 0) {
+      (g_next.flex_step->FlexDurationSeconds() == 0 || include_nonzero_flex)) {
     part_next_flex = g_next.flex_step->destination_partition;
     t_next_flex.seconds =
         t_cur.seconds + g_next.flex_step->FlexDurationSeconds();
@@ -70,7 +67,8 @@ EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     std::vector<PointBound> known_points,
-    std::unordered_set<StepId> forbidden_steps
+    std::unordered_set<StepId> forbidden_steps,
+    EmbiggenerOptions options
 ) {
   assert(known_points.size() > 0);
   assert(known_points.front().s == problem.boundary.start);
@@ -113,8 +111,14 @@ EmbiggenerState MakeEmbiggenerState(
         if (known_point_stops.contains(s_next) && s_next != b.s) {
           continue;
         }
-        auto [t_next, _] =
-            GetTNext(completed, g_next, cur.s, cur.t, forbidden_steps);
+        auto [t_next, _] = GetTNext(
+            completed,
+            g_next,
+            cur.s,
+            cur.t,
+            forbidden_steps,
+            options.include_nonzero_flex
+        );
         if (t_next > b.t_hi || (s_next == b.s && t_next < b.t_lo)) {
           // Time is out of bounds.
           continue;
@@ -160,6 +164,21 @@ EmbiggenerState MakeEmbiggenerState(
         );
         stack.push_back(origin);
       }
+    }
+  }
+
+  for (auto& [_, edge] : result_edges) {
+    std::sort(
+        edge.steps.begin(),
+        edge.steps.end(),
+        [](const FlatStep& a, const FlatStep& b) {
+          return a.origin_time < b.origin_time;
+        }
+    );
+    for (size_t i = 1; i < edge.steps.size(); ++i) {
+      assert(
+          edge.steps[i - 1].destination_time <= edge.steps[i].destination_time
+      );
     }
   }
 

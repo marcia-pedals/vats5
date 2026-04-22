@@ -256,6 +256,10 @@ inline std::ostream& operator<<(std::ostream& os, const Step& value) {
             << "}";
 }
 
+inline std::ostream& operator<<(std::ostream& os, const PlainEdge& value) {
+  return os << "PlainEdge{" << value.a.v << " -> " << value.b.v << "}";
+}
+
 struct StopPosition {
   StopId stop_id;
   double x_meters;  // approximate x position in meters
