@@ -189,9 +189,9 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_AllAllowed) {
   );
 }
 
-TEST(EmbiggenerTest, MakeEmbiggenerState_ForbidOneStep) {
+TEST(EmbiggenerTest, MakeEmbiggenerState_ForbidOnePoint) {
   // MakeEmbiggenerState works correctly on the MakeTestProblemState when
-  // we forbid one particular step.
+  // we forbid one particular point.
   ProblemState problem = MakeTestProblemState();
   StepsAdjacencyList completed =
       MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
@@ -207,16 +207,16 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_ForbidOneStep) {
           TimeSinceServiceStart{1000}
       },
   };
-  std::unordered_set<StepId> forbidden_steps{
-      StepId{S_A, S_B, TimeSinceServiceStart{110}}
+  std::unordered_set<PointInstant> forbidden_points{
+      PointInstant{S_B, TimeSinceServiceStart{110}}
   };
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, forbidden_steps);
+      MakeEmbiggenerState(problem, completed, known_points, forbidden_points);
 
   ExpectMap(
       state.edges,
       {
-          {{S_A, S_B}, Edge(FS(0, 10), FS(20, 210), FS(120, 210))},
+          {{S_A, S_B}, Edge(FS(0, 10), FS(120, 210))},
           {{S_B, S_A},
            Edge(
                FS(0, 20), FS(10, 20), FS(40, 120), FS(140, 220), FS(210, 220)
@@ -334,6 +334,76 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_MustEndBy100) {
           {{S_B, S_END}, Edge(FS(0, 0), FS(10, 10), FS(40, 40))},
           {{S_C, S_END}, Edge(FS(0, 0), FS(20, 20))},
           {{S_START, S_END}, Edge(FS(0, 0))},
+      }
+  );
+}
+
+TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_NoGoodPath) {
+  // MakeEmbiggenerState works correctly on the MakeTestProblemState when
+  // there is an intermediate known point that is not on any good path.
+  ProblemState problem = MakeTestProblemState();
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+  std::vector<PointBound> known_points{
+      PointBound{
+          problem.boundary.start,
+          TimeSinceServiceStart{0},
+          TimeSinceServiceStart{0}
+      },
+      PointBound{
+          S_B,
+          TimeSinceServiceStart{110},
+          TimeSinceServiceStart{110},
+      },
+      PointBound{
+          problem.boundary.end,
+          TimeSinceServiceStart{110},
+          TimeSinceServiceStart{1000}
+      },
+  };
+  EmbiggenerState state =
+      MakeEmbiggenerState(problem, completed, known_points, {});
+  ExpectMap(state.edges, {});
+}
+
+TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
+  // MakeEmbiggenerState works correctly on the MakeTestProblemState when
+  // there is an intermediate known point that is not on a good path.
+  ProblemState problem = MakeTestProblemState();
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+  std::vector<PointBound> known_points{
+      PointBound{
+          problem.boundary.start,
+          TimeSinceServiceStart{0},
+          TimeSinceServiceStart{0}
+      },
+      PointBound{
+          S_B,
+          TimeSinceServiceStart{10},
+          TimeSinceServiceStart{10},
+      },
+      PointBound{
+          problem.boundary.end,
+          TimeSinceServiceStart{10},
+          TimeSinceServiceStart{1000}
+      },
+  };
+  EmbiggenerState state =
+      MakeEmbiggenerState(problem, completed, known_points, {});
+
+  ExpectMap(
+      state.edges,
+      {
+          {{S_A, S_B}, Edge(FS(0, 10))},
+          {{S_B, S_A}, Edge(FS(10, 20))},
+          {{S_A, S_C}, Edge(FS(20, 220))},
+          {{S_B, S_C}, Edge(FS(10, 120))},
+          {{S_C, S_A}, Edge(FS(120, 220))},
+          {{S_START, S_A}, Edge(FS(0, 0))},
+          {{S_A, S_END}, Edge(FS(20, 20), FS(220, 220))},
+          {{S_B, S_END}, Edge(FS(10, 10))},
+          {{S_C, S_END}, Edge(FS(120, 120), FS(220, 220))},
       }
   );
 }

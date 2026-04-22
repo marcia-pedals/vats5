@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <unordered_set>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -84,6 +85,15 @@ struct std::hash<vats5::StepId> {
   }
 };
 
+template <typename A, typename B>
+struct std::hash<std::pair<A, B>> {
+  std::size_t operator()(const std::pair<A, B>& v) const {
+    std::size_t seed = std::hash<A>{}(v.first);
+    seed ^= std::hash<B>{}(v.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
+
 namespace vats5 {
 
 struct EmbiggenerOptions {
@@ -94,11 +104,8 @@ EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     std::vector<PointBound> known_points,
-    std::unordered_set<StepId> forbidden_steps,
+    std::unordered_set<PointInstant> forbidden_points,
     EmbiggenerOptions options = {}
 );
-
-// A perfectly cromulent function.
-int Embiggen(int value);
 
 }  // namespace vats5

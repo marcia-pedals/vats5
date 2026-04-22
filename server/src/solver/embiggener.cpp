@@ -15,7 +15,6 @@ std::pair<TimeSinceServiceStart, StepPartitionId> GetTNext(
     const StepGroup& g_next,
     StopId from_s,
     TimeSinceServiceStart t_cur,
-    const std::unordered_set<StepId>& forbidden_steps = {},
     bool include_nonzero_flex = false
 ) {
   StepPartitionId part_next_flex = StepPartitionId::NONE;
@@ -25,28 +24,12 @@ std::pair<TimeSinceServiceStart, StepPartitionId> GetTNext(
     part_next_flex = g_next.flex_step->destination_partition;
     t_next_flex.seconds =
         t_cur.seconds + g_next.flex_step->FlexDurationSeconds();
-    if (forbidden_steps.contains(
-            StepId{.a = from_s, .b = g_next.destination_stop, .tb = t_next_flex}
-        )) {
-      part_next_flex = StepPartitionId::NONE;
-      t_next_flex.seconds = std::numeric_limits<int>::max();
-    }
   }
 
   StepPartitionId part_next_sched = StepPartitionId::NONE;
   TimeSinceServiceStart t_next_sched{std::numeric_limits<int>::max()};
   std::span<const AdjacencyListStep> group_steps = completed.GetSteps(g_next);
   size_t t_next_i = FindDepartureAtOrAfter(completed, g_next, t_cur);
-  while (t_next_i < group_steps.size() &&
-         forbidden_steps.contains(
-             StepId{
-                 .a = from_s,
-                 .b = g_next.destination_stop,
-                 .tb = group_steps[t_next_i].destination_time
-             }
-         )) {
-    t_next_i += 1;
-  }
   if (t_next_i < group_steps.size()) {
     part_next_sched = group_steps[t_next_i].destination_partition;
     t_next_sched = group_steps[t_next_i].destination_time;
@@ -67,7 +50,7 @@ EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     std::vector<PointBound> known_points,
-    std::unordered_set<StepId> forbidden_steps,
+    std::unordered_set<PointInstant> forbidden_points,
     EmbiggenerOptions options
 ) {
   assert(known_points.size() > 0);
@@ -84,88 +67,158 @@ EmbiggenerState MakeEmbiggenerState(
     known_point_stops.insert(known.s);
   }
 
-  // Map from dest to all origins that reach it.
-  std::unordered_map<PointInstant, std::vector<PointInstant>> steps_back;
+  // DFS to find all steps along all paths that hit all the known_points.
 
-  auto ExtendEdges = [&](int known_point_index, PointBound a, PointBound b) {
-    std::vector<PointInstant> stack;
-    std::unordered_set<PointInstant> visited;
+  std::unordered_set<std::pair<PointInstant, PointInstant>> result_steps;
 
-    // Currently all points except the last one have t_lo == t_hi, so we only
-    // handle this case. If we want intervals for non-last points, then we'll
-    // have to handle that case by adding more to the stack.
-    assert(a.t_lo == a.t_hi);
-    stack.push_back(PointInstant{.s = a.s, .t = a.t_lo});
+  // 0 = not visited yet
+  // 1 = visited, and there is a path from it that hits all the known_points.
+  // 2 = visited, and there is not a path from it that hits all the
+  // known_points.
+  std::unordered_map<std::pair<PointInstant, int>, int> visited_state = {};
 
-    // DFS all steps from a.
-    while (stack.size() > 0) {
-      PointInstant cur = stack.back();
-      stack.pop_back();
-      if (visited.contains(cur) || cur.s == b.s) {
+  // Returns 1 or 2 based on whether or not there is a good path from cur, and
+  // also ensures all steps along all good paths from cur have been inserted
+  // into result_steps.
+  std::function<int(PointInstant, int)> DFS =
+      [&](PointInstant cur, int last_known_point_index) -> int {
+    if (last_known_point_index == known_points.size() - 1) {
+      return 1;
+    }
+
+    int& result_state = visited_state[{cur, last_known_point_index}];
+    if (result_state != 0) {
+      return result_state;
+    }
+
+    const PointBound& next_known_point =
+        known_points[last_known_point_index + 1];
+
+    bool has_good_path = false;
+    for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
+      StopId s_next = g_next.destination_stop;
+      // We can only go to a known_point_stop if it is next_known_point.
+      if (known_point_stops.contains(s_next) && s_next != next_known_point.s) {
         continue;
       }
-      visited.insert(cur);
-      for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
-        StopId s_next = g_next.destination_stop;
-        // We can only go to a known_point_stop if it is b.
-        if (known_point_stops.contains(s_next) && s_next != b.s) {
-          continue;
-        }
-        auto [t_next, _] = GetTNext(
-            completed,
-            g_next,
-            cur.s,
-            cur.t,
-            forbidden_steps,
-            options.include_nonzero_flex
-        );
-        if (t_next > b.t_hi || (s_next == b.s && t_next < b.t_lo)) {
-          // Time is out of bounds.
-          continue;
-        }
-        steps_back[PointInstant{s_next, t_next}].push_back(
-            PointInstant{cur.s, cur.t}
-        );
-        stack.push_back(PointInstant{s_next, t_next});
+      auto [t_next, _] = GetTNext(
+          completed, g_next, cur.s, cur.t, options.include_nonzero_flex
+      );
+      PointInstant next = PointInstant{s_next, t_next};
+      if (next.t > next_known_point.t_hi ||
+          (next.s == next_known_point.s && next.t < next_known_point.t_lo) ||
+          forbidden_points.contains(next)) {
+        // Time is out of bounds.
+        continue;
+      }
+      if (DFS(next,
+              last_known_point_index +
+                  (next.s == next_known_point.s ? 1 : 0)) == 1) {
+        result_steps.insert({cur, next});
+        has_good_path = 1;
       }
     }
+
+    result_state = has_good_path ? 1 : 2;
+    return result_state;
   };
 
-  for (int i = 0; i + 1 < known_points.size(); ++i) {
-    ExtendEdges(i, known_points[i], known_points[i + 1]);
-  }
+  assert(known_points[0].t_lo == known_points[0].t_hi);
+  DFS(PointInstant{known_points[0].s, known_points[0].t_lo}, 0);
 
-  // Get all the steps that eventually lead to END by doing a backwards DFS from
-  // END. Steps that don't lead anywhere happen because the DFS in ExtendSteps
-  // can't see whether a step will eventually reach the next known point within
-  // its time bounds.
   std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
   result_edges.reserve(problem.required.size() * problem.required.size());
-  {
-    std::vector<PointInstant> stack;
-    std::unordered_set<PointInstant> visited;
-
-    for (const auto& [dest, origins] : steps_back) {
-      if (dest.s == problem.boundary.end) {
-        stack.push_back(dest);
-      }
-    }
-
-    while (stack.size() > 0) {
-      PointInstant cur = stack.back();
-      stack.pop_back();
-      if (visited.contains(cur)) {
-        continue;
-      }
-      visited.insert(cur);
-      for (const PointInstant& origin : steps_back[cur]) {
-        result_edges[PlainEdge{origin.s, cur.s}].steps.push_back(
-            FlatStep{origin.t, cur.t}
-        );
-        stack.push_back(origin);
-      }
-    }
+  for (const std::pair<PointInstant, PointInstant>& result_step :
+       result_steps) {
+    auto [a, b] = result_step;
+    result_edges[PlainEdge{a.s, b.s}].steps.push_back(FlatStep{a.t, b.t});
   }
+
+  // // Map from dest to all origins that reach it.
+  // std::unordered_map<PointInstant, std::vector<PointInstant>> steps_back;
+
+  // auto ExtendEdges = [&](int known_point_index, PointBound a, PointBound b) {
+  //   std::vector<PointInstant> stack;
+  //   std::unordered_set<PointInstant> visited;
+
+  //   // Currently all points except the last one have t_lo == t_hi, so we only
+  //   // handle this case. If we want intervals for non-last points, then we'll
+  //   // have to handle that case by adding more to the stack.
+  //   assert(a.t_lo == a.t_hi);
+  //   stack.push_back(PointInstant{.s = a.s, .t = a.t_lo});
+
+  //   // DFS all steps from a.
+  //   while (stack.size() > 0) {
+  //     PointInstant cur = stack.back();
+  //     stack.pop_back();
+  //     if (visited.contains(cur) || cur.s == b.s) {
+  //       continue;
+  //     }
+  //     visited.insert(cur);
+  //     for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
+  //       StopId s_next = g_next.destination_stop;
+  //       // We can only go to a known_point_stop if it is b.
+  //       if (known_point_stops.contains(s_next) && s_next != b.s) {
+  //         continue;
+  //       }
+  //       auto [t_next, _] = GetTNext(
+  //           completed,
+  //           g_next,
+  //           cur.s,
+  //           cur.t,
+  //           options.include_nonzero_flex
+  //       );
+  //       if (t_next > b.t_hi || (s_next == b.s && t_next < b.t_lo) ||
+  //       forbidden_points.contains(PointInstant{s_next, t_next})) {
+  //         // Time is out of bounds.
+  //         continue;
+  //       }
+  //       steps_back[PointInstant{s_next, t_next}].push_back(
+  //           PointInstant{cur.s, cur.t}
+  //       );
+  //       stack.push_back(PointInstant{s_next, t_next});
+  //     }
+  //   }
+  // };
+
+  // for (int i = 0; i + 1 < known_points.size(); ++i) {
+  //   ExtendEdges(i, known_points[i], known_points[i + 1]);
+  // }
+
+  // // Get all the steps that eventually lead to END by doing a backwards DFS
+  // from
+  // // END. Steps that don't lead anywhere happen because the DFS in
+  // ExtendSteps
+  // // can't see whether a step will eventually reach the next known point
+  // within
+  // // its time bounds.
+  // std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
+  // result_edges.reserve(problem.required.size() * problem.required.size());
+  // {
+  //   std::vector<PointInstant> stack;
+  //   std::unordered_set<PointInstant> visited;
+
+  //   for (const auto& [dest, origins] : steps_back) {
+  //     if (dest.s == problem.boundary.end) {
+  //       stack.push_back(dest);
+  //     }
+  //   }
+
+  //   while (stack.size() > 0) {
+  //     PointInstant cur = stack.back();
+  //     stack.pop_back();
+  //     if (visited.contains(cur)) {
+  //       continue;
+  //     }
+  //     visited.insert(cur);
+  //     for (const PointInstant& origin : steps_back[cur]) {
+  //       result_edges[PlainEdge{origin.s, cur.s}].steps.push_back(
+  //           FlatStep{origin.t, cur.t}
+  //       );
+  //       stack.push_back(origin);
+  //     }
+  //   }
+  // }
 
   for (auto& [_, edge] : result_edges) {
     std::sort(
@@ -187,7 +240,5 @@ EmbiggenerState MakeEmbiggenerState(
       .edges = std::move(result_edges),
   };
 }
-
-int Embiggen(int value) { return value + 1; }
 
 }  // namespace vats5
