@@ -43,6 +43,6 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  std::cout << vats5::Embiggen(41) << std::endl;
+  std::cout << 41 << "\n";
   return 0;
 }
