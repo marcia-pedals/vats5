@@ -42,7 +42,23 @@ std::pair<TimeSinceServiceStart, StepPartitionId> GetTNext(
   }
 }
 
+struct BFSState {
+  vats5::PointInstant point;
+  int last_known_point_index;
+  bool operator==(const BFSState&) const = default;
+};
+
 }  // namespace
+
+template <>
+struct std::hash<BFSState> {
+  std::size_t operator()(const BFSState& v) const {
+    std::size_t seed = std::hash<vats5::PointInstant>{}(v.point);
+    seed ^= std::hash<int>{}(v.last_known_point_index) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+    return seed;
+  }
+};
 
 namespace vats5 {
 
@@ -67,57 +83,56 @@ EmbiggenerState MakeEmbiggenerState(
     known_point_stops.insert(known.s);
   }
 
-  using State =
-      std::pair<PointInstant, int>;  // (point, last_known_point_index)
-
-  struct Edge {
-    State to;
-    PointInstant from_point;
-    PointInstant to_point;
-  };
-
   // Phase 1: Forward BFS to discover all reachable states and edges.
-  std::unordered_map<State, std::vector<Edge>> forward_edges;
-  std::unordered_set<State> discovered;
-  std::vector<State> worklist;
+  std::unordered_map<BFSState, std::vector<BFSState>> forward_edges;
+  std::unordered_set<BFSState> discovered;
+  std::vector<BFSState> worklist;
 
   assert(known_points[0].t_lo == known_points[0].t_hi);
-  State initial{PointInstant{known_points[0].s, known_points[0].t_lo}, 0};
+  BFSState initial{PointInstant{known_points[0].s, known_points[0].t_lo}, 0};
   discovered.insert(initial);
   worklist.push_back(initial);
 
   for (size_t wi = 0; wi < worklist.size(); ++wi) {
-    auto [cur, last_known_point_index] = worklist[wi];
+    BFSState cur_state = worklist[wi];
 
-    if (last_known_point_index == static_cast<int>(known_points.size()) - 1) {
+    if (cur_state.last_known_point_index ==
+        static_cast<int>(known_points.size()) - 1) {
       continue;
     }
 
     const PointBound& next_known_point =
-        known_points[last_known_point_index + 1];
+        known_points[cur_state.last_known_point_index + 1];
 
-    for (const StepGroup& g_next : completed.GetGroups(cur.s)) {
+    for (const StepGroup& g_next : completed.GetGroups(cur_state.point.s)) {
       StopId s_next = g_next.destination_stop;
       // We can only go to a known_point_stop if it is next_known_point.
       if (known_point_stops.contains(s_next) && s_next != next_known_point.s) {
         continue;
       }
       auto [t_next, _] = GetTNext(
-          completed, g_next, cur.s, cur.t, options.include_nonzero_flex
+          completed,
+          g_next,
+          cur_state.point.s,
+          cur_state.point.t,
+          options.include_nonzero_flex
       );
-      PointInstant next = PointInstant{s_next, t_next};
-      if (next.t > next_known_point.t_hi ||
-          (next.s == next_known_point.s && next.t < next_known_point.t_lo) ||
-          forbidden_points.contains(next)) {
+      PointInstant next_point{s_next, t_next};
+      if (next_point.t > next_known_point.t_hi ||
+          (next_point.s == next_known_point.s &&
+           next_point.t < next_known_point.t_lo) ||
+          forbidden_points.contains(next_point)) {
         // Time is out of bounds.
         continue;
       }
 
-      int next_idx =
-          last_known_point_index + (next.s == next_known_point.s ? 1 : 0);
-      State next_state{next, next_idx};
+      BFSState next_state{
+          next_point,
+          cur_state.last_known_point_index +
+              (next_point.s == next_known_point.s ? 1 : 0)
+      };
 
-      forward_edges[worklist[wi]].push_back({next_state, cur, next});
+      forward_edges[cur_state].push_back(next_state);
 
       if (!discovered.contains(next_state)) {
         discovered.insert(next_state);
@@ -129,17 +144,17 @@ EmbiggenerState MakeEmbiggenerState(
   // Phase 2: Backward BFS from base-case states to find all states that
   // have a good path (one that hits all remaining known_points and reaches
   // END).
-  std::unordered_map<State, std::vector<State>> reverse_edges;
-  for (const auto& [from, edges] : forward_edges) {
-    for (const auto& edge : edges) {
-      reverse_edges[edge.to].push_back(from);
+  std::unordered_map<BFSState, std::vector<BFSState>> reverse_edges;
+  for (const auto& [from, children] : forward_edges) {
+    for (const BFSState& to : children) {
+      reverse_edges[to].push_back(from);
     }
   }
 
-  std::unordered_set<State> good_states;
-  std::vector<State> good_worklist;
-  for (const State& s : discovered) {
-    if (s.second == static_cast<int>(known_points.size()) - 1) {
+  std::unordered_set<BFSState> good_states;
+  std::vector<BFSState> good_worklist;
+  for (const BFSState& s : discovered) {
+    if (s.last_known_point_index == static_cast<int>(known_points.size()) - 1) {
       good_states.insert(s);
       good_worklist.push_back(s);
     }
@@ -147,7 +162,7 @@ EmbiggenerState MakeEmbiggenerState(
   for (size_t gi = 0; gi < good_worklist.size(); ++gi) {
     auto it = reverse_edges.find(good_worklist[gi]);
     if (it == reverse_edges.end()) continue;
-    for (const State& parent : it->second) {
+    for (const BFSState& parent : it->second) {
       if (!good_states.contains(parent)) {
         good_states.insert(parent);
         good_worklist.push_back(parent);
@@ -157,11 +172,11 @@ EmbiggenerState MakeEmbiggenerState(
 
   // Phase 3: Collect result_steps — edges from good states to good children.
   std::unordered_set<std::pair<PointInstant, PointInstant>> result_steps;
-  for (const auto& [from, edges] : forward_edges) {
+  for (const auto& [from, children] : forward_edges) {
     if (!good_states.contains(from)) continue;
-    for (const auto& edge : edges) {
-      if (good_states.contains(edge.to)) {
-        result_steps.insert({edge.from_point, edge.to_point});
+    for (const BFSState& to : children) {
+      if (good_states.contains(to)) {
+        result_steps.insert({from.point, to.point});
       }
     }
   }
