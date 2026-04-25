@@ -5,6 +5,7 @@
 
 #include "solver/data.h"
 #include "solver/steps_shortest_path.h"
+#include "solver/tarel_graph.h"
 
 namespace {
 
@@ -208,6 +209,74 @@ EmbiggenerState MakeEmbiggenerState(
       .required = problem.required,
       .edges = std::move(result_edges),
   };
+}
+
+std::optional<TspTourResult> DoTSP(
+    const ProblemState& problem, const EmbiggenerState& state, int ub_rel
+) {
+  TarelState start_state{problem.boundary.start, StepPartitionId{0}};
+  TarelState end_state{problem.boundary.end, StepPartitionId{0}};
+  std::vector<TarelEdge> edges;
+
+  // END->START edge.
+  edges.push_back(
+      TarelEdge{
+          .origin = end_state,
+          .destination = start_state,
+          .weight = 0,
+      }
+  );
+
+  // All the other edges.
+  for (const auto& [plain_edge, edge_data] : state.edges) {
+    edges.push_back(
+        TarelEdge{
+            .origin = TarelState{plain_edge.a, StepPartitionId{0}},
+            .destination = TarelState{plain_edge.b, StepPartitionId{0}},
+            .weight = edge_data.weight,
+        }
+    );
+  }
+
+  // SOLVE!!
+
+  TarelStateRemapResult remap = RemapTarelStates(edges, problem.required);
+  TspGraphData graph = MakeTspGraphEdges(remap.edges, problem.boundary);
+
+  // Check that at least one representative from each group of required stops
+  // appears in `graph`.
+  //
+  // This is necessary for correctness because the above construction can omit
+  // stops from `graph`, and if it does, then the TSP on `graph` will give a
+  // solution that does not reach all the stops. (Specifically, stops that don't
+  // appear as both origins and destinations are omitted).
+  std::unordered_set<StopId> representatives_in_graph;
+  for (const TarelState& tarel_state : graph.state_by_id) {
+    representatives_in_graph.insert(
+        problem.required.Representative(tarel_state.stop)
+    );
+  }
+  for (StopId representative : problem.required.GroupRepresentatives()) {
+    if (!representatives_in_graph.contains(representative)) {
+      std::cout << "  missing required, no solution\n";
+      return std::nullopt;
+    }
+  }
+
+  std::optional<TspTourResult> result = SolveTspAndExtractTour(
+      edges, graph, problem.boundary, ub_rel, nullptr, nullptr
+  );
+  if (!result.has_value()) {
+    return std::nullopt;
+  }
+
+  // Map `result` states back to original states.
+  for (TarelEdge& edge : result->tour_edges) {
+    edge.origin = remap.mapped_to_original.at(edge.origin);
+    edge.destination = remap.mapped_to_original.at(edge.destination);
+  }
+
+  return result;
 }
 
 }  // namespace vats5

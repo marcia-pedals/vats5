@@ -3,7 +3,26 @@
 #include <iostream>
 #include <string>
 
+#include "solver/data.h"
 #include "solver/embiggener.h"
+#include "solver/steps_shortest_path.h"
+#include "solver/tarel_graph.h"
+
+using namespace vats5;
+
+StopId FindStopByGtfsId(
+    const ProblemState& problem, const std::string& gtfs_stop_id_str
+) {
+  const GtfsStopId target_gtfs_id{gtfs_stop_id_str};
+  for (const auto& [stop_id, info] : problem.stop_infos) {
+    if (info.gtfs_stop_id == target_gtfs_id) {
+      return stop_id;
+    }
+  }
+  throw std::runtime_error(
+      "Stop " + gtfs_stop_id_str + " not found in stop_infos"
+  );
+}
 
 int main(int argc, char* argv[]) {
   CLI::App app{"Refine tool"};
@@ -43,6 +62,57 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  std::cout << 41 << "\n";
+  nlohmann::json j = nlohmann::json::parse(in);
+  ProblemState problem = j.get<ProblemState>();
+  in.close();
+
+  // Reduce it to just the group representatives (eliminates non-required stops
+  // and multi-stop groups which the later codes do not support yet).
+  //
+  // TODO: Make later codes support this stuff.
+  auto fooized = ReduceToMinimalSystemPaths(
+      problem.minimal, problem.required.GroupRepresentatives()
+  );
+  problem.minimal = MakeAdjacencyList(fooized.AllMergedSteps());
+  std::cout << "required size: " << problem.required.size() << "\n";
+
+  StopId s0 = FindStopByGtfsId(problem, gtfs_stop_id_str);
+  std::cout << "s0: " << problem.StopName(s0) << "\n";
+
+  TimeSinceServiceStart t0 = TimeSinceServiceStart::Parse(time_str);
+  std::cout << "t0: " << t0 << "\n";
+
+  int lb_rel = TimeSinceServiceStart::Parse(lb_str).seconds;
+  TimeSinceServiceStart t_lb{t0.seconds + lb_rel};
+  int ub_rel = TimeSinceServiceStart::Parse(ub_str).seconds;
+  TimeSinceServiceStart t_ub{t0.seconds + ub_rel};
+
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+
+  std::vector<PointBound> known_points{
+      PointBound{problem.boundary.start, t0, t0},
+      PointBound{problem.boundary.end, t_lb, t_ub},
+  };
+  EmbiggenerState state =
+      MakeEmbiggenerState(problem, completed, known_points, {});
+
+  for (auto& [_, edge_data] : state.edges) {
+    auto min_dur_step_it =
+        std::ranges::min_element(edge_data.steps, {}, [](const FlatStep& step) {
+          return step.DurationSeconds();
+        });
+    assert(min_dur_step_it != edge_data.steps.end());
+    edge_data.weight = min_dur_step_it->DurationSeconds();
+  }
+
+  std::optional<TspTourResult> tsp_result = DoTSP(problem, state, ub_rel);
+  if (!tsp_result.has_value()) {
+    std::cout << "  no result, exiting\n";
+    return 0;
+  }
+  std::cout << "  result: " << TimeSinceServiceStart{tsp_result->optimal_value}
+            << "\n";
+
   return 0;
 }

@@ -108,4 +108,8 @@ EmbiggenerState MakeEmbiggenerState(
     EmbiggenerOptions options = {}
 );
 
+std::optional<TspTourResult> DoTSP(
+    const ProblemState& problem, const EmbiggenerState& state, int ub_rel
+);
+
 }  // namespace vats5
