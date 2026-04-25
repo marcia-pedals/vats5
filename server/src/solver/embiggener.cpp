@@ -1,6 +1,7 @@
 #include "embiggener.h"
 
 #include <algorithm>
+#include <asio/execution/any_executor.hpp>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -303,7 +304,8 @@ int LocalEmbiggenIterative(
     const ProblemState& problem,
     const EmbiggenerState& state,
     PlainEdge target,
-    int ub_rel
+    int ub_rel,
+    int num_rounds
 ) {
   std::vector<LocalEmbiggenState> q;
 
@@ -325,7 +327,7 @@ int LocalEmbiggenIterative(
   }
   std::make_heap(q.begin(), q.end());
 
-  for (int round = 0; round < 100; ++round) {
+  for (int round = 0; round < num_rounds; ++round) {
     std::pop_heap(q.begin(), q.end());
     LocalEmbiggenState cur = std::move(q.back());
     q.pop_back();
@@ -338,8 +340,7 @@ int LocalEmbiggenIterative(
       // The tour must hit every stop.
       assert(cur.path.size() == state.required.size());
 
-      // TODO: Actually return a result in this case.
-      assert(false);
+      return cur.delta;
     }
 
     auto IsInCurPath = [&](StopId s) {
@@ -458,10 +459,39 @@ int LocalEmbiggenIterative(
     }
   }
 
-  if (q.front().delta > 0) {
-    return target_edge.weight + q.front().delta;
+  return std::max(0, q.front().delta);
+}
+
+std::optional<TspTourResult> DoRefine(
+    const ProblemState& problem, EmbiggenerState& state, int ub_rel
+) {
+  int refine_round = 0;
+  while (true) {
+    std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
+    refine_round += 1;
+
+    std::optional<TspTourResult> result = DoTSP(problem, state, ub_rel);
+    if (!result.has_value()) {
+      return std::nullopt;
+    }
+    std::cout << "  tsp result: "
+              << TimeSinceServiceStart{result->optimal_value} << "\n";
+
+    int total_delta = 0;
+    for (int edge_i = result->tour_edges.size() - 1; edge_i >= 0; --edge_i) {
+      const TarelEdge& edge = result->tour_edges[edge_i];
+      PlainEdge target{edge.origin.stop, edge.destination.stop};
+
+      int delta = LocalEmbiggenIterative(problem, state, target, ub_rel, 2000);
+      total_delta += delta;
+      state.edges.at(target).weight += delta;
+    }
+    std::cout << "  total delta: " << TimeSinceServiceStart{total_delta}
+              << "\n";
+    if (total_delta == 0) {
+      return result;
+    }
   }
-  return target_edge.weight;
 }
 
 }  // namespace vats5

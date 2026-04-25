@@ -92,6 +92,8 @@ int main(int argc, char* argv[]) {
 
   std::vector<PointBound> known_points{
       PointBound{problem.boundary.start, t0, t0},
+      // WAT! Refinement gives us a much better bound if we don't constrain the
+      // first stop!??!? PointBound{s0, t0, t0},
       PointBound{problem.boundary.end, t_lb, t_ub},
   };
   EmbiggenerState state =
@@ -106,7 +108,7 @@ int main(int argc, char* argv[]) {
     edge_data.weight = min_dur_step_it->DurationSeconds();
   }
 
-  std::optional<TspTourResult> tsp_result = DoTSP(problem, state, ub_rel);
+  std::optional<TspTourResult> tsp_result = DoRefine(problem, state, ub_rel);
   if (!tsp_result.has_value()) {
     std::cout << "  no result, exiting\n";
     return 0;

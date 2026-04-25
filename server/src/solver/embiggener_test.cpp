@@ -561,5 +561,89 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
   ));
 }
 
+RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
+  ProblemState problem = *GenProblemState();
+  // TODO: Handle problems with non-trivial stop groups. For now we restrict
+  // to problems where every stop is its own group representative.
+  RC_PRE(
+      problem.required.GroupRepresentatives().size() == problem.required.size()
+  );
+  StepsAdjacencyList completed =
+      MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
+
+  StopId start = problem.boundary.start;
+  StopId end = problem.boundary.end;
+
+  std::vector<PointBound> known_points{
+      PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
+      PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
+  };
+  EmbiggenerState state =
+      MakeEmbiggenerState(problem, completed, known_points, {});
+
+  // Collect all edges in the state in a deterministic order. Exclude the
+  // trivial START -> END edge, which LocalEmbiggenIterative cannot target.
+  std::vector<PlainEdge> all_edges;
+  for (const auto& [edge, _] : state.edges) {
+    if (edge.a == start && edge.b == end) continue;
+    all_edges.push_back(edge);
+  }
+  RC_PRE(!all_edges.empty());
+  std::sort(all_edges.begin(), all_edges.end(), [](PlainEdge x, PlainEdge y) {
+    if (x.a.v != y.a.v) return x.a.v < y.a.v;
+    return x.b.v < y.b.v;
+  });
+
+  // Pick a random sequence of targets and embiggen each in turn.
+  int num_targets = *rc::gen::inRange(1, 10);
+  for (int i = 0; i < num_targets; ++i) {
+    PlainEdge target = *rc::gen::elementOf(all_edges);
+    int delta = LocalEmbiggenIterative(problem, state, target, 0, 100);
+    state.edges.at(target).weight += delta;
+    RC_LOG() << "embiggened " << target.a << "->" << target.b << " by " << delta
+             << " (now " << state.edges.at(target).weight << ")\n";
+  }
+
+  // Collect non-boundary tour stops.
+  std::unordered_set<StopId> rep_set = problem.required.GroupRepresentatives();
+  rep_set.erase(start);
+  rep_set.erase(end);
+  std::vector<StopId> stops(rep_set.begin(), rep_set.end());
+  std::sort(stops.begin(), stops.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+
+  // For every permutation of the tour stops: the sum of edge weights along
+  // (start -> perm[0] -> ... -> perm[n-1] -> end) must be a lower bound on the
+  // actual duration of FollowTour along that perm.
+  do {
+    auto tour_result = FollowTour(state, start, end, stops);
+    if (!tour_result.has_value()) continue;
+
+    int sum_weights = 0;
+    StopId cur = start;
+    auto add_edge_weight = [&](StopId next) {
+      auto it = state.edges.find(PlainEdge{cur, next});
+      RC_ASSERT(it != state.edges.end());
+      sum_weights += it->second.weight;
+      cur = next;
+    };
+    for (StopId s : stops) add_edge_weight(s);
+    add_edge_weight(end);
+
+    int duration = tour_result->back().seconds;
+    RC_LOG() << "  perm=[";
+    for (size_t i = 0; i < stops.size(); ++i) {
+      if (i > 0) RC_LOG() << ",";
+      RC_LOG() << stops[i];
+    }
+    RC_LOG() << "] duration=" << duration << " sum_weights=" << sum_weights
+             << "\n";
+    RC_ASSERT(sum_weights <= duration);
+  } while (std::next_permutation(
+      stops.begin(), stops.end(), [](StopId a, StopId b) { return a.v < b.v; }
+  ));
+}
+
 }  // namespace
 }  // namespace vats5
