@@ -1,9 +1,11 @@
 #include "embiggener.h"
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "solver/data.h"
+#include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 
@@ -277,6 +279,189 @@ std::optional<TspTourResult> DoTSP(
   }
 
   return result;
+}
+
+struct LocalEmbiggenState {
+  // This state represents an actual path from path.front()@t_front to
+  // path.back()@t_back.
+  //
+  // TODO: We can do a constant-size bitvector for much more speed.
+  std::vector<StopId> path;
+  TimeSinceServiceStart t_front;
+  TimeSinceServiceStart t_back;
+
+  // The excess duration of the actual path over the relaxed weight on the
+  // graph.
+  int delta;
+
+  bool operator<(const LocalEmbiggenState& other) const {
+    return delta > other.delta;
+  }
+};
+
+int LocalEmbiggenIterative(
+    const ProblemState& problem,
+    const EmbiggenerState& state,
+    PlainEdge target,
+    int ub_rel
+) {
+  std::vector<LocalEmbiggenState> q;
+
+  // Initialize the heap with all the target edge steps.
+  auto target_edge_it = state.edges.find(target);
+  assert(target_edge_it != state.edges.end());
+  const EmbiggenerEdge& target_edge = target_edge_it->second;
+  assert(target_edge.steps.size() > 0);
+  q.reserve(target_edge.steps.size());
+  for (const FlatStep& step : target_edge.steps) {
+    q.push_back(
+        LocalEmbiggenState{
+            .path = {target.a, target.b},
+            .t_front = step.origin_time,
+            .t_back = step.destination_time,
+            .delta = step.DurationSeconds() - target_edge.weight,
+        }
+    );
+  }
+  std::make_heap(q.begin(), q.end());
+
+  for (int round = 0; round < 100; ++round) {
+    std::pop_heap(q.begin(), q.end());
+    LocalEmbiggenState cur = std::move(q.back());
+    q.pop_back();
+
+    if (cur.path.front() == problem.boundary.start &&
+        cur.path.back() == problem.boundary.end) {
+      // We have found an entire valid tour through a->b, so we can't embiggen
+      // past it, so this is as good as we can do.
+
+      // The tour must hit every stop.
+      assert(cur.path.size() == state.required.size());
+
+      // TODO: Actually return a result in this case.
+      assert(false);
+    }
+
+    auto IsInCurPath = [&](StopId s) {
+      for (StopId path_s : cur.path) {
+        if (path_s == s) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    auto EmbiggenForwards = [&]() {
+      for (StopId s : state.required.AllFlat()) {
+        if (
+          // Can't go to a stop we've already visited.
+          IsInCurPath(s) ||
+          // Can't go forwards to START.
+          s == problem.boundary.start ||
+          // If the path starts at START and hasn't visited everything else, can't go to END.
+          (cur.path.front() == problem.boundary.start && s == problem.boundary.end && cur.path.size() + 1 < state.required.size())
+        ) {
+          continue;
+        }
+        auto edge_data_it = state.edges.find(PlainEdge{cur.path.back(), s});
+        if (edge_data_it == state.edges.end()) {
+          continue;
+        }
+        const EmbiggenerEdge& edge_data = edge_data_it->second;
+        auto step_it = std::ranges::lower_bound(
+            edge_data.steps, cur.t_back, {}, [](const FlatStep& step) {
+              return step.origin_time;
+            }
+        );
+        if (step_it == edge_data.steps.end() ||
+            step_it->origin_time != cur.t_back) {
+          // TODO: Under what conditions can this happen? Assert them?
+          continue;
+        }
+        std::vector<StopId> new_path;
+        new_path.reserve(cur.path.size() + 1);
+        new_path.insert(new_path.end(), cur.path.begin(), cur.path.end());
+        new_path.push_back(s);
+        q.push_back(
+            LocalEmbiggenState{
+                .path = std::move(new_path),
+                .t_front = cur.t_front,
+                .t_back = step_it->destination_time,
+                .delta =
+                    cur.delta + step_it->DurationSeconds() - edge_data.weight,
+            }
+        );
+        std::push_heap(q.begin(), q.end());
+      }
+    };
+
+    auto EmbiggenBackwards = [&]() {
+      for (StopId s : state.required.AllFlat()) {
+        if (
+          // Can't go to a stop we've already visited.
+          IsInCurPath(s) ||
+          // Can't go backwards to END.
+          s == problem.boundary.end ||
+          // If the path ends at END and hasn't visited everything else, can't go to START.
+          (cur.path.back() == problem.boundary.end && s == problem.boundary.start && cur.path.size() + 1 < state.required.size())
+        ) {
+          continue;
+        }
+        auto edge_data_it = state.edges.find(PlainEdge{s, cur.path.front()});
+        if (edge_data_it == state.edges.end()) {
+          continue;
+        }
+        const EmbiggenerEdge& edge_data = edge_data_it->second;
+        auto step_it = std::ranges::lower_bound(
+            edge_data.steps, cur.t_front, {}, [](const FlatStep& step) {
+              return step.destination_time;
+            }
+        );
+        if (step_it == edge_data.steps.end() ||
+            step_it->destination_time != cur.t_front) {
+          // TODO: Under what conditions can this happen? Assert them?
+          continue;
+        }
+        std::vector<StopId> new_path;
+        new_path.reserve(cur.path.size() + 1);
+        new_path.push_back(s);
+        new_path.insert(new_path.end(), cur.path.begin(), cur.path.end());
+        q.push_back(
+            LocalEmbiggenState{
+                .path = std::move(new_path),
+                .t_front = step_it->origin_time,
+                .t_back = cur.t_back,
+                .delta =
+                    cur.delta + step_it->DurationSeconds() - edge_data.weight,
+            }
+        );
+        std::push_heap(q.begin(), q.end());
+      }
+    };
+
+    if (cur.path.front() == problem.boundary.start) {
+      // We have to extend forwards.
+      EmbiggenForwards();
+    } else if (cur.path.back() == problem.boundary.end) {
+      // We have to extend backwards.
+      EmbiggenBackwards();
+    } else {
+      // We are free to extend in either direction.
+      EmbiggenBackwards();
+    }
+
+    // If the queue is empty, it means that we have pruned all paths through
+    // a->b, so we can delete a->b from the problem.
+    // TODO: Do deletion in a cleaner way than setting the weight to be massive.
+    if (q.size() == 0) {
+      return 30 * 24 * 3600;
+    }
+  }
+
+  if (q.front().delta > 0) {
+    return target_edge.weight + q.front().delta;
+  }
+  return target_edge.weight;
 }
 
 }  // namespace vats5

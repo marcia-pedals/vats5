@@ -112,4 +112,14 @@ std::optional<TspTourResult> DoTSP(
     const ProblemState& problem, const EmbiggenerState& state, int ub_rel
 );
 
+// Return a weight for `target` that is geq its current weight in `state` such
+// that if you update its weight to the returned weight, `state` is still a LB
+// for the problem.
+int LocalEmbiggenIterative(
+    const ProblemState& problem,
+    const EmbiggenerState& state,
+    PlainEdge target,
+    int ub_rel
+);
+
 }  // namespace vats5
