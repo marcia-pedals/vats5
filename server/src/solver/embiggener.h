@@ -123,7 +123,10 @@ int LocalEmbiggenIterative(
 );
 
 std::optional<TspTourResult> DoRefine(
-    const ProblemState& problem, EmbiggenerState& state, int ub_rel
+    const ProblemState& problem,
+    EmbiggenerState& state,
+    TimeSinceServiceStart t0,
+    int ub_rel
 );
 
 }  // namespace vats5

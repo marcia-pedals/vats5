@@ -563,11 +563,11 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
 
 RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
   ProblemState problem = *GenProblemState();
-  // TODO: Handle problems with non-trivial stop groups. For now we restrict
-  // to problems where every stop is its own group representative.
-  RC_PRE(
-      problem.required.GroupRepresentatives().size() == problem.required.size()
-  );
+  // TODO: Handle problems with non-trivial stop groups. For now we override
+  // the grouping so that every stop is its own representative.
+  for (auto& [stop, rep] : problem.required.representative) {
+    rep = stop;
+  }
   StepsAdjacencyList completed =
       MakeAdjacencyList(problem.ComputeCompletedGraph().AllMergedSteps());
 
@@ -580,6 +580,17 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
   };
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
+
+  // Initialize each edge's weight to the minimum step duration on that edge,
+  // matching what refine.cpp does before embiggening.
+  for (auto& [_, edge_data] : state.edges) {
+    auto min_dur_step_it =
+        std::ranges::min_element(edge_data.steps, {}, [](const FlatStep& step) {
+          return step.DurationSeconds();
+        });
+    RC_ASSERT(min_dur_step_it != edge_data.steps.end());
+    edge_data.weight = min_dur_step_it->DurationSeconds();
+  }
 
   // Collect all edges in the state in a deterministic order. Exclude the
   // trivial START -> END edge, which LocalEmbiggenIterative cannot target.

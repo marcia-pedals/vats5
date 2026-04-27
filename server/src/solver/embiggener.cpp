@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <asio/execution/any_executor.hpp>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -300,6 +301,197 @@ struct LocalEmbiggenState {
   }
 };
 
+std::vector<LocalEmbiggenState> BuildPrimitivePaths(
+    const ProblemState& problem, const EmbiggenerState& state
+) {
+  std::vector<LocalEmbiggenState> primitive_paths;
+  for (const auto& [edge, edge_data] : state.edges) {
+    int smallest_delta = std::numeric_limits<int>::max();
+    for (const FlatStep& step : edge_data.steps) {
+      int delta = step.DurationSeconds() - edge_data.weight;
+      assert(delta >= 0);
+      smallest_delta = std::min(smallest_delta, delta);
+      primitive_paths.push_back(
+          LocalEmbiggenState{
+              .path = {edge.a, edge.b},
+              .t_front = step.origin_time,
+              .t_back = step.destination_time,
+              .delta = delta,
+          }
+      );
+    }
+    assert(smallest_delta == 0);
+  }
+  return primitive_paths;
+}
+
+int LocalEmbiggenCorrect(
+    const ProblemState& problem,
+    EmbiggenerState& state,
+    std::vector<LocalEmbiggenState>& primitive_paths,
+    PlainEdge edge_to_embiggen
+) {
+  auto Joinable = [&](const LocalEmbiggenState& p1,
+                      const LocalEmbiggenState& p2) -> bool {
+    // Paths must join at a stop and time.
+    if (p1.path.back() != p2.path.front() || p1.t_back != p2.t_front) {
+      return false;
+    }
+
+    // If the joined path goes from START to END, it must touch all the stops.
+    if (p1.path.front() == problem.boundary.start &&
+        p2.path.back() == problem.boundary.end &&
+        p1.path.size() + p2.path.size() != problem.required.size() + 1) {
+      return false;
+    }
+
+    // The joined path must not repeat any stops.
+    // TODO: This check is embarassingly slow.
+    std::unordered_set<StopId> p1_stops;
+    for (StopId s : p1.path) {
+      p1_stops.insert(s);
+    }
+    for (int i = 1; i < p2.path.size(); ++i) {
+      if (p1_stops.contains(p2.path[i])) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  auto ExtendForwards =
+      [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
+    assert(target.path.back() != problem.boundary.end);
+    std::vector<LocalEmbiggenState> result;
+    for (const LocalEmbiggenState& candidate : primitive_paths) {
+      if (!Joinable(target, candidate)) {
+        continue;
+      }
+      std::vector<StopId> new_path;
+      new_path.reserve(target.path.size() + candidate.path.size() - 1);
+      new_path.insert(new_path.end(), target.path.begin(), target.path.end());
+      new_path.insert(
+          new_path.end(), candidate.path.begin() + 1, candidate.path.end()
+      );
+      result.push_back(
+          LocalEmbiggenState{
+              .path = std::move(new_path),
+              .t_front = target.t_front,
+              .t_back = candidate.t_back,
+              .delta = target.delta + candidate.delta,
+          }
+      );
+    }
+    return result;
+  };
+
+  auto ExtendBackwards = [&](const LocalEmbiggenState& target) {
+    assert(target.path.front() != problem.boundary.start);
+    std::vector<LocalEmbiggenState> result;
+    for (const LocalEmbiggenState& candidate : primitive_paths) {
+      if (!Joinable(candidate, target)) {
+        continue;
+      }
+      std::vector<StopId> new_path;
+      new_path.reserve(target.path.size() + candidate.path.size() - 1);
+      new_path.insert(
+          new_path.end(), candidate.path.begin(), candidate.path.end()
+      );
+      new_path.insert(
+          new_path.end(), target.path.begin() + 1, target.path.end()
+      );
+      result.push_back(
+          LocalEmbiggenState{
+              .path = std::move(new_path),
+              .t_front = candidate.t_front,
+              .t_back = target.t_back,
+              .delta = candidate.delta + target.delta,
+          }
+      );
+    }
+    return result;
+  };
+
+  auto ContainsEdge = [](const std::vector<StopId> p,
+                         const PlainEdge& edge) -> bool {
+    for (int i = 0; i + 1 < p.size(); ++i) {
+      if (p[i] == edge.a && p[i + 1] == edge.b) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // TODO: Understand better how this can be >0.
+  int smallest_preextend_delta = std::numeric_limits<int>::max();
+  for (const LocalEmbiggenState& candidate : primitive_paths) {
+    if (ContainsEdge(candidate.path, edge_to_embiggen)) {
+      smallest_preextend_delta =
+          std::min(smallest_preextend_delta, candidate.delta);
+    }
+  }
+  assert(smallest_preextend_delta < std::numeric_limits<int>::max());
+
+  int smallest_noncritical_delta = std::numeric_limits<int>::max();
+  std::vector<LocalEmbiggenState> critical_paths;
+  std::erase_if(primitive_paths, [&](LocalEmbiggenState& candidate) {
+    if (ContainsEdge(candidate.path, edge_to_embiggen)) {
+      if (candidate.delta == smallest_preextend_delta) {
+        critical_paths.push_back(std::move(candidate));
+        return true;
+      }
+      smallest_noncritical_delta =
+          std::min(smallest_noncritical_delta, candidate.delta);
+    }
+    return false;
+  });
+  if (critical_paths.size() == 0) {
+    std::cout << "oh no, no critical paths!\n";
+    std::cout << "  " << problem.StopName(edge_to_embiggen.a) << " -> "
+              << problem.StopName(edge_to_embiggen.b) << "\n";
+    std::cout << "  smallest_noncritical_delta: "
+              << TimeSinceServiceStart{smallest_noncritical_delta} << "\n";
+    assert(false);
+  }
+
+  std::vector<LocalEmbiggenState> extensions;
+  for (const LocalEmbiggenState& critical_path : critical_paths) {
+    std::vector<LocalEmbiggenState> new_extensions;
+    if (critical_path.path.front() == problem.boundary.start) {
+      // Must extend forwards.
+      new_extensions = ExtendForwards(critical_path);
+    } else if (critical_path.path.back() == problem.boundary.end) {
+      // Must extend backwards.
+      new_extensions = ExtendBackwards(critical_path);
+    } else {
+      // We can arbitrarily choose which direction to extend.
+      new_extensions = ExtendBackwards(critical_path);
+    }
+    for (LocalEmbiggenState& new_extension : new_extensions) {
+      extensions.push_back(std::move(new_extension));
+    }
+  }
+
+  int smallest_delta = smallest_noncritical_delta;
+  for (LocalEmbiggenState& extension : extensions) {
+    assert(ContainsEdge(extension.path, edge_to_embiggen));
+    primitive_paths.push_back(std::move(extension));
+    smallest_delta = std::min(smallest_delta, extension.delta);
+  }
+  assert(smallest_delta < std::numeric_limits<int>::max());
+
+  state.edges.at(edge_to_embiggen).weight += smallest_delta;
+  for (LocalEmbiggenState& primitive_path : primitive_paths) {
+    if (ContainsEdge(primitive_path.path, edge_to_embiggen)) {
+      assert(primitive_path.delta >= smallest_delta);
+      primitive_path.delta -= smallest_delta;
+    }
+  }
+
+  return smallest_delta;
+}
+
 int LocalEmbiggenIterative(
     const ProblemState& problem,
     const EmbiggenerState& state,
@@ -309,6 +501,14 @@ int LocalEmbiggenIterative(
 ) {
   std::vector<LocalEmbiggenState> q;
 
+  // The biggest delta of any state we've ever popped from the heap.
+  int biggest_popped_delta = 0;
+
+  auto Push = [&](LocalEmbiggenState s) {
+    q.push_back(std::move(s));
+    std::push_heap(q.begin(), q.end());
+  };
+
   // Initialize the heap with all the target edge steps.
   auto target_edge_it = state.edges.find(target);
   assert(target_edge_it != state.edges.end());
@@ -316,7 +516,7 @@ int LocalEmbiggenIterative(
   assert(target_edge.steps.size() > 0);
   q.reserve(target_edge.steps.size());
   for (const FlatStep& step : target_edge.steps) {
-    q.push_back(
+    Push(
         LocalEmbiggenState{
             .path = {target.a, target.b},
             .t_front = step.origin_time,
@@ -325,22 +525,25 @@ int LocalEmbiggenIterative(
         }
     );
   }
-  std::make_heap(q.begin(), q.end());
 
   for (int round = 0; round < num_rounds; ++round) {
+    if (q.empty()) {
+      // Exhaustive search complete with no full tour found, so target is on
+      // no full tour and can be deleted.
+      // TODO: Do deletion in a cleaner way than setting the weight to be
+      // massive.
+      return 30 * 24 * 3600;
+    }
     std::pop_heap(q.begin(), q.end());
     LocalEmbiggenState cur = std::move(q.back());
     q.pop_back();
+    biggest_popped_delta = std::max(biggest_popped_delta, cur.delta);
 
     if (cur.path.front() == problem.boundary.start &&
         cur.path.back() == problem.boundary.end) {
-      // We have found an entire valid tour through a->b, so we can't embiggen
-      // past it, so this is as good as we can do.
-
       // The tour must hit every stop.
       assert(cur.path.size() == state.required.size());
-
-      return cur.delta;
+      return biggest_popped_delta;
     }
 
     auto IsInCurPath = [&](StopId s) {
@@ -383,7 +586,7 @@ int LocalEmbiggenIterative(
         new_path.reserve(cur.path.size() + 1);
         new_path.insert(new_path.end(), cur.path.begin(), cur.path.end());
         new_path.push_back(s);
-        q.push_back(
+        Push(
             LocalEmbiggenState{
                 .path = std::move(new_path),
                 .t_front = cur.t_front,
@@ -392,7 +595,6 @@ int LocalEmbiggenIterative(
                     cur.delta + step_it->DurationSeconds() - edge_data.weight,
             }
         );
-        std::push_heap(q.begin(), q.end());
       }
     };
 
@@ -413,30 +615,34 @@ int LocalEmbiggenIterative(
           continue;
         }
         const EmbiggenerEdge& edge_data = edge_data_it->second;
-        auto step_it = std::ranges::lower_bound(
+        // Multiple FlatSteps can share a destination_time (e.g. arrivals at
+        // (b, 1201) reachable from both (c, 0) and (c, 1) via the same merged
+        // step). All of them are valid backward extensions.
+        auto first_it = std::ranges::lower_bound(
             edge_data.steps, cur.t_front, {}, [](const FlatStep& step) {
               return step.destination_time;
             }
         );
-        if (step_it == edge_data.steps.end() ||
-            step_it->destination_time != cur.t_front) {
-          // TODO: Under what conditions can this happen? Assert them?
-          continue;
-        }
-        std::vector<StopId> new_path;
-        new_path.reserve(cur.path.size() + 1);
-        new_path.push_back(s);
-        new_path.insert(new_path.end(), cur.path.begin(), cur.path.end());
-        q.push_back(
-            LocalEmbiggenState{
-                .path = std::move(new_path),
-                .t_front = step_it->origin_time,
-                .t_back = cur.t_back,
-                .delta =
-                    cur.delta + step_it->DurationSeconds() - edge_data.weight,
+        auto last_it = std::ranges::upper_bound(
+            edge_data.steps, cur.t_front, {}, [](const FlatStep& step) {
+              return step.destination_time;
             }
         );
-        std::push_heap(q.begin(), q.end());
+        for (auto step_it = first_it; step_it != last_it; ++step_it) {
+          std::vector<StopId> new_path;
+          new_path.reserve(cur.path.size() + 1);
+          new_path.push_back(s);
+          new_path.insert(new_path.end(), cur.path.begin(), cur.path.end());
+          Push(
+              LocalEmbiggenState{
+                  .path = std::move(new_path),
+                  .t_front = step_it->origin_time,
+                  .t_back = cur.t_back,
+                  .delta =
+                      cur.delta + step_it->DurationSeconds() - edge_data.weight,
+              }
+          );
+        }
       }
     };
 
@@ -448,43 +654,75 @@ int LocalEmbiggenIterative(
       EmbiggenBackwards();
     } else {
       // We are free to extend in either direction.
-      EmbiggenBackwards();
-    }
-
-    // If the queue is empty, it means that we have pruned all paths through
-    // a->b, so we can delete a->b from the problem.
-    // TODO: Do deletion in a cleaner way than setting the weight to be massive.
-    if (q.size() == 0) {
-      return 30 * 24 * 3600;
+      EmbiggenForwards();
     }
   }
 
-  return std::max(0, q.front().delta);
+  // Round budget exhausted without finding a full tour.
+  return biggest_popped_delta;
+}
+
+int AnalyzeTour(
+    const ProblemState& problem,
+    const EmbiggenerState& state,
+    TimeSinceServiceStart t0,
+    const TspTourResult& tour
+) {
+  TimeSinceServiceStart t_cur = t0;
+  for (const TarelEdge& edge : tour.tour_edges) {
+    PlainEdge plain_edge{edge.origin.stop, edge.destination.stop};
+    // std::cout << problem.StopName(plain_edge.a) << " -> " <<
+    // problem.StopName(plain_edge.b) << "\n";
+    const EmbiggenerEdge edge_data = state.edges.at(plain_edge);
+    auto step_it = std::ranges::lower_bound(
+        edge_data.steps, t_cur, {}, [](const FlatStep& step) {
+          return step.origin_time;
+        }
+    );
+    if (step_it == edge_data.steps.end() || step_it->origin_time != t_cur) {
+      return std::numeric_limits<int>::max();
+    }
+    t_cur = step_it->destination_time;
+  }
+  return t_cur.seconds - t0.seconds;
 }
 
 std::optional<TspTourResult> DoRefine(
-    const ProblemState& problem, EmbiggenerState& state, int ub_rel
+    const ProblemState& problem,
+    EmbiggenerState& state,
+    TimeSinceServiceStart t0,
+    int ub_rel
 ) {
+  std::vector<LocalEmbiggenState> primitive_paths =
+      BuildPrimitivePaths(problem, state);
+
   int refine_round = 0;
   while (true) {
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
+    std::cout << "  primitive paths: " << primitive_paths.size() << "\n";
 
     std::optional<TspTourResult> result = DoTSP(problem, state, ub_rel);
     if (!result.has_value()) {
       return std::nullopt;
     }
+    int t_actual = AnalyzeTour(problem, state, t0, *result);
     std::cout << "  tsp result: "
-              << TimeSinceServiceStart{result->optimal_value} << "\n";
+              << TimeSinceServiceStart{result->optimal_value} << " / "
+              << TimeSinceServiceStart{t_actual} << "\n";
 
     int total_delta = 0;
-    for (int edge_i = result->tour_edges.size() - 1; edge_i >= 0; --edge_i) {
-      const TarelEdge& edge = result->tour_edges[edge_i];
-      PlainEdge target{edge.origin.stop, edge.destination.stop};
-
-      int delta = LocalEmbiggenIterative(problem, state, target, ub_rel, 2000);
-      total_delta += delta;
-      state.edges.at(target).weight += delta;
+    for (int round = 0; round < 1; ++round) {
+      int round_delta = 0;
+      for (const TarelEdge& edge : result->tour_edges) {
+        PlainEdge target{edge.origin.stop, edge.destination.stop};
+        int delta =
+            LocalEmbiggenCorrect(problem, state, primitive_paths, target);
+        round_delta += delta;
+      }
+      std::cout << "  round " << round
+                << " delta: " << TimeSinceServiceStart{round_delta} << "\n";
+      total_delta += round_delta;
     }
     std::cout << "  total delta: " << TimeSinceServiceStart{total_delta}
               << "\n";
