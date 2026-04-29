@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <asio/execution/any_executor.hpp>
 #include <limits>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -10,6 +11,12 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
+
+// Drop-in replacement for assert() that throws instead of aborting, so
+// rapidcheck can catch the failure and shrink the input. To switch back to
+// real assertions, find-and-replace `AssertOrRaise` with `assert`.
+#define AssertOrRaise(expr) \
+  ((expr) ? (void)0 : throw std::runtime_error("AssertOrRaise failed: " #expr))
 
 namespace {
 
@@ -283,24 +290,6 @@ std::optional<TspTourResult> DoTSP(
   return result;
 }
 
-struct LocalEmbiggenState {
-  // This state represents an actual path from path.front()@t_front to
-  // path.back()@t_back.
-  //
-  // TODO: We can do a constant-size bitvector for much more speed.
-  std::vector<StopId> path;
-  TimeSinceServiceStart t_front;
-  TimeSinceServiceStart t_back;
-
-  // The excess duration of the actual path over the relaxed weight on the
-  // graph.
-  int delta;
-
-  bool operator<(const LocalEmbiggenState& other) const {
-    return delta > other.delta;
-  }
-};
-
 std::vector<LocalEmbiggenState> BuildPrimitivePaths(
     const ProblemState& problem, const EmbiggenerState& state
 ) {
@@ -325,7 +314,7 @@ std::vector<LocalEmbiggenState> BuildPrimitivePaths(
   return primitive_paths;
 }
 
-int LocalEmbiggenCorrect(
+std::optional<int> LocalEmbiggenCorrect(
     const ProblemState& problem,
     EmbiggenerState& state,
     std::vector<LocalEmbiggenState>& primitive_paths,
@@ -362,7 +351,7 @@ int LocalEmbiggenCorrect(
 
   auto ExtendForwards =
       [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
-    assert(target.path.back() != problem.boundary.end);
+    AssertOrRaise(target.path.back() != problem.boundary.end);
     std::vector<LocalEmbiggenState> result;
     for (const LocalEmbiggenState& candidate : primitive_paths) {
       if (!Joinable(target, candidate)) {
@@ -387,7 +376,7 @@ int LocalEmbiggenCorrect(
   };
 
   auto ExtendBackwards = [&](const LocalEmbiggenState& target) {
-    assert(target.path.front() != problem.boundary.start);
+    AssertOrRaise(target.path.front() != problem.boundary.start);
     std::vector<LocalEmbiggenState> result;
     for (const LocalEmbiggenState& candidate : primitive_paths) {
       if (!Joinable(candidate, target)) {
@@ -423,7 +412,6 @@ int LocalEmbiggenCorrect(
     return false;
   };
 
-  // TODO: Understand better how this can be >0.
   int smallest_preextend_delta = std::numeric_limits<int>::max();
   for (const LocalEmbiggenState& candidate : primitive_paths) {
     if (ContainsEdge(candidate.path, edge_to_embiggen)) {
@@ -431,7 +419,13 @@ int LocalEmbiggenCorrect(
           std::min(smallest_preextend_delta, candidate.delta);
     }
   }
-  assert(smallest_preextend_delta < std::numeric_limits<int>::max());
+  if (smallest_preextend_delta == std::numeric_limits<int>::max()) {
+    // There are no primitive paths through this edge! This is totally possible
+    // -- embiggening a different edge might happen to disprove all primitive
+    // paths through this edge.
+    state.edges.erase(edge_to_embiggen);
+    return std::nullopt;
+  }
 
   int smallest_noncritical_delta = std::numeric_limits<int>::max();
   std::vector<LocalEmbiggenState> critical_paths;
@@ -446,19 +440,17 @@ int LocalEmbiggenCorrect(
     }
     return false;
   });
-  if (critical_paths.size() == 0) {
-    std::cout << "oh no, no critical paths!\n";
-    std::cout << "  " << problem.StopName(edge_to_embiggen.a) << " -> "
-              << problem.StopName(edge_to_embiggen.b) << "\n";
-    std::cout << "  smallest_noncritical_delta: "
-              << TimeSinceServiceStart{smallest_noncritical_delta} << "\n";
-    assert(false);
-  }
+  AssertOrRaise(critical_paths.size() > 0);
 
   std::vector<LocalEmbiggenState> extensions;
   for (const LocalEmbiggenState& critical_path : critical_paths) {
     std::vector<LocalEmbiggenState> new_extensions;
-    if (critical_path.path.front() == problem.boundary.start) {
+    if (critical_path.path.front() == problem.boundary.start &&
+        critical_path.path.back() == problem.boundary.end) {
+      // This is a full tour, so it can't be extended further.
+      AssertOrRaise(critical_path.path.size() == state.required.size());
+      extensions.push_back(critical_path);
+    } else if (critical_path.path.front() == problem.boundary.start) {
       // Must extend forwards.
       new_extensions = ExtendForwards(critical_path);
     } else if (critical_path.path.back() == problem.boundary.end) {
@@ -475,16 +467,27 @@ int LocalEmbiggenCorrect(
 
   int smallest_delta = smallest_noncritical_delta;
   for (LocalEmbiggenState& extension : extensions) {
-    assert(ContainsEdge(extension.path, edge_to_embiggen));
+    AssertOrRaise(ContainsEdge(extension.path, edge_to_embiggen));
     primitive_paths.push_back(std::move(extension));
     smallest_delta = std::min(smallest_delta, extension.delta);
   }
-  assert(smallest_delta < std::numeric_limits<int>::max());
+
+  // TODO: Consider. If smallest_delta==0, might it be better to leave
+  // primitive_paths unchanged?
+
+  if (smallest_delta == std::numeric_limits<int>::max()) {
+    // This means that there are no feasible paths through `edge_to_embiggen` so
+    // we can simply delete it from the state. (We've already deleted all
+    // primitive paths through it, because we deleted all the critical primitive
+    // paths and there are no non-critical primitive paths through it).
+    state.edges.erase(edge_to_embiggen);
+    return std::nullopt;
+  }
 
   state.edges.at(edge_to_embiggen).weight += smallest_delta;
   for (LocalEmbiggenState& primitive_path : primitive_paths) {
     if (ContainsEdge(primitive_path.path, edge_to_embiggen)) {
-      assert(primitive_path.delta >= smallest_delta);
+      AssertOrRaise(primitive_path.delta >= smallest_delta);
       primitive_path.delta -= smallest_delta;
     }
   }
@@ -716,9 +719,12 @@ std::optional<TspTourResult> DoRefine(
       int round_delta = 0;
       for (const TarelEdge& edge : result->tour_edges) {
         PlainEdge target{edge.origin.stop, edge.destination.stop};
-        int delta =
+        std::optional<int> delta =
             LocalEmbiggenCorrect(problem, state, primitive_paths, target);
-        round_delta += delta;
+        // TODO: Handle nullopt as inf?
+        if (delta.has_value()) {
+          round_delta += *delta;
+        }
       }
       std::cout << "  round " << round
                 << " delta: " << TimeSinceServiceStart{round_delta} << "\n";

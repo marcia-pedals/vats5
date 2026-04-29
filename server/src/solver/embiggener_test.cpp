@@ -6,6 +6,7 @@
 #include <rapidcheck/gtest.h>
 
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <unordered_set>
 
@@ -500,7 +501,7 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
   RC_PRE(arrival_times.contains(p_stop) && !arrival_times[p_stop].empty());
   TimeSinceServiceStart p_time = *rc::gen::elementOf(arrival_times[p_stop]);
   PointInstant p{p_stop, p_time};
-  RC_LOG() << "p = (" << p_stop << ", " << p_time << ")\n";
+  RC_LOG() << "p = (" << problem.StopName(p_stop) << ", " << p_time << ")\n";
 
   // Sub-state where p is a known intermediate point.
   std::vector<PointBound> known_kps{
@@ -525,7 +526,7 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
     RC_LOG() << "  perm=[";
     for (size_t i = 0; i < stops.size(); ++i) {
       if (i > 0) RC_LOG() << ",";
-      RC_LOG() << stops[i];
+      RC_LOG() << problem.StopName(stops[i]);
     }
     RC_LOG() << "] base="
              << (base_result ? std::to_string(base_result->back().seconds)
@@ -561,7 +562,7 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
   ));
 }
 
-RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
+RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
   ProblemState problem = *GenProblemState();
   // TODO: Handle problems with non-trivial stop groups. For now we override
   // the grouping so that every stop is its own representative.
@@ -578,8 +579,13 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
       PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
       PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
   };
-  EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
+  EmbiggenerState state = MakeEmbiggenerState(
+      problem,
+      completed,
+      known_points,
+      {},
+      EmbiggenerOptions{.include_nonzero_flex = true}
+  );
 
   // Initialize each edge's weight to the minimum step duration on that edge,
   // matching what refine.cpp does before embiggening.
@@ -592,8 +598,11 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
     edge_data.weight = min_dur_step_it->DurationSeconds();
   }
 
+  std::vector<LocalEmbiggenState> primitive_paths =
+      BuildPrimitivePaths(problem, state);
+
   // Collect all edges in the state in a deterministic order. Exclude the
-  // trivial START -> END edge, which LocalEmbiggenIterative cannot target.
+  // trivial START -> END edge, which LocalEmbiggenCorrect cannot target.
   std::vector<PlainEdge> all_edges;
   for (const auto& [edge, _] : state.edges) {
     if (edge.a == start && edge.b == end) continue;
@@ -606,13 +615,27 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
   });
 
   // Pick a random sequence of targets and embiggen each in turn.
-  int num_targets = *rc::gen::inRange(1, 10);
-  for (int i = 0; i < num_targets; ++i) {
-    PlainEdge target = *rc::gen::elementOf(all_edges);
-    int delta = LocalEmbiggenIterative(problem, state, target, 0, 100);
-    state.edges.at(target).weight += delta;
-    RC_LOG() << "embiggened " << target.a << "->" << target.b << " by " << delta
-             << " (now " << state.edges.at(target).weight << ")\n";
+  std::vector<PlainEdge> targets = *rc::gen::nonEmpty(
+      rc::gen::resize(
+          10,
+          rc::gen::container<std::vector<PlainEdge>>(
+              rc::gen::elementOf(all_edges)
+          )
+      )
+  );
+  for (PlainEdge target : targets) {
+    RC_LOG() << "target " << problem.StopName(target.a) << "->"
+             << problem.StopName(target.b) << "\n";
+    std::optional<int> delta =
+        LocalEmbiggenCorrect(problem, state, primitive_paths, target);
+    if (delta.has_value()) {
+      RC_LOG() << "embiggened " << problem.StopName(target.a) << "->"
+               << problem.StopName(target.b) << " by " << *delta << " (now "
+               << state.edges.at(target).weight << ")\n";
+    } else {
+      RC_LOG() << "eliminated " << problem.StopName(target.a) << "->"
+               << problem.StopName(target.b) << "\n";
+    }
   }
 
   // Collect non-boundary tour stops.
@@ -646,7 +669,7 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenIterative_LowerBound, ()) {
     RC_LOG() << "  perm=[";
     for (size_t i = 0; i < stops.size(); ++i) {
       if (i > 0) RC_LOG() << ",";
-      RC_LOG() << stops[i];
+      RC_LOG() << problem.StopName(stops[i]);
     }
     RC_LOG() << "] duration=" << duration << " sum_weights=" << sum_weights
              << "\n";

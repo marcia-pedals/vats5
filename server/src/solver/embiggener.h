@@ -122,6 +122,43 @@ int LocalEmbiggenIterative(
     int num_rounds
 );
 
+struct LocalEmbiggenState {
+  // This state represents an actual path from path.front()@t_front to
+  // path.back()@t_back.
+  //
+  // TODO: We can do a constant-size bitvector for much more speed.
+  // It may also be that we can store front, back, and bitset, because the order
+  // of the things in the middle might not matter!
+  std::vector<StopId> path;
+  TimeSinceServiceStart t_front;
+  TimeSinceServiceStart t_back;
+
+  // The excess duration of the actual path over the relaxed weight on the
+  // graph.
+  int delta;
+
+  bool operator<(const LocalEmbiggenState& other) const {
+    return delta > other.delta;
+  }
+};
+
+std::vector<LocalEmbiggenState> BuildPrimitivePaths(
+    const ProblemState& problem, const EmbiggenerState& state
+);
+
+// Embiggen `edge_to_embiggen` in `state`: returns the delta added to the
+// edge's weight, updates `state.edges.at(edge_to_embiggen).weight` in place,
+// and updates `primitive_paths` so subsequent calls remain correct.
+//
+// If it realizes that there are no feasible paths through `edge_to_embiggen`,
+// returns nullopt. (i.e. treat nullopt as infinity).
+std::optional<int> LocalEmbiggenCorrect(
+    const ProblemState& problem,
+    EmbiggenerState& state,
+    std::vector<LocalEmbiggenState>& primitive_paths,
+    PlainEdge edge_to_embiggen
+);
+
 std::optional<TspTourResult> DoRefine(
     const ProblemState& problem,
     EmbiggenerState& state,
