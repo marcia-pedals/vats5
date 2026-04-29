@@ -67,6 +67,7 @@ void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
   for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
     state.by_edge[PlainEdge{p.path[i], p.path[i + 1]}].insert(idx);
   }
+  ++state.num_active_primitive_paths;
 }
 
 void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
@@ -76,6 +77,7 @@ void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
   for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
     state.by_edge.at(PlainEdge{p.path[i], p.path[i + 1]}).erase(idx);
   }
+  --state.num_active_primitive_paths;
 }
 
 }  // namespace
@@ -258,14 +260,6 @@ EmbiggenerState MakeEmbiggenerState(
     }
   }
   return state;
-}
-
-std::size_t EmbiggenerState::NumActivePrimitivePaths() const {
-  std::size_t count = 0;
-  for (const LocalEmbiggenState& p : primitive_paths) {
-    if (!p.path.empty()) ++count;
-  }
-  return count;
 }
 
 std::optional<TspTourResult> DoTSP(
@@ -558,13 +552,13 @@ std::optional<TspTourResult> DoRefine(
 ) {
   int refine_round = 0;
   while (true) {
-    // if (refine_round >= 20) {
-    //   return std::nullopt;
-    // }
+    if (refine_round >= 20) {
+      return std::nullopt;
+    }
 
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
-    std::cout << "  primitive paths: " << state.NumActivePrimitivePaths()
+    std::cout << "  primitive paths: " << state.num_active_primitive_paths
               << "\n";
 
     std::optional<TspTourResult> result = DoTSP(problem, state, ub_rel);

@@ -94,7 +94,9 @@ struct EmbiggenerState {
   std::unordered_map<PointInstant, std::unordered_set<std::size_t>> by_back;
   std::unordered_map<PlainEdge, std::unordered_set<std::size_t>> by_edge;
 
-  std::size_t NumActivePrimitivePaths() const;
+  // Number of non-tombstoned slots in primitive_paths. Maintained by
+  // RegisterPrimitivePath / UnregisterPrimitivePath.
+  std::size_t num_active_primitive_paths = 0;
 };
 
 struct PointBound {
