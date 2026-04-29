@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <asio/execution/any_executor.hpp>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -89,6 +90,23 @@ struct std::hash<BFSState> {
 };
 
 namespace vats5 {
+
+void EmbiggenerState::Compact() {
+  std::vector<LocalEmbiggenState> new_paths;
+  new_paths.reserve(num_active_primitive_paths);
+  for (LocalEmbiggenState& p : primitive_paths) {
+    if (p.path.empty()) continue;
+    new_paths.push_back(std::move(p));
+  }
+  primitive_paths = std::move(new_paths);
+  by_front.clear();
+  by_back.clear();
+  by_edge.clear();
+  num_active_primitive_paths = 0;
+  for (std::size_t idx = 0; idx < primitive_paths.size(); ++idx) {
+    RegisterPrimitivePath(*this, idx);
+  }
+}
 
 EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
@@ -578,9 +596,11 @@ std::optional<TspTourResult> DoRefine(
     TimeSinceServiceStart t0,
     int ub_rel
 ) {
+  std::map<std::vector<StopId>, int> tour_counts;
+
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 20) {
+    if (refine_round >= 14) {
       return std::nullopt;
     }
 
@@ -589,32 +609,75 @@ std::optional<TspTourResult> DoRefine(
     std::cout << "  primitive paths: " << state.num_active_primitive_paths
               << "\n";
 
-    std::optional<TspTourResult> result = DoTSP(problem, state, ub_rel);
+    int effective_ub = ub_rel;
+    for (const auto& [tour, count] : tour_counts) {
+      int w = 0;
+      bool feasible = true;
+      for (std::size_t i = 0; i + 1 < tour.size(); ++i) {
+        auto it = state.edges.find(PlainEdge{tour[i], tour[i + 1]});
+        if (it == state.edges.end()) {
+          feasible = false;
+          break;
+        }
+        w += it->second.weight;
+      }
+      if (feasible) {
+        effective_ub = std::min(effective_ub, w + 1);
+      }
+    }
+
+    std::optional<TspTourResult> result = DoTSP(problem, state, effective_ub);
     if (!result.has_value()) {
       return std::nullopt;
     }
+
+    std::vector<StopId> tour_stops;
+    tour_stops.push_back(result->tour_edges[0].origin.stop);
+    for (const TarelEdge& edge : result->tour_edges) {
+      tour_stops.push_back(edge.destination.stop);
+    }
+    AssertOrRaise(tour_stops.front() == problem.boundary.start);
+    AssertOrRaise(tour_stops.back() == problem.boundary.end);
+    tour_counts[tour_stops] += 1;
+    std::cout << "  distinct tours: " << tour_counts.size() << "\n";
+
     int t_actual = AnalyzeTour(problem, state, t0, *result);
     std::cout << "  tsp result: "
               << TimeSinceServiceStart{result->optimal_value} << " / "
               << TimeSinceServiceStart{t_actual} << "\n";
 
-    int total_delta = 0;
-    for (int round = 0; round < 1; ++round) {
-      int round_delta = 0;
+    std::optional<int> total_delta = 0;
+    for (int round = 0; round < 10; ++round) {
+      std::optional<int> round_delta = 0;
       for (const TarelEdge& edge : result->tour_edges) {
         PlainEdge target{edge.origin.stop, edge.destination.stop};
         std::optional<int> delta = LocalEmbiggenCorrect(problem, state, target);
-        // TODO: Handle nullopt as inf?
-        if (delta.has_value()) {
-          round_delta += *delta;
+        if (delta.has_value() && round_delta.has_value()) {
+          *round_delta += *delta;
+        } else {
+          round_delta = std::nullopt;
         }
       }
-      std::cout << "  round " << round
-                << " delta: " << TimeSinceServiceStart{round_delta} << "\n";
-      total_delta += round_delta;
+      std::cout << "  round " << round << " delta: ";
+      if (round_delta.has_value()) {
+        std::cout << TimeSinceServiceStart{*round_delta};
+      } else {
+        std::cout << "inf";
+      }
+      std::cout << "\n";
+      if (round_delta.has_value() && total_delta.has_value()) {
+        *total_delta += *round_delta;
+      } else {
+        total_delta = std::nullopt;
+      }
     }
-    std::cout << "  total delta: " << TimeSinceServiceStart{total_delta}
-              << "\n";
+    std::cout << "  total delta: ";
+    if (total_delta.has_value()) {
+      std::cout << TimeSinceServiceStart{*total_delta};
+    } else {
+      std::cout << "inf";
+    }
+    std::cout << "\n";
     if (total_delta == 0) {
       return result;
     }

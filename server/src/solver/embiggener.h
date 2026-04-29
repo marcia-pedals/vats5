@@ -99,6 +99,9 @@ struct EmbiggenerState {
   // Number of non-tombstoned slots in primitive_paths. Maintained by
   // RegisterPrimitivePath / UnregisterPrimitivePath.
   std::size_t num_active_primitive_paths = 0;
+
+  // Erases tombstoned slots from primitive_paths and rebuilds the indexes.
+  void Compact();
 };
 
 struct PointBound {
