@@ -57,29 +57,10 @@ struct LocalEmbiggenState {
   }
 };
 
-struct EmbiggenerState {
-  RequiredStops required;
-  std::unordered_map<PlainEdge, EmbiggenerEdge> edges;
-  std::vector<LocalEmbiggenState> primitive_paths;
-};
-
-struct PointBound {
-  StopId s;
-  TimeSinceServiceStart t_lo;
-  TimeSinceServiceStart t_hi;
-};
-
 struct PointInstant {
   StopId s;
   TimeSinceServiceStart t;
   bool operator==(const PointInstant&) const = default;
-};
-
-struct StepId {
-  StopId a;
-  StopId b;
-  TimeSinceServiceStart tb;
-  bool operator==(const StepId&) const = default;
 };
 
 }  // namespace vats5
@@ -93,6 +74,43 @@ struct std::hash<vats5::PointInstant> {
     return seed;
   }
 };
+
+namespace vats5 {
+
+struct EmbiggenerState {
+  RequiredStops required;
+  std::unordered_map<PlainEdge, EmbiggenerEdge> edges;
+
+  // Storage for primitive paths. Slots may be tombstoned (path.empty()) when
+  // they have been removed from the indexes below.
+  std::vector<LocalEmbiggenState> primitive_paths;
+
+  // Indexes into primitive_paths.
+  // - by_front: maps (path.front(), t_front) to the indices whose path begins
+  //   there at that time.
+  // - by_back: maps (path.back(), t_back) similarly for path ends.
+  // - by_edge: maps each PlainEdge to the indices of paths that contain it.
+  std::unordered_map<PointInstant, std::unordered_set<std::size_t>> by_front;
+  std::unordered_map<PointInstant, std::unordered_set<std::size_t>> by_back;
+  std::unordered_map<PlainEdge, std::unordered_set<std::size_t>> by_edge;
+
+  std::size_t NumActivePrimitivePaths() const;
+};
+
+struct PointBound {
+  StopId s;
+  TimeSinceServiceStart t_lo;
+  TimeSinceServiceStart t_hi;
+};
+
+struct StepId {
+  StopId a;
+  StopId b;
+  TimeSinceServiceStart tb;
+  bool operator==(const StepId&) const = default;
+};
+
+}  // namespace vats5
 
 template <>
 struct std::hash<vats5::StepId> {

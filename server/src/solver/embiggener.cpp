@@ -60,6 +60,24 @@ struct BFSState {
   bool operator==(const BFSState&) const = default;
 };
 
+void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
+  const LocalEmbiggenState& p = state.primitive_paths[idx];
+  state.by_front[PointInstant{p.path.front(), p.t_front}].insert(idx);
+  state.by_back[PointInstant{p.path.back(), p.t_back}].insert(idx);
+  for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
+    state.by_edge[PlainEdge{p.path[i], p.path[i + 1]}].insert(idx);
+  }
+}
+
+void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
+  const LocalEmbiggenState& p = state.primitive_paths[idx];
+  state.by_front.at(PointInstant{p.path.front(), p.t_front}).erase(idx);
+  state.by_back.at(PointInstant{p.path.back(), p.t_back}).erase(idx);
+  for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
+    state.by_edge.at(PlainEdge{p.path[i], p.path[i + 1]}).erase(idx);
+  }
+}
+
 }  // namespace
 
 template <>
@@ -221,10 +239,14 @@ EmbiggenerState MakeEmbiggenerState(
     edge.weight = min_duration;
   }
 
-  std::vector<LocalEmbiggenState> primitive_paths;
-  for (const auto& [edge, edge_data] : result_edges) {
+  EmbiggenerState state{
+      .required = problem.required,
+      .edges = std::move(result_edges),
+  };
+  for (const auto& [edge, edge_data] : state.edges) {
     for (const FlatStep& step : edge_data.steps) {
-      primitive_paths.push_back(
+      std::size_t idx = state.primitive_paths.size();
+      state.primitive_paths.push_back(
           LocalEmbiggenState{
               .path = {edge.a, edge.b},
               .t_front = step.origin_time,
@@ -232,14 +254,18 @@ EmbiggenerState MakeEmbiggenerState(
               .delta = step.DurationSeconds() - edge_data.weight,
           }
       );
+      RegisterPrimitivePath(state, idx);
     }
   }
+  return state;
+}
 
-  return EmbiggenerState{
-      .required = problem.required,
-      .edges = std::move(result_edges),
-      .primitive_paths = std::move(primitive_paths),
-  };
+std::size_t EmbiggenerState::NumActivePrimitivePaths() const {
+  std::size_t count = 0;
+  for (const LocalEmbiggenState& p : primitive_paths) {
+    if (!p.path.empty()) ++count;
+  }
+  return count;
 }
 
 std::optional<TspTourResult> DoTSP(
@@ -317,10 +343,8 @@ std::optional<int> LocalEmbiggenCorrect(
 ) {
   auto Joinable = [&](const LocalEmbiggenState& p1,
                       const LocalEmbiggenState& p2) -> bool {
-    // Paths must join at a stop and time.
-    if (p1.path.back() != p2.path.front() || p1.t_back != p2.t_front) {
-      return false;
-    }
+    // The (p1.path.back() == p2.path.front() && p1.t_back == p2.t_front) check
+    // is implied by how we look up candidates via the by_front/by_back indexes.
 
     // If the joined path goes from START to END, it must touch all the stops.
     if (p1.path.front() == problem.boundary.start &&
@@ -348,7 +372,11 @@ std::optional<int> LocalEmbiggenCorrect(
       [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
     AssertOrRaise(target.path.back() != problem.boundary.end);
     std::vector<LocalEmbiggenState> result;
-    for (const LocalEmbiggenState& candidate : state.primitive_paths) {
+    auto it =
+        state.by_front.find(PointInstant{target.path.back(), target.t_back});
+    if (it == state.by_front.end()) return result;
+    for (std::size_t cand_idx : it->second) {
+      const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
       if (!Joinable(target, candidate)) {
         continue;
       }
@@ -373,7 +401,11 @@ std::optional<int> LocalEmbiggenCorrect(
   auto ExtendBackwards = [&](const LocalEmbiggenState& target) {
     AssertOrRaise(target.path.front() != problem.boundary.start);
     std::vector<LocalEmbiggenState> result;
-    for (const LocalEmbiggenState& candidate : state.primitive_paths) {
+    auto it =
+        state.by_back.find(PointInstant{target.path.front(), target.t_front});
+    if (it == state.by_back.end()) return result;
+    for (std::size_t cand_idx : it->second) {
+      const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
       if (!Joinable(candidate, target)) {
         continue;
       }
@@ -397,22 +429,21 @@ std::optional<int> LocalEmbiggenCorrect(
     return result;
   };
 
-  auto ContainsEdge = [](const std::vector<StopId> p,
-                         const PlainEdge& edge) -> bool {
-    for (int i = 0; i + 1 < p.size(); ++i) {
-      if (p[i] == edge.a && p[i + 1] == edge.b) {
-        return true;
-      }
+  // Snapshot the indices of primitive paths that contain `edge_to_embiggen`,
+  // since we will mutate the by_edge bucket while iterating.
+  std::vector<std::size_t> through_edge;
+  auto by_edge_it = state.by_edge.find(edge_to_embiggen);
+  if (by_edge_it != state.by_edge.end()) {
+    through_edge.reserve(by_edge_it->second.size());
+    for (std::size_t idx : by_edge_it->second) {
+      through_edge.push_back(idx);
     }
-    return false;
-  };
+  }
 
   int smallest_preextend_delta = std::numeric_limits<int>::max();
-  for (const LocalEmbiggenState& candidate : state.primitive_paths) {
-    if (ContainsEdge(candidate.path, edge_to_embiggen)) {
-      smallest_preextend_delta =
-          std::min(smallest_preextend_delta, candidate.delta);
-    }
+  for (std::size_t idx : through_edge) {
+    smallest_preextend_delta =
+        std::min(smallest_preextend_delta, state.primitive_paths[idx].delta);
   }
   if (smallest_preextend_delta == std::numeric_limits<int>::max()) {
     // There are no primitive paths through this edge! This is totally possible
@@ -424,17 +455,17 @@ std::optional<int> LocalEmbiggenCorrect(
 
   int smallest_noncritical_delta = std::numeric_limits<int>::max();
   std::vector<LocalEmbiggenState> critical_paths;
-  std::erase_if(state.primitive_paths, [&](LocalEmbiggenState& candidate) {
-    if (ContainsEdge(candidate.path, edge_to_embiggen)) {
-      if (candidate.delta == smallest_preextend_delta) {
-        critical_paths.push_back(std::move(candidate));
-        return true;
-      }
+  for (std::size_t idx : through_edge) {
+    LocalEmbiggenState& candidate = state.primitive_paths[idx];
+    if (candidate.delta == smallest_preextend_delta) {
+      UnregisterPrimitivePath(state, idx);
+      critical_paths.push_back(std::move(candidate));
+      candidate.path.clear();  // tombstone
+    } else {
       smallest_noncritical_delta =
           std::min(smallest_noncritical_delta, candidate.delta);
     }
-    return false;
-  });
+  }
   AssertOrRaise(critical_paths.size() > 0);
 
   std::vector<LocalEmbiggenState> extensions;
@@ -462,9 +493,11 @@ std::optional<int> LocalEmbiggenCorrect(
 
   int smallest_delta = smallest_noncritical_delta;
   for (LocalEmbiggenState& extension : extensions) {
-    AssertOrRaise(ContainsEdge(extension.path, edge_to_embiggen));
+    int delta = extension.delta;
+    std::size_t new_idx = state.primitive_paths.size();
     state.primitive_paths.push_back(std::move(extension));
-    smallest_delta = std::min(smallest_delta, extension.delta);
+    RegisterPrimitivePath(state, new_idx);
+    smallest_delta = std::min(smallest_delta, delta);
   }
 
   // TODO: Consider. If smallest_delta==0, might it be better to leave
@@ -480,8 +513,10 @@ std::optional<int> LocalEmbiggenCorrect(
   }
 
   state.edges.at(edge_to_embiggen).weight += smallest_delta;
-  for (LocalEmbiggenState& primitive_path : state.primitive_paths) {
-    if (ContainsEdge(primitive_path.path, edge_to_embiggen)) {
+  auto by_edge_it2 = state.by_edge.find(edge_to_embiggen);
+  if (by_edge_it2 != state.by_edge.end()) {
+    for (std::size_t idx : by_edge_it2->second) {
+      LocalEmbiggenState& primitive_path = state.primitive_paths[idx];
       AssertOrRaise(primitive_path.delta >= smallest_delta);
       primitive_path.delta -= smallest_delta;
     }
@@ -523,13 +558,14 @@ std::optional<TspTourResult> DoRefine(
 ) {
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 20) {
-      return std::nullopt;
-    }
+    // if (refine_round >= 20) {
+    //   return std::nullopt;
+    // }
 
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
-    std::cout << "  primitive paths: " << state.primitive_paths.size() << "\n";
+    std::cout << "  primitive paths: " << state.NumActivePrimitivePaths()
+              << "\n";
 
     std::optional<TspTourResult> result = DoTSP(problem, state, ub_rel);
     if (!result.has_value()) {
