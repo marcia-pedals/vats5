@@ -23,9 +23,16 @@ using testing::ElementsAre;
 using testing::Field;
 using testing::Matcher;
 
-testing::Matcher<const EmbiggenerEdge&> Edge(auto... steps) {
+testing::Matcher<const EmbiggenerEdge&> Edge(
+    std::same_as<FlatStep> auto... steps
+) {
+  std::vector<FlatStep> step_vec{steps...};
+  int min_duration = std::numeric_limits<int>::max();
+  for (const FlatStep& s : step_vec) {
+    min_duration = std::min(min_duration, s.DurationSeconds());
+  }
   return AllOf(
-      Field(&EmbiggenerEdge::weight, 0),
+      Field(&EmbiggenerEdge::weight, min_duration),
       Field(&EmbiggenerEdge::steps, ElementsAre(steps...))
   );
 }
@@ -587,20 +594,6 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
       EmbiggenerOptions{.include_nonzero_flex = true}
   );
 
-  // Initialize each edge's weight to the minimum step duration on that edge,
-  // matching what refine.cpp does before embiggening.
-  for (auto& [_, edge_data] : state.edges) {
-    auto min_dur_step_it =
-        std::ranges::min_element(edge_data.steps, {}, [](const FlatStep& step) {
-          return step.DurationSeconds();
-        });
-    RC_ASSERT(min_dur_step_it != edge_data.steps.end());
-    edge_data.weight = min_dur_step_it->DurationSeconds();
-  }
-
-  std::vector<LocalEmbiggenState> primitive_paths =
-      BuildPrimitivePaths(problem, state);
-
   // Collect all edges in the state in a deterministic order. Exclude the
   // trivial START -> END edge, which LocalEmbiggenCorrect cannot target.
   std::vector<PlainEdge> all_edges;
@@ -626,8 +619,7 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
   for (PlainEdge target : targets) {
     RC_LOG() << "target " << problem.StopName(target.a) << "->"
              << problem.StopName(target.b) << "\n";
-    std::optional<int> delta =
-        LocalEmbiggenCorrect(problem, state, primitive_paths, target);
+    std::optional<int> delta = LocalEmbiggenCorrect(problem, state, target);
     if (delta.has_value()) {
       RC_LOG() << "embiggened " << problem.StopName(target.a) << "->"
                << problem.StopName(target.b) << " by " << *delta << " (now "
