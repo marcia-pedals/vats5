@@ -554,6 +554,10 @@ std::optional<int> LocalEmbiggenCorrect(
 
   // TODO: Consider. If smallest_delta==0, might it be better to leave
   // primitive_paths unchanged?
+  // Hmm, seems not. It helps a lot to extend even ones that have
+  // smalles_delta==0. Maybe it adds to other nearby ones and eventually helps
+  // or something? Or like there are a bunch of delta>0 ones even if there is
+  // one delta==0?
 
   if (smallest_delta == std::numeric_limits<int>::max()) {
     // This means that there are no feasible paths through `edge_to_embiggen` so
