@@ -85,14 +85,16 @@ struct EmbiggenerState {
   // they have been removed from the indexes below.
   std::vector<LocalEmbiggenState> primitive_paths;
 
-  // Indexes into primitive_paths.
+  // Indexes into primitive_paths. Buckets are append-only vectors: indices
+  // added by RegisterPrimitivePath are never removed. Iteration sites must
+  // skip tombstoned slots (path.empty()).
   // - by_front: maps (path.front(), t_front) to the indices whose path begins
   //   there at that time.
   // - by_back: maps (path.back(), t_back) similarly for path ends.
   // - by_edge: maps each PlainEdge to the indices of paths that contain it.
-  std::unordered_map<PointInstant, std::unordered_set<std::size_t>> by_front;
-  std::unordered_map<PointInstant, std::unordered_set<std::size_t>> by_back;
-  std::unordered_map<PlainEdge, std::unordered_set<std::size_t>> by_edge;
+  std::unordered_map<PointInstant, std::vector<std::size_t>> by_front;
+  std::unordered_map<PointInstant, std::vector<std::size_t>> by_back;
+  std::unordered_map<PlainEdge, std::vector<std::size_t>> by_edge;
 
   // Number of non-tombstoned slots in primitive_paths. Maintained by
   // RegisterPrimitivePath / UnregisterPrimitivePath.

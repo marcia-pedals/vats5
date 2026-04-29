@@ -62,21 +62,17 @@ struct BFSState {
 
 void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
   const LocalEmbiggenState& p = state.primitive_paths[idx];
-  state.by_front[PointInstant{p.path.front(), p.t_front}].insert(idx);
-  state.by_back[PointInstant{p.path.back(), p.t_back}].insert(idx);
+  state.by_front[PointInstant{p.path.front(), p.t_front}].push_back(idx);
+  state.by_back[PointInstant{p.path.back(), p.t_back}].push_back(idx);
   for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
-    state.by_edge[PlainEdge{p.path[i], p.path[i + 1]}].insert(idx);
+    state.by_edge[PlainEdge{p.path[i], p.path[i + 1]}].push_back(idx);
   }
   ++state.num_active_primitive_paths;
 }
 
-void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
-  const LocalEmbiggenState& p = state.primitive_paths[idx];
-  state.by_front.at(PointInstant{p.path.front(), p.t_front}).erase(idx);
-  state.by_back.at(PointInstant{p.path.back(), p.t_back}).erase(idx);
-  for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
-    state.by_edge.at(PlainEdge{p.path[i], p.path[i + 1]}).erase(idx);
-  }
+// Marks the slot as tombstoned. Index entries are NOT removed; iteration sites
+// must skip slots whose `path` is empty.
+void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t /*idx*/) {
   --state.num_active_primitive_paths;
 }
 
@@ -335,33 +331,6 @@ std::optional<int> LocalEmbiggenCorrect(
     EmbiggenerState& state,
     PlainEdge edge_to_embiggen
 ) {
-  auto Joinable = [&](const LocalEmbiggenState& p1,
-                      const LocalEmbiggenState& p2) -> bool {
-    // The (p1.path.back() == p2.path.front() && p1.t_back == p2.t_front) check
-    // is implied by how we look up candidates via the by_front/by_back indexes.
-
-    // If the joined path goes from START to END, it must touch all the stops.
-    if (p1.path.front() == problem.boundary.start &&
-        p2.path.back() == problem.boundary.end &&
-        p1.path.size() + p2.path.size() != problem.required.size() + 1) {
-      return false;
-    }
-
-    // The joined path must not repeat any stops.
-    // TODO: This check is embarassingly slow.
-    std::unordered_set<StopId> p1_stops;
-    for (StopId s : p1.path) {
-      p1_stops.insert(s);
-    }
-    for (int i = 1; i < p2.path.size(); ++i) {
-      if (p1_stops.contains(p2.path[i])) {
-        return false;
-      }
-    }
-
-    return true;
-  };
-
   auto ExtendForwards =
       [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
     AssertOrRaise(target.path.back() != problem.boundary.end);
@@ -369,11 +338,38 @@ std::optional<int> LocalEmbiggenCorrect(
     auto it =
         state.by_front.find(PointInstant{target.path.back(), target.t_back});
     if (it == state.by_front.end()) return result;
+
+    // Joined path = target.path + candidate.path[1:]. We need to detect whether
+    // any stop in candidate.path[1:] also appears in target.path. Precompute
+    // target.path as a set once.
+    std::unordered_set<StopId> stops_to_avoid;
+    for (StopId s : target.path) stops_to_avoid.insert(s);
+
+    const bool target_starts_at_start =
+        target.path.front() == problem.boundary.start;
+
     for (std::size_t cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
-      if (!Joinable(target, candidate)) {
+      if (candidate.path.empty()) continue;  // tombstone
+
+      // If the joined path goes from START to END it must touch all stops.
+      if (target_starts_at_start &&
+          candidate.path.back() == problem.boundary.end &&
+          target.path.size() + candidate.path.size() !=
+              problem.required.size() + 1) {
         continue;
       }
+
+      // Stop overlap check (skip candidate.path[0], which is the join point).
+      bool overlaps = false;
+      for (std::size_t i = 1; i < candidate.path.size(); ++i) {
+        if (stops_to_avoid.contains(candidate.path[i])) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (overlaps) continue;
+
       std::vector<StopId> new_path;
       new_path.reserve(target.path.size() + candidate.path.size() - 1);
       new_path.insert(new_path.end(), target.path.begin(), target.path.end());
@@ -398,11 +394,41 @@ std::optional<int> LocalEmbiggenCorrect(
     auto it =
         state.by_back.find(PointInstant{target.path.front(), target.t_front});
     if (it == state.by_back.end()) return result;
+
+    // Joined path = candidate.path + target.path[1:]. We need to detect whether
+    // any stop in target.path[1:] appears in candidate.path. Precompute
+    // target.path[1:] as a set once.
+    std::unordered_set<StopId> stops_to_avoid;
+    for (std::size_t i = 1; i < target.path.size(); ++i) {
+      stops_to_avoid.insert(target.path[i]);
+    }
+
+    const bool target_ends_at_end = target.path.back() == problem.boundary.end;
+
     for (std::size_t cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
-      if (!Joinable(candidate, target)) {
+      if (candidate.path.empty()) continue;  // tombstone
+
+      // If the joined path goes from START to END it must touch all stops.
+      if (candidate.path.front() == problem.boundary.start &&
+          target_ends_at_end &&
+          candidate.path.size() + target.path.size() !=
+              problem.required.size() + 1) {
         continue;
       }
+
+      // Stop overlap check (full candidate.path; the join point at
+      // candidate.path.back() is checked here because target.path[0] is NOT
+      // in stops_to_avoid, so the shared join stop won't trigger a false hit).
+      bool overlaps = false;
+      for (StopId s : candidate.path) {
+        if (stops_to_avoid.contains(s)) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (overlaps) continue;
+
       std::vector<StopId> new_path;
       new_path.reserve(target.path.size() + candidate.path.size() - 1);
       new_path.insert(
@@ -424,12 +450,13 @@ std::optional<int> LocalEmbiggenCorrect(
   };
 
   // Snapshot the indices of primitive paths that contain `edge_to_embiggen`,
-  // since we will mutate the by_edge bucket while iterating.
+  // since we will mutate the by_edge bucket while iterating. Skip tombstones.
   std::vector<std::size_t> through_edge;
   auto by_edge_it = state.by_edge.find(edge_to_embiggen);
   if (by_edge_it != state.by_edge.end()) {
     through_edge.reserve(by_edge_it->second.size());
     for (std::size_t idx : by_edge_it->second) {
+      if (state.primitive_paths[idx].path.empty()) continue;
       through_edge.push_back(idx);
     }
   }
@@ -511,6 +538,7 @@ std::optional<int> LocalEmbiggenCorrect(
   if (by_edge_it2 != state.by_edge.end()) {
     for (std::size_t idx : by_edge_it2->second) {
       LocalEmbiggenState& primitive_path = state.primitive_paths[idx];
+      if (primitive_path.path.empty()) continue;  // tombstone
       AssertOrRaise(primitive_path.delta >= smallest_delta);
       primitive_path.delta -= smallest_delta;
     }
