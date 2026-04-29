@@ -112,16 +112,6 @@ std::optional<TspTourResult> DoTSP(
     const ProblemState& problem, const EmbiggenerState& state, int ub_rel
 );
 
-// Return a delta that you can add to the weight of `target` in `state` such
-// that `state` is still a LB for the problem.
-int LocalEmbiggenIterative(
-    const ProblemState& problem,
-    const EmbiggenerState& state,
-    PlainEdge target,
-    int ub_rel,
-    int num_rounds
-);
-
 struct LocalEmbiggenState {
   // This state represents an actual path from path.front()@t_front to
   // path.back()@t_back.
