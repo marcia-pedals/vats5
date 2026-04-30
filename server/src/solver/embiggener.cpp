@@ -579,17 +579,22 @@ std::optional<int> LocalEmbiggenCorrect(
   return smallest_delta;
 }
 
-int AnalyzeTour(
+// Walks `tour` from `t0` and returns the trajectory of (stop, time) instants.
+// Returns an empty vector if the tour is infeasible at the given t0.
+std::vector<PointInstant> AnalyzeTour(
     const ProblemState& problem,
     const EmbiggenerState& state,
     TimeSinceServiceStart t0,
     const TspTourResult& tour
 ) {
+  std::vector<PointInstant> trajectory;
+  if (tour.tour_edges.empty()) {
+    return trajectory;
+  }
   TimeSinceServiceStart t_cur = t0;
+  trajectory.push_back(PointInstant{tour.tour_edges[0].origin.stop, t_cur});
   for (const TarelEdge& edge : tour.tour_edges) {
     PlainEdge plain_edge{edge.origin.stop, edge.destination.stop};
-    // std::cout << problem.StopName(plain_edge.a) << " -> " <<
-    // problem.StopName(plain_edge.b) << "\n";
     const EmbiggenerEdge edge_data = state.edges.at(plain_edge);
     auto step_it = std::ranges::lower_bound(
         edge_data.steps, t_cur, {}, [](const FlatStep& step) {
@@ -597,14 +602,15 @@ int AnalyzeTour(
         }
     );
     if (step_it == edge_data.steps.end() || step_it->origin_time != t_cur) {
-      return std::numeric_limits<int>::max();
+      return {};
     }
     t_cur = step_it->destination_time;
+    trajectory.push_back(PointInstant{edge.destination.stop, t_cur});
   }
-  return t_cur.seconds - t0.seconds;
+  return trajectory;
 }
 
-std::optional<TspTourResult> DoRefine(
+RefineResult DoRefine(
     const ProblemState& problem,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
@@ -612,10 +618,14 @@ std::optional<TspTourResult> DoRefine(
 ) {
   std::map<std::vector<StopId>, int> tour_counts;
 
+  int lb = 0;
+  int ub = std::numeric_limits<int>::max();
+  std::vector<PointInstant> ub_tour;
+
   int refine_round = 0;
   while (true) {
     if (refine_round >= 14) {
-      return std::nullopt;
+      return RefineResult{lb, ub, ub_tour};
     }
 
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
@@ -641,9 +651,8 @@ std::optional<TspTourResult> DoRefine(
     }
 
     std::optional<TspTourResult> result = DoTSP(problem, state, effective_ub);
-    if (!result.has_value()) {
-      return std::nullopt;
-    }
+    AssertOrRaise(result.has_value());
+    lb = result->optimal_value;
 
     std::vector<StopId> tour_stops;
     tour_stops.push_back(result->tour_edges[0].origin.stop);
@@ -655,10 +664,18 @@ std::optional<TspTourResult> DoRefine(
     tour_counts[tour_stops] += 1;
     std::cout << "  distinct tours: " << tour_counts.size() << "\n";
 
-    int t_actual = AnalyzeTour(problem, state, t0, *result);
+    std::vector<PointInstant> trajectory =
+        AnalyzeTour(problem, state, t0, *result);
+    int t_actual = trajectory.empty()
+                       ? std::numeric_limits<int>::max()
+                       : trajectory.back().t.seconds - t0.seconds;
     std::cout << "  tsp result: "
               << TimeSinceServiceStart{result->optimal_value} << " / "
               << TimeSinceServiceStart{t_actual} << "\n";
+    if (t_actual < ub) {
+      ub = t_actual;
+      ub_tour = std::move(trajectory);
+    }
 
     std::optional<int> total_delta = 0;
     for (int round = 0; round < 10; ++round) {
@@ -693,7 +710,7 @@ std::optional<TspTourResult> DoRefine(
     }
     std::cout << "\n";
     if (total_delta == 0) {
-      return result;
+      return RefineResult{lb, ub, ub_tour};
     }
   }
 }

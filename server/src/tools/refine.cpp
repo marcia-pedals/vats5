@@ -107,14 +107,9 @@ int main(int argc, char* argv[]) {
     edge_data.weight = min_dur_step_it->DurationSeconds();
   }
 
-  std::optional<TspTourResult> tsp_result =
-      DoRefine(problem, state, t0, ub_rel);
-  if (!tsp_result.has_value()) {
-    std::cout << "  no result, exiting\n";
-    return 0;
-  }
-  std::cout << "  result: " << TimeSinceServiceStart{tsp_result->optimal_value}
-            << "\n";
+  RefineResult refine_result = DoRefine(problem, state, t0, ub_rel);
+  std::cout << "  lb: " << TimeSinceServiceStart{refine_result.lb} << "\n";
+  std::cout << "  ub: " << TimeSinceServiceStart{refine_result.ub} << "\n";
 
   return 0;
 }

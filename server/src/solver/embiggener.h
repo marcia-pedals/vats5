@@ -181,7 +181,14 @@ std::optional<int> LocalEmbiggenCorrect(
     PlainEdge edge_to_embiggen
 );
 
-std::optional<TspTourResult> DoRefine(
+struct RefineResult {
+  int lb;  // the optimal value of the latest round DoTSP
+  int ub;  // the lowest t_actual from any round
+  std::vector<PointInstant> ub_tour;  // the tour stops (with t_cur times) from
+                                      // the tour with the lowest t_actual
+};
+
+RefineResult DoRefine(
     const ProblemState& problem,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
