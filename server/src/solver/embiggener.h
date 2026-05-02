@@ -31,6 +31,12 @@ inline std::ostream& operator<<(std::ostream& os, const EmbiggenerEdge& value) {
   return os << "EmbiggenerEdge{w=" << value.weight << "}";
 }
 
+struct PointInstant {
+  StopId s;
+  TimeSinceServiceStart t;
+  bool operator==(const PointInstant&) const = default;
+};
+
 struct LocalEmbiggenState {
   // This state represents an actual path from path.front()@t_front to
   // path.back()@t_back.
@@ -49,12 +55,10 @@ struct LocalEmbiggenState {
   bool operator<(const LocalEmbiggenState& other) const {
     return delta > other.delta;
   }
-};
 
-struct PointInstant {
-  StopId s;
-  TimeSinceServiceStart t;
-  bool operator==(const PointInstant&) const = default;
+  PointInstant Front() const { return PointInstant{path.front(), t_front}; }
+
+  PointInstant Back() const { return PointInstant{path.back(), t_back}; }
 };
 
 }  // namespace vats5
@@ -159,8 +163,9 @@ EmbiggenerState MakeEmbiggenerState(
     EmbiggenerOptions options = {}
 );
 
-void ConstrainEmbiggenerState(
-    EmbiggenerState& state,
+EmbiggenerState ConstrainEmbiggenerState(
+    const ProblemState& problem,
+    const EmbiggenerState& state,
     const std::vector<PointBound>& known_points,
     const std::unordered_set<PointInstant>& forbidden_points
 );

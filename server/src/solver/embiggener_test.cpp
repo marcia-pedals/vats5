@@ -7,8 +7,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -681,6 +684,194 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
   } while (std::next_permutation(
       stops.begin(), stops.end(), [](StopId a, StopId b) { return a.v < b.v; }
   ));
+}
+
+// Normalize an EmbiggenerState so that two states which produce the same set of
+// 2-hop primitive paths but differ only in how each edge's slack is split
+// between weight and per-path delta become byte-for-byte comparable. For each
+// edge:
+//  1. Drop the edge if no 2-hop primitive path uses it.
+//  (ConstrainEmbiggenerState
+//     copies edges from the source state but may leave behind edges that have
+//     no surviving primitive path; MakeEmbiggenerState never emits such edges.)
+//  2. Otherwise let m be the smallest delta among 2-hop primitive paths on
+//     that edge. Add m to the edge weight and subtract m from each matching
+//     path's delta, so that at least one 2-hop path on every edge has delta=0
+//     (matching the invariant established by MakeEmbiggenerState).
+void NormalizeEmbiggenerState(EmbiggenerState& state) {
+  std::unordered_map<PlainEdge, std::vector<std::size_t>> two_hop_by_edge;
+  for (std::size_t i = 0; i < state.primitive_paths.size(); ++i) {
+    const LocalEmbiggenState& p = state.primitive_paths[i];
+    if (p.path.size() != 2) continue;
+    two_hop_by_edge[PlainEdge{p.path.front(), p.path.back()}].push_back(i);
+  }
+
+  for (auto it = state.edges.begin(); it != state.edges.end();) {
+    auto bucket_it = two_hop_by_edge.find(it->first);
+    if (bucket_it == two_hop_by_edge.end()) {
+      it = state.edges.erase(it);
+      continue;
+    }
+    int min_delta = std::numeric_limits<int>::max();
+    for (std::size_t i : bucket_it->second) {
+      min_delta = std::min(min_delta, state.primitive_paths[i].delta);
+    }
+    if (min_delta > 0) {
+      it->second.weight += min_delta;
+      for (std::size_t i : bucket_it->second) {
+        state.primitive_paths[i].delta -= min_delta;
+      }
+    }
+    ++it;
+  }
+}
+
+struct PathKey {
+  std::vector<int> path_v;
+  int t_front_seconds;
+  int t_back_seconds;
+  int delta;
+  bool operator==(const PathKey&) const = default;
+  bool operator<(const PathKey& other) const {
+    if (path_v != other.path_v) return path_v < other.path_v;
+    if (t_front_seconds != other.t_front_seconds)
+      return t_front_seconds < other.t_front_seconds;
+    if (t_back_seconds != other.t_back_seconds)
+      return t_back_seconds < other.t_back_seconds;
+    return delta < other.delta;
+  }
+};
+
+std::vector<PathKey> SortedPaths(const EmbiggenerState& state) {
+  std::vector<PathKey> result;
+  for (const LocalEmbiggenState& p : state.primitive_paths) {
+    if (p.path.empty()) continue;
+    PathKey k;
+    k.path_v.reserve(p.path.size());
+    for (StopId s : p.path) k.path_v.push_back(s.v);
+    k.t_front_seconds = p.t_front.seconds;
+    k.t_back_seconds = p.t_back.seconds;
+    k.delta = p.delta;
+    result.push_back(std::move(k));
+  }
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
+std::map<std::pair<int, int>, int> EdgesAsSortedMap(
+    const EmbiggenerState& state
+) {
+  std::map<std::pair<int, int>, int> result;
+  for (const auto& [edge, data] : state.edges) {
+    result[{edge.a.v, edge.b.v}] = data.weight;
+  }
+  return result;
+}
+
+// Generates a (problem, base_state, extra_intermediate_point) triple where
+// `p` is a (stop, time) pair that the base state actually arrives at.
+struct ConstrainSetup {
+  ProblemState problem;
+  StepsAdjacencyList completed;
+  std::vector<PointBound> base_known_points;
+  EmbiggenerState base_state;
+  PointInstant p;
+};
+
+ConstrainSetup GenConstrainSetup() {
+  ConstrainSetup setup;
+  setup.problem = *GenProblemState();
+  setup.completed =
+      MakeAdjacencyList(setup.problem.ComputeCompletedGraph().AllMergedSteps());
+
+  StopId start = setup.problem.boundary.start;
+  StopId end = setup.problem.boundary.end;
+
+  setup.base_known_points = {
+      PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
+      PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
+  };
+  setup.base_state = MakeEmbiggenerState(
+      setup.problem, setup.completed, setup.base_known_points, {}
+  );
+
+  std::unordered_set<StopId> rep_set =
+      setup.problem.required.GroupRepresentatives();
+  rep_set.erase(start);
+  rep_set.erase(end);
+  std::vector<StopId> stops(rep_set.begin(), rep_set.end());
+  std::sort(stops.begin(), stops.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+  RC_PRE(!stops.empty());
+
+  std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
+  for (const LocalEmbiggenState& p : setup.base_state.primitive_paths) {
+    if (p.path.size() != 2) continue;
+    if (rep_set.contains(p.path[1])) {
+      arrival_times[p.path[1]].push_back(p.t_back);
+    }
+  }
+  StopId p_stop = *rc::gen::elementOf(stops);
+  RC_PRE(arrival_times.contains(p_stop) && !arrival_times[p_stop].empty());
+  TimeSinceServiceStart p_time = *rc::gen::elementOf(arrival_times[p_stop]);
+  setup.p = PointInstant{p_stop, p_time};
+  RC_LOG() << "p = (" << setup.problem.StopName(p_stop) << ", " << p_time
+           << ")\n";
+
+  return setup;
+}
+
+void CheckConstrainMatchesMake(
+    const ConstrainSetup& setup,
+    const std::vector<PointBound>& extra_known_points,
+    const std::unordered_set<PointInstant>& extra_forbidden_points
+) {
+  EmbiggenerState from_make = MakeEmbiggenerState(
+      setup.problem, setup.completed, extra_known_points, extra_forbidden_points
+  );
+  EmbiggenerState from_constrain = ConstrainEmbiggenerState(
+      setup.problem,
+      setup.base_state,
+      extra_known_points,
+      extra_forbidden_points
+  );
+
+  NormalizeEmbiggenerState(from_make);
+  NormalizeEmbiggenerState(from_constrain);
+
+  RC_ASSERT(EdgesAsSortedMap(from_make) == EdgesAsSortedMap(from_constrain));
+  RC_ASSERT(SortedPaths(from_make) == SortedPaths(from_constrain));
+}
+
+// Property: starting from a base EmbiggenerState built with no intermediate
+// known points, applying ConstrainEmbiggenerState with one extra known
+// intermediate point should yield the same state (up to per-edge weight/delta
+// slack) as calling MakeEmbiggenerState directly with that extra known point.
+RC_GTEST_PROP(
+    EmbiggenerTest, ConstrainEmbiggenerState_KnownPoint_MatchesMake, ()
+) {
+  ConstrainSetup setup = GenConstrainSetup();
+  std::vector<PointBound> extra_known_points{
+      PointBound{
+          setup.problem.boundary.start,
+          TimeSinceServiceStart{0},
+          TimeSinceServiceStart{0}
+      },
+      PointBound{setup.p.s, setup.p.t, setup.p.t},
+      PointBound{
+          setup.problem.boundary.end, setup.p.t, TimeSinceServiceStart{100000}
+      },
+  };
+  CheckConstrainMatchesMake(setup, extra_known_points, {});
+}
+
+// Property: same as above but with a forbidden point instead of a known one.
+RC_GTEST_PROP(
+    EmbiggenerTest, ConstrainEmbiggenerState_ForbiddenPoint_MatchesMake, ()
+) {
+  ConstrainSetup setup = GenConstrainSetup();
+  CheckConstrainMatchesMake(setup, setup.base_known_points, {setup.p});
 }
 
 }  // namespace

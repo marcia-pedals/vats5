@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unordered_set>
 
 #include "solver/data.h"
 #include "solver/embiggener.h"
@@ -22,6 +23,34 @@ StopId FindStopByGtfsId(
   throw std::runtime_error(
       "Stop " + gtfs_stop_id_str + " not found in stop_infos"
   );
+}
+
+struct BnbState {
+  int lb;
+  std::vector<PointBound> known_points;
+  std::unordered_set<PointInstant> forbidden_points;
+  EmbiggenerState state;
+
+  bool operator<(const BnbState& other) const {
+    return known_points.size() > other.known_points.size();
+  }
+};
+
+void Bnb(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const BnbState& initial
+) {
+  std::vector<BnbState> q;
+  q.push_back(initial);
+
+  while (true) {
+    std::pop_heap(q.begin(), q.end());
+    BnbState cur = std::move(q.back());
+    q.pop_back();
+
+    std::cout << "take " << TimeSinceServiceStart{cur.lb} << "\n";
+  }
 }
 
 int main(int argc, char* argv[]) {
