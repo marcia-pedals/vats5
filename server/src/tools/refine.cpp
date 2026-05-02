@@ -39,7 +39,9 @@ struct BnbState {
 void Bnb(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
-    const BnbState& initial
+    const BnbState& initial,
+    TimeSinceServiceStart t0,
+    int ub
 ) {
   std::vector<BnbState> q;
   q.push_back(initial);
@@ -50,6 +52,11 @@ void Bnb(
     q.pop_back();
 
     std::cout << "take " << TimeSinceServiceStart{cur.lb} << "\n";
+
+    RefineResult refine_result =
+        DoRefine(problem, completed, cur.state, t0, ub);
+    std::cout << "  refine result: " << TimeSinceServiceStart{refine_result.lb}
+              << " / " << TimeSinceServiceStart{refine_result.ub} << "\n";
   }
 }
 

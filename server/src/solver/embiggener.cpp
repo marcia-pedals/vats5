@@ -63,10 +63,10 @@ struct BFSState {
 
 void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
   const LocalEmbiggenState& p = state.primitive_paths[idx];
-  state.by_front[PointInstant{p.path.front(), p.t_front}].push_back(idx);
-  state.by_back[PointInstant{p.path.back(), p.t_back}].push_back(idx);
+  state.by_front[p.path.front()].push_back(idx);
+  state.by_back[p.path.back()].push_back(idx);
   for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
-    state.by_edge[state.EdgeIndex(PlainEdge{p.path[i], p.path[i + 1]})]
+    state.by_edge[state.EdgeIndex(PlainEdge{p.path[i].s, p.path[i + 1].s})]
         .push_back(idx);
   }
   ++state.num_active_primitive_paths;
@@ -275,9 +275,9 @@ EmbiggenerState MakeEmbiggenerState(
       std::size_t idx = state.primitive_paths.size();
       state.primitive_paths.push_back(
           LocalEmbiggenState{
-              .path = {edge.a, edge.b},
-              .t_front = step.origin_time,
-              .t_back = step.destination_time,
+              .path =
+                  {PointInstant{edge.a, step.origin_time},
+                   PointInstant{edge.b, step.destination_time}},
               .delta = step.DurationSeconds() - weight,
           }
       );
@@ -307,9 +307,42 @@ EmbiggenerState ConstrainEmbiggenerState(
     known_point_stops.insert(known.s);
   }
 
-  // Phase 1: Forward BFS to discover all reachable states and primitive steps.
-  // We walk all the primitive paths the originate at the current point and only
-  // "include" them when they match all the constraints.
+  // Walks `path` starting from kpi=`start_kpi`. Returns the kpi after the walk
+  // if every transition along the path satisfies the known/forbidden
+  // constraints (mirroring the per-step rules in MakeEmbiggenerState's BFS),
+  // or nullopt if any transition is rejected.
+  auto WalkPath = [&](const std::vector<PointInstant>& path,
+                      int start_kpi) -> std::optional<int> {
+    int kpi = start_kpi;
+    for (std::size_t i = 1; i < path.size(); ++i) {
+      if (kpi == static_cast<int>(known_points.size()) - 1) {
+        return std::nullopt;
+      }
+      const PointBound& next_kp = known_points[kpi + 1];
+      const PointInstant& next = path[i];
+      if (known_point_stops.contains(next.s) && next.s != next_kp.s) {
+        return std::nullopt;
+      }
+      if (next.t > next_kp.t_hi) {
+        return std::nullopt;
+      }
+      if (next.s == next_kp.s && next.t < next_kp.t_lo) {
+        return std::nullopt;
+      }
+      if (forbidden_points.contains(next)) {
+        return std::nullopt;
+      }
+      if (next.s == next_kp.s) {
+        kpi += 1;
+      }
+    }
+    return kpi;
+  };
+
+  // Phase 1: Forward BFS to discover all reachable states and primitive paths.
+  // For each primitive path that starts at the current BFS state's point, walk
+  // the path against the new constraints; if it survives, it produces a
+  // transition to the new BFS state with the resulting kpi.
   std::vector<bool> primitive_path_reachable(
       state.primitive_paths.size(), false
   );
@@ -329,27 +362,23 @@ EmbiggenerState ConstrainEmbiggenerState(
         static_cast<int>(known_points.size()) - 1) {
       continue;
     }
-    for (size_t primitive_path_i : state.by_front.at(cur_state.point)) {
+    auto by_front_it = state.by_front.find(cur_state.point);
+    if (by_front_it == state.by_front.end()) continue;
+    for (size_t primitive_path_i : by_front_it->second) {
       const LocalEmbiggenState& primitive_path =
           state.primitive_paths[primitive_path_i];
       if (primitive_path.path.empty()) {
         // tombstone
         continue;
       }
-      bool primitive_path_allowed = true;
-      int next_known_point_index = -1;
-      // TODO: Walk the primitive path!!!!
-      if (!primitive_path_allowed) {
-        continue;
-      }
+      std::optional<int> end_kpi =
+          WalkPath(primitive_path.path, cur_state.last_known_point_index);
+      if (!end_kpi.has_value()) continue;
       primitive_path_reachable[primitive_path_i] = true;
       primitive_path_start_kpi[primitive_path_i] =
           cur_state.last_known_point_index;
-      primitive_path_end_kpi[primitive_path_i] = next_known_point_index;
-      BFSState next_state{
-          PointInstant{primitive_path.path.back(), primitive_path.t_back},
-          next_known_point_index
-      };
+      primitive_path_end_kpi[primitive_path_i] = *end_kpi;
+      BFSState next_state{primitive_path.Back(), *end_kpi};
       if (!discovered.contains(next_state)) {
         discovered.insert(next_state);
         worklist.push_back(next_state);
@@ -358,7 +387,7 @@ EmbiggenerState ConstrainEmbiggenerState(
   }
 
   // Phase 2: Backwards BFS from end states to find all states that have a good
-  // path (one that reaches an end state using only allowed primitive steps).
+  // path (one that reaches an end state using only allowed primitive paths).
   std::unordered_set<BFSState> good_states;
   std::vector<BFSState> good_worklist;
   for (const BFSState& s : discovered) {
@@ -369,7 +398,9 @@ EmbiggenerState ConstrainEmbiggenerState(
   }
   for (size_t gi = 0; gi < good_worklist.size(); ++gi) {
     BFSState cur_state = good_worklist[gi];
-    for (size_t pi : state.by_back.at(cur_state.point)) {
+    auto by_back_it = state.by_back.find(cur_state.point);
+    if (by_back_it == state.by_back.end()) continue;
+    for (size_t pi : by_back_it->second) {
       if (!primitive_path_reachable[pi] ||
           primitive_path_end_kpi[pi] != cur_state.last_known_point_index) {
         continue;
@@ -384,22 +415,33 @@ EmbiggenerState ConstrainEmbiggenerState(
     }
   }
 
-  // Phase 3: Keep reachable primitive paths that go to good states.
+  // Phase 3: Keep reachable primitive paths that go to good states. Edges are
+  // copied from the source state (their weights remain valid relaxations); any
+  // edge that ends up with no surviving primitive path through it is dropped.
   EmbiggenerState result;
   result.required = state.required;
-  result.edges = state.edges;
   result.num_stops_for_edge_index = state.num_stops_for_edge_index;
+  result.by_edge.resize(state.by_edge.size());
+  std::unordered_set<PlainEdge> used_edges;
   for (size_t pi = 0; pi < state.primitive_paths.size(); ++pi) {
-    if (primitive_path_reachable[pi] &&
-        good_states.contains(
+    if (!primitive_path_reachable[pi]) continue;
+    if (!good_states.contains(
             BFSState{
                 state.primitive_paths[pi].Back(), primitive_path_end_kpi[pi]
             }
         )) {
-      std::size_t new_idx = state.primitive_paths.size();
-      result.primitive_paths.push_back(state.primitive_paths[pi]);
-      RegisterPrimitivePath(result, new_idx);
+      continue;
     }
+    const LocalEmbiggenState& path = state.primitive_paths[pi];
+    std::size_t new_idx = result.primitive_paths.size();
+    result.primitive_paths.push_back(path);
+    RegisterPrimitivePath(result, new_idx);
+    for (std::size_t i = 0; i + 1 < path.path.size(); ++i) {
+      used_edges.insert(PlainEdge{path.path[i].s, path.path[i + 1].s});
+    }
+  }
+  for (const PlainEdge& edge : used_edges) {
+    result.edges[edge] = state.edges.at(edge);
   }
 
   return result;
@@ -480,20 +522,19 @@ std::optional<int> LocalEmbiggenCorrect(
 ) {
   auto ExtendForwards =
       [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
-    AssertOrRaise(target.path.back() != problem.boundary.end);
+    AssertOrRaise(target.path.back().s != problem.boundary.end);
     std::vector<LocalEmbiggenState> result;
-    auto it =
-        state.by_front.find(PointInstant{target.path.back(), target.t_back});
+    auto it = state.by_front.find(target.path.back());
     if (it == state.by_front.end()) return result;
 
     // Joined path = target.path + candidate.path[1:]. We need to detect whether
     // any stop in candidate.path[1:] also appears in target.path. Precompute
     // target.path as a set once.
     std::unordered_set<StopId> stops_to_avoid;
-    for (StopId s : target.path) stops_to_avoid.insert(s);
+    for (const PointInstant& p : target.path) stops_to_avoid.insert(p.s);
 
     const bool target_starts_at_start =
-        target.path.front() == problem.boundary.start;
+        target.path.front().s == problem.boundary.start;
 
     for (std::size_t cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
@@ -501,7 +542,7 @@ std::optional<int> LocalEmbiggenCorrect(
 
       // If the joined path goes from START to END it must touch all stops.
       if (target_starts_at_start &&
-          candidate.path.back() == problem.boundary.end &&
+          candidate.path.back().s == problem.boundary.end &&
           target.path.size() + candidate.path.size() !=
               problem.required.size() + 1) {
         continue;
@@ -510,14 +551,14 @@ std::optional<int> LocalEmbiggenCorrect(
       // Stop overlap check (skip candidate.path[0], which is the join point).
       bool overlaps = false;
       for (std::size_t i = 1; i < candidate.path.size(); ++i) {
-        if (stops_to_avoid.contains(candidate.path[i])) {
+        if (stops_to_avoid.contains(candidate.path[i].s)) {
           overlaps = true;
           break;
         }
       }
       if (overlaps) continue;
 
-      std::vector<StopId> new_path;
+      std::vector<PointInstant> new_path;
       new_path.reserve(target.path.size() + candidate.path.size() - 1);
       new_path.insert(new_path.end(), target.path.begin(), target.path.end());
       new_path.insert(
@@ -526,8 +567,6 @@ std::optional<int> LocalEmbiggenCorrect(
       result.push_back(
           LocalEmbiggenState{
               .path = std::move(new_path),
-              .t_front = target.t_front,
-              .t_back = candidate.t_back,
               .delta = target.delta + candidate.delta,
           }
       );
@@ -536,10 +575,9 @@ std::optional<int> LocalEmbiggenCorrect(
   };
 
   auto ExtendBackwards = [&](const LocalEmbiggenState& target) {
-    AssertOrRaise(target.path.front() != problem.boundary.start);
+    AssertOrRaise(target.path.front().s != problem.boundary.start);
     std::vector<LocalEmbiggenState> result;
-    auto it =
-        state.by_back.find(PointInstant{target.path.front(), target.t_front});
+    auto it = state.by_back.find(target.path.front());
     if (it == state.by_back.end()) return result;
 
     // Joined path = candidate.path + target.path[1:]. We need to detect whether
@@ -547,17 +585,18 @@ std::optional<int> LocalEmbiggenCorrect(
     // target.path[1:] as a set once.
     std::unordered_set<StopId> stops_to_avoid;
     for (std::size_t i = 1; i < target.path.size(); ++i) {
-      stops_to_avoid.insert(target.path[i]);
+      stops_to_avoid.insert(target.path[i].s);
     }
 
-    const bool target_ends_at_end = target.path.back() == problem.boundary.end;
+    const bool target_ends_at_end =
+        target.path.back().s == problem.boundary.end;
 
     for (std::size_t cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
       if (candidate.path.empty()) continue;  // tombstone
 
       // If the joined path goes from START to END it must touch all stops.
-      if (candidate.path.front() == problem.boundary.start &&
+      if (candidate.path.front().s == problem.boundary.start &&
           target_ends_at_end &&
           candidate.path.size() + target.path.size() !=
               problem.required.size() + 1) {
@@ -568,15 +607,15 @@ std::optional<int> LocalEmbiggenCorrect(
       // candidate.path.back() is checked here because target.path[0] is NOT
       // in stops_to_avoid, so the shared join stop won't trigger a false hit).
       bool overlaps = false;
-      for (StopId s : candidate.path) {
-        if (stops_to_avoid.contains(s)) {
+      for (const PointInstant& p : candidate.path) {
+        if (stops_to_avoid.contains(p.s)) {
           overlaps = true;
           break;
         }
       }
       if (overlaps) continue;
 
-      std::vector<StopId> new_path;
+      std::vector<PointInstant> new_path;
       new_path.reserve(target.path.size() + candidate.path.size() - 1);
       new_path.insert(
           new_path.end(), candidate.path.begin(), candidate.path.end()
@@ -587,8 +626,6 @@ std::optional<int> LocalEmbiggenCorrect(
       result.push_back(
           LocalEmbiggenState{
               .path = std::move(new_path),
-              .t_front = candidate.t_front,
-              .t_back = target.t_back,
               .delta = candidate.delta + target.delta,
           }
       );
@@ -640,15 +677,15 @@ std::optional<int> LocalEmbiggenCorrect(
   std::vector<LocalEmbiggenState> extensions;
   for (const LocalEmbiggenState& critical_path : critical_paths) {
     std::vector<LocalEmbiggenState> new_extensions;
-    if (critical_path.path.front() == problem.boundary.start &&
-        critical_path.path.back() == problem.boundary.end) {
+    if (critical_path.path.front().s == problem.boundary.start &&
+        critical_path.path.back().s == problem.boundary.end) {
       // This is a full tour, so it can't be extended further.
       AssertOrRaise(critical_path.path.size() == state.required.size());
       extensions.push_back(critical_path);
-    } else if (critical_path.path.front() == problem.boundary.start) {
+    } else if (critical_path.path.front().s == problem.boundary.start) {
       // Must extend forwards.
       new_extensions = ExtendForwards(critical_path);
-    } else if (critical_path.path.back() == problem.boundary.end) {
+    } else if (critical_path.path.back().s == problem.boundary.end) {
       // Must extend backwards.
       new_extensions = ExtendBackwards(critical_path);
     } else {

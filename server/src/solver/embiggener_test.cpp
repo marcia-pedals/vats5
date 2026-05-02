@@ -32,8 +32,8 @@ std::vector<FlatStep> EdgeFlatSteps(
   for (std::size_t idx : state.by_edge[state.EdgeIndex(edge)]) {
     const LocalEmbiggenState& p = state.primitive_paths[idx];
     if (p.path.size() != 2) continue;
-    if (p.path[0] != edge.a || p.path[1] != edge.b) continue;
-    result.push_back(FlatStep{p.t_front, p.t_back});
+    if (p.path[0].s != edge.a || p.path[1].s != edge.b) continue;
+    result.push_back(FlatStep{p.path[0].t, p.path[1].t});
   }
   std::sort(
       result.begin(), result.end(), [](const FlatStep& a, const FlatStep& b) {
@@ -512,8 +512,8 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
   std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
   for (const LocalEmbiggenState& p : base_state.primitive_paths) {
     if (p.path.size() != 2) continue;
-    if (rep_set.contains(p.path[1])) {
-      arrival_times[p.path[1]].push_back(p.t_back);
+    if (rep_set.contains(p.path[1].s)) {
+      arrival_times[p.path[1].s].push_back(p.path[1].t);
     }
   }
 
@@ -703,7 +703,7 @@ void NormalizeEmbiggenerState(EmbiggenerState& state) {
   for (std::size_t i = 0; i < state.primitive_paths.size(); ++i) {
     const LocalEmbiggenState& p = state.primitive_paths[i];
     if (p.path.size() != 2) continue;
-    two_hop_by_edge[PlainEdge{p.path.front(), p.path.back()}].push_back(i);
+    two_hop_by_edge[PlainEdge{p.path.front().s, p.path.back().s}].push_back(i);
   }
 
   for (auto it = state.edges.begin(); it != state.edges.end();) {
@@ -727,17 +727,12 @@ void NormalizeEmbiggenerState(EmbiggenerState& state) {
 }
 
 struct PathKey {
+  // Encoded as alternating (stop_id, time_seconds) pairs.
   std::vector<int> path_v;
-  int t_front_seconds;
-  int t_back_seconds;
   int delta;
   bool operator==(const PathKey&) const = default;
   bool operator<(const PathKey& other) const {
     if (path_v != other.path_v) return path_v < other.path_v;
-    if (t_front_seconds != other.t_front_seconds)
-      return t_front_seconds < other.t_front_seconds;
-    if (t_back_seconds != other.t_back_seconds)
-      return t_back_seconds < other.t_back_seconds;
     return delta < other.delta;
   }
 };
@@ -747,10 +742,11 @@ std::vector<PathKey> SortedPaths(const EmbiggenerState& state) {
   for (const LocalEmbiggenState& p : state.primitive_paths) {
     if (p.path.empty()) continue;
     PathKey k;
-    k.path_v.reserve(p.path.size());
-    for (StopId s : p.path) k.path_v.push_back(s.v);
-    k.t_front_seconds = p.t_front.seconds;
-    k.t_back_seconds = p.t_back.seconds;
+    k.path_v.reserve(p.path.size() * 2);
+    for (const PointInstant& pi : p.path) {
+      k.path_v.push_back(pi.s.v);
+      k.path_v.push_back(pi.t.seconds);
+    }
     k.delta = p.delta;
     result.push_back(std::move(k));
   }
@@ -808,8 +804,8 @@ ConstrainSetup GenConstrainSetup() {
   std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
   for (const LocalEmbiggenState& p : setup.base_state.primitive_paths) {
     if (p.path.size() != 2) continue;
-    if (rep_set.contains(p.path[1])) {
-      arrival_times[p.path[1]].push_back(p.t_back);
+    if (rep_set.contains(p.path[1].s)) {
+      arrival_times[p.path[1].s].push_back(p.path[1].t);
     }
   }
   StopId p_stop = *rc::gen::elementOf(stops);

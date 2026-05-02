@@ -38,15 +38,9 @@ struct PointInstant {
 };
 
 struct LocalEmbiggenState {
-  // This state represents an actual path from path.front()@t_front to
-  // path.back()@t_back.
-  //
-  // TODO: We can do a constant-size bitvector for much more speed.
-  // It may also be that we can store front, back, and bitset, because the order
-  // of the things in the middle might not matter!
-  std::vector<StopId> path;
-  TimeSinceServiceStart t_front;
-  TimeSinceServiceStart t_back;
+  // This state represents an actual path from path.front() to path.back(),
+  // including the times at every intermediate stop.
+  std::vector<PointInstant> path;
 
   // The excess duration of the actual path over the relaxed weight on the
   // graph.
@@ -56,9 +50,9 @@ struct LocalEmbiggenState {
     return delta > other.delta;
   }
 
-  PointInstant Front() const { return PointInstant{path.front(), t_front}; }
+  PointInstant Front() const { return path.front(); }
 
-  PointInstant Back() const { return PointInstant{path.back(), t_back}; }
+  PointInstant Back() const { return path.back(); }
 };
 
 }  // namespace vats5
@@ -86,9 +80,9 @@ struct EmbiggenerState {
   // Indexes into primitive_paths. Buckets are append-only vectors: indices
   // added by RegisterPrimitivePath are never removed. Iteration sites must
   // skip tombstoned slots (path.empty()).
-  // - by_front: maps (path.front(), t_front) to the indices whose path begins
-  //   there at that time.
-  // - by_back: maps (path.back(), t_back) similarly for path ends.
+  // - by_front: maps path.front() to the indices whose path begins there at
+  //   that time.
+  // - by_back: maps path.back() similarly for path ends.
   // - by_edge: maps each PlainEdge to the indices of paths that contain it,
   //   indexed by EdgeIndex(edge). Buckets for edges that don't exist are
   //   simply empty.
