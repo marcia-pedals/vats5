@@ -785,7 +785,7 @@ RefineResult DoRefine(
 
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 14) {
+    if (refine_round >= 10) {
       return RefineResult{lb, ub, ub_tour};
     }
 
@@ -823,7 +823,7 @@ RefineResult DoRefine(
     AssertOrRaise(tour_stops.front() == problem.boundary.start);
     AssertOrRaise(tour_stops.back() == problem.boundary.end);
     tour_counts[tour_stops] += 1;
-    std::cout << "  distinct tours: " << tour_counts.size() << "\n";
+    // std::cout << "  distinct tours: " << tour_counts.size() << "\n";
 
     std::vector<PointInstant> trajectory =
         AnalyzeTour(problem, completed, t0, *result);
@@ -839,7 +839,7 @@ RefineResult DoRefine(
     }
 
     std::optional<int> total_delta = 0;
-    for (int round = 0; round < 10; ++round) {
+    for (int round = 0; round < 1; ++round) {
       std::optional<int> round_delta = 0;
       for (const TarelEdge& edge : result->tour_edges) {
         PlainEdge target{edge.origin.stop, edge.destination.stop};
@@ -850,26 +850,26 @@ RefineResult DoRefine(
           round_delta = std::nullopt;
         }
       }
-      std::cout << "  round " << round << " delta: ";
-      if (round_delta.has_value()) {
-        std::cout << TimeSinceServiceStart{*round_delta};
-      } else {
-        std::cout << "inf";
-      }
-      std::cout << "\n";
+      // std::cout << "  round " << round << " delta: ";
+      // if (round_delta.has_value()) {
+      //   std::cout << TimeSinceServiceStart{*round_delta};
+      // } else {
+      //   std::cout << "inf";
+      // }
+      // std::cout << "\n";
       if (round_delta.has_value() && total_delta.has_value()) {
         *total_delta += *round_delta;
       } else {
         total_delta = std::nullopt;
       }
     }
-    std::cout << "  total delta: ";
-    if (total_delta.has_value()) {
-      std::cout << TimeSinceServiceStart{*total_delta};
-    } else {
-      std::cout << "inf";
-    }
-    std::cout << "\n";
+    // std::cout << "  total delta: ";
+    // if (total_delta.has_value()) {
+    //   std::cout << TimeSinceServiceStart{*total_delta};
+    // } else {
+    //   std::cout << "inf";
+    // }
+    // std::cout << "\n";
     if (total_delta == 0) {
       return RefineResult{lb, ub, ub_tour};
     }
