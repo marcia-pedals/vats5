@@ -228,32 +228,30 @@ EmbiggenerState MakeEmbiggenerState(
     }
   }
 
-  std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
-  result_edges.reserve(problem.required.size() * problem.required.size());
+  std::unordered_map<PlainEdge, std::vector<FlatStep>> steps_per_edge;
+  steps_per_edge.reserve(problem.required.size() * problem.required.size());
   for (const std::pair<PointInstant, PointInstant>& result_step :
        result_steps) {
     auto [a, b] = result_step;
-    result_edges[PlainEdge{a.s, b.s}].steps.push_back(FlatStep{a.t, b.t});
+    steps_per_edge[PlainEdge{a.s, b.s}].push_back(FlatStep{a.t, b.t});
   }
 
-  for (auto& [_, edge] : result_edges) {
+  std::unordered_map<PlainEdge, EmbiggenerEdge> result_edges;
+  result_edges.reserve(steps_per_edge.size());
+  for (auto& [edge, steps] : steps_per_edge) {
     std::sort(
-        edge.steps.begin(),
-        edge.steps.end(),
-        [](const FlatStep& a, const FlatStep& b) {
+        steps.begin(), steps.end(), [](const FlatStep& a, const FlatStep& b) {
           return a.origin_time < b.origin_time;
         }
     );
-    for (size_t i = 1; i < edge.steps.size(); ++i) {
-      assert(
-          edge.steps[i - 1].destination_time <= edge.steps[i].destination_time
-      );
+    for (size_t i = 1; i < steps.size(); ++i) {
+      assert(steps[i - 1].destination_time <= steps[i].destination_time);
     }
     int min_duration = std::numeric_limits<int>::max();
-    for (const FlatStep& step : edge.steps) {
+    for (const FlatStep& step : steps) {
       min_duration = std::min(min_duration, step.DurationSeconds());
     }
-    edge.weight = min_duration;
+    result_edges[edge] = EmbiggenerEdge{.weight = min_duration};
   }
 
   int max_stop_v = -1;
@@ -271,15 +269,16 @@ EmbiggenerState MakeEmbiggenerState(
       .by_edge = std::vector<std::vector<std::size_t>>(edge_index_size),
       .num_stops_for_edge_index = num_stops_for_edge_index,
   };
-  for (const auto& [edge, edge_data] : state.edges) {
-    for (const FlatStep& step : edge_data.steps) {
+  for (const auto& [edge, steps] : steps_per_edge) {
+    int weight = state.edges.at(edge).weight;
+    for (const FlatStep& step : steps) {
       std::size_t idx = state.primitive_paths.size();
       state.primitive_paths.push_back(
           LocalEmbiggenState{
               .path = {edge.a, edge.b},
               .t_front = step.origin_time,
               .t_back = step.destination_time,
-              .delta = step.DurationSeconds() - edge_data.weight,
+              .delta = step.DurationSeconds() - weight,
           }
       );
       RegisterPrimitivePath(state, idx);
@@ -677,7 +676,7 @@ std::optional<int> LocalEmbiggenCorrect(
 // Returns an empty vector if the tour is infeasible at the given t0.
 std::vector<PointInstant> AnalyzeTour(
     const ProblemState& problem,
-    const EmbiggenerState& state,
+    const StepsAdjacencyList& completed,
     TimeSinceServiceStart t0,
     const TspTourResult& tour
 ) {
@@ -688,24 +687,31 @@ std::vector<PointInstant> AnalyzeTour(
   TimeSinceServiceStart t_cur = t0;
   trajectory.push_back(PointInstant{tour.tour_edges[0].origin.stop, t_cur});
   for (const TarelEdge& edge : tour.tour_edges) {
-    PlainEdge plain_edge{edge.origin.stop, edge.destination.stop};
-    const EmbiggenerEdge edge_data = state.edges.at(plain_edge);
-    auto step_it = std::ranges::lower_bound(
-        edge_data.steps, t_cur, {}, [](const FlatStep& step) {
-          return step.origin_time;
-        }
-    );
-    if (step_it == edge_data.steps.end() || step_it->origin_time != t_cur) {
+    StopId origin = edge.origin.stop;
+    StopId destination = edge.destination.stop;
+    const StepGroup* g_next = nullptr;
+    for (const StepGroup& g : completed.GetGroups(origin)) {
+      if (g.destination_stop == destination) {
+        g_next = &g;
+        break;
+      }
+    }
+    if (g_next == nullptr) {
       return {};
     }
-    t_cur = step_it->destination_time;
-    trajectory.push_back(PointInstant{edge.destination.stop, t_cur});
+    auto [t_next, _] = GetTNext(completed, *g_next, origin, t_cur);
+    if (t_next.seconds == std::numeric_limits<int>::max()) {
+      return {};
+    }
+    t_cur = t_next;
+    trajectory.push_back(PointInstant{destination, t_cur});
   }
   return trajectory;
 }
 
 RefineResult DoRefine(
     const ProblemState& problem,
+    const StepsAdjacencyList& completed,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel
@@ -759,7 +765,7 @@ RefineResult DoRefine(
     std::cout << "  distinct tours: " << tour_counts.size() << "\n";
 
     std::vector<PointInstant> trajectory =
-        AnalyzeTour(problem, state, t0, *result);
+        AnalyzeTour(problem, completed, t0, *result);
     int t_actual = trajectory.empty()
                        ? std::numeric_limits<int>::max()
                        : trajectory.back().t.seconds - t0.seconds;

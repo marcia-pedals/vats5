@@ -18,7 +18,6 @@ struct FlatStep {
 };
 
 struct EmbiggenerEdge {
-  std::vector<FlatStep> steps = {};
   int weight = 0;
   bool operator==(const EmbiggenerEdge&) const = default;
 };
@@ -29,12 +28,7 @@ inline std::ostream& operator<<(std::ostream& os, const FlatStep& value) {
 }
 
 inline std::ostream& operator<<(std::ostream& os, const EmbiggenerEdge& value) {
-  os << "EmbiggenerEdge{w=" << value.weight << ", steps=[";
-  for (size_t i = 0; i < value.steps.size(); ++i) {
-    if (i > 0) os << ", ";
-    os << value.steps[i];
-  }
-  return os << "]}";
+  return os << "EmbiggenerEdge{w=" << value.weight << "}";
 }
 
 struct LocalEmbiggenState {
@@ -196,6 +190,7 @@ struct RefineResult {
 
 RefineResult DoRefine(
     const ProblemState& problem,
+    const StepsAdjacencyList& completed,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel

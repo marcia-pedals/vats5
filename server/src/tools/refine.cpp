@@ -98,16 +98,7 @@ int main(int argc, char* argv[]) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
 
-  for (auto& [_, edge_data] : state.edges) {
-    auto min_dur_step_it =
-        std::ranges::min_element(edge_data.steps, {}, [](const FlatStep& step) {
-          return step.DurationSeconds();
-        });
-    assert(min_dur_step_it != edge_data.steps.end());
-    edge_data.weight = min_dur_step_it->DurationSeconds();
-  }
-
-  RefineResult refine_result = DoRefine(problem, state, t0, ub_rel);
+  RefineResult refine_result = DoRefine(problem, completed, state, t0, ub_rel);
   std::cout << "  lb: " << TimeSinceServiceStart{refine_result.lb} << "\n";
   std::cout << "  ub: " << TimeSinceServiceStart{refine_result.ub} << "\n";
 

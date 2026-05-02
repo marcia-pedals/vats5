@@ -18,42 +18,55 @@
 namespace vats5 {
 namespace {
 
-using testing::AllOf;
-using testing::ElementsAre;
-using testing::Field;
-using testing::Matcher;
+using testing::ElementsAreArray;
 
-testing::Matcher<const EmbiggenerEdge&> Edge(
-    std::same_as<FlatStep> auto... steps
+// Returns the FlatSteps for `edge` derived from the state's 2-hop primitive
+// paths, sorted by origin_time.
+std::vector<FlatStep> EdgeFlatSteps(
+    const EmbiggenerState& state, PlainEdge edge
 ) {
-  std::vector<FlatStep> step_vec{steps...};
-  int min_duration = std::numeric_limits<int>::max();
-  for (const FlatStep& s : step_vec) {
-    min_duration = std::min(min_duration, s.DurationSeconds());
+  std::vector<FlatStep> result;
+  for (std::size_t idx : state.by_edge[state.EdgeIndex(edge)]) {
+    const LocalEmbiggenState& p = state.primitive_paths[idx];
+    if (p.path.size() != 2) continue;
+    if (p.path[0] != edge.a || p.path[1] != edge.b) continue;
+    result.push_back(FlatStep{p.t_front, p.t_back});
   }
-  return AllOf(
-      Field(&EmbiggenerEdge::weight, min_duration),
-      Field(&EmbiggenerEdge::steps, ElementsAre(steps...))
+  std::sort(
+      result.begin(), result.end(), [](const FlatStep& a, const FlatStep& b) {
+        return a.origin_time < b.origin_time;
+      }
   );
+  return result;
 }
 
-template <typename K, typename V>
-void ExpectMap(
-    const std::unordered_map<K, V>& actual,
-    std::vector<std::pair<K, Matcher<const V&>>> expected
+std::vector<FlatStep> Edge(std::same_as<FlatStep> auto... steps) {
+  return std::vector<FlatStep>{steps...};
+}
+
+void ExpectEdges(
+    const EmbiggenerState& state,
+    std::vector<std::pair<PlainEdge, std::vector<FlatStep>>> expected
 ) {
-  std::unordered_set<K> expected_keys;
-  for (const auto& [key, matcher] : expected) {
-    expected_keys.insert(key);
-    if (actual.contains(key)) {
-      EXPECT_THAT(actual.at(key), matcher) << "at key " << key;
-    } else {
-      ADD_FAILURE() << "missing key " << key;
+  std::unordered_set<PlainEdge> expected_keys;
+  for (const auto& [edge, expected_steps] : expected) {
+    expected_keys.insert(edge);
+    auto it = state.edges.find(edge);
+    if (it == state.edges.end()) {
+      ADD_FAILURE() << "missing edge " << edge;
+      continue;
     }
+    EXPECT_THAT(EdgeFlatSteps(state, edge), ElementsAreArray(expected_steps))
+        << "steps at edge " << edge;
+    int min_duration = std::numeric_limits<int>::max();
+    for (const FlatStep& s : expected_steps) {
+      min_duration = std::min(min_duration, s.DurationSeconds());
+    }
+    EXPECT_EQ(it->second.weight, min_duration) << "weight at edge " << edge;
   }
-  for (const auto& [key, _] : actual) {
-    if (!expected_keys.contains(key)) {
-      ADD_FAILURE() << "unexpected key " << key << " = " << actual.at(key);
+  for (const auto& [edge, _] : state.edges) {
+    if (!expected_keys.contains(edge)) {
+      ADD_FAILURE() << "unexpected edge " << edge;
     }
   }
 }
@@ -160,8 +173,8 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_AllAllowed) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
 
-  ExpectMap(
-      state.edges,
+  ExpectEdges(
+      state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(20, 110), FS(120, 210))},
           {{S_B, S_A},
@@ -226,8 +239,8 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_ForbidOnePoint) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, forbidden_points);
 
-  ExpectMap(
-      state.edges,
+  ExpectEdges(
+      state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(120, 210))},
           {{S_B, S_A},
@@ -281,8 +294,8 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_MustNotEndBefore200) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
 
-  ExpectMap(
-      state.edges,
+  ExpectEdges(
+      state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(20, 110), FS(120, 210))},
           {{S_B, S_A},
@@ -333,8 +346,8 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_MustEndBy100) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
 
-  ExpectMap(
-      state.edges,
+  ExpectEdges(
+      state,
       {
           {{S_A, S_B}, Edge(FS(0, 10))},
           {{S_B, S_A}, Edge(FS(0, 20), FS(10, 20))},
@@ -376,7 +389,7 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_NoGoodPath) {
   };
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
-  ExpectMap(state.edges, {});
+  ExpectEdges(state, {});
 }
 
 TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
@@ -405,8 +418,8 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
   EmbiggenerState state =
       MakeEmbiggenerState(problem, completed, known_points, {});
 
-  ExpectMap(
-      state.edges,
+  ExpectEdges(
+      state,
       {
           {{S_A, S_B}, Edge(FS(0, 10))},
           {{S_B, S_A}, Edge(FS(10, 20))},
@@ -438,7 +451,7 @@ std::optional<std::vector<TimeSinceServiceStart>> FollowTour(
     PlainEdge edge{cur_stop, next_stop};
     auto it = state.edges.find(edge);
     if (it == state.edges.end()) return false;
-    for (const FlatStep& step : it->second.steps) {
+    for (const FlatStep& step : EdgeFlatSteps(state, edge)) {
       // Only follow steps that originate exactly at cur_time. If you get to a
       // stop and there isn't a step at the current time but there is a stop at
       // a later time, waiting is not allowed because TODO EXPLAIN.
@@ -494,11 +507,10 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
 
   // Collect all arrival times at each tour stop in the base state.
   std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
-  for (const auto& [edge, emb_edge] : base_state.edges) {
-    if (rep_set.contains(edge.b)) {
-      for (const FlatStep& step : emb_edge.steps) {
-        arrival_times[edge.b].push_back(step.destination_time);
-      }
+  for (const LocalEmbiggenState& p : base_state.primitive_paths) {
+    if (p.path.size() != 2) continue;
+    if (rep_set.contains(p.path[1])) {
+      arrival_times[p.path[1]].push_back(p.t_back);
     }
   }
 
