@@ -288,6 +288,100 @@ EmbiggenerState MakeEmbiggenerState(
   return state;
 }
 
+// void ConstrainEmbiggenerState(
+//   const ProblemState& problem,
+//   EmbiggenerState& state,
+//   const std::vector<PointBound>& known_points,
+//   const std::unordered_set<PointInstant>& forbidden_points
+// ) {
+//   assert(known_points.size() > 0);
+//   assert(known_points.front().s == problem.boundary.start);
+//   assert(known_points.back().s == problem.boundary.end);
+//   for (int i = 0; i + 1 < known_points.size(); ++i) {
+//     assert(known_points[i].t_lo <= known_points[i + 1].t_lo);
+//     assert(known_points[i].t_hi <= known_points[i + 1].t_hi);
+//   }
+
+//   std::unordered_set<StopId> known_point_stops;
+//   known_point_stops.reserve(known_points.size());
+//   for (const PointBound& known : known_points) {
+//     known_point_stops.insert(known.s);
+//   }
+
+//   // Phase 1: Forward BFS to discover all reachable states and primitive
+//   steps.
+//   // We walk all the primitive paths the originate at the current point and
+//   only
+//   // "include" them when they match all the constraints.
+//   std::vector<bool> primitive_path_reachable(state.primitive_paths.size(),
+//   false); std::unordered_set<BFSState> discovered; std::vector<BFSState>
+//   worklist;
+
+//   assert(known_points[0].t_lo == known_points[0].t_hi);
+//   BFSState initial{PointInstant{known_points[0].s, known_points[0].t_lo}, 0};
+//   discovered.insert(initial);
+//   worklist.push_back(initial);
+
+//   for (size_t wi = 0; wi < worklist.size(); ++wi) {
+//     BFSState cur_state = worklist[wi];
+//     if (cur_state.last_known_point_index ==
+//     static_cast<int>(known_points.size()) - 1) {
+//       continue;
+//     }
+//     for (size_t primitive_path_i : state.by_front.at(cur_state.point)) {
+//       const LocalEmbiggenState& primitive_path =
+//       state.primitive_paths[primitive_path_i]; bool primitive_path_allowed =
+//       true; int next_known_point_index = -1;
+//       // TODO: Walk the primitive path!!!!
+//       if (primitive_path_allowed) {
+//         primitive_path_reachable[primitive_path_i] = true;
+//         BFSState next_state{
+//           PointInstant{primitive_path.path.back(), primitive_path.t_back},
+//           next_known_point_index
+//         };
+//         if (!discovered.contains(next_state)) {
+//           discovered.insert(next_state);
+//           worklist.push_back(next_state);
+//         }
+//       }
+//     }
+//   }
+
+//   // Phase 2: Backwards BFS from end states to find all states that have a
+//   good
+//   // path (one that reaches an end state using only allowed primitive steps).
+//   std::unordered_set<BFSState> good_states;
+//   std::vector<BFSState> good_worklist;
+//   for (const BFSState& s : discovered) {
+//     if (s.last_known_point_index == static_cast<int>(known_points.size()) -
+//     1) {
+//       good_states.insert(s);
+//       good_worklist.push_back(s);
+//     }
+//   }
+//   for (size_t gi = 0; gi < good_worklist.size(); ++gi) {
+//     BFSState cur_state = good_worklist[gi];
+//     for (size_t primitive_path_i : state.by_back.at(cur_state.point)) {
+//       if (!primitive_path_reachable[primitive_path_i]) {
+//         continue;
+//       }
+//       const LocalEmbiggenState& primitive_path =
+//       state.primitive_paths[primitive_path_i]; BFSState next_state{
+//         PointInstant{primitive_path.path.front(), primitive_path.t_front},
+//         -1 // TODO: Maybe we should track the reverse state so that we know
+//         this.
+//       };
+//       if (!good_states.contains(next_state)) {
+//         good_states.insert(next_state);
+//         good_worklist.push_back(next_state);
+//       }
+//     }
+//   }
+
+//   // Phase 3: Keep reachable primitive steps that go to good states.
+
+// }
+
 std::optional<TspTourResult> DoTSP(
     const ProblemState& problem, const EmbiggenerState& state, int ub_rel
 ) {

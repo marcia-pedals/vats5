@@ -165,6 +165,12 @@ EmbiggenerState MakeEmbiggenerState(
     EmbiggenerOptions options = {}
 );
 
+void ConstrainEmbiggenerState(
+    EmbiggenerState& state,
+    const std::vector<PointBound>& known_points,
+    const std::unordered_set<PointInstant>& forbidden_points
+);
+
 std::optional<TspTourResult> DoTSP(
     const ProblemState& problem, const EmbiggenerState& state, int ub_rel
 );
