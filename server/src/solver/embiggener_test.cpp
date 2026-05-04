@@ -26,14 +26,16 @@ using testing::ElementsAreArray;
 // Returns the FlatSteps for `edge` derived from the state's 2-hop primitive
 // paths, sorted by origin_time.
 std::vector<FlatStep> EdgeFlatSteps(
-    const EmbiggenerState& state, PlainEdge edge
+    const PathCache& cache, const EmbiggenerState& state, PlainEdge edge
 ) {
   std::vector<FlatStep> result;
-  for (std::size_t idx : state.by_edge[state.EdgeIndex(edge)]) {
+  for (int idx : state.by_edge[state.EdgeIndex(edge)]) {
     const LocalEmbiggenState& p = state.primitive_paths[idx];
-    if (p.path.size() != 2) continue;
-    if (p.path[0].s != edge.a || p.path[1].s != edge.b) continue;
-    result.push_back(FlatStep{p.path[0].t, p.path[1].t});
+    if (p.IsTombstone()) continue;
+    std::span<const StopId> stops = cache.Get(p.path_index);
+    if (stops.size() != 2) continue;
+    if (stops[0] != edge.a || stops[1] != edge.b) continue;
+    result.push_back(FlatStep{p.t_front, p.t_back});
   }
   std::sort(
       result.begin(), result.end(), [](const FlatStep& a, const FlatStep& b) {
@@ -48,6 +50,7 @@ std::vector<FlatStep> Edge(std::same_as<FlatStep> auto... steps) {
 }
 
 void ExpectEdges(
+    const PathCache& cache,
     const EmbiggenerState& state,
     std::vector<std::pair<PlainEdge, std::vector<FlatStep>>> expected
 ) {
@@ -59,8 +62,10 @@ void ExpectEdges(
       ADD_FAILURE() << "missing edge " << edge;
       continue;
     }
-    EXPECT_THAT(EdgeFlatSteps(state, edge), ElementsAreArray(expected_steps))
-        << "steps at edge " << edge;
+    EXPECT_THAT(
+        EdgeFlatSteps(cache, state, edge), ElementsAreArray(expected_steps)
+    ) << "steps at edge "
+      << edge;
     int min_duration = std::numeric_limits<int>::max();
     for (const FlatStep& s : expected_steps) {
       min_duration = std::min(min_duration, s.DurationSeconds());
@@ -173,10 +178,12 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_AllAllowed) {
           TimeSinceServiceStart{1000}
       },
   };
+  PathCache cache;
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
+      MakeEmbiggenerState(problem, completed, cache, known_points, {});
 
   ExpectEdges(
+      cache,
       state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(20, 110), FS(120, 210))},
@@ -239,10 +246,13 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_ForbidOnePoint) {
   std::unordered_set<PointInstant> forbidden_points{
       PointInstant{S_B, TimeSinceServiceStart{110}}
   };
-  EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, forbidden_points);
+  PathCache cache;
+  EmbiggenerState state = MakeEmbiggenerState(
+      problem, completed, cache, known_points, forbidden_points
+  );
 
   ExpectEdges(
+      cache,
       state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(120, 210))},
@@ -294,10 +304,12 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_MustNotEndBefore200) {
           TimeSinceServiceStart{1000}
       },
   };
+  PathCache cache;
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
+      MakeEmbiggenerState(problem, completed, cache, known_points, {});
 
   ExpectEdges(
+      cache,
       state,
       {
           {{S_A, S_B}, Edge(FS(0, 10), FS(20, 110), FS(120, 210))},
@@ -346,10 +358,12 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_MustEndBy100) {
           TimeSinceServiceStart{100}
       },
   };
+  PathCache cache;
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
+      MakeEmbiggenerState(problem, completed, cache, known_points, {});
 
   ExpectEdges(
+      cache,
       state,
       {
           {{S_A, S_B}, Edge(FS(0, 10))},
@@ -390,9 +404,10 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_NoGoodPath) {
           TimeSinceServiceStart{1000}
       },
   };
+  PathCache cache;
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
-  ExpectEdges(state, {});
+      MakeEmbiggenerState(problem, completed, cache, known_points, {});
+  ExpectEdges(cache, state, {});
 }
 
 TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
@@ -418,10 +433,12 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
           TimeSinceServiceStart{1000}
       },
   };
+  PathCache cache;
   EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, {});
+      MakeEmbiggenerState(problem, completed, cache, known_points, {});
 
   ExpectEdges(
+      cache,
       state,
       {
           {{S_A, S_B}, Edge(FS(0, 10))},
@@ -441,6 +458,7 @@ TEST(EmbiggenerTest, MakeEmbiggenerState_KnownPoint_GoodPath) {
 // EmbiggenerState. Returns the arrival times at each stop (including END), or
 // nullopt if the tour can't be completed.
 std::optional<std::vector<TimeSinceServiceStart>> FollowTour(
+    const PathCache& cache,
     const EmbiggenerState& state,
     StopId start,
     StopId end,
@@ -454,7 +472,7 @@ std::optional<std::vector<TimeSinceServiceStart>> FollowTour(
     PlainEdge edge{cur_stop, next_stop};
     auto it = state.edges.find(edge);
     if (it == state.edges.end()) return false;
-    for (const FlatStep& step : EdgeFlatSteps(state, edge)) {
+    for (const FlatStep& step : EdgeFlatSteps(cache, state, edge)) {
       // Only follow steps that originate exactly at cur_time. If you get to a
       // stop and there isn't a step at the current time but there is a stop at
       // a later time, waiting is not allowed because TODO EXPLAIN.
@@ -496,8 +514,9 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
       PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
       PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
   };
+  PathCache cache;
   EmbiggenerState base_state =
-      MakeEmbiggenerState(problem, completed, base_known_points, {});
+      MakeEmbiggenerState(problem, completed, cache, base_known_points, {});
 
   // Collect the group representatives (excluding boundary) for tour perms.
   std::unordered_set<StopId> rep_set = problem.required.GroupRepresentatives();
@@ -511,9 +530,11 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
   // Collect all arrival times at each tour stop in the base state.
   std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
   for (const LocalEmbiggenState& p : base_state.primitive_paths) {
-    if (p.path.size() != 2) continue;
-    if (rep_set.contains(p.path[1].s)) {
-      arrival_times[p.path[1].s].push_back(p.path[1].t);
+    if (p.IsTombstone()) continue;
+    std::span<const StopId> stops_p = cache.Get(p.path_index);
+    if (stops_p.size() != 2) continue;
+    if (rep_set.contains(stops_p[1])) {
+      arrival_times[stops_p[1]].push_back(p.t_back);
     }
   }
 
@@ -532,18 +553,20 @@ RC_GTEST_PROP(EmbiggenerTest, KnownForbiddenPartition, ()) {
       PointBound{end, p_time, TimeSinceServiceStart{100000}},
   };
   EmbiggenerState known_state =
-      MakeEmbiggenerState(problem, completed, known_kps, {});
+      MakeEmbiggenerState(problem, completed, cache, known_kps, {});
 
   // Sub-state where p is a forbidden point.
   std::unordered_set<PointInstant> forbidden{p};
-  EmbiggenerState forbidden_state =
-      MakeEmbiggenerState(problem, completed, base_known_points, forbidden);
+  EmbiggenerState forbidden_state = MakeEmbiggenerState(
+      problem, completed, cache, base_known_points, forbidden
+  );
 
   // Check partition property for all permutations of the tour stops.
   do {
-    auto base_result = FollowTour(base_state, start, end, stops);
-    auto known_result = FollowTour(known_state, start, end, stops);
-    auto forbidden_result = FollowTour(forbidden_state, start, end, stops);
+    auto base_result = FollowTour(cache, base_state, start, end, stops);
+    auto known_result = FollowTour(cache, known_state, start, end, stops);
+    auto forbidden_result =
+        FollowTour(cache, forbidden_state, start, end, stops);
 
     RC_LOG() << "  perm=[";
     for (size_t i = 0; i < stops.size(); ++i) {
@@ -601,9 +624,11 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
       PointBound{start, TimeSinceServiceStart{0}, TimeSinceServiceStart{0}},
       PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
   };
+  PathCache cache;
   EmbiggenerState state = MakeEmbiggenerState(
       problem,
       completed,
+      cache,
       known_points,
       {},
       EmbiggenerOptions{.include_nonzero_flex = true}
@@ -634,7 +659,8 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
   for (PlainEdge target : targets) {
     RC_LOG() << "target " << problem.StopName(target.a) << "->"
              << problem.StopName(target.b) << "\n";
-    std::optional<int> delta = LocalEmbiggenCorrect(problem, state, target);
+    std::optional<int> delta =
+        LocalEmbiggenCorrect(problem, cache, state, target);
     if (delta.has_value()) {
       RC_LOG() << "embiggened " << problem.StopName(target.a) << "->"
                << problem.StopName(target.b) << " by " << *delta << " (now "
@@ -658,7 +684,7 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
   // (start -> perm[0] -> ... -> perm[n-1] -> end) must be a lower bound on the
   // actual duration of FollowTour along that perm.
   do {
-    auto tour_result = FollowTour(state, start, end, stops);
+    auto tour_result = FollowTour(cache, state, start, end, stops);
     if (!tour_result.has_value()) continue;
 
     int sum_weights = 0;
@@ -698,12 +724,14 @@ RC_GTEST_PROP(EmbiggenerTest, LocalEmbiggenCorrect_LowerBound, ()) {
 //     that edge. Add m to the edge weight and subtract m from each matching
 //     path's delta, so that at least one 2-hop path on every edge has delta=0
 //     (matching the invariant established by MakeEmbiggenerState).
-void NormalizeEmbiggenerState(EmbiggenerState& state) {
+void NormalizeEmbiggenerState(const PathCache& cache, EmbiggenerState& state) {
   std::unordered_map<PlainEdge, std::vector<std::size_t>> two_hop_by_edge;
   for (std::size_t i = 0; i < state.primitive_paths.size(); ++i) {
     const LocalEmbiggenState& p = state.primitive_paths[i];
-    if (p.path.size() != 2) continue;
-    two_hop_by_edge[PlainEdge{p.path.front().s, p.path.back().s}].push_back(i);
+    if (p.IsTombstone()) continue;
+    std::span<const StopId> stops = cache.Get(p.path_index);
+    if (stops.size() != 2) continue;
+    two_hop_by_edge[PlainEdge{stops.front(), stops.back()}].push_back(i);
   }
 
   for (auto it = state.edges.begin(); it != state.edges.end();) {
@@ -737,15 +765,19 @@ struct PathKey {
   }
 };
 
-std::vector<PathKey> SortedPaths(const EmbiggenerState& state) {
+std::vector<PathKey> SortedPaths(
+    const PathCache& cache, const EmbiggenerState& state
+) {
   std::vector<PathKey> result;
   for (const LocalEmbiggenState& p : state.primitive_paths) {
-    if (p.path.empty()) continue;
+    if (p.IsTombstone()) continue;
+    std::span<const StopId> stops = cache.Get(p.path_index);
     PathKey k;
-    k.path_v.reserve(p.path.size() * 2);
-    for (const PointInstant& pi : p.path) {
-      k.path_v.push_back(pi.s.v);
-      k.path_v.push_back(pi.t.seconds);
+    k.path_v.reserve(stops.size() + 2);
+    k.path_v.push_back(p.t_front.seconds);
+    k.path_v.push_back(p.t_back.seconds);
+    for (StopId s : stops) {
+      k.path_v.push_back(s.v);
     }
     k.delta = p.delta;
     result.push_back(std::move(k));
@@ -769,6 +801,7 @@ std::map<std::pair<int, int>, int> EdgesAsSortedMap(
 struct ConstrainSetup {
   ProblemState problem;
   StepsAdjacencyList completed;
+  PathCache cache;
   std::vector<PointBound> base_known_points;
   EmbiggenerState base_state;
   PointInstant p;
@@ -788,7 +821,7 @@ ConstrainSetup GenConstrainSetup() {
       PointBound{end, TimeSinceServiceStart{0}, TimeSinceServiceStart{100000}},
   };
   setup.base_state = MakeEmbiggenerState(
-      setup.problem, setup.completed, setup.base_known_points, {}
+      setup.problem, setup.completed, setup.cache, setup.base_known_points, {}
   );
 
   std::unordered_set<StopId> rep_set =
@@ -803,9 +836,11 @@ ConstrainSetup GenConstrainSetup() {
 
   std::unordered_map<StopId, std::vector<TimeSinceServiceStart>> arrival_times;
   for (const LocalEmbiggenState& p : setup.base_state.primitive_paths) {
-    if (p.path.size() != 2) continue;
-    if (rep_set.contains(p.path[1].s)) {
-      arrival_times[p.path[1].s].push_back(p.path[1].t);
+    if (p.IsTombstone()) continue;
+    std::span<const StopId> stops_p = setup.cache.Get(p.path_index);
+    if (stops_p.size() != 2) continue;
+    if (rep_set.contains(stops_p[1])) {
+      arrival_times[stops_p[1]].push_back(p.t_back);
     }
   }
   StopId p_stop = *rc::gen::elementOf(stops);
@@ -819,25 +854,34 @@ ConstrainSetup GenConstrainSetup() {
 }
 
 void CheckConstrainMatchesMake(
-    const ConstrainSetup& setup,
+    ConstrainSetup& setup,
     const std::vector<PointBound>& extra_known_points,
     const std::unordered_set<PointInstant>& extra_forbidden_points
 ) {
   EmbiggenerState from_make = MakeEmbiggenerState(
-      setup.problem, setup.completed, extra_known_points, extra_forbidden_points
+      setup.problem,
+      setup.completed,
+      setup.cache,
+      extra_known_points,
+      extra_forbidden_points
   );
   EmbiggenerState from_constrain = ConstrainEmbiggenerState(
       setup.problem,
+      setup.completed,
+      setup.cache,
       setup.base_state,
       extra_known_points,
       extra_forbidden_points
   );
 
-  NormalizeEmbiggenerState(from_make);
-  NormalizeEmbiggenerState(from_constrain);
+  NormalizeEmbiggenerState(setup.cache, from_make);
+  NormalizeEmbiggenerState(setup.cache, from_constrain);
 
   RC_ASSERT(EdgesAsSortedMap(from_make) == EdgesAsSortedMap(from_constrain));
-  RC_ASSERT(SortedPaths(from_make) == SortedPaths(from_constrain));
+  RC_ASSERT(
+      SortedPaths(setup.cache, from_make) ==
+      SortedPaths(setup.cache, from_constrain)
+  );
 }
 
 // Property: starting from a base EmbiggenerState built with no intermediate

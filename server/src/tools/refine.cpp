@@ -40,6 +40,7 @@ struct BnbState {
 void Bnb(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
+    PathCache& cache,
     const BnbState& initial,
     TimeSinceServiceStart t0,
     int ub
@@ -53,23 +54,42 @@ void Bnb(
     q.pop_back();
 
     std::cout << "take " << TimeSinceServiceStart{cur.lb} << "\n";
+    if (cur.lb >= ub) {
+      std::cout << "  pruned: reached ub\n";
+      continue;
+    }
 
-    RefineResult refine_result =
-        DoRefine(problem, completed, cur.state, t0, ub);
-    std::cout << "  refine result: " << TimeSinceServiceStart{refine_result.lb}
-              << " / " << TimeSinceServiceStart{refine_result.ub} << "\n";
-    ub = std::min(refine_result.ub, ub);
+    std::optional<RefineResult> refine_result =
+        DoRefine(problem, completed, cache, cur.state, t0, ub);
+    if (!refine_result.has_value()) {
+      std::cout << "  pruned: no refine result\n";
+      continue;
+    }
+
+    std::cout << "  refine result: " << TimeSinceServiceStart{refine_result->lb}
+              << " / " << TimeSinceServiceStart{refine_result->ub} << "\n";
+    ub = std::min(refine_result->ub, ub);
     std::cout << "  best ub: " << TimeSinceServiceStart{ub} << "\n";
 
     // cur.known_points is START, k points, END
     // refine_result.ub_tour is START, k points, first not-known point, ..., END
     for (int i = 0; i + 1 < cur.known_points.size(); ++i) {
-      assert(refine_result.ub_tour[i].s == cur.known_points[i].s);
-      assert(refine_result.ub_tour[i].t >= cur.known_points[i].t_lo);
-      assert(refine_result.ub_tour[i].t <= cur.known_points[i].t_hi);
+      if (!(refine_result->ub_tour[i].s == cur.known_points[i].s) ||
+          !(refine_result->ub_tour[i].t >= cur.known_points[i].t_lo) ||
+          !(refine_result->ub_tour[i].t <= cur.known_points[i].t_hi)) {
+        for (int j = 0; j + 1 < cur.known_points.size(); ++j) {
+          std::cout << "    " << j << ". "
+                    << problem.StopName(refine_result->ub_tour[j].s) << " @ "
+                    << refine_result->ub_tour[j].t << " - "
+                    << problem.StopName(cur.known_points[j].s) << " @ ["
+                    << cur.known_points[j].t_lo << ", "
+                    << cur.known_points[j].t_hi << "]\n";
+        }
+        assert(false);
+      }
     }
     PointInstant first_not_known_point =
-        refine_result.ub_tour[cur.known_points.size() - 1];
+        refine_result->ub_tour[cur.known_points.size() - 1];
     std::cout << "  next constraint: "
               << problem.StopName(first_not_known_point.s) << " @ "
               << first_not_known_point.t << "\n";
@@ -85,11 +105,16 @@ void Bnb(
           }
       );
       BnbState constrained_require{
-          .lb = refine_result.lb,
+          .lb = refine_result->lb,
           .known_points = known_points,
           .forbidden_points = cur.forbidden_points,
           .state = ConstrainEmbiggenerState(
-              problem, cur.state, known_points, cur.forbidden_points
+              problem,
+              completed,
+              cache,
+              cur.state,
+              known_points,
+              cur.forbidden_points
           ),
       };
       q.push_back(std::move(constrained_require));
@@ -100,11 +125,16 @@ void Bnb(
       std::unordered_set<PointInstant> forbidden_points = cur.forbidden_points;
       forbidden_points.insert(first_not_known_point);
       BnbState constrained_require{
-          .lb = refine_result.lb,
+          .lb = refine_result->lb,
           .known_points = cur.known_points,
           .forbidden_points = forbidden_points,
           .state = ConstrainEmbiggenerState(
-              problem, cur.state, cur.known_points, forbidden_points
+              problem,
+              completed,
+              cache,
+              cur.state,
+              cur.known_points,
+              forbidden_points
           ),
       };
       q.push_back(std::move(constrained_require));
@@ -185,8 +215,10 @@ int main(int argc, char* argv[]) {
       PointBound{problem.boundary.end, t_lb, t_ub},
   };
   std::unordered_set<PointInstant> forbidden_points;
-  EmbiggenerState state =
-      MakeEmbiggenerState(problem, completed, known_points, forbidden_points);
+  PathCache cache;
+  EmbiggenerState state = MakeEmbiggenerState(
+      problem, completed, cache, known_points, forbidden_points
+  );
 
   BnbState initial{
       .lb = 0,
@@ -194,7 +226,7 @@ int main(int argc, char* argv[]) {
       .forbidden_points = forbidden_points,
       .state = state,
   };
-  Bnb(problem, completed, initial, t0, ub_rel);
+  Bnb(problem, completed, cache, initial, t0, ub_rel);
 
   // RefineResult refine_result = DoRefine(problem, completed, state, t0,
   // ub_rel); std::cout << "  lb: " << TimeSinceServiceStart{refine_result.lb}

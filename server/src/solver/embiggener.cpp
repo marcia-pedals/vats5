@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -63,19 +64,23 @@ struct BFSState {
   bool operator==(const BFSState&) const = default;
 };
 
-void RegisterPrimitivePath(EmbiggenerState& state, int idx) {
+void RegisterPrimitivePath(
+    const PathCache& cache, EmbiggenerState& state, int idx
+) {
   const LocalEmbiggenState& p = state.primitive_paths[idx];
-  state.by_front[p.path.front()].push_back(idx);
-  state.by_back[p.path.back()].push_back(idx);
-  for (std::size_t i = 0; i + 1 < p.path.size(); ++i) {
-    state.by_edge[state.EdgeIndex(PlainEdge{p.path[i].s, p.path[i + 1].s})]
-        .push_back(idx);
+  std::span<const StopId> stops = cache.Get(p.path_index);
+  state.by_front[p.Front(cache)].push_back(idx);
+  state.by_back[p.Back(cache)].push_back(idx);
+  for (std::size_t i = 0; i + 1 < stops.size(); ++i) {
+    state.by_edge[state.EdgeIndex(PlainEdge{stops[i], stops[i + 1]})].push_back(
+        idx
+    );
   }
   ++state.num_active_primitive_paths;
 }
 
 // Marks the slot as tombstoned. Index entries are NOT removed; iteration sites
-// must skip slots whose `path` is empty.
+// must skip tombstoned slots (LocalEmbiggenState::IsTombstone()).
 void UnregisterPrimitivePath(EmbiggenerState& state, int /*idx*/) {
   --state.num_active_primitive_paths;
 }
@@ -94,11 +99,124 @@ struct std::hash<BFSState> {
 
 namespace vats5 {
 
-void EmbiggenerState::Compact() {
+struct PathCache::Impl {
+  // All interned paths concatenated.
+  std::vector<StopId> storage;
+  // offsets[i] is the start index of path i in `storage`. Path i occupies
+  // storage[offsets[i] .. offsets[i+1]). Has size num_paths + 1, with the
+  // sentinel offsets[0] = 0 set on construction.
+  std::vector<int> offsets{0};
+
+  // Hashes/compares paths by dereferencing into storage/offsets via a stable
+  // pointer to *this Impl (which lives on the heap and never moves).
+  struct Hash {
+    const Impl* impl;
+    std::size_t operator()(int i) const noexcept {
+      const StopId* p = impl->storage.data() + impl->offsets[i];
+      const StopId* e = impl->storage.data() + impl->offsets[i + 1];
+      std::size_t seed = 0;
+      while (p != e) {
+        seed ^=
+            std::hash<StopId>{}(*p) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        ++p;
+      }
+      return seed;
+    }
+  };
+  struct Eq {
+    const Impl* impl;
+    bool operator()(int i, int j) const noexcept {
+      int ia = impl->offsets[i], ib = impl->offsets[i + 1];
+      int ja = impl->offsets[j], jb = impl->offsets[j + 1];
+      if ((ib - ia) != (jb - ja)) return false;
+      return std::equal(
+          impl->storage.begin() + ia,
+          impl->storage.begin() + ib,
+          impl->storage.begin() + ja
+      );
+    }
+  };
+  std::unordered_set<int, Hash, Eq> index_set;
+
+  Impl() : index_set(0, Hash{this}, Eq{this}) {}
+};
+
+PathCache::PathCache() : impl_(std::make_unique<Impl>()) {}
+PathCache::~PathCache() = default;
+PathCache::PathCache(PathCache&&) noexcept = default;
+PathCache& PathCache::operator=(PathCache&&) noexcept = default;
+
+int PathCache::Intern(std::span<const StopId> path) {
+  Impl& im = *impl_;
+  int new_idx = static_cast<int>(im.offsets.size()) - 1;
+  // Tentatively append the path. (`path` must not alias `im.storage`.)
+  im.storage.insert(im.storage.end(), path.begin(), path.end());
+  im.offsets.push_back(static_cast<int>(im.storage.size()));
+  auto [it, inserted] = im.index_set.insert(new_idx);
+  if (!inserted) {
+    // Existing entry matches; roll back the tentative append.
+    im.storage.resize(im.offsets[new_idx]);
+    im.offsets.pop_back();
+  }
+  return *it;
+}
+
+std::span<const StopId> PathCache::Get(int index) const {
+  const Impl& im = *impl_;
+  return std::span<const StopId>(
+      im.storage.data() + im.offsets[index],
+      im.storage.data() + im.offsets[index + 1]
+  );
+}
+
+void PathCache::PrintMemStats() const {
+  auto si = [](std::size_t n) -> std::string {
+    double v = static_cast<double>(n);
+    const char* prefix = "";
+    if (n >= 1'000'000'000) {
+      v /= 1e9;
+      prefix = "G";
+    } else if (n >= 1'000'000) {
+      v /= 1e6;
+      prefix = "M";
+    } else if (n >= 1'000) {
+      v /= 1e3;
+      prefix = "k";
+    } else {
+      return std::to_string(n);
+    }
+    int precision = v >= 100 ? 0 : (v >= 10 ? 1 : 2);
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(precision) << v << prefix;
+    return oss.str();
+  };
+
+  const Impl& im = *impl_;
+  std::size_t num_paths = im.offsets.size() - 1;
+  std::cout << "  path cache: " << si(num_paths) << " paths\n";
+
+  // storage: 4 bytes per StopId.
+  std::size_t storage_bytes = 4 * im.storage.size();
+  std::cout << "    storage: " << si(storage_bytes) << "b\n";
+
+  // offsets: 4 bytes per int.
+  std::size_t offsets_bytes = 4 * im.offsets.size();
+  std::cout << "    offsets: " << si(offsets_bytes) << "b\n";
+
+  // index_set: ~24 bytes per node (next ptr + cached hash + int with padding)
+  // plus ~8 bytes per bucket slot at default load factor 1.0.
+  std::size_t set_bytes = 32 * num_paths;
+  std::cout << "    index_set: " << si(set_bytes) << "b\n";
+
+  std::cout << "    TOTAL: " << si(storage_bytes + offsets_bytes + set_bytes)
+            << "b\n";
+}
+
+void EmbiggenerState::Compact(const PathCache& cache) {
   std::vector<LocalEmbiggenState> new_paths;
   new_paths.reserve(num_active_primitive_paths);
   for (LocalEmbiggenState& p : primitive_paths) {
-    if (p.path.empty()) continue;
+    if (p.IsTombstone()) continue;
     new_paths.push_back(std::move(p));
   }
   primitive_paths = std::move(new_paths);
@@ -107,13 +225,13 @@ void EmbiggenerState::Compact() {
   for (std::vector<int>& bucket : by_edge) bucket.clear();
   num_active_primitive_paths = 0;
   for (int idx = 0; idx < static_cast<int>(primitive_paths.size()); ++idx) {
-    RegisterPrimitivePath(*this, idx);
+    RegisterPrimitivePath(cache, *this, idx);
   }
 }
 
-void EmbiggenerState::PrintMemStats() const {
-  auto si = [](int n) -> std::string {
-    double v = n;
+void EmbiggenerState::PrintMemStats(const PathCache& cache) const {
+  auto si = [](std::size_t n) -> std::string {
+    double v = static_cast<double>(n);
     const char* prefix = "";
     if (n >= 1'000'000'000) {
       v /= 1e9;
@@ -135,22 +253,33 @@ void EmbiggenerState::PrintMemStats() const {
 
   std::cout << "  active paths: " << si(num_active_primitive_paths) << "\n";
 
-  int data_bytes = 0;
+  std::size_t data_bytes = 0;
+  std::set<int> distinct_path_indexes;
+  std::set<std::tuple<int, int, int>> distinct_active_keys;
+  std::size_t active_count = 0;
   for (const LocalEmbiggenState& p : primitive_paths) {
-    // vector bookeeping = 24 bytes
-    // int (delta) = 4 bytes
-    // vector data = 8 bytes per entry (2 ints)
-    data_bytes += 24 + 4 + 8 * p.path.size();
+    // path_index + delta + t_front + t_back = 16 bytes
+    data_bytes += 16;
+    if (p.IsTombstone()) continue;
+    distinct_path_indexes.insert(p.path_index);
+    distinct_active_keys.insert(
+        std::make_tuple(p.path_index, p.t_front.seconds, p.t_back.seconds)
+    );
+    ++active_count;
   }
   std::cout << "    data: " << si(data_bytes) << "b\n";
+  std::cout << "      distinct path count: " << si(distinct_path_indexes.size())
+            << "\n";
+  std::cout << "      duplicate active LES: "
+            << si(active_count - distinct_active_keys.size()) << "\n";
 
-  int edge_index_bytes = 0;
+  std::size_t edge_index_bytes = 0;
   for (const std::vector<int>& v : by_edge) {
     edge_index_bytes += 24 + 4 * v.size();
   }
   std::cout << "    edge index: " << si(edge_index_bytes) << "b\n";
 
-  int endpoint_index_bytes = 0;
+  std::size_t endpoint_index_bytes = 0;
   for (const auto& [e, v] : by_front) {
     // 52 bytes of unordered_map bookkeeping
     // 24 bytes of vector bookkeeping
@@ -164,11 +293,16 @@ void EmbiggenerState::PrintMemStats() const {
     endpoint_index_bytes += 52 + 24 + 4 * v.size();
   }
   std::cout << "    endpoint index: " << si(endpoint_index_bytes) << "b\n";
+
+  std::cout << "    TOTAL: "
+            << si(data_bytes + edge_index_bytes + endpoint_index_bytes)
+            << "b\n";
 }
 
 EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
+    PathCache& cache,
     std::vector<PointBound> known_points,
     std::unordered_set<PointInstant> forbidden_points,
     EmbiggenerOptions options
@@ -328,17 +462,19 @@ EmbiggenerState MakeEmbiggenerState(
   };
   for (const auto& [edge, steps] : steps_per_edge) {
     int weight = state.edges.at(edge).weight;
+    StopId edge_stops[2] = {edge.a, edge.b};
+    int edge_path_index = cache.Intern(edge_stops);
     for (const FlatStep& step : steps) {
       int idx = static_cast<int>(state.primitive_paths.size());
       state.primitive_paths.push_back(
           LocalEmbiggenState{
-              .path =
-                  {PointInstant{edge.a, step.origin_time},
-                   PointInstant{edge.b, step.destination_time}},
+              .path_index = edge_path_index,
+              .t_front = step.origin_time,
+              .t_back = step.destination_time,
               .delta = step.DurationSeconds() - weight,
           }
       );
-      RegisterPrimitivePath(state, idx);
+      RegisterPrimitivePath(cache, state, idx);
     }
   }
   return state;
@@ -346,6 +482,8 @@ EmbiggenerState MakeEmbiggenerState(
 
 EmbiggenerState ConstrainEmbiggenerState(
     const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    PathCache& cache,
     const EmbiggenerState& state,
     const std::vector<PointBound>& known_points,
     const std::unordered_set<PointInstant>& forbidden_points
@@ -353,9 +491,21 @@ EmbiggenerState ConstrainEmbiggenerState(
   assert(known_points.size() > 0);
   assert(known_points.front().s == problem.boundary.start);
   assert(known_points.back().s == problem.boundary.end);
-  for (int i = 0; i + 1 < known_points.size(); ++i) {
-    assert(known_points[i].t_lo <= known_points[i + 1].t_lo);
-    assert(known_points[i].t_hi <= known_points[i + 1].t_hi);
+  // Don't check the ->END edge because the END t_lo might be lower than what we
+  // actually get to.
+  // TODO: Cleaner way of doing this? e.g. increasing the END t_lo when we know
+  // it's too low.
+  for (int i = 0; i + 2 < known_points.size(); ++i) {
+    if (!(known_points[i].t_lo <= known_points[i + 1].t_lo) ||
+        !(known_points[i].t_hi <= known_points[i + 1].t_hi)) {
+      std::cout << problem.StopName(known_points[i].s) << " "
+                << problem.StopName(known_points[i + 1].s) << "\n"
+                << TimeSinceServiceStart{known_points[i].t_lo} << " "
+                << TimeSinceServiceStart{known_points[i + 1].t_lo} << "\n"
+                << TimeSinceServiceStart{known_points[i].t_hi} << " "
+                << TimeSinceServiceStart{known_points[i + 1].t_hi} << "\n";
+      assert(false);
+    }
   }
 
   std::unordered_set<StopId> known_point_stops;
@@ -367,16 +517,28 @@ EmbiggenerState ConstrainEmbiggenerState(
   // Walks `path` starting from kpi=`start_kpi`. Returns the kpi after the walk
   // if every transition along the path satisfies the known/forbidden
   // constraints (mirroring the per-step rules in MakeEmbiggenerState's BFS),
-  // or nullopt if any transition is rejected.
-  auto WalkPath = [&](const std::vector<PointInstant>& path,
+  // or nullopt if any transition is rejected. Intermediate times are recovered
+  // by stepping forward from path.t_front via GetTNext.
+  auto WalkPath = [&](const LocalEmbiggenState& path,
                       int start_kpi) -> std::optional<int> {
+    std::span<const StopId> stops = cache.Get(path.path_index);
     int kpi = start_kpi;
-    for (std::size_t i = 1; i < path.size(); ++i) {
+    TimeSinceServiceStart t_cur = path.t_front;
+    for (std::size_t i = 1; i < stops.size(); ++i) {
       if (kpi == static_cast<int>(known_points.size()) - 1) {
         return std::nullopt;
       }
+      const StepGroup* g_next = nullptr;
+      for (const StepGroup& g : completed.GetGroups(stops[i - 1])) {
+        if (g.destination_stop == stops[i]) {
+          g_next = &g;
+          break;
+        }
+      }
+      if (g_next == nullptr) return std::nullopt;
+      auto [t_next, _] = GetTNext(completed, *g_next, stops[i - 1], t_cur);
+      PointInstant next{stops[i], t_next};
       const PointBound& next_kp = known_points[kpi + 1];
-      const PointInstant& next = path[i];
       if (known_point_stops.contains(next.s) && next.s != next_kp.s) {
         return std::nullopt;
       }
@@ -392,6 +554,7 @@ EmbiggenerState ConstrainEmbiggenerState(
       if (next.s == next_kp.s) {
         kpi += 1;
       }
+      t_cur = t_next;
     }
     return kpi;
   };
@@ -424,18 +587,15 @@ EmbiggenerState ConstrainEmbiggenerState(
     for (int primitive_path_i : by_front_it->second) {
       const LocalEmbiggenState& primitive_path =
           state.primitive_paths[primitive_path_i];
-      if (primitive_path.path.empty()) {
-        // tombstone
-        continue;
-      }
+      if (primitive_path.IsTombstone()) continue;
       std::optional<int> end_kpi =
-          WalkPath(primitive_path.path, cur_state.last_known_point_index);
+          WalkPath(primitive_path, cur_state.last_known_point_index);
       if (!end_kpi.has_value()) continue;
       primitive_path_reachable[primitive_path_i] = true;
       primitive_path_start_kpi[primitive_path_i] =
           cur_state.last_known_point_index;
       primitive_path_end_kpi[primitive_path_i] = *end_kpi;
-      BFSState next_state{primitive_path.Back(), *end_kpi};
+      BFSState next_state{primitive_path.Back(cache), *end_kpi};
       if (!discovered.contains(next_state)) {
         discovered.insert(next_state);
         worklist.push_back(next_state);
@@ -463,7 +623,7 @@ EmbiggenerState ConstrainEmbiggenerState(
         continue;
       }
       BFSState good_state{
-          state.primitive_paths[pi].Front(), primitive_path_start_kpi[pi]
+          state.primitive_paths[pi].Front(cache), primitive_path_start_kpi[pi]
       };
       if (!good_states.contains(good_state)) {
         good_states.insert(good_state);
@@ -484,7 +644,8 @@ EmbiggenerState ConstrainEmbiggenerState(
     if (!primitive_path_reachable[pi]) continue;
     if (!good_states.contains(
             BFSState{
-                state.primitive_paths[pi].Back(), primitive_path_end_kpi[pi]
+                state.primitive_paths[pi].Back(cache),
+                primitive_path_end_kpi[pi]
             }
         )) {
       continue;
@@ -492,9 +653,10 @@ EmbiggenerState ConstrainEmbiggenerState(
     const LocalEmbiggenState& path = state.primitive_paths[pi];
     int new_idx = static_cast<int>(result.primitive_paths.size());
     result.primitive_paths.push_back(path);
-    RegisterPrimitivePath(result, new_idx);
-    for (std::size_t i = 0; i + 1 < path.path.size(); ++i) {
-      used_edges.insert(PlainEdge{path.path[i].s, path.path[i + 1].s});
+    RegisterPrimitivePath(cache, result, new_idx);
+    std::span<const StopId> stops = cache.Get(path.path_index);
+    for (std::size_t i = 0; i + 1 < stops.size(); ++i) {
+      used_edges.insert(PlainEdge{stops[i], stops[i + 1]});
     }
   }
   for (const PlainEdge& edge : used_edges) {
@@ -574,56 +736,66 @@ std::optional<TspTourResult> DoTSP(
 
 std::optional<int> LocalEmbiggenCorrect(
     const ProblemState& problem,
+    PathCache& cache,
     EmbiggenerState& state,
     PlainEdge edge_to_embiggen
 ) {
   auto ExtendForwards =
       [&](const LocalEmbiggenState& target) -> std::vector<LocalEmbiggenState> {
-    AssertOrRaise(target.path.back().s != problem.boundary.end);
+    // Copy target stops because cache.Intern() below may reallocate the
+    // PathCache backing storage and invalidate a span held across iterations.
+    std::span<const StopId> target_span = cache.Get(target.path_index);
+    std::vector<StopId> target_stops(target_span.begin(), target_span.end());
+    AssertOrRaise(target_stops.back() != problem.boundary.end);
     std::vector<LocalEmbiggenState> result;
-    auto it = state.by_front.find(target.path.back());
+    auto it = state.by_front.find(target.Back(cache));
     if (it == state.by_front.end()) return result;
 
-    // Joined path = target.path + candidate.path[1:]. We need to detect whether
-    // any stop in candidate.path[1:] also appears in target.path. Precompute
-    // target.path as a set once.
+    // Joined path = target_stops + candidate_stops[1:]. We need to detect
+    // whether any stop in candidate_stops[1:] also appears in target_stops.
+    // Precompute target_stops as a set once.
     std::unordered_set<StopId> stops_to_avoid;
-    for (const PointInstant& p : target.path) stops_to_avoid.insert(p.s);
+    for (StopId s : target_stops) stops_to_avoid.insert(s);
 
     const bool target_starts_at_start =
-        target.path.front().s == problem.boundary.start;
+        target_stops.front() == problem.boundary.start;
 
     for (int cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
-      if (candidate.path.empty()) continue;  // tombstone
+      if (candidate.IsTombstone()) continue;
+      // Span is valid within this iteration: cache.Intern() only runs at the
+      // end, after we've finished reading candidate_stops.
+      std::span<const StopId> candidate_stops = cache.Get(candidate.path_index);
 
       // If the joined path goes from START to END it must touch all stops.
       if (target_starts_at_start &&
-          candidate.path.back().s == problem.boundary.end &&
-          target.path.size() + candidate.path.size() !=
+          candidate_stops.back() == problem.boundary.end &&
+          target_stops.size() + candidate_stops.size() !=
               problem.required.size() + 1) {
         continue;
       }
 
-      // Stop overlap check (skip candidate.path[0], which is the join point).
+      // Stop overlap check (skip candidate_stops[0], which is the join point).
       bool overlaps = false;
-      for (std::size_t i = 1; i < candidate.path.size(); ++i) {
-        if (stops_to_avoid.contains(candidate.path[i].s)) {
+      for (std::size_t i = 1; i < candidate_stops.size(); ++i) {
+        if (stops_to_avoid.contains(candidate_stops[i])) {
           overlaps = true;
           break;
         }
       }
       if (overlaps) continue;
 
-      std::vector<PointInstant> new_path;
-      new_path.reserve(target.path.size() + candidate.path.size() - 1);
-      new_path.insert(new_path.end(), target.path.begin(), target.path.end());
+      std::vector<StopId> new_path;
+      new_path.reserve(target_stops.size() + candidate_stops.size() - 1);
+      new_path.insert(new_path.end(), target_stops.begin(), target_stops.end());
       new_path.insert(
-          new_path.end(), candidate.path.begin() + 1, candidate.path.end()
+          new_path.end(), candidate_stops.begin() + 1, candidate_stops.end()
       );
       result.push_back(
           LocalEmbiggenState{
-              .path = std::move(new_path),
+              .path_index = cache.Intern(new_path),
+              .t_front = target.t_front,
+              .t_back = candidate.t_back,
               .delta = target.delta + candidate.delta,
           }
       );
@@ -632,57 +804,65 @@ std::optional<int> LocalEmbiggenCorrect(
   };
 
   auto ExtendBackwards = [&](const LocalEmbiggenState& target) {
-    AssertOrRaise(target.path.front().s != problem.boundary.start);
+    // Copy target stops because cache.Intern() below may reallocate the
+    // PathCache backing storage and invalidate a span held across iterations.
+    std::span<const StopId> target_span = cache.Get(target.path_index);
+    std::vector<StopId> target_stops(target_span.begin(), target_span.end());
+    AssertOrRaise(target_stops.front() != problem.boundary.start);
     std::vector<LocalEmbiggenState> result;
-    auto it = state.by_back.find(target.path.front());
+    auto it = state.by_back.find(target.Front(cache));
     if (it == state.by_back.end()) return result;
 
-    // Joined path = candidate.path + target.path[1:]. We need to detect whether
-    // any stop in target.path[1:] appears in candidate.path. Precompute
-    // target.path[1:] as a set once.
+    // Joined path = candidate_stops + target_stops[1:]. We need to detect
+    // whether any stop in target_stops[1:] appears in candidate_stops.
+    // Precompute target_stops[1:] as a set once.
     std::unordered_set<StopId> stops_to_avoid;
-    for (std::size_t i = 1; i < target.path.size(); ++i) {
-      stops_to_avoid.insert(target.path[i].s);
+    for (std::size_t i = 1; i < target_stops.size(); ++i) {
+      stops_to_avoid.insert(target_stops[i]);
     }
 
-    const bool target_ends_at_end =
-        target.path.back().s == problem.boundary.end;
+    const bool target_ends_at_end = target_stops.back() == problem.boundary.end;
 
     for (int cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
-      if (candidate.path.empty()) continue;  // tombstone
+      if (candidate.IsTombstone()) continue;
+      // Span is valid within this iteration: cache.Intern() only runs at the
+      // end, after we've finished reading candidate_stops.
+      std::span<const StopId> candidate_stops = cache.Get(candidate.path_index);
 
       // If the joined path goes from START to END it must touch all stops.
-      if (candidate.path.front().s == problem.boundary.start &&
+      if (candidate_stops.front() == problem.boundary.start &&
           target_ends_at_end &&
-          candidate.path.size() + target.path.size() !=
+          candidate_stops.size() + target_stops.size() !=
               problem.required.size() + 1) {
         continue;
       }
 
-      // Stop overlap check (full candidate.path; the join point at
-      // candidate.path.back() is checked here because target.path[0] is NOT
+      // Stop overlap check (full candidate_stops; the join point at
+      // candidate_stops.back() is checked here because target_stops[0] is NOT
       // in stops_to_avoid, so the shared join stop won't trigger a false hit).
       bool overlaps = false;
-      for (const PointInstant& p : candidate.path) {
-        if (stops_to_avoid.contains(p.s)) {
+      for (StopId s : candidate_stops) {
+        if (stops_to_avoid.contains(s)) {
           overlaps = true;
           break;
         }
       }
       if (overlaps) continue;
 
-      std::vector<PointInstant> new_path;
-      new_path.reserve(target.path.size() + candidate.path.size() - 1);
+      std::vector<StopId> new_path;
+      new_path.reserve(target_stops.size() + candidate_stops.size() - 1);
       new_path.insert(
-          new_path.end(), candidate.path.begin(), candidate.path.end()
+          new_path.end(), candidate_stops.begin(), candidate_stops.end()
       );
       new_path.insert(
-          new_path.end(), target.path.begin() + 1, target.path.end()
+          new_path.end(), target_stops.begin() + 1, target_stops.end()
       );
       result.push_back(
           LocalEmbiggenState{
-              .path = std::move(new_path),
+              .path_index = cache.Intern(new_path),
+              .t_front = candidate.t_front,
+              .t_back = target.t_back,
               .delta = candidate.delta + target.delta,
           }
       );
@@ -698,7 +878,7 @@ std::optional<int> LocalEmbiggenCorrect(
         state.by_edge[state.EdgeIndex(edge_to_embiggen)];
     through_edge.reserve(bucket.size());
     for (int idx : bucket) {
-      if (state.primitive_paths[idx].path.empty()) continue;
+      if (state.primitive_paths[idx].IsTombstone()) continue;
       through_edge.push_back(idx);
     }
   }
@@ -723,7 +903,7 @@ std::optional<int> LocalEmbiggenCorrect(
     if (candidate.delta == smallest_preextend_delta) {
       UnregisterPrimitivePath(state, idx);
       critical_paths.push_back(std::move(candidate));
-      candidate.path.clear();  // tombstone
+      candidate.path_index = -1;  // tombstone
     } else {
       smallest_noncritical_delta =
           std::min(smallest_noncritical_delta, candidate.delta);
@@ -733,16 +913,18 @@ std::optional<int> LocalEmbiggenCorrect(
 
   std::vector<LocalEmbiggenState> extensions;
   for (const LocalEmbiggenState& critical_path : critical_paths) {
+    std::span<const StopId> critical_stops =
+        cache.Get(critical_path.path_index);
     std::vector<LocalEmbiggenState> new_extensions;
-    if (critical_path.path.front().s == problem.boundary.start &&
-        critical_path.path.back().s == problem.boundary.end) {
+    if (critical_stops.front() == problem.boundary.start &&
+        critical_stops.back() == problem.boundary.end) {
       // This is a full tour, so it can't be extended further.
-      AssertOrRaise(critical_path.path.size() == state.required.size());
+      AssertOrRaise(critical_stops.size() == state.required.size());
       extensions.push_back(critical_path);
-    } else if (critical_path.path.front().s == problem.boundary.start) {
+    } else if (critical_stops.front() == problem.boundary.start) {
       // Must extend forwards.
       new_extensions = ExtendForwards(critical_path);
-    } else if (critical_path.path.back().s == problem.boundary.end) {
+    } else if (critical_stops.back() == problem.boundary.end) {
       // Must extend backwards.
       new_extensions = ExtendBackwards(critical_path);
     } else {
@@ -759,7 +941,7 @@ std::optional<int> LocalEmbiggenCorrect(
     int delta = extension.delta;
     int new_idx = static_cast<int>(state.primitive_paths.size());
     state.primitive_paths.push_back(std::move(extension));
-    RegisterPrimitivePath(state, new_idx);
+    RegisterPrimitivePath(cache, state, new_idx);
     smallest_delta = std::min(smallest_delta, delta);
   }
 
@@ -782,7 +964,7 @@ std::optional<int> LocalEmbiggenCorrect(
   state.edges.at(edge_to_embiggen).weight += smallest_delta;
   for (int idx : state.by_edge[state.EdgeIndex(edge_to_embiggen)]) {
     LocalEmbiggenState& primitive_path = state.primitive_paths[idx];
-    if (primitive_path.path.empty()) continue;  // tombstone
+    if (primitive_path.IsTombstone()) continue;
     AssertOrRaise(primitive_path.delta >= smallest_delta);
     primitive_path.delta -= smallest_delta;
   }
@@ -827,9 +1009,10 @@ std::vector<PointInstant> AnalyzeTour(
   return trajectory;
 }
 
-RefineResult DoRefine(
+std::optional<RefineResult> DoRefine(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
+    PathCache& cache,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel
@@ -842,13 +1025,14 @@ RefineResult DoRefine(
 
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 10) {
+    if (refine_round >= 1) {
       return RefineResult{lb, ub, ub_tour};
     }
 
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
-    state.PrintMemStats();
+    state.PrintMemStats(cache);
+    cache.PrintMemStats();
 
     int effective_ub = ub_rel;
     for (const auto& [tour, count] : tour_counts) {
@@ -868,7 +1052,10 @@ RefineResult DoRefine(
     }
 
     std::optional<TspTourResult> result = DoTSP(problem, state, effective_ub);
-    AssertOrRaise(result.has_value());
+    if (!result.has_value()) {
+      // TODO: Consider whether this is an expected situation.
+      return std::nullopt;
+    }
     lb = result->optimal_value;
 
     std::vector<StopId> tour_stops;
@@ -899,7 +1086,8 @@ RefineResult DoRefine(
       std::optional<int> round_delta = 0;
       for (const TarelEdge& edge : result->tour_edges) {
         PlainEdge target{edge.origin.stop, edge.destination.stop};
-        std::optional<int> delta = LocalEmbiggenCorrect(problem, state, target);
+        std::optional<int> delta =
+            LocalEmbiggenCorrect(problem, cache, state, target);
         if (delta.has_value() && round_delta.has_value()) {
           *round_delta += *delta;
         } else {

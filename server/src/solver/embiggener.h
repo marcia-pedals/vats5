@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -7,6 +9,28 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
 namespace vats5 {
+
+// Interns stop sequences to contiguous integer indices: the same stop sequence
+// always maps to the same index. Paths are stored once, in a single flat
+// backing buffer; an index_set keyed by content (via a self-referential hasher)
+// dedupes them.
+struct PathCache {
+  PathCache();
+  ~PathCache();
+  PathCache(PathCache&&) noexcept;
+  PathCache& operator=(PathCache&&) noexcept;
+  PathCache(const PathCache&) = delete;
+  PathCache& operator=(const PathCache&) = delete;
+
+  int Intern(std::span<const StopId> path);
+  std::span<const StopId> Get(int index) const;
+
+  void PrintMemStats() const;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 struct FlatStep {
   TimeSinceServiceStart origin_time;
@@ -38,9 +62,14 @@ struct PointInstant {
 };
 
 struct LocalEmbiggenState {
-  // This state represents an actual path from path.front() to path.back(),
-  // including the times at every intermediate stop.
-  std::vector<PointInstant> path;
+  // Index into a PathCache that holds the stop sequence. The path begins at
+  // its first stop at t_front and ends at its last stop at t_back. Intermediate
+  // times are not stored; recover them by walking forward from t_front via
+  // GetTNext on `completed`. path_index == -1 indicates a tombstoned slot that
+  // has been removed from the indexes.
+  int path_index;
+  TimeSinceServiceStart t_front;
+  TimeSinceServiceStart t_back;
 
   // The excess duration of the actual path over the relaxed weight on the
   // graph.
@@ -50,9 +79,15 @@ struct LocalEmbiggenState {
     return delta > other.delta;
   }
 
-  PointInstant Front() const { return path.front(); }
+  bool IsTombstone() const { return path_index < 0; }
 
-  PointInstant Back() const { return path.back(); }
+  PointInstant Front(const PathCache& cache) const {
+    return PointInstant{cache.Get(path_index).front(), t_front};
+  }
+
+  PointInstant Back(const PathCache& cache) const {
+    return PointInstant{cache.Get(path_index).back(), t_back};
+  }
 };
 
 }  // namespace vats5
@@ -73,13 +108,13 @@ struct EmbiggenerState {
   RequiredStops required;
   std::unordered_map<PlainEdge, EmbiggenerEdge> edges;
 
-  // Storage for primitive paths. Slots may be tombstoned (path.empty()) when
+  // Storage for primitive paths. Slots may be tombstoned (path_index < 0) when
   // they have been removed from the indexes below.
   std::vector<LocalEmbiggenState> primitive_paths;
 
   // Indexes into primitive_paths. Buckets are append-only vectors: indices
   // added by RegisterPrimitivePath are never removed. Iteration sites must
-  // skip tombstoned slots (path.empty()).
+  // skip tombstoned slots (IsTombstone()).
   // - by_front: maps path.front() to the indices whose path begins there at
   //   that time.
   // - by_back: maps path.back() similarly for path ends.
@@ -104,9 +139,9 @@ struct EmbiggenerState {
   std::size_t num_active_primitive_paths = 0;
 
   // Erases tombstoned slots from primitive_paths and rebuilds the indexes.
-  void Compact();
+  void Compact(const PathCache& cache);
 
-  void PrintMemStats() const;
+  void PrintMemStats(const PathCache& cache) const;
 };
 
 struct PointBound {
@@ -154,6 +189,7 @@ struct EmbiggenerOptions {
 EmbiggenerState MakeEmbiggenerState(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
+    PathCache& cache,
     std::vector<PointBound> known_points,
     std::unordered_set<PointInstant> forbidden_points,
     EmbiggenerOptions options = {}
@@ -161,6 +197,8 @@ EmbiggenerState MakeEmbiggenerState(
 
 EmbiggenerState ConstrainEmbiggenerState(
     const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    PathCache& cache,
     const EmbiggenerState& state,
     const std::vector<PointBound>& known_points,
     const std::unordered_set<PointInstant>& forbidden_points
@@ -178,6 +216,7 @@ std::optional<TspTourResult> DoTSP(
 // returns nullopt. (i.e. treat nullopt as infinity).
 std::optional<int> LocalEmbiggenCorrect(
     const ProblemState& problem,
+    PathCache& cache,
     EmbiggenerState& state,
     PlainEdge edge_to_embiggen
 );
@@ -189,9 +228,10 @@ struct RefineResult {
                                       // the tour with the lowest t_actual
 };
 
-RefineResult DoRefine(
+std::optional<RefineResult> DoRefine(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
+    PathCache& cache,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel
