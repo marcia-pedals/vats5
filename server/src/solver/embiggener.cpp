@@ -1025,7 +1025,7 @@ std::optional<RefineResult> DoRefine(
 
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 1) {
+    if (refine_round >= 2) {
       return RefineResult{lb, ub, ub_tour};
     }
 

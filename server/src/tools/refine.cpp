@@ -71,33 +71,30 @@ void Bnb(
     ub = std::min(refine_result->ub, ub);
     std::cout << "  best ub: " << TimeSinceServiceStart{ub} << "\n";
 
-    // cur.known_points is START, k points, END
-    // refine_result.ub_tour is START, k points, first not-known point, ..., END
+    // cur.known_points is START, k points, END.
+    // ub_tour matches known_points up to some divergence index, then deviates
+    // (the TSP relaxation may interleave non-known stops between consecutive
+    // known points). Find the first divergence and use that stop as the next
+    // constraint, inserted at that index in known_points.
+    int insert_index = static_cast<int>(cur.known_points.size()) - 1;
     for (int i = 0; i + 1 < cur.known_points.size(); ++i) {
       if (!(refine_result->ub_tour[i].s == cur.known_points[i].s) ||
           !(refine_result->ub_tour[i].t >= cur.known_points[i].t_lo) ||
           !(refine_result->ub_tour[i].t <= cur.known_points[i].t_hi)) {
-        for (int j = 0; j + 1 < cur.known_points.size(); ++j) {
-          std::cout << "    " << j << ". "
-                    << problem.StopName(refine_result->ub_tour[j].s) << " @ "
-                    << refine_result->ub_tour[j].t << " - "
-                    << problem.StopName(cur.known_points[j].s) << " @ ["
-                    << cur.known_points[j].t_lo << ", "
-                    << cur.known_points[j].t_hi << "]\n";
-        }
-        assert(false);
+        insert_index = i;
+        break;
       }
     }
-    PointInstant first_not_known_point =
-        refine_result->ub_tour[cur.known_points.size() - 1];
+    PointInstant first_not_known_point = refine_result->ub_tour[insert_index];
     std::cout << "  next constraint: "
               << problem.StopName(first_not_known_point.s) << " @ "
-              << first_not_known_point.t << "\n";
+              << first_not_known_point.t << " (at index " << insert_index
+              << ")\n";
 
     {
       std::vector<PointBound> known_points = cur.known_points;
       known_points.insert(
-          known_points.end() - 1,
+          known_points.begin() + insert_index,
           PointBound{
               first_not_known_point.s,
               first_not_known_point.t,
