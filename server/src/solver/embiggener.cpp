@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <asio/execution/any_executor.hpp>
+#include <iomanip>
 #include <limits>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,7 +63,7 @@ struct BFSState {
   bool operator==(const BFSState&) const = default;
 };
 
-void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
+void RegisterPrimitivePath(EmbiggenerState& state, int idx) {
   const LocalEmbiggenState& p = state.primitive_paths[idx];
   state.by_front[p.path.front()].push_back(idx);
   state.by_back[p.path.back()].push_back(idx);
@@ -74,7 +76,7 @@ void RegisterPrimitivePath(EmbiggenerState& state, std::size_t idx) {
 
 // Marks the slot as tombstoned. Index entries are NOT removed; iteration sites
 // must skip slots whose `path` is empty.
-void UnregisterPrimitivePath(EmbiggenerState& state, std::size_t /*idx*/) {
+void UnregisterPrimitivePath(EmbiggenerState& state, int /*idx*/) {
   --state.num_active_primitive_paths;
 }
 
@@ -102,11 +104,66 @@ void EmbiggenerState::Compact() {
   primitive_paths = std::move(new_paths);
   by_front.clear();
   by_back.clear();
-  for (std::vector<std::size_t>& bucket : by_edge) bucket.clear();
+  for (std::vector<int>& bucket : by_edge) bucket.clear();
   num_active_primitive_paths = 0;
-  for (std::size_t idx = 0; idx < primitive_paths.size(); ++idx) {
+  for (int idx = 0; idx < static_cast<int>(primitive_paths.size()); ++idx) {
     RegisterPrimitivePath(*this, idx);
   }
+}
+
+void EmbiggenerState::PrintMemStats() const {
+  auto si = [](int n) -> std::string {
+    double v = n;
+    const char* prefix = "";
+    if (n >= 1'000'000'000) {
+      v /= 1e9;
+      prefix = "G";
+    } else if (n >= 1'000'000) {
+      v /= 1e6;
+      prefix = "M";
+    } else if (n >= 1'000) {
+      v /= 1e3;
+      prefix = "k";
+    } else {
+      return std::to_string(n);
+    }
+    int precision = v >= 100 ? 0 : (v >= 10 ? 1 : 2);
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(precision) << v << prefix;
+    return oss.str();
+  };
+
+  std::cout << "  active paths: " << si(num_active_primitive_paths) << "\n";
+
+  int data_bytes = 0;
+  for (const LocalEmbiggenState& p : primitive_paths) {
+    // vector bookeeping = 24 bytes
+    // int (delta) = 4 bytes
+    // vector data = 8 bytes per entry (2 ints)
+    data_bytes += 24 + 4 + 8 * p.path.size();
+  }
+  std::cout << "    data: " << si(data_bytes) << "b\n";
+
+  int edge_index_bytes = 0;
+  for (const std::vector<int>& v : by_edge) {
+    edge_index_bytes += 24 + 4 * v.size();
+  }
+  std::cout << "    edge index: " << si(edge_index_bytes) << "b\n";
+
+  int endpoint_index_bytes = 0;
+  for (const auto& [e, v] : by_front) {
+    // 52 bytes of unordered_map bookkeeping
+    // 24 bytes of vector bookkeeping
+    // vector data = 4 bytes per entry
+    endpoint_index_bytes += 52 + 24 + 4 * v.size();
+  }
+  for (const auto& [e, v] : by_back) {
+    // 52 bytes of unordered_map bookkeeping
+    // 24 bytes of vector bookkeeping
+    // vector data = 4 bytes per entry
+    endpoint_index_bytes += 52 + 24 + 4 * v.size();
+  }
+  std::cout << "    endpoint index: " << si(endpoint_index_bytes) << "b\n";
 }
 
 EmbiggenerState MakeEmbiggenerState(
@@ -266,13 +323,13 @@ EmbiggenerState MakeEmbiggenerState(
   EmbiggenerState state{
       .required = problem.required,
       .edges = std::move(result_edges),
-      .by_edge = std::vector<std::vector<std::size_t>>(edge_index_size),
+      .by_edge = std::vector<std::vector<int>>(edge_index_size),
       .num_stops_for_edge_index = num_stops_for_edge_index,
   };
   for (const auto& [edge, steps] : steps_per_edge) {
     int weight = state.edges.at(edge).weight;
     for (const FlatStep& step : steps) {
-      std::size_t idx = state.primitive_paths.size();
+      int idx = static_cast<int>(state.primitive_paths.size());
       state.primitive_paths.push_back(
           LocalEmbiggenState{
               .path =
@@ -364,7 +421,7 @@ EmbiggenerState ConstrainEmbiggenerState(
     }
     auto by_front_it = state.by_front.find(cur_state.point);
     if (by_front_it == state.by_front.end()) continue;
-    for (size_t primitive_path_i : by_front_it->second) {
+    for (int primitive_path_i : by_front_it->second) {
       const LocalEmbiggenState& primitive_path =
           state.primitive_paths[primitive_path_i];
       if (primitive_path.path.empty()) {
@@ -400,7 +457,7 @@ EmbiggenerState ConstrainEmbiggenerState(
     BFSState cur_state = good_worklist[gi];
     auto by_back_it = state.by_back.find(cur_state.point);
     if (by_back_it == state.by_back.end()) continue;
-    for (size_t pi : by_back_it->second) {
+    for (int pi : by_back_it->second) {
       if (!primitive_path_reachable[pi] ||
           primitive_path_end_kpi[pi] != cur_state.last_known_point_index) {
         continue;
@@ -433,7 +490,7 @@ EmbiggenerState ConstrainEmbiggenerState(
       continue;
     }
     const LocalEmbiggenState& path = state.primitive_paths[pi];
-    std::size_t new_idx = result.primitive_paths.size();
+    int new_idx = static_cast<int>(result.primitive_paths.size());
     result.primitive_paths.push_back(path);
     RegisterPrimitivePath(result, new_idx);
     for (std::size_t i = 0; i + 1 < path.path.size(); ++i) {
@@ -536,7 +593,7 @@ std::optional<int> LocalEmbiggenCorrect(
     const bool target_starts_at_start =
         target.path.front().s == problem.boundary.start;
 
-    for (std::size_t cand_idx : it->second) {
+    for (int cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
       if (candidate.path.empty()) continue;  // tombstone
 
@@ -591,7 +648,7 @@ std::optional<int> LocalEmbiggenCorrect(
     const bool target_ends_at_end =
         target.path.back().s == problem.boundary.end;
 
-    for (std::size_t cand_idx : it->second) {
+    for (int cand_idx : it->second) {
       const LocalEmbiggenState& candidate = state.primitive_paths[cand_idx];
       if (candidate.path.empty()) continue;  // tombstone
 
@@ -635,19 +692,19 @@ std::optional<int> LocalEmbiggenCorrect(
 
   // Snapshot the indices of primitive paths that contain `edge_to_embiggen`,
   // since we will mutate the by_edge bucket while iterating. Skip tombstones.
-  std::vector<std::size_t> through_edge;
+  std::vector<int> through_edge;
   {
-    const std::vector<std::size_t>& bucket =
+    const std::vector<int>& bucket =
         state.by_edge[state.EdgeIndex(edge_to_embiggen)];
     through_edge.reserve(bucket.size());
-    for (std::size_t idx : bucket) {
+    for (int idx : bucket) {
       if (state.primitive_paths[idx].path.empty()) continue;
       through_edge.push_back(idx);
     }
   }
 
   int smallest_preextend_delta = std::numeric_limits<int>::max();
-  for (std::size_t idx : through_edge) {
+  for (int idx : through_edge) {
     smallest_preextend_delta =
         std::min(smallest_preextend_delta, state.primitive_paths[idx].delta);
   }
@@ -661,7 +718,7 @@ std::optional<int> LocalEmbiggenCorrect(
 
   int smallest_noncritical_delta = std::numeric_limits<int>::max();
   std::vector<LocalEmbiggenState> critical_paths;
-  for (std::size_t idx : through_edge) {
+  for (int idx : through_edge) {
     LocalEmbiggenState& candidate = state.primitive_paths[idx];
     if (candidate.delta == smallest_preextend_delta) {
       UnregisterPrimitivePath(state, idx);
@@ -700,7 +757,7 @@ std::optional<int> LocalEmbiggenCorrect(
   int smallest_delta = smallest_noncritical_delta;
   for (LocalEmbiggenState& extension : extensions) {
     int delta = extension.delta;
-    std::size_t new_idx = state.primitive_paths.size();
+    int new_idx = static_cast<int>(state.primitive_paths.size());
     state.primitive_paths.push_back(std::move(extension));
     RegisterPrimitivePath(state, new_idx);
     smallest_delta = std::min(smallest_delta, delta);
@@ -723,7 +780,7 @@ std::optional<int> LocalEmbiggenCorrect(
   }
 
   state.edges.at(edge_to_embiggen).weight += smallest_delta;
-  for (std::size_t idx : state.by_edge[state.EdgeIndex(edge_to_embiggen)]) {
+  for (int idx : state.by_edge[state.EdgeIndex(edge_to_embiggen)]) {
     LocalEmbiggenState& primitive_path = state.primitive_paths[idx];
     if (primitive_path.path.empty()) continue;  // tombstone
     AssertOrRaise(primitive_path.delta >= smallest_delta);
@@ -791,8 +848,7 @@ RefineResult DoRefine(
 
     std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
-    std::cout << "  primitive paths: " << state.num_active_primitive_paths
-              << "\n";
+    state.PrintMemStats();
 
     int effective_ub = ub_rel;
     for (const auto& [tour, count] : tour_counts) {

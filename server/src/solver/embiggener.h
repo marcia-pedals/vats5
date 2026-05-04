@@ -86,9 +86,9 @@ struct EmbiggenerState {
   // - by_edge: maps each PlainEdge to the indices of paths that contain it,
   //   indexed by EdgeIndex(edge). Buckets for edges that don't exist are
   //   simply empty.
-  std::unordered_map<PointInstant, std::vector<std::size_t>> by_front;
-  std::unordered_map<PointInstant, std::vector<std::size_t>> by_back;
-  std::vector<std::vector<std::size_t>> by_edge;
+  std::unordered_map<PointInstant, std::vector<int>> by_front;
+  std::unordered_map<PointInstant, std::vector<int>> by_back;
+  std::vector<std::vector<int>> by_edge;
 
   // Sized so that EdgeIndex(e) is a valid index into by_edge for every
   // PlainEdge e that appears in any primitive path. Set once by
@@ -105,6 +105,8 @@ struct EmbiggenerState {
 
   // Erases tombstoned slots from primitive_paths and rebuilds the indexes.
   void Compact();
+
+  void PrintMemStats() const;
 };
 
 struct PointBound {
