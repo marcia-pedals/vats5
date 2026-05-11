@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <random>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -9,6 +11,10 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
 namespace vats5 {
+
+struct TourCache {
+  std::set<std::vector<StopId>> tours;
+};
 
 // Interns stop sequences to contiguous integer indices: the same stop sequence
 // always maps to the same index. Paths are stored once, in a single flat
@@ -228,10 +234,58 @@ struct RefineResult {
                                       // the tour with the lowest t_actual
 };
 
+struct RandomWalkResult {
+  // Sum of state.edges[e].weight over all edges in the walked path.
+  int total_weight;
+  // Time at which the walk reached boundary.end, minus t0.
+  int duration_seconds;
+};
+
+// Samples a random walk from (boundary.start, t0) to boundary.end by repeatedly
+// drawing a uniformly random primitive path from state.by_front at the current
+// PointInstant and jumping to its back. Throws if no primitive path is
+// available at some intermediate point.
+RandomWalkResult SampleRandomWalk(
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    const ProblemBoundary& boundary,
+    TimeSinceServiceStart t0,
+    std::mt19937& rng
+);
+
+struct SampleStats {
+  int p0;
+  int p10;
+  int p50;
+  int p90;
+  int p100;
+  double mean;
+};
+
+struct RandomWalkSampleStats {
+  int sample_count;
+  SampleStats total_weight;
+  SampleStats duration_seconds;
+  SampleStats slack_seconds;  // duration_seconds - total_weight
+};
+
+// Draws `sample_count` random walks via SampleRandomWalk and returns summary
+// stats over total_weight, duration_seconds, and (duration_seconds -
+// total_weight).
+RandomWalkSampleStats SampleRandomWalkStats(
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    const ProblemBoundary& boundary,
+    TimeSinceServiceStart t0,
+    int sample_count,
+    std::mt19937& rng
+);
+
 std::optional<RefineResult> DoRefine(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     PathCache& cache,
+    TourCache& tour_cache,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel

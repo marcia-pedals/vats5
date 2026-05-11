@@ -1009,16 +1009,104 @@ std::vector<PointInstant> AnalyzeTour(
   return trajectory;
 }
 
+RandomWalkResult SampleRandomWalk(
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    const ProblemBoundary& boundary,
+    TimeSinceServiceStart t0,
+    std::mt19937& rng
+) {
+  PointInstant cur{boundary.start, t0};
+  int total_weight = 0;
+  while (cur.s != boundary.end) {
+    auto it = state.by_front.find(cur);
+    if (it == state.by_front.end()) {
+      throw std::runtime_error(
+          "SampleRandomWalk: no primitive path from point"
+      );
+    }
+    const std::vector<int>& bucket = it->second;
+    std::vector<int> live;
+    live.reserve(bucket.size());
+    for (int idx : bucket) {
+      if (state.primitive_paths[idx].IsTombstone()) continue;
+      live.push_back(idx);
+    }
+    if (live.empty()) {
+      throw std::runtime_error(
+          "SampleRandomWalk: no primitive path from point"
+      );
+    }
+    std::uniform_int_distribution<std::size_t> dist(0, live.size() - 1);
+    const LocalEmbiggenState& chosen = state.primitive_paths[live[dist(rng)]];
+    std::span<const StopId> stops = cache.Get(chosen.path_index);
+    for (std::size_t i = 0; i + 1 < stops.size(); ++i) {
+      total_weight += state.edges.at(PlainEdge{stops[i], stops[i + 1]}).weight;
+    }
+    cur = chosen.Back(cache);
+  }
+  return RandomWalkResult{
+      .total_weight = total_weight,
+      .duration_seconds = cur.t.seconds - t0.seconds,
+  };
+}
+
+RandomWalkSampleStats SampleRandomWalkStats(
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    const ProblemBoundary& boundary,
+    TimeSinceServiceStart t0,
+    int sample_count,
+    std::mt19937& rng
+) {
+  AssertOrRaise(sample_count > 0);
+  std::vector<int> weights(sample_count);
+  std::vector<int> durations(sample_count);
+  std::vector<int> slacks(sample_count);
+  for (int i = 0; i < sample_count; ++i) {
+    RandomWalkResult r = SampleRandomWalk(state, cache, boundary, t0, rng);
+    weights[i] = r.total_weight;
+    durations[i] = r.duration_seconds;
+    slacks[i] = r.duration_seconds - r.total_weight;
+  }
+  auto summarize = [](std::vector<int>& xs) -> SampleStats {
+    std::sort(xs.begin(), xs.end());
+    int n = static_cast<int>(xs.size());
+    auto pct = [&](int p) -> int {
+      // Percentile by nearest-rank; p in [0, 100].
+      if (p <= 0) return xs.front();
+      if (p >= 100) return xs.back();
+      int idx = (p * (n - 1) + 50) / 100;
+      return xs[idx];
+    };
+    long long sum = 0;
+    for (int x : xs) sum += x;
+    return SampleStats{
+        .p0 = pct(0),
+        .p10 = pct(10),
+        .p50 = pct(50),
+        .p90 = pct(90),
+        .p100 = pct(100),
+        .mean = static_cast<double>(sum) / static_cast<double>(n),
+    };
+  };
+  return RandomWalkSampleStats{
+      .sample_count = sample_count,
+      .total_weight = summarize(weights),
+      .duration_seconds = summarize(durations),
+      .slack_seconds = summarize(slacks),
+  };
+}
+
 std::optional<RefineResult> DoRefine(
     const ProblemState& problem,
     const StepsAdjacencyList& completed,
     PathCache& cache,
+    TourCache& tour_cache,
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel
 ) {
-  std::map<std::vector<StopId>, int> tour_counts;
-
   int lb = 0;
   int ub = std::numeric_limits<int>::max();
   std::vector<PointInstant> ub_tour;
@@ -1029,13 +1117,13 @@ std::optional<RefineResult> DoRefine(
       return RefineResult{lb, ub, ub_tour};
     }
 
-    std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
+    // std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
-    state.PrintMemStats(cache);
-    cache.PrintMemStats();
+    // state.PrintMemStats(cache);
+    // cache.PrintMemStats();
 
     int effective_ub = ub_rel;
-    for (const auto& [tour, count] : tour_counts) {
+    for (const std::vector<StopId>& tour : tour_cache.tours) {
       int w = 0;
       bool feasible = true;
       for (std::size_t i = 0; i + 1 < tour.size(); ++i) {
@@ -1065,17 +1153,16 @@ std::optional<RefineResult> DoRefine(
     }
     AssertOrRaise(tour_stops.front() == problem.boundary.start);
     AssertOrRaise(tour_stops.back() == problem.boundary.end);
-    tour_counts[tour_stops] += 1;
-    // std::cout << "  distinct tours: " << tour_counts.size() << "\n";
+    tour_cache.tours.insert(tour_stops);
 
     std::vector<PointInstant> trajectory =
         AnalyzeTour(problem, completed, t0, *result);
     int t_actual = trajectory.empty()
                        ? std::numeric_limits<int>::max()
                        : trajectory.back().t.seconds - t0.seconds;
-    std::cout << "  tsp result: "
-              << TimeSinceServiceStart{result->optimal_value} << " / "
-              << TimeSinceServiceStart{t_actual} << "\n";
+    // std::cout << "  tsp result: "
+    //           << TimeSinceServiceStart{result->optimal_value} << " / "
+    //           << TimeSinceServiceStart{t_actual} << "\n";
     if (t_actual < ub) {
       ub = t_actual;
       ub_tour = std::move(trajectory);

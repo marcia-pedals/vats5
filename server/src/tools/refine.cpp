@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <unordered_set>
 
@@ -31,9 +32,15 @@ struct BnbState {
   std::vector<PointBound> known_points;
   std::unordered_set<PointInstant> forbidden_points;
   EmbiggenerState state;
+  RandomWalkSampleStats stats;
+  int est_dur;
 
   bool operator<(const BnbState& other) const {
-    return known_points.size() < other.known_points.size();
+    // return known_points.size() < other.known_points.size();
+    // return lb > other.lb;
+    // return stats.duration_seconds.p10 > other.stats.duration_seconds.p10;
+    // return stats.duration_seconds.mean > other.stats.duration_seconds.mean;
+    return est_dur > other.est_dur;
   }
 };
 
@@ -45,22 +52,40 @@ void Bnb(
     TimeSinceServiceStart t0,
     int ub
 ) {
-  std::vector<BnbState> q;
-  q.push_back(initial);
+  TourCache tour_cache;
+  std::mt19937 rng(42);
 
-  while (true) {
+  std::vector<BnbState> q;
+  auto push = [&](BnbState&& s) {
+    s.stats =
+        SampleRandomWalkStats(s.state, cache, problem.boundary, t0, 1000, rng);
+    s.est_dur = s.lb + s.stats.slack_seconds.mean;
+    q.push_back(std::move(s));
+    std::push_heap(q.begin(), q.end());
+  };
+
+  push(BnbState{initial});
+
+  int bnb_round = 0;
+  while (q.size() > 0 && bnb_round < 2048) {
+    bnb_round += 1;
+
     std::pop_heap(q.begin(), q.end());
     BnbState cur = std::move(q.back());
     q.pop_back();
 
-    std::cout << "take " << TimeSinceServiceStart{cur.lb} << "\n";
+    std::cout << "bnb " << bnb_round << " take "
+              << TimeSinceServiceStart{cur.lb} << " (" << q.size() << " active)"
+              << " (" << tour_cache.tours.size() << " distinct tours)"
+              << " (" << TimeSinceServiceStart{cur.est_dur} << " est dur)"
+              << "\n";
     if (cur.lb >= ub) {
       std::cout << "  pruned: reached ub\n";
       continue;
     }
 
     std::optional<RefineResult> refine_result =
-        DoRefine(problem, completed, cache, cur.state, t0, ub);
+        DoRefine(problem, completed, cache, tour_cache, cur.state, t0, ub);
     if (!refine_result.has_value()) {
       std::cout << "  pruned: no refine result\n";
       continue;
@@ -91,6 +116,9 @@ void Bnb(
               << first_not_known_point.t << " (at index " << insert_index
               << ")\n";
 
+    cur.known_points.back().t_lo.seconds = t0.seconds + refine_result->lb;
+    cur.known_points.back().t_hi.seconds = t0.seconds + ub;
+
     {
       std::vector<PointBound> known_points = cur.known_points;
       known_points.insert(
@@ -101,41 +129,41 @@ void Bnb(
               first_not_known_point.t
           }
       );
-      BnbState constrained_require{
-          .lb = refine_result->lb,
-          .known_points = known_points,
-          .forbidden_points = cur.forbidden_points,
-          .state = ConstrainEmbiggenerState(
-              problem,
-              completed,
-              cache,
-              cur.state,
-              known_points,
-              cur.forbidden_points
-          ),
-      };
-      q.push_back(std::move(constrained_require));
-      std::push_heap(q.begin(), q.end());
+      push(
+          BnbState{
+              .lb = refine_result->lb,
+              .known_points = known_points,
+              .forbidden_points = cur.forbidden_points,
+              .state = ConstrainEmbiggenerState(
+                  problem,
+                  completed,
+                  cache,
+                  cur.state,
+                  known_points,
+                  cur.forbidden_points
+              ),
+          }
+      );
     }
 
     {
       std::unordered_set<PointInstant> forbidden_points = cur.forbidden_points;
       forbidden_points.insert(first_not_known_point);
-      BnbState constrained_require{
-          .lb = refine_result->lb,
-          .known_points = cur.known_points,
-          .forbidden_points = forbidden_points,
-          .state = ConstrainEmbiggenerState(
-              problem,
-              completed,
-              cache,
-              cur.state,
-              cur.known_points,
-              forbidden_points
-          ),
-      };
-      q.push_back(std::move(constrained_require));
-      std::push_heap(q.begin(), q.end());
+      push(
+          BnbState{
+              .lb = refine_result->lb,
+              .known_points = cur.known_points,
+              .forbidden_points = forbidden_points,
+              .state = ConstrainEmbiggenerState(
+                  problem,
+                  completed,
+                  cache,
+                  cur.state,
+                  cur.known_points,
+                  forbidden_points
+              ),
+          }
+      );
     }
   }
 }
