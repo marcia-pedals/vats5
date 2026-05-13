@@ -12,10 +12,6 @@
 #include "solver/tarel_graph.h"
 namespace vats5 {
 
-struct TourCache {
-  std::set<std::vector<StopId>> tours;
-};
-
 // Interns stop sequences to contiguous integer indices: the same stop sequence
 // always maps to the same index. Paths are stored once, in a single flat
 // backing buffer; an index_set keyed by content (via a self-referential hasher)
@@ -65,14 +61,22 @@ struct PointInstant {
   StopId s;
   TimeSinceServiceStart t;
   bool operator==(const PointInstant&) const = default;
+  bool operator<(const PointInstant& other) const {
+    if (s.v != other.s.v) return s.v < other.s.v;
+    return t.seconds < other.t.seconds;
+  }
+};
+
+struct TourCache {
+  std::set<std::vector<PointInstant>> tours;
 };
 
 struct LocalEmbiggenState {
   // Index into a PathCache that holds the stop sequence. The path begins at
   // its first stop at t_front and ends at its last stop at t_back. Intermediate
-  // times are not stored; recover them by walking forward from t_front via
-  // GetTNext on `completed`. path_index == -1 indicates a tombstoned slot that
-  // has been removed from the indexes.
+  // times are not stored; recover them by walking forward from t_front via the
+  // WalkStopsFromTFront helper (in embiggener.cpp). path_index == -1 indicates
+  // a tombstoned slot that has been removed from the indexes.
   int path_index;
   TimeSinceServiceStart t_front;
   TimeSinceServiceStart t_back;
@@ -211,7 +215,9 @@ EmbiggenerState ConstrainEmbiggenerState(
 );
 
 std::optional<TspTourResult> DoTSP(
-    const ProblemState& problem, const EmbiggenerState& state, int ub_rel
+    const ProblemState& problem,
+    const std::unordered_map<PlainEdge, EmbiggenerEdge>& edges,
+    int ub_rel
 );
 
 // Embiggen `edge_to_embiggen` in `state`: returns the delta added to the
@@ -289,6 +295,13 @@ std::optional<RefineResult> DoRefine(
     EmbiggenerState& state,
     TimeSinceServiceStart t0,
     int ub_rel
+);
+
+int EstimateCost(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache
 );
 
 }  // namespace vats5

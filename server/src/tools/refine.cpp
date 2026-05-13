@@ -29,18 +29,13 @@ StopId FindStopByGtfsId(
 
 struct BnbState {
   int lb;
+  int estimate;
   std::vector<PointBound> known_points;
   std::unordered_set<PointInstant> forbidden_points;
   EmbiggenerState state;
-  RandomWalkSampleStats stats;
-  int est_dur;
 
   bool operator<(const BnbState& other) const {
-    // return known_points.size() < other.known_points.size();
-    // return lb > other.lb;
-    // return stats.duration_seconds.p10 > other.stats.duration_seconds.p10;
-    // return stats.duration_seconds.mean > other.stats.duration_seconds.mean;
-    return est_dur > other.est_dur;
+    return estimate > other.estimate;
   }
 };
 
@@ -57,9 +52,7 @@ void Bnb(
 
   std::vector<BnbState> q;
   auto push = [&](BnbState&& s) {
-    s.stats =
-        SampleRandomWalkStats(s.state, cache, problem.boundary, t0, 1000, rng);
-    s.est_dur = s.lb + s.stats.slack_seconds.mean;
+    s.estimate = EstimateCost(problem, completed, s.state, cache);
     q.push_back(std::move(s));
     std::push_heap(q.begin(), q.end());
   };
@@ -75,9 +68,10 @@ void Bnb(
     q.pop_back();
 
     std::cout << "bnb " << bnb_round << " take "
-              << TimeSinceServiceStart{cur.lb} << " (" << q.size() << " active)"
+              << TimeSinceServiceStart{cur.lb} << " (est "
+              << TimeSinceServiceStart{cur.estimate} << ")"
+              << " (" << q.size() << " active)"
               << " (" << tour_cache.tours.size() << " distinct tours)"
-              << " (" << TimeSinceServiceStart{cur.est_dur} << " est dur)"
               << "\n";
     if (cur.lb >= ub) {
       std::cout << "  pruned: reached ub\n";

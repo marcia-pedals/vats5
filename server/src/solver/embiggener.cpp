@@ -58,6 +58,40 @@ std::pair<TimeSinceServiceStart, StepPartitionId> GetTNext(
   }
 }
 
+// Walks the stop sequence `stops` starting at `t_front`. Invokes
+// `visit(0, t_front)` for the first stop, then for each i in [1, stops.size())
+// finds the matching StepGroup in `completed` (from stops[i-1] to stops[i]),
+// advances via GetTNext, and invokes `visit(i, t_next)`. Returns false if the
+// StepGroup is missing (without invoking visit for that step), or if `visit`
+// returns false. Returns true if all stops were visited successfully. This is
+// how intermediate times are recovered from a LocalEmbiggenState, which stores
+// only t_front and t_back.
+template <typename Visit>
+bool WalkStopsFromTFront(
+    const StepsAdjacencyList& completed,
+    std::span<const StopId> stops,
+    TimeSinceServiceStart t_front,
+    Visit&& visit
+) {
+  if (stops.empty()) return true;
+  if (!visit(0, t_front)) return false;
+  TimeSinceServiceStart t_cur = t_front;
+  for (std::size_t i = 1; i < stops.size(); ++i) {
+    const StepGroup* g_next = nullptr;
+    for (const StepGroup& g : completed.GetGroups(stops[i - 1])) {
+      if (g.destination_stop == stops[i]) {
+        g_next = &g;
+        break;
+      }
+    }
+    if (g_next == nullptr) return false;
+    auto [t_next, _] = GetTNext(completed, *g_next, stops[i - 1], t_cur);
+    if (!visit(static_cast<int>(i), t_next)) return false;
+    t_cur = t_next;
+  }
+  return true;
+}
+
 struct BFSState {
   vats5::PointInstant point;
   int last_known_point_index;
@@ -517,45 +551,33 @@ EmbiggenerState ConstrainEmbiggenerState(
   // Walks `path` starting from kpi=`start_kpi`. Returns the kpi after the walk
   // if every transition along the path satisfies the known/forbidden
   // constraints (mirroring the per-step rules in MakeEmbiggenerState's BFS),
-  // or nullopt if any transition is rejected. Intermediate times are recovered
-  // by stepping forward from path.t_front via GetTNext.
+  // or nullopt if any transition is rejected.
   auto WalkPath = [&](const LocalEmbiggenState& path,
                       int start_kpi) -> std::optional<int> {
     std::span<const StopId> stops = cache.Get(path.path_index);
     int kpi = start_kpi;
-    TimeSinceServiceStart t_cur = path.t_front;
-    for (std::size_t i = 1; i < stops.size(); ++i) {
-      if (kpi == static_cast<int>(known_points.size()) - 1) {
-        return std::nullopt;
-      }
-      const StepGroup* g_next = nullptr;
-      for (const StepGroup& g : completed.GetGroups(stops[i - 1])) {
-        if (g.destination_stop == stops[i]) {
-          g_next = &g;
-          break;
+    bool ok = WalkStopsFromTFront(
+        completed,
+        stops,
+        path.t_front,
+        [&](int i, TimeSinceServiceStart t_next) {
+          // The first stop is the caller-verified start of this walk, so it
+          // has no incoming transition to constrain.
+          if (i == 0) return true;
+          if (kpi == static_cast<int>(known_points.size()) - 1) return false;
+          PointInstant next{stops[i], t_next};
+          const PointBound& next_kp = known_points[kpi + 1];
+          if (known_point_stops.contains(next.s) && next.s != next_kp.s) {
+            return false;
+          }
+          if (next.t > next_kp.t_hi) return false;
+          if (next.s == next_kp.s && next.t < next_kp.t_lo) return false;
+          if (forbidden_points.contains(next)) return false;
+          if (next.s == next_kp.s) kpi += 1;
+          return true;
         }
-      }
-      if (g_next == nullptr) return std::nullopt;
-      auto [t_next, _] = GetTNext(completed, *g_next, stops[i - 1], t_cur);
-      PointInstant next{stops[i], t_next};
-      const PointBound& next_kp = known_points[kpi + 1];
-      if (known_point_stops.contains(next.s) && next.s != next_kp.s) {
-        return std::nullopt;
-      }
-      if (next.t > next_kp.t_hi) {
-        return std::nullopt;
-      }
-      if (next.s == next_kp.s && next.t < next_kp.t_lo) {
-        return std::nullopt;
-      }
-      if (forbidden_points.contains(next)) {
-        return std::nullopt;
-      }
-      if (next.s == next_kp.s) {
-        kpi += 1;
-      }
-      t_cur = t_next;
-    }
+    );
+    if (!ok) return std::nullopt;
     return kpi;
   };
 
@@ -667,14 +689,16 @@ EmbiggenerState ConstrainEmbiggenerState(
 }
 
 std::optional<TspTourResult> DoTSP(
-    const ProblemState& problem, const EmbiggenerState& state, int ub_rel
+    const ProblemState& problem,
+    const std::unordered_map<PlainEdge, EmbiggenerEdge>& edges,
+    int ub_rel
 ) {
   TarelState start_state{problem.boundary.start, StepPartitionId{0}};
   TarelState end_state{problem.boundary.end, StepPartitionId{0}};
-  std::vector<TarelEdge> edges;
+  std::vector<TarelEdge> tarel_edges;
 
   // END->START edge.
-  edges.push_back(
+  tarel_edges.push_back(
       TarelEdge{
           .origin = end_state,
           .destination = start_state,
@@ -683,8 +707,8 @@ std::optional<TspTourResult> DoTSP(
   );
 
   // All the other edges.
-  for (const auto& [plain_edge, edge_data] : state.edges) {
-    edges.push_back(
+  for (const auto& [plain_edge, edge_data] : edges) {
+    tarel_edges.push_back(
         TarelEdge{
             .origin = TarelState{plain_edge.a, StepPartitionId{0}},
             .destination = TarelState{plain_edge.b, StepPartitionId{0}},
@@ -695,7 +719,7 @@ std::optional<TspTourResult> DoTSP(
 
   // SOLVE!!
 
-  TarelStateRemapResult remap = RemapTarelStates(edges, problem.required);
+  TarelStateRemapResult remap = RemapTarelStates(tarel_edges, problem.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, problem.boundary);
 
   // Check that at least one representative from each group of required stops
@@ -719,7 +743,7 @@ std::optional<TspTourResult> DoTSP(
   }
 
   std::optional<TspTourResult> result = SolveTspAndExtractTour(
-      edges, graph, problem.boundary, ub_rel, nullptr, nullptr
+      tarel_edges, graph, problem.boundary, ub_rel, nullptr, nullptr
   );
   if (!result.has_value()) {
     return std::nullopt;
@@ -984,28 +1008,20 @@ std::vector<PointInstant> AnalyzeTour(
   if (tour.tour_edges.empty()) {
     return trajectory;
   }
-  TimeSinceServiceStart t_cur = t0;
-  trajectory.push_back(PointInstant{tour.tour_edges[0].origin.stop, t_cur});
+  std::vector<StopId> stops;
+  stops.reserve(tour.tour_edges.size() + 1);
+  stops.push_back(tour.tour_edges[0].origin.stop);
   for (const TarelEdge& edge : tour.tour_edges) {
-    StopId origin = edge.origin.stop;
-    StopId destination = edge.destination.stop;
-    const StepGroup* g_next = nullptr;
-    for (const StepGroup& g : completed.GetGroups(origin)) {
-      if (g.destination_stop == destination) {
-        g_next = &g;
-        break;
-      }
-    }
-    if (g_next == nullptr) {
-      return {};
-    }
-    auto [t_next, _] = GetTNext(completed, *g_next, origin, t_cur);
-    if (t_next.seconds == std::numeric_limits<int>::max()) {
-      return {};
-    }
-    t_cur = t_next;
-    trajectory.push_back(PointInstant{destination, t_cur});
+    stops.push_back(edge.destination.stop);
   }
+  bool ok = WalkStopsFromTFront(
+      completed, stops, t0, [&](int i, TimeSinceServiceStart t_next) {
+        if (t_next.seconds == std::numeric_limits<int>::max()) return false;
+        trajectory.push_back(PointInstant{stops[i], t_next});
+        return true;
+      }
+  );
+  if (!ok) return {};
   return trajectory;
 }
 
@@ -1123,11 +1139,11 @@ std::optional<RefineResult> DoRefine(
     // cache.PrintMemStats();
 
     int effective_ub = ub_rel;
-    for (const std::vector<StopId>& tour : tour_cache.tours) {
+    for (const std::vector<PointInstant>& tour : tour_cache.tours) {
       int w = 0;
       bool feasible = true;
       for (std::size_t i = 0; i + 1 < tour.size(); ++i) {
-        auto it = state.edges.find(PlainEdge{tour[i], tour[i + 1]});
+        auto it = state.edges.find(PlainEdge{tour[i].s, tour[i + 1].s});
         if (it == state.edges.end()) {
           feasible = false;
           break;
@@ -1139,27 +1155,24 @@ std::optional<RefineResult> DoRefine(
       }
     }
 
-    std::optional<TspTourResult> result = DoTSP(problem, state, effective_ub);
+    std::optional<TspTourResult> result =
+        DoTSP(problem, state.edges, effective_ub);
     if (!result.has_value()) {
       // TODO: Consider whether this is an expected situation.
       return std::nullopt;
     }
     lb = result->optimal_value;
 
-    std::vector<StopId> tour_stops;
-    tour_stops.push_back(result->tour_edges[0].origin.stop);
-    for (const TarelEdge& edge : result->tour_edges) {
-      tour_stops.push_back(edge.destination.stop);
-    }
-    AssertOrRaise(tour_stops.front() == problem.boundary.start);
-    AssertOrRaise(tour_stops.back() == problem.boundary.end);
-    tour_cache.tours.insert(tour_stops);
-
     std::vector<PointInstant> trajectory =
         AnalyzeTour(problem, completed, t0, *result);
     int t_actual = trajectory.empty()
                        ? std::numeric_limits<int>::max()
                        : trajectory.back().t.seconds - t0.seconds;
+    if (!trajectory.empty()) {
+      AssertOrRaise(trajectory.front().s == problem.boundary.start);
+      AssertOrRaise(trajectory.back().s == problem.boundary.end);
+      tour_cache.tours.insert(trajectory);
+    }
     // std::cout << "  tsp result: "
     //           << TimeSinceServiceStart{result->optimal_value} << " / "
     //           << TimeSinceServiceStart{t_actual} << "\n";
@@ -1205,6 +1218,60 @@ std::optional<RefineResult> DoRefine(
       return RefineResult{lb, ub, ub_tour};
     }
   }
+}
+
+int EstimateCost(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache
+) {
+  std::unordered_map<PlainEdge, EmbiggenerEdge> est_edges;
+  for (const auto& [edge, _] : state.edges) {
+    std::unordered_map<TimeSinceServiceStart, TimeSinceServiceStart> edge_times;
+    for (int pi : state.by_edge[state.EdgeIndex(edge)]) {
+      const LocalEmbiggenState& primitive_path = state.primitive_paths[pi];
+      if (primitive_path.path_index == -1) {
+        continue;
+      }
+      std::span<const StopId> stops = cache.Get(primitive_path.path_index);
+      TimeSinceServiceStart t_head{-1};
+      WalkStopsFromTFront(
+          completed,
+          stops,
+          primitive_path.t_front,
+          [&](int i, TimeSinceServiceStart t) {
+            if (stops[i] == edge.a) {
+              t_head = t;
+            } else if (t_head.seconds != -1) {
+              edge_times[t_head] = t;
+              return false;
+            }
+            return true;
+          }
+      );
+      assert(t_head.seconds != -1);
+    }
+
+    if (edge_times.size() == 0) {
+      continue;
+    }
+
+    std::vector<int> durations;
+    durations.reserve(edge_times.size());
+    for (const auto& [t_head, t_tail] : edge_times) {
+      durations.push_back(t_tail.seconds - t_head.seconds);
+    }
+    auto percentile = durations.begin() + durations.size() / 3;
+    std::nth_element(durations.begin(), percentile, durations.end());
+    est_edges[edge] = EmbiggenerEdge{.weight = *percentile};
+  }
+
+  std::optional<TspTourResult> result = DoTSP(problem, est_edges, 18 * 3600);
+  if (!result.has_value()) {
+    return std::numeric_limits<int>::max();
+  }
+  return result->optimal_value;
 }
 
 }  // namespace vats5
