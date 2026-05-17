@@ -238,6 +238,8 @@ struct RefineResult {
   int ub;  // the lowest t_actual from any round
   std::vector<PointInstant> ub_tour;  // the tour stops (with t_cur times) from
                                       // the tour with the lowest t_actual
+  std::vector<PointInstant> final_tour;  // the trajectory from the final refine
+                                         // iteration (not necessarily ub_tour)
 };
 
 struct RandomWalkResult {
@@ -302,6 +304,32 @@ int EstimateCost(
     const StepsAdjacencyList& completed,
     const EmbiggenerState& state,
     const PathCache& cache
+);
+
+struct DeltaLBResult {
+  int delta;
+  std::vector<PointInstant> points;
+};
+
+DeltaLBResult DeltaLB(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    TimeSinceServiceStart t0,
+    int lb_rel,
+    const std::vector<StopId>& forbid_repeat_stops
+);
+
+// Runs DeltaLB twice: first with no forbidden repeats; then re-runs with the
+// two most-visited stops from the first result forbidden from being repeated.
+DeltaLBResult DeltaLBWithRepeatFix(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    TimeSinceServiceStart t0,
+    int lb_rel
 );
 
 }  // namespace vats5

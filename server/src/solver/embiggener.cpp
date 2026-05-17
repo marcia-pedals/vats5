@@ -1126,13 +1126,10 @@ std::optional<RefineResult> DoRefine(
   int lb = 0;
   int ub = std::numeric_limits<int>::max();
   std::vector<PointInstant> ub_tour;
+  std::vector<PointInstant> final_tour;
 
   int refine_round = 0;
   while (true) {
-    if (refine_round >= 2) {
-      return RefineResult{lb, ub, ub_tour};
-    }
-
     // std::cout << "===== REFINE ROUND " << refine_round << " =====\n";
     refine_round += 1;
     // state.PrintMemStats(cache);
@@ -1178,7 +1175,12 @@ std::optional<RefineResult> DoRefine(
     //           << TimeSinceServiceStart{t_actual} << "\n";
     if (t_actual < ub) {
       ub = t_actual;
-      ub_tour = std::move(trajectory);
+      ub_tour = trajectory;
+    }
+    final_tour = std::move(trajectory);
+
+    if (refine_round >= 10) {
+      return RefineResult{lb, ub, ub_tour, final_tour};
     }
 
     std::optional<int> total_delta = 0;
@@ -1215,7 +1217,7 @@ std::optional<RefineResult> DoRefine(
     // }
     // std::cout << "\n";
     if (total_delta == 0) {
-      return RefineResult{lb, ub, ub_tour};
+      return RefineResult{lb, ub, ub_tour, final_tour};
     }
   }
 }
@@ -1272,6 +1274,192 @@ int EstimateCost(
     return std::numeric_limits<int>::max();
   }
   return result->optimal_value;
+}
+
+DeltaLBResult DeltaLB(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    TimeSinceServiceStart t0,
+    int lb_rel,
+    const std::vector<StopId>& forbid_repeat_stops
+) {
+  AssertOrRaise(forbid_repeat_stops.size() <= 32);
+
+  std::unordered_map<StopId, int> forbid_bit;
+  for (std::size_t i = 0; i < forbid_repeat_stops.size(); ++i) {
+    forbid_bit[forbid_repeat_stops[i]] = static_cast<int>(i);
+  }
+  auto get_bit = [&](StopId s) -> int {
+    auto it = forbid_bit.find(s);
+    return it == forbid_bit.end() ? -1 : it->second;
+  };
+  unsigned full_mask = forbid_repeat_stops.empty()
+                           ? 0u
+                           : ((1u << forbid_repeat_stops.size()) - 1);
+
+  std::vector<PointInstant> end_points;
+  end_points.reserve(state.by_back.size());
+  for (const auto& [point, _] : state.by_back) {
+    end_points.push_back(point);
+  }
+  std::sort(
+      end_points.begin(),
+      end_points.end(),
+      [](const PointInstant& a, const PointInstant& b) { return a.t < b.t; }
+  );
+
+  struct ParentEdge {
+    PointInstant from;
+    unsigned from_mask;
+    int pi;
+  };
+
+  using PointMap = std::unordered_map<PointInstant, int>;
+  using PointParents = std::unordered_map<PointInstant, ParentEdge>;
+
+  PointInstant start_point{problem.boundary.start, t0};
+  int K = static_cast<int>(problem.required.size());
+  int num_masks = static_cast<int>(1u << forbid_repeat_stops.size());
+  std::vector<std::vector<PointMap>> delta_min(
+      K + 1, std::vector<PointMap>(num_masks)
+  );
+  std::vector<std::vector<PointParents>> parent(
+      K + 1, std::vector<PointParents>(num_masks)
+  );
+  unsigned start_mask = 0;
+  if (int b = get_bit(start_point.s); b >= 0) start_mask |= 1u << b;
+  delta_min[1][start_mask][start_point] = 0;
+
+  for (int k = 2; k <= K; ++k) {
+    for (const PointInstant& end_point : end_points) {
+      for (size_t pi : state.by_back.at(end_point)) {
+        const LocalEmbiggenState& primitive_path = state.primitive_paths[pi];
+        std::span<const StopId> stops = cache.Get(primitive_path.path_index);
+        int num_stops = static_cast<int>(stops.size());
+        int prev_k = k - (num_stops - 1);
+        if (prev_k < 1) continue;
+
+        // Bitmask of forbid stops in stops[1..num_stops-1]. Skip the primitive
+        // path entirely if any forbid stop appears more than once within it.
+        unsigned added_mask = 0;
+        bool invalid = false;
+        for (int i = 1; i < num_stops; ++i) {
+          int b = get_bit(stops[i]);
+          if (b < 0) continue;
+          unsigned bit = 1u << b;
+          if (added_mask & bit) {
+            invalid = true;
+            break;
+          }
+          added_mask |= bit;
+        }
+        if (invalid) continue;
+
+        PointInstant front = primitive_path.Front(cache);
+        for (unsigned prev_mask = 0;
+             prev_mask < static_cast<unsigned>(num_masks);
+             ++prev_mask) {
+          if (prev_mask & added_mask) continue;
+          auto front_it = delta_min[prev_k][prev_mask].find(front);
+          if (front_it == delta_min[prev_k][prev_mask].end()) continue;
+          unsigned new_mask = prev_mask | added_mask;
+          int candidate = front_it->second + primitive_path.delta;
+          auto& cell = delta_min[k][new_mask];
+          auto [it, inserted] = cell.try_emplace(end_point, candidate);
+          if (inserted || candidate < it->second) {
+            it->second = candidate;
+            parent[k][new_mask][end_point] =
+                ParentEdge{front, prev_mask, static_cast<int>(pi)};
+          }
+        }
+      }
+    }
+  }
+
+  int result = std::numeric_limits<int>::max();
+  PointInstant best_end_point{};
+  unsigned best_end_mask = 0;
+  bool has_best = false;
+  for (const auto& [point, delta] : delta_min[K][full_mask]) {
+    if (!(point.s == problem.boundary.end)) continue;
+    if (point.t.seconds - t0.seconds < lb_rel) continue;
+    if (delta < result) {
+      result = delta;
+      best_end_point = point;
+      best_end_mask = full_mask;
+      has_best = true;
+    }
+  }
+
+  std::vector<PointInstant> points;
+  if (has_best) {
+    std::vector<int> edges_reversed;
+    PointInstant cur = best_end_point;
+    unsigned cur_mask = best_end_mask;
+    int cur_k = K;
+    while (cur_k > 1) {
+      auto p_it = parent[cur_k][cur_mask].find(cur);
+      if (p_it == parent[cur_k][cur_mask].end()) break;
+      int pi = p_it->second.pi;
+      edges_reversed.push_back(pi);
+      const LocalEmbiggenState& primitive_path = state.primitive_paths[pi];
+      int num_stops =
+          static_cast<int>(cache.Get(primitive_path.path_index).size());
+      cur = p_it->second.from;
+      cur_mask = p_it->second.from_mask;
+      cur_k -= num_stops - 1;
+    }
+    bool first_edge = true;
+    for (auto rit = edges_reversed.rbegin(); rit != edges_reversed.rend();
+         ++rit) {
+      const LocalEmbiggenState& primitive_path = state.primitive_paths[*rit];
+      std::span<const StopId> stops = cache.Get(primitive_path.path_index);
+      WalkStopsFromTFront(
+          completed,
+          stops,
+          primitive_path.t_front,
+          [&](int i, TimeSinceServiceStart t) {
+            if (!first_edge && i == 0) return true;
+            points.push_back(PointInstant{stops[i], t});
+            return true;
+          }
+      );
+      first_edge = false;
+    }
+  }
+
+  return DeltaLBResult{result, std::move(points)};
+}
+
+DeltaLBResult DeltaLBWithRepeatFix(
+    const ProblemState& problem,
+    const StepsAdjacencyList& completed,
+    const EmbiggenerState& state,
+    const PathCache& cache,
+    TimeSinceServiceStart t0,
+    int lb_rel
+) {
+  std::vector<StopId> forbid;
+  DeltaLBResult result;
+  for (int i = 0; i < 4; ++i) {
+    result = DeltaLB(problem, completed, state, cache, t0, lb_rel, forbid);
+    std::unordered_map<StopId, int> counts;
+    for (const PointInstant& p : result.points) counts[p.s] += 1;
+    std::vector<std::pair<StopId, int>> sorted_counts(
+        counts.begin(), counts.end()
+    );
+    std::sort(
+        sorted_counts.begin(),
+        sorted_counts.end(),
+        [](const auto& a, const auto& b) { return a.second > b.second; }
+    );
+    for (int i = 0; i < 1 && i < static_cast<int>(sorted_counts.size()); ++i) {
+      forbid.push_back(sorted_counts[i].first);
+    }
+  }
+  return result;
 }
 
 }  // namespace vats5

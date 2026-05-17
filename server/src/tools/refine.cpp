@@ -30,12 +30,15 @@ StopId FindStopByGtfsId(
 struct BnbState {
   int lb;
   int estimate;
+  int delta_lb;
+  std::vector<PointInstant> delta_lb_points;
   std::vector<PointBound> known_points;
   std::unordered_set<PointInstant> forbidden_points;
   EmbiggenerState state;
 
   bool operator<(const BnbState& other) const {
-    return estimate > other.estimate;
+    return lb > other.lb;
+    // return estimate > other.estimate;
   }
 };
 
@@ -52,27 +55,74 @@ void Bnb(
 
   std::vector<BnbState> q;
   auto push = [&](BnbState&& s) {
-    s.estimate = EstimateCost(problem, completed, s.state, cache);
+    // s.estimate = EstimateCost(problem, completed, s.state, cache);
+    DeltaLBResult dlr =
+        DeltaLBWithRepeatFix(problem, completed, s.state, cache, t0, s.lb);
+    s.delta_lb = dlr.delta;
+    s.delta_lb_points = std::move(dlr.points);
+    s.lb += s.delta_lb;
     q.push_back(std::move(s));
     std::push_heap(q.begin(), q.end());
   };
 
+  // Diving: after expanding a node, the "require" child is held in `dive`
+  // and processed in the next iteration without going through the heap.
+  // When the dive hits a leaf (any pruning), `dive` is empty and we pop
+  // the best-estimate node from the heap.
+  std::optional<BnbState> dive;
+
   push(BnbState{initial});
 
   int bnb_round = 0;
-  while (q.size() > 0 && bnb_round < 2048) {
+  while ((dive.has_value() || q.size() > 0) && bnb_round < 2048) {
     bnb_round += 1;
 
-    std::pop_heap(q.begin(), q.end());
-    BnbState cur = std::move(q.back());
-    q.pop_back();
+    BnbState cur;
+    bool is_dive;
+    if (dive.has_value()) {
+      cur = std::move(*dive);
+      dive.reset();
+      is_dive = true;
+    } else {
+      std::pop_heap(q.begin(), q.end());
+      cur = std::move(q.back());
+      q.pop_back();
+      is_dive = false;
+    }
 
-    std::cout << "bnb " << bnb_round << " take "
+    std::cout << "bnb " << bnb_round << (is_dive ? " dive " : " take ")
               << TimeSinceServiceStart{cur.lb} << " (est "
               << TimeSinceServiceStart{cur.estimate} << ")"
               << " (" << q.size() << " active)"
               << " (" << tour_cache.tours.size() << " distinct tours)"
               << "\n";
+
+    std::cout << "  delta lb: " << TimeSinceServiceStart{cur.delta_lb};
+    {
+      std::unordered_map<StopId, int> stop_counts;
+      for (const PointInstant& p : cur.delta_lb_points) {
+        stop_counts[p.s] += 1;
+      }
+      std::vector<std::pair<StopId, int>> sorted_counts(
+          stop_counts.begin(), stop_counts.end()
+      );
+      std::sort(
+          sorted_counts.begin(),
+          sorted_counts.end(),
+          [](const auto& a, const auto& b) { return a.second > b.second; }
+      );
+      std::cout << " (" << cur.delta_lb_points.size() << " points, "
+                << stop_counts.size() << " distinct stops; top:";
+      for (int i = 0; i < 3 && i < static_cast<int>(sorted_counts.size());
+           ++i) {
+        std::cout << (i == 0 ? " " : "; ")
+                  << problem.StopName(sorted_counts[i].first) << " ("
+                  << sorted_counts[i].second << ")";
+      }
+      std::cout << ")";
+    }
+    std::cout << "\n";
+
     if (cur.lb >= ub) {
       std::cout << "  pruned: reached ub\n";
       continue;
@@ -91,20 +141,21 @@ void Bnb(
     std::cout << "  best ub: " << TimeSinceServiceStart{ub} << "\n";
 
     // cur.known_points is START, k points, END.
-    // ub_tour matches known_points up to some divergence index, then deviates
-    // (the TSP relaxation may interleave non-known stops between consecutive
-    // known points). Find the first divergence and use that stop as the next
-    // constraint, inserted at that index in known_points.
+    // final_tour matches known_points up to some divergence index, then
+    // deviates (the TSP relaxation may interleave non-known stops between
+    // consecutive known points). Find the first divergence and use that stop as
+    // the next constraint, inserted at that index in known_points.
     int insert_index = static_cast<int>(cur.known_points.size()) - 1;
     for (int i = 0; i + 1 < cur.known_points.size(); ++i) {
-      if (!(refine_result->ub_tour[i].s == cur.known_points[i].s) ||
-          !(refine_result->ub_tour[i].t >= cur.known_points[i].t_lo) ||
-          !(refine_result->ub_tour[i].t <= cur.known_points[i].t_hi)) {
+      if (!(refine_result->final_tour[i].s == cur.known_points[i].s) ||
+          !(refine_result->final_tour[i].t >= cur.known_points[i].t_lo) ||
+          !(refine_result->final_tour[i].t <= cur.known_points[i].t_hi)) {
         insert_index = i;
         break;
       }
     }
-    PointInstant first_not_known_point = refine_result->ub_tour[insert_index];
+    PointInstant first_not_known_point =
+        refine_result->final_tour[insert_index];
     std::cout << "  next constraint: "
               << problem.StopName(first_not_known_point.s) << " @ "
               << first_not_known_point.t << " (at index " << insert_index
@@ -123,21 +174,28 @@ void Bnb(
               first_not_known_point.t
           }
       );
-      push(
-          BnbState{
-              .lb = refine_result->lb,
-              .known_points = known_points,
-              .forbidden_points = cur.forbidden_points,
-              .state = ConstrainEmbiggenerState(
-                  problem,
-                  completed,
-                  cache,
-                  cur.state,
-                  known_points,
-                  cur.forbidden_points
-              ),
-          }
+      BnbState require_state{
+          .lb = refine_result->lb,
+          .known_points = known_points,
+          .forbidden_points = cur.forbidden_points,
+          .state = ConstrainEmbiggenerState(
+              problem,
+              completed,
+              cache,
+              cur.state,
+              known_points,
+              cur.forbidden_points
+          ),
+      };
+      // require_state.estimate =
+      //     EstimateCost(problem, completed, require_state.state, cache);
+      DeltaLBResult require_dlr = DeltaLBWithRepeatFix(
+          problem, completed, require_state.state, cache, t0, require_state.lb
       );
+      require_state.delta_lb = require_dlr.delta;
+      require_state.delta_lb_points = std::move(require_dlr.points);
+      require_state.lb += require_state.delta_lb;
+      dive = std::move(require_state);
     }
 
     {
