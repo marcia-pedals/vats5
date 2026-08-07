@@ -1,59 +1,65 @@
-# VATS5
+# VATS5 - "Visit All The Stops"
 
-## Main Algorithm
+Given transit schedules and a set of target stops, computes the **exact fastest route** to visit all the stops. Also allows walking/cycling/etc transfers between stops using a configurable "as-the-crow-flies" speed.
 
-Do a branch and bound, using a normal TSP solver as a subcomponent.
+Supports problem instances with transfers on non-target systems (e.g. using Caltrain or local busses to cut across BART lines). These instances are much harder than instances that only allow trips on the target system because the graph gets much denser.
 
-Upper and lower bounds. Calculate the pairwise shortest durations (taking actual schedules into
-account) between all target stops, use those as weights for a complete graph on all the stops, and
-solve TSP on that graph. The cost of the TSP solution is a lower bound on the cost of the actual
-solution. The actual fastest time it would take to visit the stations in that order is an upper
-bound on the cost of the actual solution.
+The current implemented approach can solve **BART (50 stops, 5 lines)** or **VTA Light Rail (60 stops, 3 lines)**, including transfers using all other transit in the region, in **~1 minute on an M5 MacBook Pro**.
 
-Branch. Choose any ordered pair of target stations (A, B). The actual solution either does not (left
-branch) or does (right branch) have a segment that stops at A then B without stopping at any other
-target stations in between.
+I've been working on NYC Subway (~400 stops, ~30 lines). I do not yet know if there exist algorithms that make exact solutions computationally feasible. Maybe I will try to adapt some approximate TSP approaches to find an approximate solution, but I haven't focused on that yet.
 
-For the left branch, record A->B as a forbidden segment and disregard all paths that do A->B while
-calculating pairwise shortest durations.
+## Why?
 
-For the right branch, collapse A and B into a single stop AB, and combine(2) the steps(1) as follows:
+Fun. See https://www.transitruns.org, https://www.bart.gov/speedrun.
 
-* X->A->B steps are combined to X->AB steps.
-* B->X steps become AB->X steps.
-* X->A->Y steps are combined to X->Y steps.
-* X->B->Y (where Y != A) steps are combined to X->Y steps.
-* X->B->A->Y steps are combined to X->Y steps (which can be done by first combining the X->B->A
-  steps and then combining those with the A->Y steps).
+## Actually running it
 
-(1) What's a step? It's one of:
+There are a lot of different undocumented configuration formats and preprocessing / solving utilities that you need to chain together because I've been actively experimenting. Let me know if you want to actually run this and I can clean them up a bit.
 
-* A scheduled step (origin_stop: StopId, destination_stop: StopId, origin_time: Time,
-  destination_time: Time, origin_trip_id: TripId | None, destination_trip_id: TripId | None)
-  representing a single step of a scheduled trip. The trip ids are important for calculating
-  required connection times between steps: e.g. if you come in and leave a stop on the same trip id,
-  you're just sitting in the same vehicle so you don't need a min connection time. For steps that
-  come directly from the underlying schedule, origin_trip_id and destination_trip_id are equal and
-  defined. When we collapse stops though (see "right branch" above), the collapsed step might start
-  (origin_trip_id) on a different trip than it ends up (destination_trip_id), and one or both could
-  be None if the collapsed step starts or ends with a walking step.
-* A walking step (origin_stop: StopId, destination_stop: StopId, duration: Duration) representing
-  walking between stops.
+Making a super easy interface, and maybe hosting on the web so that anyone can query it, is _future work_.
 
-(2) What's it mean to combine X->Y->Z steps? You take the cross product of all the X->Y steps with
-all the Y->Z steps, filtered for pairs that you can actually ride based on the schedule and min
-connection times, and each one of these pairs becomes a step X->Z. You don't need to actually
-process or emit all `O(m*n)` pairs because there are `O(min(m, n))` that dominate in the sense that
-for any pair you can find one of the dominating pairs that departs at a later-or-same time and
-arrives at an earlier-or-same time. You can find these in `O(min(m, n))` time with the two sliding
-pointer approach. (Not completely true that an optimal solution to the overall problem will always
-use one of these dominating pairs: e.g. it's possible that it's worth it to arrive at Z later if you
-arrive on a different train that requires less min connection time for the onward journey. A bit of
-logic in the sliding pointer combiner should be able to detect these and also include them. I'll
-figure it out while writing the logic.)
+## Approach outline
 
-Selecting branch. Ideally we select a branch where the left side (forbid A->B) has a really high
-lower bound that lets us quickly disprove it. Chosing an arbitrary segment from the current upper
-bound route seems like a good heuristic for this, because the current upper bound route is probably
-close to the optimal route and therefore many of its segments are "good ones" that are costly to
-avoid.
+**Input.** Read GTFS transit schedules and extract all the trips on a specified date.
+
+**Prune.** There exists an optimal solution using only steps that are on shortest paths between target stops, so we can prune all other steps.
+
+**Guess a "covering set" of stops.** This is a subset of the target stops such that the optimal path visiting covering set happens to visit all the target stops. Solve using one of the approaches below. If the solution doesn't visit all stops, add some missing stops to the guess and try again.
+
+**Brute force.** If there are fewer than 9 stops, brute force check all permutations of the stops.
+
+**Branch-and-bound relaxation.** Otherwise, relax the problem to vanilla TSP, solve with Concorde, then branch-and-bound.
+
+## Approach details
+
+### Pruning
+
+We define a "step" to be: a single segment of a scheduled transit trip, from one stop at a specific time, to the next stop; or a walking segment from one stop at any time to any other stop.
+
+If we find a set of shortest paths from all `(target stop, time)` pairs to all other target stops, then there exists an optimal solution to the visit-all-target-stops problem that only uses steps from these shortest paths, because if we have any optimal solution, then we can replace each segment `(s_0, t_0) -> (s_1, t_1)` with one of our shortest paths `(s_0, t_0) -> (s_1, t_1')`, and `t_1' <= t_1` because it's a shortest path.
+
+This speeds up all our later operations by eliminating a lot of steps that can't contribute to an optimal solution.
+
+The main idea for finding these sets of shortest paths is to run a multi-target Dijkstra's-like search from every `(target stop, time)`, where we keep track of the "current time" at each search node rather than the "current weight" that plain Dijkstra's uses.
+
+Searching from every second-resolution time is too much work, so there is one imporant optimization: Instead of stepping forwards by one second after each query, step forwards to the next reachable departure time, which gives the same results with fewer searches TODO: Explain about walking, both why this is valid in light of walking and the trick about walking-reachable departures.
+
+The implementation also has a few straightforward memory layout optimizations and parallelizations of embarassingly-parallel bits.
+
+With all optimizations combined, this prunes the entire Bay Area Regional GTFS for BART or VTA Light Rail problem instances in seconds.
+
+### Covering sets
+
+TODO
+
+### Relaxation to vanilla TSP
+
+TODO
+
+### Branch and bound
+
+TODO
+
+## Next steps
+
+TODO
