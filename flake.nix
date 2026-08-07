@@ -75,6 +75,7 @@
             nlohmann_json
             nodejs
             pre-commit
+            python313
             sqlite
           ] ++ [
             concorde
