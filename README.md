@@ -1,22 +1,14 @@
 # VATS5 - "Visit All The Stops"
 
-Given transit schedules and a set of target stops, computes the **exact fastest route** to visit all the stops. Also allows walking/cycling/etc transfers between stops using a configurable "as-the-crow-flies" speed.
+Computes the **exact fastest route** to visit all the stops in a transit system, including **arbitary walking transfers** and **transfers to other systems**.
 
-Supports problem instances with transfers on non-target systems (e.g. using Caltrain or local busses to cut across BART lines). These instances are much harder than instances that only allow trips on the target system because the graph gets much denser.
+The current implemented approach can solve **BART (50 stops, 5 lines)** or **VTA Light Rail (60 stops, 3 lines)**, including walking and using other systems, in **~1 minute on an M5 MacBook Pro**.
 
-The current implemented approach can solve **BART (50 stops, 5 lines)** or **VTA Light Rail (60 stops, 3 lines)**, including transfers using all other transit in the region, in **~1 minute on an M5 MacBook Pro**.
-
-I've been working on NYC Subway (~400 stops, ~30 lines). I do not yet know if there exist algorithms that make exact solutions computationally feasible. Maybe I will try to adapt some approximate TSP approaches to find an approximate solution, but I haven't focused on that yet.
+NYC Subway (~400 stops, ~30 lines) is in progress. I do not yet know if there exist computationally feasible exact algorithms. Maybe I will adapt some approximate TSP approaches to find an approximate solution.
 
 ## Why?
 
-Fun. See https://www.transitruns.org, https://www.bart.gov/speedrun.
-
-## Actually running it
-
-There are a lot of different undocumented configuration formats and preprocessing / solving utilities that you need to chain together because I've been actively experimenting. Let me know if you want to actually run this and I can clean them up a bit.
-
-Making a super easy interface, and maybe hosting on the web so that anyone can query it, is _future work_.
+Fun algorithms. I like transit. See https://www.transitruns.org, https://www.bart.gov/speedrun.
 
 ## Approach outline
 
@@ -63,3 +55,9 @@ TODO
 ## Next steps
 
 TODO
+
+## Actually running it
+
+There are a lot of different undocumented configuration formats and preprocessing / solving utilities that you need to chain together because I've been actively experimenting. Let me know if you want to actually run this and I can clean them up a bit.
+
+Making a super easy interface, and maybe hosting on the web so that anyone can query it, is _future work_.
