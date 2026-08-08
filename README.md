@@ -16,7 +16,7 @@ Fun algorithms. I like transit. See https://www.transitruns.org, https://www.bar
 
 **Prune.** There exists an optimal solution using only steps that are on shortest paths between target stops, so we can prune all other steps.
 
-**Guess a "covering set" of stops.** This is a subset of the target stops such that the optimal path visiting covering set happens to visit all the target stops. Solve using one of the approaches below. If the solution doesn't visit all stops, add some missing stops to the guess and try again.
+**Guess a "covering set" of stops.** Choose a subset of the target stops and solve the problem for the subset. If the solution visits all the target stops, then we are done. Otherwise, add some missing stops to the subset and try again.
 
 **Brute force.** If there are fewer than 9 stops, brute force check all permutations of the stops.
 
@@ -34,7 +34,7 @@ This speeds up all our later operations by eliminating a lot of steps that can't
 
 The main idea for finding these sets of shortest paths is to run a multi-target Dijkstra's-like search from every `(target stop, time)`, where we keep track of the "current time" at each search node rather than the "current weight" that plain Dijkstra's uses.
 
-Searching from every second-resolution time is too much work, so there is one imporant optimization: Instead of stepping forwards by one second after each query, step forwards to the next reachable departure time, which gives the same results with fewer searches TODO: Explain about walking, both why this is valid in light of walking and the trick about walking-reachable departures.
+Searching from every second-resolution time is too much work, so there is one imporant optimization: Instead of stepping forwards by one second after each query, step forwards to the next reachable departure time, which gives the same results with fewer searches. (TODO: Explain about walking, both why this is valid in light of walking and the trick about walking-reachable departures).
 
 The implementation also has a few straightforward memory layout optimizations and parallelizations of embarassingly-parallel bits.
 
