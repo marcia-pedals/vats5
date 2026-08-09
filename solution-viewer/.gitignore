@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+src/routeTree.gen.ts
+vite.config.ts.timestamp-*
+.sv
+.pgdata
+.env
+.env.local
+.vercel
