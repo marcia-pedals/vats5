@@ -74,6 +74,7 @@
             ninja
             nlohmann_json
             nodejs
+            postgresql_17
             pre-commit
             python313
             sqlite

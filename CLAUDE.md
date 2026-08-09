@@ -19,6 +19,14 @@
 - `bin/viz logs` — tail the log file
 - Always run `bin/viz status` before attempting to start the server.
 
+## Solution Viewer
+
+- `solution-viewer/` is a separate Vite/tRPC app backed by PostgreSQL (Neon in production, a checkout-local cluster in development).
+- Use `bin/sv` to manage its dev server (same commands as `bin/viz`). Do NOT run `npm run dev` directly.
+- Use `bin/pg` to manage the local PostgreSQL cluster: `bin/pg init` on first setup, then `start`/`stop`/`status`/`psql`.
+- Always run `bin/sv status` / `bin/pg status` before attempting to start either.
+- Schema changes go in a new numbered file in `solution-viewer/migrations/`, applied with `npm run migrate`. Never edit an applied migration.
+
 ## Pull Requests
 
 - When creating a PR, always use a blank description (empty `--body ""`).

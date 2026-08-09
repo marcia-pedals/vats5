@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+/*
+ * Transit Control Center — shared design system with visualization/.
+ * Light-mode, information-dense control center aesthetic.
+ */
+
+@theme {
+  /* ── Surface colors (light palette) ── */
+  --color-tc-void: #f5f6f9;
+  --color-tc-base: #edeef2;
+  --color-tc-raised: #ffffff;
+  --color-tc-surface: #f0f1f4;
+  --color-tc-overlay: #e8e9ee;
+  --color-tc-subtle: #dfe1e8;
+
+  /* ── Border / divider ── */
+  --color-tc-border: #d0d3dc;
+  --color-tc-border-bright: #b8bcc8;
+
+  /* ── Text ── */
+  --color-tc-text: #1a1e2e;
+  --color-tc-text-muted: #5c6378;
+  --color-tc-text-dim: #8b90a0;
+
+  /* ── Status / accent colors ── */
+  --color-tc-green: #0db340;
+  --color-tc-green-dim: #d6f5df;
+  --color-tc-amber: #d69e00;
+  --color-tc-amber-dim: #fef4d6;
+  --color-tc-red: #dc2a38;
+  --color-tc-red-dim: #fde0e2;
+  --color-tc-cyan: #0094b3;
+  --color-tc-cyan-dim: #d5f0f7;
+  --color-tc-blue: #2d6ae0;
+  --color-tc-blue-dim: #dde8fc;
+  --color-tc-magenta: #a040d0;
+
+  /* ── Typography ── */
+  --font-mono: "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-sans: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
+  --font-display: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
+
+  /* ── Spacing ── */
+  --spacing-panel: 1rem;
+
+  /* ── Radius ── */
+  --radius-panel: 0.375rem;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-tc-void);
+    color: var(--color-tc-text);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-tc-void);
+    color: var(--color-tc-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  ::selection {
+    background-color: var(--color-tc-cyan-dim);
+    color: var(--color-tc-text);
+  }
+}
+
+@utility panel {
+  background-color: var(--color-tc-raised);
+  border: 1px solid var(--color-tc-border);
+  border-radius: var(--radius-panel);
+  padding: var(--spacing-panel);
+}

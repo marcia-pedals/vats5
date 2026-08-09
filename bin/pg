@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Manage a project-local PostgreSQL instance for the solution-viewer app.
+# The cluster lives entirely inside the checkout (solution-viewer/.pgdata) and
+# listens on a port derived from the checkout path, so multiple checkouts and
+# any system-wide postgres can coexist.
+#
+# Usage: pg {init|start|stop|restart|status|psql|url|destroy|logs}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+APP_DIR="$PROJECT_ROOT/solution-viewer"
+
+export PGDATA="$APP_DIR/.pgdata"
+LOG_FILE="$APP_DIR/.pgdata/postgres.log"
+ENV_FILE="$APP_DIR/.env.local"
+
+DB_NAME="solution_viewer"
+DB_USER="$(whoami)"
+
+# --- port derivation (same scheme as bin/viz, different base) ---
+if command -v md5 &>/dev/null; then
+  hex=$(echo -n "$PROJECT_ROOT" | md5 | head -c 4)
+elif command -v md5sum &>/dev/null; then
+  hex=$(echo -n "$PROJECT_ROOT" | md5sum | head -c 4)
+else
+  echo "error: neither md5 nor md5sum found" >&2
+  exit 1
+fi
+uint16=$((16#$hex))
+offset=$((uint16 % 1000))
+export PGPORT=$((15000 + offset))
+export PGHOST=localhost
+
+DATABASE_URL="postgresql://$DB_USER@localhost:$PGPORT/$DB_NAME"
+
+require_postgres() {
+  if ! command -v initdb &>/dev/null; then
+    echo "error: postgres not on PATH — run this inside the nix dev shell" >&2
+    exit 1
+  fi
+}
+
+is_running() {
+  pg_ctl status >/dev/null 2>&1
+}
+
+cluster_exists() {
+  [[ -f "$PGDATA/PG_VERSION" ]]
+}
+
+wait_until_ready() {
+  local i
+  for i in $(seq 1 30); do
+    if pg_isready -q -h localhost -p "$PGPORT"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "error: postgres did not become ready — check logs:" >&2
+  echo "  $LOG_FILE" >&2
+  return 1
+}
+
+do_start() {
+  require_postgres
+  if ! cluster_exists; then
+    echo "no cluster yet — run 'bin/pg init' first" >&2
+    exit 1
+  fi
+  if is_running; then
+    echo "postgres is already running on port $PGPORT"
+    return 0
+  fi
+  pg_ctl start -l "$LOG_FILE" -o "-p $PGPORT -k '$PGDATA'" -w >/dev/null
+  wait_until_ready
+  echo "postgres started on port $PGPORT"
+}
+
+do_stop() {
+  require_postgres
+  if ! cluster_exists || ! is_running; then
+    echo "postgres is not running"
+    return 0
+  fi
+  pg_ctl stop -m fast -w >/dev/null
+  echo "postgres stopped"
+}
+
+do_init() {
+  require_postgres
+
+  if cluster_exists; then
+    echo "cluster already exists at $PGDATA"
+  else
+    echo "creating cluster at $PGDATA..."
+    mkdir -p "$PGDATA"
+    # Restrictive perms are required by initdb.
+    chmod 700 "$PGDATA"
+    initdb --username="$DB_USER" --auth=trust --encoding=UTF8 --no-locale >/dev/null
+  fi
+
+  do_start
+
+  if psql -p "$PGPORT" -h localhost -d postgres -tAc \
+    "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+    echo "database '$DB_NAME' already exists"
+  else
+    createdb -p "$PGPORT" -h localhost "$DB_NAME"
+    echo "created database '$DB_NAME'"
+  fi
+
+  if [[ -f "$ENV_FILE" ]]; then
+    echo "$ENV_FILE already exists — leaving it alone"
+    echo "  (expected DATABASE_URL: $DATABASE_URL)"
+  else
+    cat > "$ENV_FILE" <<EOF
+# Local development database, managed by bin/pg. Not committed.
+DATABASE_URL=$DATABASE_URL
+EOF
+    echo "wrote $ENV_FILE"
+  fi
+
+  echo
+  echo "next: cd solution-viewer && npm install && npm run migrate"
+}
+
+do_destroy() {
+  require_postgres
+  if ! cluster_exists; then
+    echo "no cluster at $PGDATA"
+    return 0
+  fi
+  if is_running; then
+    do_stop
+  fi
+  echo "removing $PGDATA"
+  rm -rf "$PGDATA"
+}
+
+print_status() {
+  require_postgres
+  if ! cluster_exists; then
+    echo "postgres cluster not initialized ($PGDATA missing)"
+    echo "  run: bin/pg init"
+    return 0
+  fi
+  if is_running; then
+    echo "postgres is running"
+    echo "  port: $PGPORT"
+    echo "  data: $PGDATA"
+    echo "  url:  $DATABASE_URL"
+    echo "  logs: $LOG_FILE"
+  else
+    echo "postgres is stopped (cluster exists at $PGDATA)"
+  fi
+}
+
+case "${1:-}" in
+  init)
+    do_init
+    ;;
+  start)
+    do_start
+    ;;
+  stop)
+    do_stop
+    ;;
+  restart)
+    do_stop
+    do_start
+    ;;
+  status)
+    print_status
+    ;;
+  psql)
+    require_postgres
+    shift
+    exec psql -p "$PGPORT" -h localhost -d "$DB_NAME" "$@"
+    ;;
+  url)
+    echo "$DATABASE_URL"
+    ;;
+  destroy)
+    do_destroy
+    ;;
+  logs)
+    if [[ -f "$LOG_FILE" ]]; then
+      exec tail -f "$LOG_FILE"
+    else
+      echo "no log file yet — start postgres first"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "usage: pg {init|start|stop|restart|status|psql|url|destroy|logs}"
+    exit 1
+    ;;
+esac

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/trpc/:path*", "destination": "/api/trpc/:path*" },
+    { "source": "/((?!api/|trpc/|assets/).*)", "destination": "/index.html" }
+  ]
+}

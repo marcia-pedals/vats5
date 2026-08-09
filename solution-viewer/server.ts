@@ -1,0 +1,31 @@
+import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import cors from "cors";
+import express from "express";
+// Loads DATABASE_URL from .env.local for local development. Reading env is
+// lazy in db.ts, so this side-effect import is fine anywhere in the list.
+import "./src/server/env";
+import { appRouter } from "./src/server/trpc";
+
+const TRPC_PORT = Number(process.env.TRPC_PORT);
+const CHECKOUT_NAME = process.env.CHECKOUT_NAME ?? "unknown";
+
+if (!TRPC_PORT) {
+  console.error("TRPC_PORT not set — use bin/sv to start the server");
+  process.exit(1);
+}
+
+const app = express();
+
+app.use(cors());
+
+app.use(
+  "/trpc",
+  createExpressMiddleware({
+    router: appRouter,
+    createContext: () => ({}),
+  })
+);
+
+app.listen(TRPC_PORT, "0.0.0.0", () => {
+  console.log(`tRPC server listening on http://0.0.0.0:${TRPC_PORT} [${CHECKOUT_NAME}]`);
+});
