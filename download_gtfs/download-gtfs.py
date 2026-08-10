@@ -9,13 +9,10 @@ Reads the API key from the `apikey` file next to this script (gitignored).
 """
 
 import argparse
-import io
 import sys
-import zipfile
-from datetime import date
 from pathlib import Path
 
-import api511
+from gtfs_feed import FeedDownloadError, dated_feed_dir, download_feed
 
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "feeds"
 
@@ -36,21 +33,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    raw = api511.get(
-        "datafeeds", api_key=api511.read_api_key(), operator_id=args.operator_id
-    )
-
-    # An unknown operator id comes back as a 200 with a non-zip error body.
-    if not zipfile.is_zipfile(io.BytesIO(raw)):
-        body = raw.decode("utf-8-sig", "replace").strip()
-        sys.exit(f"511.org did not return a zip for operator {args.operator_id!r}: {body}")
-
-    feed_dir = args.output_dir / f"{args.operator_id}_{date.today():%Y%m%d}"
-    feed_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        z.extractall(feed_dir)
-        names = z.namelist()
-    print(f"Extracted {len(names)} files to {feed_dir}")
+    feed_dir = dated_feed_dir(args.output_dir, args.operator_id)
+    try:
+        file_count = download_feed(args.operator_id, feed_dir)
+    except FeedDownloadError as error:
+        sys.exit(str(error))
+    print(f"Extracted {file_count} files to {feed_dir}")
 
 
 if __name__ == "__main__":

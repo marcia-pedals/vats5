@@ -189,9 +189,16 @@ struct PartialSolution {
   }
 };
 
+// Thrown when --timeout elapses. Checked between outer iterations and, more
+// finely, on every branch-and-bound search event.
+struct SolveTimeout : std::runtime_error {
+  SolveTimeout() : std::runtime_error("solve timed out") {}
+};
+
 PartialSolution PartialSolveBranchAndBound(
     std::unordered_set<StopId> required_subset,
-    const ProblemState& original_problem
+    const ProblemState& original_problem,
+    const SearchEventCallback& on_event
 ) {
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
@@ -222,7 +229,9 @@ PartialSolution PartialSolveBranchAndBound(
       original_problem.original_edges
   );
 
-  auto bb_result = BranchAndBoundSolve(partial_problem, &std::cout);
+  auto bb_result = BranchAndBoundSolve(
+      partial_problem, &std::cout, std::nullopt, -1, on_event
+  );
   if (bb_result.best_paths.empty()) {
     return PartialSolution{};
   }
@@ -586,7 +595,40 @@ int main(int argc, char* argv[]) {
       "Directory to write required_iteration_{n}.toml files"
   );
 
+  std::string solution_json_path;
+  app.add_option(
+      "--solution_json", solution_json_path, "Path to write solution info JSON"
+  );
+
+  double timeout_seconds = 0.0;
+  app.add_option(
+      "--timeout",
+      timeout_seconds,
+      "Give up after this many seconds (0 = no timeout). Checked between "
+      "iterations and on each branch-and-bound search event, so a single "
+      "long-running Concorde solve can overshoot it."
+  );
+
   CLI11_PARSE(app, argc, argv);
+
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (timeout_seconds > 0.0) {
+    deadline = std::chrono::steady_clock::now() +
+               std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                   std::chrono::duration<double>(timeout_seconds)
+               );
+  }
+  auto check_deadline = [&deadline]() {
+    if (deadline && std::chrono::steady_clock::now() > *deadline) {
+      throw SolveTimeout{};
+    }
+  };
+  SearchEventCallback on_search_event = nullptr;
+  if (deadline) {
+    on_search_event = [&check_deadline](const SearchEvent&) {
+      check_deadline();
+    };
+  }
 
   std::string viz_sqlite_path = viz::VizSqlitePath(input_path);
 
@@ -698,84 +740,116 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(required_subset_dir);
   }
 
-  for (int iteration = 0;; iteration++) {
-    WriteRequiredSubsetToml(
-        state, required_subset_dir, iteration, required_subset
-    );
-    std::cout << "=== Iteration " << iteration << ": branch and bound on "
-              << required_subset.size() << " leaves ===\n";
-    auto solution = PartialSolveBranchAndBound(required_subset, state);
+  // Outcome of the loop below, reported via --solution_json.
+  std::string status = "solved";
+  std::optional<int> optimal_duration_seconds;
 
-    // Choose the path that visits the most required stops.
-    auto best_solution_path_it =
-        solution.BestPathByRequiredStops(state.required);
-    if (best_solution_path_it == solution.paths.end()) {
-      std::cout << "No feasible paths found.\n";
-      return 1;
-    }
-
-    PartialSolutionPath best_solution_path = *best_solution_path_it;
-    std::cout << "Before greedy improve: "
-              << best_solution_path.path.IntermediateStopCount() << "\n";
-
-    best_solution_path =
-        GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
-            state, best_solution_path
-        );
-    std::cout << "After greedy improve: "
-              << best_solution_path.path.IntermediateStopCount() << "\n";
-
-    const Path& best_path = best_solution_path.path;
-    const std::vector<StopDistance> distances =
-        RequiredStopDistances(best_path, state);
-
-    // Write partial solution to viz SQLite.
-    {
-      PartialSolutionData data;
-      for (StopId leaf : required_subset) {
-        data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
-      }
-      for (const PartialSolutionPath& sol_path : solution.paths) {
-        data.paths.push_back(ToVizPath(sol_path.path));
-      }
-      data.best_path = ToVizPath(best_path);
-
-      viz::SqliteDb db(viz_sqlite_path);
-      viz::SqliteStmt stmt(
-          db,
-          "INSERT INTO partial_solutions (run_timestamp, iteration, data) "
-          "VALUES (?, ?, ?)"
+  try {
+    for (int iteration = 0;; iteration++) {
+      check_deadline();
+      WriteRequiredSubsetToml(
+          state, required_subset_dir, iteration, required_subset
       );
-      stmt.bind_text(1, run_timestamp.c_str());
-      stmt.bind_int(2, iteration);
-      std::string data_str = nlohmann::json(data).dump();
-      stmt.bind_text(3, data_str.c_str());
-      stmt.step_and_reset();
+      std::cout << "=== Iteration " << iteration << ": branch and bound on "
+                << required_subset.size() << " leaves ===\n";
+      auto solution =
+          PartialSolveBranchAndBound(required_subset, state, on_search_event);
+
+      // Choose the path that visits the most required stops.
+      auto best_solution_path_it =
+          solution.BestPathByRequiredStops(state.required);
+      if (best_solution_path_it == solution.paths.end()) {
+        std::cout << "No feasible paths found.\n";
+        status = "infeasible";
+        break;
+      }
+
+      PartialSolutionPath best_solution_path = *best_solution_path_it;
+      std::cout << "Before greedy improve: "
+                << best_solution_path.path.IntermediateStopCount() << "\n";
+
+      best_solution_path =
+          GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
+              state, best_solution_path
+          );
+      std::cout << "After greedy improve: "
+                << best_solution_path.path.IntermediateStopCount() << "\n";
+
+      const Path& best_path = best_solution_path.path;
+      const std::vector<StopDistance> distances =
+          RequiredStopDistances(best_path, state);
+
+      // Write partial solution to viz SQLite.
+      {
+        PartialSolutionData data;
+        for (StopId leaf : required_subset) {
+          data.leaves.push_back(state.stop_infos.at(leaf).gtfs_stop_id.v);
+        }
+        for (const PartialSolutionPath& sol_path : solution.paths) {
+          data.paths.push_back(ToVizPath(sol_path.path));
+        }
+        data.best_path = ToVizPath(best_path);
+
+        viz::SqliteDb db(viz_sqlite_path);
+        viz::SqliteStmt stmt(
+            db,
+            "INSERT INTO partial_solutions (run_timestamp, iteration, data) "
+            "VALUES (?, ?, ?)"
+        );
+        stmt.bind_text(1, run_timestamp.c_str());
+        stmt.bind_int(2, iteration);
+        std::string data_str = nlohmann::json(data).dump();
+        stmt.bind_text(3, data_str.c_str());
+        stmt.step_and_reset();
+      }
+
+      std::cout << "\n" << best_path.Debug(state);
+
+      if (distances.empty()) {
+        std::cout << "\nAll required stops are visited.\n";
+        optimal_duration_seconds = best_path.DurationSeconds();
+        break;
+      }
+
+      std::cout << "\nRequired stops NOT visited (" << distances.size()
+                << "):\n";
+      for (const auto& sd : distances) {
+        std::cout << "  " << state.StopName(sd.unvisited_stop)
+                  << " (distance: " << sd.distance
+                  << ", nearest: " << state.StopName(sd.nearest_path_stop)
+                  << ")\n";
+      }
+
+      // Add the farthest unvisited stop to leaves for the next iteration.
+      StopId farthest = distances.back().unvisited_stop;
+      std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
+                << "\n\n";
+      state.required.VisitGroupStops(farthest, [&](StopId s) {
+        required_subset.insert(s);
+      });
     }
-
-    std::cout << "\n" << best_path.Debug(state);
-
-    if (distances.empty()) {
-      std::cout << "\nAll required stops are visited.\n";
-      break;
-    }
-
-    std::cout << "\nRequired stops NOT visited (" << distances.size() << "):\n";
-    for (const auto& sd : distances) {
-      std::cout << "  " << state.StopName(sd.unvisited_stop)
-                << " (distance: " << sd.distance
-                << ", nearest: " << state.StopName(sd.nearest_path_stop)
-                << ")\n";
-    }
-
-    // Add the farthest unvisited stop to leaves for the next iteration.
-    StopId farthest = distances.back().unvisited_stop;
-    std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
-              << "\n\n";
-    state.required.VisitGroupStops(farthest, [&](StopId s) {
-      required_subset.insert(s);
-    });
+  } catch (const SolveTimeout&) {
+    std::cout << "\nTimed out after " << timeout_seconds << " seconds.\n";
+    status = "timeout";
   }
 
-  return 0;
+  if (!solution_json_path.empty()) {
+    nlohmann::json solution_info;
+    solution_info["status"] = status;
+    if (optimal_duration_seconds.has_value()) {
+      solution_info["optimal_duration_seconds"] = *optimal_duration_seconds;
+    }
+    if (status == "timeout") {
+      solution_info["timeout_seconds"] = timeout_seconds;
+    }
+    std::ofstream solution_out(solution_json_path);
+    if (!solution_out.is_open()) {
+      std::cerr << "Error: could not write " << solution_json_path << "\n";
+      return 1;
+    }
+    solution_out << solution_info.dump(2) << "\n";
+    std::cout << "Saved solution info to: " << solution_json_path << "\n";
+  }
+
+  return status == "solved" ? 0 : 1;
 }

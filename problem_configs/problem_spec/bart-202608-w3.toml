@@ -1,0 +1,7 @@
+problem_spec_id = "bart-202608-w3"
+gtfs_source_id = "bayarea"
+target_stops_id = "bart-202608"
+title = "walk 3m/s"
+
+max_walking_distance = 500
+walking_speed = 3

@@ -33,25 +33,76 @@ async function query(sql: string, params: unknown[] = []): Promise<unknown[]> {
 
 // --- Schemas ---
 
-const HelloWorldRowSchema = z.object({
-  id: z.number(),
-  message: z.string(),
-  created_at: z.date(),
+// What pipeline/run.py stores in problem_instance.data. `status` is "solved",
+// "timeout", or one of the failure statuses; the other fields depend on it.
+const SolutionDataSchema = z
+  .object({
+    status: z.string(),
+    optimal_duration_seconds: z.number().optional(),
+    timeout_seconds: z.number().optional(),
+    returncode: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const SolutionRowSchema = z.object({
+  problem_instance_id: z.string(),
+  problem_spec_id: z.string(),
+  spec_title: z.string(),
+  target_stops_id: z.string(),
+  target_stops_title: z.string(),
+  service_date: z.string(),
+  gtfs_instance_id: z.string(),
+  data: SolutionDataSchema,
+});
+export type Solution = z.infer<typeof SolutionRowSchema>;
+
+// One GTFS fetch, i.e. one pipeline run.
+const RunRowSchema = z.object({
+  gtfs_instance_id: z.string(),
+  fetched_at: z.date(),
 });
 
-const HelloWorldSchema = z.object({
-  id: z.number(),
-  message: z.string(),
-  created_at: z.string(),
-});
-export type HelloWorld = z.infer<typeof HelloWorldSchema>;
+const RunSchema = RunRowSchema.extend({ fetched_at: z.string() });
+export type Run = z.infer<typeof RunSchema>;
 
 // --- Queries ---
 
-export async function listHelloWorld(): Promise<HelloWorld[]> {
-  const rows = await query("SELECT id, message, created_at FROM hello_world ORDER BY id");
+/** Every GTFS fetch that the pipeline has run against, newest first. */
+export async function listRuns(): Promise<Run[]> {
+  const rows = await query(`
+    SELECT gtfs_instance_id, fetched_at
+    FROM gtfs_instance
+    ORDER BY fetched_at DESC
+  `);
   return z
-    .array(HelloWorldRowSchema)
+    .array(RunRowSchema)
     .parse(rows)
-    .map((row) => ({ ...row, created_at: row.created_at.toISOString() }));
+    .map((row) => ({ ...row, fetched_at: row.fetched_at.toISOString() }));
+}
+
+/** Every problem instance solved against one GTFS fetch. */
+export async function listSolutions(gtfsInstanceId: string): Promise<Solution[]> {
+  const rows = await query(
+    `
+    SELECT instance.problem_instance_id,
+           instance.problem_spec_id,
+           spec.title AS spec_title,
+           spec.target_stops_id,
+           stops.title AS target_stops_title,
+           instance.service_date,
+           instance.gtfs_instance_id,
+           instance.data
+    FROM problem_instance AS instance
+    JOIN problem_spec AS spec
+      ON spec.problem_spec_id = instance.problem_spec_id
+     AND spec.gtfs_source_id = instance.gtfs_source_id
+    JOIN target_stops AS stops
+      ON stops.target_stops_id = spec.target_stops_id
+     AND stops.gtfs_source_id = spec.gtfs_source_id
+    WHERE instance.gtfs_instance_id = $1
+    ORDER BY stops.title, instance.service_date, instance.problem_spec_id
+  `,
+    [gtfsInstanceId]
+  );
+  return z.array(SolutionRowSchema).parse(rows);
 }
