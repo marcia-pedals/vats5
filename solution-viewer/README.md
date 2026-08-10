@@ -9,7 +9,12 @@ backed by PostgreSQL instead of SQLite:
 - **Database**: PostgreSQL via `pg`. Local cluster in development, Neon in
   production.
 
-Right now it renders every row of the `hello_world` table.
+`/solutions` redirects to the newest pipeline run and shows its solved problem
+instances, grouped by target stop set: service dates down, problem specs
+across. The run selector switches between runs, and the run id is in the URL
+(`/solutions/{gtfs_instance_id}`).
+
+The rows come from `pipeline/run.py` — see `pipeline/` for how they get there.
 
 ## Local development
 
