@@ -25,13 +25,15 @@ CREATE TABLE target_stops (
   UNIQUE (target_stops_id, gtfs_source_id)
 );
 
+-- Titles are scoped to the target stop set (the UI shows them as columns under
+-- a target_stops heading), so they only have to be unique within one set.
 CREATE TABLE problem_spec (
   problem_spec_id slug PRIMARY KEY,
   gtfs_source_id slug NOT NULL REFERENCES gtfs_source (gtfs_source_id),
   target_stops_id slug NOT NULL,
   title VARCHAR(128) NOT NULL,
   data JSONB NOT NULL,
-  UNIQUE (gtfs_source_id, title),
+  UNIQUE (gtfs_source_id, target_stops_id, title),
   UNIQUE (problem_spec_id, gtfs_source_id),
   FOREIGN KEY (target_stops_id, gtfs_source_id)
     REFERENCES target_stops (target_stops_id, gtfs_source_id)
