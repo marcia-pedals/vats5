@@ -3,7 +3,7 @@
 
 target_stops_id = "bart-202608"
 gtfs_source_id = "bayarea"
-title = "BART 2020-present"
+title = "BART"
 
 stop_ids = [
   "mtc:12th-st-oakland-city-center-bart", # 12th St Oakland City Center BART: Orange-N, Orange-S, Red-N, Red-S, Yellow-N [North], Yellow-S

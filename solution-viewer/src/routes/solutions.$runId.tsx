@@ -102,28 +102,16 @@ function ErrorIcon() {
   );
 }
 
-function SolutionCell({
-  solution,
-  fastestSeconds,
-}: {
-  solution?: Solution;
-  fastestSeconds?: number;
-}) {
+function SolutionCell({ solution }: { solution?: Solution }) {
   if (!solution) {
     return <span className="text-tc-text-dim">·</span>;
   }
   const { status, optimal_duration_seconds } = solution.data;
 
   if (status === "solved" && optimal_duration_seconds !== undefined) {
-    // How much slower than this spec's best day, which is what makes one
-    // service date interesting relative to the others.
-    const excess = fastestSeconds !== undefined ? optimal_duration_seconds - fastestSeconds : 0;
     return (
-      <span title={`${optimal_duration_seconds} seconds`}>
-        <span className="text-tc-text">{formatDuration(optimal_duration_seconds)}</span>
-        {excess > 0 && (
-          <span className="ml-2 text-[0.6875rem] text-tc-amber">+{formatDuration(excess)}</span>
-        )}
+      <span className="text-tc-text" title={`${optimal_duration_seconds} seconds`}>
+        {formatDuration(optimal_duration_seconds)}
       </span>
     );
   }
@@ -155,33 +143,24 @@ function SolutionCell({
 }
 
 function GroupTable({ group }: { group: Group }) {
-  // Each spec's best day, so every other day can be shown relative to it.
-  const fastestBySpec = new Map<string, number>();
-  for (const spec of group.specs) {
-    const durations = group.serviceDates
-      .map((date) => group.cells.get(`${spec.id}|${date}`)?.data.optimal_duration_seconds)
-      .filter((value): value is number => value !== undefined);
-    if (durations.length > 0) {
-      fastestBySpec.set(spec.id, Math.min(...durations));
-    }
-  }
-
   return (
     <section className="panel space-y-3 overflow-x-auto">
       <header>
         <h2 className="font-display text-base text-tc-text">{group.targetStopsTitle}</h2>
       </header>
 
-      {/* Auto width: with only a few specs, a full-width table flings the
-          columns to opposite edges and makes them hard to compare. */}
-      <table className="w-auto font-mono text-sm border-collapse">
+      {/* Fixed column widths, chosen to be wider than any cell: every group's
+          table is then the same width, so the cards line up instead of each
+          sizing to its own contents. Full width instead would fling the columns
+          to opposite edges of the page and make them hard to compare. */}
+      <table className="w-auto table-fixed font-mono text-sm border-collapse">
         <thead>
           <tr className="text-tc-text-dim text-xs uppercase tracking-wider">
-            <th className="text-left font-medium py-1 pr-6">service date</th>
+            <th className="w-32 text-left font-medium py-1 pr-6 whitespace-nowrap">service date</th>
             {group.specs.map((spec) => (
               <th
                 key={spec.id}
-                className="text-right font-medium py-1 pl-10 normal-case whitespace-nowrap"
+                className="w-28 text-right font-medium py-1 pl-6 normal-case whitespace-nowrap"
                 title={spec.id}
               >
                 {spec.title}
@@ -201,12 +180,9 @@ function GroupTable({ group }: { group: Group }) {
                 {group.specs.map((spec) => (
                   <td
                     key={spec.id}
-                    className="py-1.5 pl-10 text-right tabular-nums whitespace-nowrap"
+                    className="py-1.5 pl-6 text-right tabular-nums whitespace-nowrap"
                   >
-                    <SolutionCell
-                      solution={group.cells.get(`${spec.id}|${serviceDate}`)}
-                      fastestSeconds={fastestBySpec.get(spec.id)}
-                    />
+                    <SolutionCell solution={group.cells.get(`${spec.id}|${serviceDate}`)} />
                   </td>
                 ))}
               </tr>
