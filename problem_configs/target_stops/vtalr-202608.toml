@@ -3,7 +3,7 @@
 
 target_stops_id = "vtalr-202608"
 gtfs_source_id = "bayarea"
-title = "VTA Light Rail 2019-present"
+title = "VTA Light Rail"
 
 stop_ids = [
   "PS_ALDR", # Alder Station: Orange Line
