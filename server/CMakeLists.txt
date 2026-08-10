@@ -17,8 +17,8 @@ find_package(SQLite3 REQUIRED)
 
 FetchContent_Declare(
   csv
-  GIT_REPOSITORY https://github.com/StaflSystems/csv-parser.git
-  GIT_TAG f30f50d3b4f6c4c0973dacb8e319faaca79d3960  # PR #277: fix --coverage linker error
+  GIT_REPOSITORY https://github.com/vincentlaucsb/csv-parser.git
+  GIT_TAG 5.3.0
 )
 FetchContent_MakeAvailable(csv)
 
