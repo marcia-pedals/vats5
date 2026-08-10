@@ -18,11 +18,7 @@ find_package(SQLite3 REQUIRED)
 FetchContent_Declare(
   csv
   GIT_REPOSITORY https://github.com/vincentlaucsb/csv-parser.git
-  # v5.3.0+. Replaces the std::deque field storage, whose growth raced with
-  # readers of already-parsed rows and segfaulted while loading stop_times.txt,
-  # with an atomically published fixed arena. Upstream also made --coverage
-  # opt-in, which is why we no longer need the StaflSystems fork.
-  GIT_TAG 7ec81a89e08f9383fbeebb466b0f1131327a25a5
+  GIT_TAG 5.3.0
 )
 FetchContent_MakeAvailable(csv)
 
