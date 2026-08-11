@@ -253,4 +253,92 @@ PartialSolution PartialSolveBruteForce(
   return PartialSolution{.paths = std::move(best_paths)};
 }
 
+TourPathSets TourPathSets::Compute(
+    const std::vector<StopId>& tour, MinimalPathSetCache& cache
+) {
+  size_t n = tour.size();
+  TourPathSets result{
+      .prefixes = std::vector<std::vector<Path>>(n),
+      .suffixes = std::vector<std::vector<Path>>(n),
+  };
+  for (size_t i = 1; i < n; ++i) {
+    std::span<const Path> edge = cache.Between(tour[i - 1], tour[i]);
+    result.prefixes[i] =
+        i == 1 ? std::vector<Path>(edge.begin(), edge.end())
+               : ExtendMinimalFeasiblePaths(result.prefixes[i - 1], edge);
+  }
+  for (size_t i = n - 1; i-- > 0;) {
+    std::span<const Path> edge = cache.Between(tour[i], tour[i + 1]);
+    result.suffixes[i] =
+        i + 2 == n ? std::vector<Path>(edge.begin(), edge.end())
+                   : ExtendMinimalFeasiblePaths(edge, result.suffixes[i + 1]);
+  }
+  return result;
+}
+
+PartialSolution NaivelyExtendPartialSolution(
+    const std::vector<StopId>& partial_solution_tour,
+    const TourPathSets& tour_paths,
+    StopId new_stop,
+    MinimalPathSetCache& cache
+) {
+  int best_duration = std::numeric_limits<int>::max();
+  std::vector<PartialSolutionPath> best_paths;
+
+  // Figure out the duration of the extended tour with the new stop in each
+  // position. Intentionally don't try the new stop first or last because first
+  // and last should always be START and END.
+  size_t n = partial_solution_tour.size();
+  for (size_t position = 1; position < n; ++position) {
+    std::span<const Path> to_new =
+        cache.Between(partial_solution_tour[position - 1], new_stop);
+    if (to_new.empty()) {
+      continue;
+    }
+    std::vector<Path> paths = ExtendMinimalFeasiblePaths(
+        to_new, cache.Between(new_stop, partial_solution_tour[position])
+    );
+    if (position > 1) {
+      paths =
+          ExtendMinimalFeasiblePaths(tour_paths.prefixes[position - 1], paths);
+    }
+    if (position + 1 < n) {
+      paths = ExtendMinimalFeasiblePaths(paths, tour_paths.suffixes[position]);
+    }
+    // Same as ComputeMinimalFeasiblePathsAlong: paths that depart before
+    // 00:00:00 don't count.
+    std::erase_if(paths, [](const Path& path) {
+      return path.merged_step.origin.time < TimeSinceServiceStart{0};
+    });
+
+    auto best_path_it = std::ranges::min_element(
+        paths, {}, [](const Path& path) { return path.DurationSeconds(); }
+    );
+    if (best_path_it == paths.end() ||
+        best_path_it->DurationSeconds() > best_duration) {
+      continue;
+    }
+    if (best_path_it->DurationSeconds() < best_duration) {
+      best_duration = best_path_it->DurationSeconds();
+      best_paths.clear();
+    }
+
+    std::vector<StopId> extended_tour = partial_solution_tour;
+    extended_tour.insert(extended_tour.begin() + position, new_stop);
+    for (Path& path : paths) {
+      if (path.DurationSeconds() != best_duration) {
+        continue;
+      }
+      NormalizeConsecutiveSteps(path.steps);
+      assert(ConsecutiveMergedSteps(path.steps) == path.merged_step);
+      best_paths.push_back({
+          .path = std::move(path),
+          .subset_tour = extended_tour,
+      });
+    }
+  }
+
+  return PartialSolution{.paths = best_paths};
+}
+
 }  // namespace vats5

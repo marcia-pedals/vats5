@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 #include "solver/test_util/problem_state_gen.h"
+#include "solver/tour_paths.h"
 
 namespace vats5 {
 namespace {
@@ -279,6 +281,193 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
         RC_ASSERT(visited.contains(rep));
       }
     }
+  }
+}
+
+// The tour of `stops`, with the boundary around it.
+std::vector<StopId> Tour(
+    const ProblemState& state, const std::vector<StopId>& stops
+) {
+  std::vector<StopId> tour{state.boundary.start};
+  tour.insert(tour.end(), stops.begin(), stops.end());
+  tour.push_back(state.boundary.end);
+  return tour;
+}
+
+PartialSolution ExtendTour(
+    const ProblemState& state, const std::vector<StopId>& tour, StopId new_stop
+) {
+  MinimalPathSetCache cache(state.minimal);
+  return NaivelyExtendPartialSolution(
+      tour, TourPathSets::Compute(tour, cache), new_stop, cache
+  );
+}
+
+TEST(NaivelyExtendPartialSolutionTest, InsertsTheNewStopWhereItIsCheapest) {
+  ProblemState state = LineState();
+  // b belongs between a and c: either end of the tour would need one of the
+  // expensive backwards edges.
+  PartialSolution extended =
+      ExtendTour(state, Tour(state, {StopId{0}, StopId{2}}), StopId{1});
+
+  ASSERT_FALSE(extended.paths.empty());
+  EXPECT_EQ(OptimalDuration(extended), 200);
+  for (const PartialSolutionPath& path : extended.paths) {
+    EXPECT_EQ(
+        TourNames(state, path.subset_tour),
+        (std::vector<std::string>{"START", "a", "b", "c", "END"})
+    );
+  }
+}
+
+TEST(NaivelyExtendPartialSolutionTest, KeepsTheOrderOfTheTourItExtends) {
+  ProblemState state = LineState();
+  // The tour is in the expensive order, and inserting a stop can't fix that:
+  // wherever b goes, one of c -> a's 1000 or c -> b -> a's 2000 is paid.
+  PartialSolution extended =
+      ExtendTour(state, Tour(state, {StopId{2}, StopId{0}}), StopId{1});
+
+  ASSERT_FALSE(extended.paths.empty());
+  EXPECT_EQ(OptimalDuration(extended), 1100);
+  for (const PartialSolutionPath& path : extended.paths) {
+    std::vector<std::string> names = TourNames(state, path.subset_tour);
+    EXPECT_LT(
+        std::ranges::find(names, "c") - names.begin(),
+        std::ranges::find(names, "a") - names.begin()
+    );
+  }
+}
+
+TEST(NaivelyExtendPartialSolutionTest, ExtendsTheEmptyTour) {
+  ProblemState state = LineState();
+  // Only one position to insert into, and no prefix or suffix around it.
+  PartialSolution extended = ExtendTour(state, Tour(state, {}), StopId{1});
+
+  ASSERT_FALSE(extended.paths.empty());
+  EXPECT_EQ(OptimalDuration(extended), 0);
+  for (const PartialSolutionPath& path : extended.paths) {
+    EXPECT_EQ(
+        TourNames(state, path.subset_tour),
+        (std::vector<std::string>{"START", "b", "END"})
+    );
+  }
+}
+
+TEST(NaivelyExtendPartialSolutionTest, UnreachableNewStopHasNoPaths) {
+  // Nothing but the boundary connects to c, so no position works: inserting it
+  // before a has no c -> a and inserting it after has no a -> c.
+  ProblemState state = MakeState(3, {Flex(0, 1, 100, 0), Flex(1, 0, 100, 1)});
+  PartialSolution extended =
+      ExtendTour(state, Tour(state, {StopId{0}}), StopId{2});
+
+  EXPECT_TRUE(extended.paths.empty());
+}
+
+// The optimum over the insertion positions, each computed from scratch rather
+// than from the tour's cached prefixes and suffixes.
+int ReferenceExtendedDuration(
+    const ProblemState& state, const std::vector<StopId>& tour, StopId new_stop
+) {
+  int result = std::numeric_limits<int>::max();
+  for (size_t position = 1; position < tour.size(); ++position) {
+    std::vector<StopId> extended_tour = tour;
+    extended_tour.insert(extended_tour.begin() + position, new_stop);
+    for (const Path& path :
+         ComputeMinimalFeasiblePathsAlong(extended_tour, state.minimal)) {
+      result = std::min(result, path.DurationSeconds());
+    }
+  }
+  return result;
+}
+
+// A tour of `state` to extend, together with the stop to insert into it. The
+// tour is in stop order, which the extension has to preserve whether or not it
+// is a good one.
+struct GeneratedExtension {
+  std::vector<StopId> tour;
+  StopId new_stop;
+};
+GeneratedExtension GenExtension(const ProblemState& state) {
+  std::vector<StopId> representatives;
+  for (StopId rep : state.required.GroupRepresentatives()) {
+    if (rep == state.boundary.start || rep == state.boundary.end) {
+      continue;
+    }
+    representatives.push_back(rep);
+  }
+  // GroupRepresentatives comes out of a hash set, so fix the order before
+  // generating against it; otherwise a shrink can pick a different tour.
+  std::ranges::sort(representatives, {}, &StopId::v);
+
+  size_t new_stop_index =
+      *rc::gen::inRange<size_t>(0, representatives.size()).as("new stop index");
+  std::vector<StopId> stops;
+  for (size_t i = 0; i < representatives.size(); ++i) {
+    if (i != new_stop_index && *rc::gen::arbitrary<bool>()) {
+      stops.push_back(representatives[i]);
+    }
+  }
+  return {
+      .tour = Tour(state, stops),
+      .new_stop = representatives[new_stop_index],
+  };
+}
+
+// Splicing into the tour's cached prefixes and suffixes must find the same
+// optimum as rebuilding each candidate tour's paths from scratch.
+RC_GTEST_PROP(
+    NaivelyExtendPartialSolutionTest, AgreesWithExtendingFromScratch, ()
+) {
+  ProblemState state = *GenProblemState();
+  GeneratedExtension extension = GenExtension(state);
+
+  PartialSolution extended =
+      ExtendTour(state, extension.tour, extension.new_stop);
+
+  RC_LOG() << "tour of " << extension.tour.size() << " stops, "
+           << extended.paths.size() << " extended paths\n";
+
+  RC_ASSERT(
+      OptimalDuration(extended) ==
+      ReferenceExtendedDuration(state, extension.tour, extension.new_stop)
+  );
+}
+
+// Every returned path must come from the tour it was given with the new stop
+// spliced in somewhere in the middle, and must achieve the optimum.
+RC_GTEST_PROP(
+    NaivelyExtendPartialSolutionTest, ReturnedPathsFollowTheExtendedTour, ()
+) {
+  ProblemState state = *GenProblemState();
+  GeneratedExtension extension = GenExtension(state);
+
+  PartialSolution extended =
+      ExtendTour(state, extension.tour, extension.new_stop);
+
+  int optimal = OptimalDuration(extended);
+  for (const PartialSolutionPath& path : extended.paths) {
+    RC_ASSERT(path.path.DurationSeconds() == optimal);
+
+    // The extended tour is the original with the new stop inserted, and never
+    // in the first or last position, which belong to the boundary.
+    std::vector<StopId> without_new_stop = path.subset_tour;
+    auto new_stop_it = std::ranges::find(without_new_stop, extension.new_stop);
+    RC_ASSERT(new_stop_it != without_new_stop.end());
+    RC_ASSERT(new_stop_it != without_new_stop.begin());
+    RC_ASSERT(new_stop_it != without_new_stop.end() - 1);
+    without_new_stop.erase(new_stop_it);
+    RC_ASSERT(without_new_stop == extension.tour);
+
+    // And the path visits the whole of it, in order.
+    std::vector<StopId> visited;
+    path.path.VisitAllStops([&](StopId stop) { visited.push_back(stop); });
+    auto tour_it = path.subset_tour.begin();
+    for (StopId stop : visited) {
+      if (tour_it != path.subset_tour.end() && stop == *tour_it) {
+        ++tour_it;
+      }
+    }
+    RC_ASSERT(tour_it == path.subset_tour.end());
   }
 }
 

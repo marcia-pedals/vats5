@@ -159,64 +159,10 @@ struct SolveTimeout : std::runtime_error {
   SolveTimeout() : std::runtime_error("solve timed out") {}
 };
 
-PartialSolution NaivelyExtendPartialSolution(
-    const ProblemState& original_problem,
-    const std::vector<StopId>& partial_solution_tour,
-    StopId new_stop
-) {
-  // Create an extended tour with the new stop inserted at index 0.
-  std::vector<StopId> extended_tour;
-  extended_tour.reserve(partial_solution_tour.size() + 1);
-  extended_tour.push_back(new_stop);
-  extended_tour.append_range(partial_solution_tour);
-
-  int best_duration = std::numeric_limits<int>::max();
-  std::vector<PartialSolutionPath> best_paths;
-
-  // Figure out the duration of the extended tour with the new stop in each
-  // position, by swapping it forwards. Intentionally don't try the new stop
-  // first or last because first and last should always be START and END.
-  for (int new_stop_index = 1; new_stop_index + 1 < extended_tour.size();
-       ++new_stop_index) {
-    // Swap forwards.
-    std::swap(extended_tour[new_stop_index - 1], extended_tour[new_stop_index]);
-    assert(extended_tour[new_stop_index] == new_stop);
-
-    std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.minimal
-    );
-    auto best_path_it = std::ranges::min_element(
-        paths, {}, [](const Path& path) { return path.DurationSeconds(); }
-    );
-    if (best_path_it == paths.end()) {
-      continue;
-    }
-    const Path& best_path = *best_path_it;
-    if (best_path.DurationSeconds() < best_duration) {
-      best_duration = best_path.DurationSeconds();
-      best_paths.clear();
-    }
-    if (best_path.DurationSeconds() == best_duration) {
-      // TODO: A lot of allocation and copying here, and this might be a pretty
-      // hot loop. And then we throw it all away if we find a better duration.
-      for (const Path& path : paths) {
-        if (path.DurationSeconds() > best_path.DurationSeconds()) {
-          continue;
-        }
-        best_paths.push_back({
-            .path = path,
-            .subset_tour = extended_tour,
-        });
-      }
-    }
-  }
-
-  return PartialSolution{.paths = best_paths};
-}
-
 PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     const ProblemState& original_problem,
-    const PartialSolutionPath& partial_path
+    const PartialSolutionPath& partial_path,
+    MinimalPathSetCache& cache
 ) {
   PartialSolutionPath result = partial_path;
 
@@ -229,10 +175,14 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
       });
     });
 
+    // Every candidate is spliced into the same tour, so its path sets are
+    // computed once here rather than once per candidate.
+    TourPathSets tour_paths = TourPathSets::Compute(result.subset_tour, cache);
+
     std::vector<PartialSolutionPath> improved;
     for (StopId new_stop : unvisited) {
       PartialSolution extended = NaivelyExtendPartialSolution(
-          original_problem, result.subset_tour, new_stop
+          result.subset_tour, tour_paths, new_stop, cache
       );
       auto best_extended_it =
           extended.BestPathByRequiredStops(original_problem.required);
@@ -583,6 +533,10 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(required_subset_dir);
   }
 
+  // Kept across iterations: the tours they extend share most of their stop
+  // pairs, so a pair computed in one iteration is usually asked for again.
+  MinimalPathSetCache path_cache(state.minimal);
+
   // Outcome of the loop below, reported via --solution_json.
   std::string status = "solved";
   std::optional<int> optimal_duration_seconds;
@@ -632,7 +586,7 @@ int main(int argc, char* argv[]) {
 
       best_solution_path =
           GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
-              state, best_solution_path
+              state, best_solution_path, path_cache
           );
       std::cout << "After greedy improve: "
                 << best_solution_path.path.IntermediateStopCount() << "\n";
