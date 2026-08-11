@@ -1,6 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { trpc } from "../client/trpc";
+import {
+  type SolutionPath,
+  SolutionPathView,
+  type SolutionRoute,
+  type SolutionStop,
+} from "../components/SolutionPath";
 import { usePageTitle } from "./__root";
 
 export const Route = createFileRoute("/solutions/$runId")({
@@ -30,6 +36,11 @@ type Solution = {
     timeout_seconds?: number;
     returncode?: number | null;
     trace?: TraceNode;
+    // Reported by iterative_expansion; absent for rows written before it did.
+    // Only a solve has a path, and `routes` covers the routes it uses.
+    stops?: SolutionStop[];
+    routes?: SolutionRoute[];
+    solution_path?: SolutionPath;
   };
 };
 
@@ -419,7 +430,8 @@ function TraceChart({ root }: { root: TraceNode }) {
 }
 
 function SolutionDetails({ solution, onClose }: { solution: Solution; onClose: () => void }) {
-  const { status, optimal_duration_seconds, trace, ...rest } = solution.data;
+  const { status, optimal_duration_seconds, trace, stops, routes, solution_path, ...rest } =
+    solution.data;
   const { weekday, label } = formatServiceDate(solution.service_date);
   const solved = status === "solved";
 
@@ -467,6 +479,17 @@ function SolutionDetails({ solution, onClose }: { solution: Solution; onClose: (
           {solution.gtfs_instance_id}/service_{solution.service_date}/{solution.problem_spec_id}
         </dd>
       </dl>
+
+      <div className="space-y-2 border-t border-tc-border pt-3">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Path</h3>
+        {solution_path && stops ? (
+          <SolutionPathView stops={stops} routes={routes ?? []} path={solution_path} />
+        ) : (
+          <p className="font-mono text-xs text-tc-text-muted">
+            {solved ? "No path recorded for this run." : "Only a solved instance has a path."}
+          </p>
+        )}
+      </div>
 
       <div className="space-y-2 border-t border-tc-border pt-3">
         <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Timing</h3>

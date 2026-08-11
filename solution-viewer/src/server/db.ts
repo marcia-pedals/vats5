@@ -53,9 +53,53 @@ const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
   })
 );
 
+// One stop of the problem, as iterative_expansion reports it. `id` is the GTFS
+// stop id, which is what a path step refers to.
+const SolutionStopSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  lat: z.number(),
+  lon: z.number(),
+  required: z.boolean(),
+});
+export type SolutionStop = z.infer<typeof SolutionStopSchema>;
+
+// One GTFS route+direction a leg of the solution path travels on. The colors
+// are GTFS route_color/route_text_color, without the "#", and may be empty.
+const SolutionRouteSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.string(),
+  text_color: z.string(),
+});
+export type SolutionRoute = z.infer<typeof SolutionRouteSchema>;
+
+// One leg of the solution path. `route_direction_id` is null for a walk.
+const PathStepSchema = z.object({
+  origin_stop_id: z.string(),
+  destination_stop_id: z.string(),
+  depart_time: z.number(),
+  arrive_time: z.number(),
+  is_flex: z.number(),
+  route_direction_id: z.string().nullable().optional(),
+});
+export type PathStep = z.infer<typeof PathStepSchema>;
+
+// The tour the solver settled on, without its synthetic START/END edges.
+// `steps` collapses each run of consecutive steps on one trip into a single
+// leg; `original_steps` keeps every stop the path passes through.
+const SolutionPathSchema = z.object({
+  steps: z.array(PathStepSchema),
+  original_steps: z.array(PathStepSchema),
+  duration: z.number(),
+});
+export type SolutionPath = z.infer<typeof SolutionPathSchema>;
+
 // What pipeline/run.py stores in problem_instance.data. `status` is "solved",
 // "timeout", or one of the failure statuses; the other fields depend on it.
-// `trace` is absent for rows written before it was recorded.
+// `trace` is absent for rows written before it was recorded, and so are
+// `stops`/`solution_path`/`routes`. Only a solve has a path; `routes` covers
+// exactly the routes that path uses.
 const SolutionDataSchema = z
   .object({
     status: z.string(),
@@ -63,6 +107,9 @@ const SolutionDataSchema = z
     timeout_seconds: z.number().optional(),
     returncode: z.number().nullable().optional(),
     trace: TraceNodeSchema.optional(),
+    stops: z.array(SolutionStopSchema).optional(),
+    routes: z.array(SolutionRouteSchema).optional(),
+    solution_path: SolutionPathSchema.optional(),
   })
   .passthrough();
 
