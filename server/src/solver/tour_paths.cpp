@@ -8,6 +8,21 @@
 
 namespace vats5 {
 
+std::span<const Path> MinimalPathSetCache::Between(
+    StopId origin, StopId destination
+) {
+  auto [it, inserted] = paths_.try_emplace(PlainEdge{origin, destination});
+  if (inserted) {
+    std::unordered_map<StopId, std::vector<Path>> found =
+        FindMinimalPathSet(minimal_, origin, {destination});
+    auto found_it = found.find(destination);
+    if (found_it != found.end()) {
+      it->second = std::move(found_it->second);
+    }
+  }
+  return it->second;
+}
+
 std::vector<Path> ExtendMinimalFeasiblePaths(
     std::span<const Path> ab_paths, std::span<const Path> bc_paths
 ) {
@@ -111,6 +126,16 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlong(
           return {};
         }
         return std::move(it->second);
+      }
+  );
+}
+
+std::vector<Path> ComputeMinimalFeasiblePathsAlong(
+    const std::vector<StopId>& stop_sequence, MinimalPathSetCache& cache
+) {
+  return ComputeMinimalFeasiblePathsAlongImpl(
+      stop_sequence, [&](StopId a, StopId b) -> std::span<const Path> {
+        return cache.Between(a, b);
       }
   );
 }

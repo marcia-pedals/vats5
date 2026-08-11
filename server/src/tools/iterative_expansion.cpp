@@ -159,55 +159,100 @@ struct SolveTimeout : std::runtime_error {
   SolveTimeout() : std::runtime_error("solve timed out") {}
 };
 
-PartialSolution NaivelyExtendPartialSolution(
-    const ProblemState& original_problem,
-    const std::vector<StopId>& partial_solution_tour,
-    StopId new_stop
-) {
-  // Create an extended tour with the new stop inserted at index 0.
-  std::vector<StopId> extended_tour;
-  extended_tour.reserve(partial_solution_tour.size() + 1);
-  extended_tour.push_back(new_stop);
-  extended_tour.append_range(partial_solution_tour);
+// The path sets along the parts of a tour, so that evaluating a stop inserted
+// into it costs a few merges instead of recomputing the whole tour.
+//
+// prefixes[i] runs from tour[0] to tour[i] and suffixes[i] from tour[i] to the
+// last stop, so splicing at position i is prefixes[i - 1] then the two new
+// edges then suffixes[i]. The empty ends (prefixes[0] and the last suffix) are
+// unused: a path set spanning no edges isn't representable.
+struct TourPathSets {
+  std::vector<std::vector<Path>> prefixes;
+  std::vector<std::vector<Path>> suffixes;
 
+  static TourPathSets Compute(
+      const std::vector<StopId>& tour, MinimalPathSetCache& cache
+  ) {
+    size_t n = tour.size();
+    TourPathSets result{
+        .prefixes = std::vector<std::vector<Path>>(n),
+        .suffixes = std::vector<std::vector<Path>>(n),
+    };
+    for (size_t i = 1; i < n; ++i) {
+      std::span<const Path> edge = cache.Between(tour[i - 1], tour[i]);
+      result.prefixes[i] =
+          i == 1 ? std::vector<Path>(edge.begin(), edge.end())
+                 : ExtendMinimalFeasiblePaths(result.prefixes[i - 1], edge);
+    }
+    for (size_t i = n - 1; i-- > 0;) {
+      std::span<const Path> edge = cache.Between(tour[i], tour[i + 1]);
+      result.suffixes[i] =
+          i + 2 == n ? std::vector<Path>(edge.begin(), edge.end())
+                     : ExtendMinimalFeasiblePaths(edge, result.suffixes[i + 1]);
+    }
+    return result;
+  }
+};
+
+PartialSolution NaivelyExtendPartialSolution(
+    const std::vector<StopId>& partial_solution_tour,
+    const TourPathSets& tour_paths,
+    StopId new_stop,
+    MinimalPathSetCache& cache
+) {
   int best_duration = std::numeric_limits<int>::max();
   std::vector<PartialSolutionPath> best_paths;
 
   // Figure out the duration of the extended tour with the new stop in each
-  // position, by swapping it forwards. Intentionally don't try the new stop
-  // first or last because first and last should always be START and END.
-  for (int new_stop_index = 1; new_stop_index + 1 < extended_tour.size();
-       ++new_stop_index) {
-    // Swap forwards.
-    std::swap(extended_tour[new_stop_index - 1], extended_tour[new_stop_index]);
-    assert(extended_tour[new_stop_index] == new_stop);
-
-    std::vector<Path> paths = ComputeMinimalFeasiblePathsAlong(
-        extended_tour, original_problem.minimal
+  // position. Intentionally don't try the new stop first or last because first
+  // and last should always be START and END.
+  size_t n = partial_solution_tour.size();
+  for (size_t position = 1; position < n; ++position) {
+    std::span<const Path> to_new =
+        cache.Between(partial_solution_tour[position - 1], new_stop);
+    if (to_new.empty()) {
+      continue;
+    }
+    std::vector<Path> paths = ExtendMinimalFeasiblePaths(
+        to_new, cache.Between(new_stop, partial_solution_tour[position])
     );
+    if (position > 1) {
+      paths =
+          ExtendMinimalFeasiblePaths(tour_paths.prefixes[position - 1], paths);
+    }
+    if (position + 1 < n) {
+      paths = ExtendMinimalFeasiblePaths(paths, tour_paths.suffixes[position]);
+    }
+    // Same as ComputeMinimalFeasiblePathsAlong: paths that depart before
+    // 00:00:00 don't count.
+    std::erase_if(paths, [](const Path& path) {
+      return path.merged_step.origin.time < TimeSinceServiceStart{0};
+    });
+
     auto best_path_it = std::ranges::min_element(
         paths, {}, [](const Path& path) { return path.DurationSeconds(); }
     );
-    if (best_path_it == paths.end()) {
+    if (best_path_it == paths.end() ||
+        best_path_it->DurationSeconds() > best_duration) {
       continue;
     }
-    const Path& best_path = *best_path_it;
-    if (best_path.DurationSeconds() < best_duration) {
-      best_duration = best_path.DurationSeconds();
+    if (best_path_it->DurationSeconds() < best_duration) {
+      best_duration = best_path_it->DurationSeconds();
       best_paths.clear();
     }
-    if (best_path.DurationSeconds() == best_duration) {
-      // TODO: A lot of allocation and copying here, and this might be a pretty
-      // hot loop. And then we throw it all away if we find a better duration.
-      for (const Path& path : paths) {
-        if (path.DurationSeconds() > best_path.DurationSeconds()) {
-          continue;
-        }
-        best_paths.push_back({
-            .path = path,
-            .subset_tour = extended_tour,
-        });
+
+    std::vector<StopId> extended_tour = partial_solution_tour;
+    extended_tour.insert(extended_tour.begin() + position, new_stop);
+    for (Path& path : paths) {
+      if (path.DurationSeconds() != best_duration) {
+        continue;
       }
+      NormalizeConsecutiveSteps(path.steps);
+      assert(ConsecutiveMergedSteps(path.steps) == path.merged_step);
+      best_paths.push_back({
+          .path = std::move(path),
+          .subset_tour = extended_tour,
+      });
     }
   }
 
@@ -216,7 +261,8 @@ PartialSolution NaivelyExtendPartialSolution(
 
 PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
     const ProblemState& original_problem,
-    const PartialSolutionPath& partial_path
+    const PartialSolutionPath& partial_path,
+    MinimalPathSetCache& cache
 ) {
   PartialSolutionPath result = partial_path;
 
@@ -229,10 +275,14 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
       });
     });
 
+    // Every candidate is spliced into the same tour, so its path sets are
+    // computed once here rather than once per candidate.
+    TourPathSets tour_paths = TourPathSets::Compute(result.subset_tour, cache);
+
     std::vector<PartialSolutionPath> improved;
     for (StopId new_stop : unvisited) {
       PartialSolution extended = NaivelyExtendPartialSolution(
-          original_problem, result.subset_tour, new_stop
+          result.subset_tour, tour_paths, new_stop, cache
       );
       auto best_extended_it =
           extended.BestPathByRequiredStops(original_problem.required);
@@ -583,6 +633,10 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(required_subset_dir);
   }
 
+  // Kept across iterations: the tours they extend share most of their stop
+  // pairs, so a pair computed in one iteration is usually asked for again.
+  MinimalPathSetCache path_cache(state.minimal);
+
   // Outcome of the loop below, reported via --solution_json.
   std::string status = "solved";
   std::optional<int> optimal_duration_seconds;
@@ -632,7 +686,7 @@ int main(int argc, char* argv[]) {
 
       best_solution_path =
           GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
-              state, best_solution_path
+              state, best_solution_path, path_cache
           );
       std::cout << "After greedy improve: "
                 << best_solution_path.path.IntermediateStopCount() << "\n";
