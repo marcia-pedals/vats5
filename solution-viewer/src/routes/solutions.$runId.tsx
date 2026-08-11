@@ -1,10 +1,20 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 import { trpc } from "../client/trpc";
 import { usePageTitle } from "./__root";
 
 export const Route = createFileRoute("/solutions/$runId")({
   component: RunPage,
 });
+
+/** One span of a solve's timing trace; see pipeline/run.py. */
+type TraceNode = {
+  name: string;
+  start_seconds: number;
+  duration_seconds: number;
+  metadata?: Record<string, unknown>;
+  children?: TraceNode[];
+};
 
 type Solution = {
   problem_instance_id: string;
@@ -19,6 +29,7 @@ type Solution = {
     optimal_duration_seconds?: number;
     timeout_seconds?: number;
     returncode?: number | null;
+    trace?: TraceNode;
   };
 };
 
@@ -102,47 +113,58 @@ function ErrorIcon() {
   );
 }
 
-function SolutionCell({ solution }: { solution?: Solution }) {
-  if (!solution) {
-    return <span className="text-tc-text-dim">·</span>;
-  }
+function SolutionCellContents({ solution }: { solution: Solution }) {
   const { status, optimal_duration_seconds } = solution.data;
 
   if (status === "solved" && optimal_duration_seconds !== undefined) {
-    return (
-      <span className="text-tc-text" title={`${optimal_duration_seconds} seconds`}>
-        {formatDuration(optimal_duration_seconds)}
-      </span>
-    );
+    return <span className="text-tc-text">{formatDuration(optimal_duration_seconds)}</span>;
   }
 
-  // Anything that is not a solve -- timeout included -- is a failure: an icon
-  // with everything needed to go find the logs in its tooltip.
-  const { returncode, ...rest } = solution.data;
-  const details = [
-    status.replace(/_/g, " "),
-    returncode === undefined || returncode === null ? null : `exit code ${returncode}`,
-    ...Object.entries(rest)
-      .filter(([key]) => key !== "status")
-      .map(([key, value]) => `${key}: ${JSON.stringify(value)}`),
-    `logs: ${solution.gtfs_instance_id}/service_${solution.service_date}/${solution.problem_spec_id}`,
-  ]
-    .filter((line) => line !== null)
-    .join("\n");
-
+  // Anything that is not a solve -- timeout included -- is a failure, shown as
+  // an icon; the details panel says what went wrong.
   return (
-    <span
-      className="inline-flex text-tc-red cursor-help align-middle"
-      title={details}
-      aria-label={details}
-      role="img"
-    >
+    <span className="inline-flex text-tc-red align-middle" role="img" aria-label={status}>
       <ErrorIcon />
     </span>
   );
 }
 
-function GroupTable({ group }: { group: Group }) {
+function SolutionCell({
+  solution,
+  selected,
+  onSelect,
+}: {
+  solution?: Solution;
+  selected: boolean;
+  onSelect: (solution: Solution) => void;
+}) {
+  if (!solution) {
+    return <span className="text-tc-text-dim">·</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={
+        "w-full rounded-panel px-2 py-0.5 text-right transition-colors " +
+        (selected ? "bg-tc-cyan-dim ring-1 ring-tc-cyan" : "hover:bg-tc-overlay cursor-pointer")
+      }
+      aria-pressed={selected}
+      onClick={() => onSelect(solution)}
+    >
+      <SolutionCellContents solution={solution} />
+    </button>
+  );
+}
+
+function GroupTable({
+  group,
+  selectedId,
+  onSelect,
+}: {
+  group: Group;
+  selectedId?: string;
+  onSelect: (solution: Solution) => void;
+}) {
   return (
     <section className="panel space-y-3 overflow-x-auto">
       <header>
@@ -177,14 +199,21 @@ function GroupTable({ group }: { group: Group }) {
                   <span className="text-tc-text">{weekday}</span>{" "}
                   <span className="text-tc-text-muted tabular-nums">{label}</span>
                 </td>
-                {group.specs.map((spec) => (
-                  <td
-                    key={spec.id}
-                    className="py-1.5 pl-6 text-right tabular-nums whitespace-nowrap"
-                  >
-                    <SolutionCell solution={group.cells.get(`${spec.id}|${serviceDate}`)} />
-                  </td>
-                ))}
+                {group.specs.map((spec) => {
+                  const solution = group.cells.get(`${spec.id}|${serviceDate}`);
+                  return (
+                    <td
+                      key={spec.id}
+                      className="py-1.5 pl-6 text-right tabular-nums whitespace-nowrap"
+                    >
+                      <SolutionCell
+                        solution={solution}
+                        selected={solution?.problem_instance_id === selectedId}
+                        onSelect={onSelect}
+                      />
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
@@ -277,15 +306,197 @@ function RunBar({ runId }: { runId: string }) {
   );
 }
 
+/** 3.14 -> "3.1s", 614.2 -> "10m14s". Wall-clock, not solution durations. */
+function formatSeconds(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
+}
+
+type TraceRow = { key: string; node: TraceNode; depth: number };
+
+function flattenTrace(node: TraceNode, depth = 0, key = "0"): TraceRow[] {
+  return [
+    { key, node, depth },
+    ...(node.children ?? []).flatMap((child, index) =>
+      flattenTrace(child, depth + 1, `${key}.${index}`)
+    ),
+  ];
+}
+
+// Bar color by depth, so the nesting reads at a glance. Deeper than this
+// repeats the last one.
+const TRACE_DEPTH_COLORS = ["bg-tc-blue", "bg-tc-cyan", "bg-tc-magenta"];
+
+// Chip color per value of a span's `solver` metadata, so that which solver ran
+// for which iteration reads down the column rather than having to be read.
+const SOLVER_CLASS: Record<string, string> = {
+  brute: "bg-tc-cyan-dim text-tc-cyan",
+  bnb: "bg-tc-blue-dim text-tc-blue",
+};
+
+/**
+ * A flame chart of one solve: every span laid out against the root's span, so
+ * gaps (time inside a span that nothing below accounts for) are visible.
+ */
+function TraceChart({ root }: { root: TraceNode }) {
+  const rows = flattenTrace(root);
+  // A zero-length root would put every bar at width 0; nothing to lay out.
+  const total = root.duration_seconds;
+  if (total <= 0) {
+    return <p className="font-mono text-xs text-tc-text-muted">Trace has no duration.</p>;
+  }
+
+  // Rows are laid out one grid each, so the column widths have to be fixed for
+  // them to line up; long span names truncate rather than shift the bars.
+  return (
+    <div className="space-y-1">
+      <div className="grid grid-cols-[16rem_1fr_4rem] items-center gap-3 font-mono text-[10px] uppercase tracking-wider text-tc-text-dim">
+        <span>span</span>
+        <span className="flex justify-between">
+          <span>0s</span>
+          <span>{formatSeconds(total)}</span>
+        </span>
+        <span className="text-right normal-case tracking-normal">took</span>
+      </div>
+
+      {rows.map(({ key, node, depth }) => {
+        const metadata = Object.entries(node.metadata ?? {});
+        return (
+          <div
+            key={key}
+            className="grid grid-cols-[16rem_1fr_4rem] items-center gap-3 rounded-panel py-0.5 font-mono text-xs hover:bg-tc-surface"
+            title={`${node.name}\nstart ${node.start_seconds.toFixed(1)}s\nduration ${node.duration_seconds.toFixed(1)}s`}
+          >
+            <span
+              className="truncate whitespace-nowrap text-tc-text"
+              style={{ paddingLeft: `${depth * 0.75}rem` }}
+            >
+              {node.name}
+              {metadata.map(([metaKey, value]) =>
+                metaKey === "solver" ? (
+                  // Which solver ran is the one piece of metadata worth
+                  // spotting without reading, so it gets a chip of its own.
+                  <span
+                    key={metaKey}
+                    className={`ml-1.5 rounded-sm px-1 ${
+                      SOLVER_CLASS[String(value)] ?? "bg-tc-subtle text-tc-text-muted"
+                    }`}
+                  >
+                    {String(value)}
+                  </span>
+                ) : (
+                  <span key={metaKey} className="ml-1.5 text-tc-text-dim">
+                    {metaKey.replace(/_/g, " ")} {String(value)}
+                  </span>
+                )
+              )}
+            </span>
+
+            <span className="relative block h-2.5 rounded-sm bg-tc-subtle">
+              <span
+                className={`absolute top-0 h-full rounded-sm ${
+                  TRACE_DEPTH_COLORS[Math.min(depth, TRACE_DEPTH_COLORS.length - 1)]
+                }`}
+                style={{
+                  left: `${(node.start_seconds / total) * 100}%`,
+                  width: `${(node.duration_seconds / total) * 100}%`,
+                  minWidth: "2px",
+                }}
+              />
+            </span>
+
+            <span className="text-right tabular-nums text-tc-text-muted">
+              {formatSeconds(node.duration_seconds)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SolutionDetails({ solution, onClose }: { solution: Solution; onClose: () => void }) {
+  const { status, optimal_duration_seconds, trace, ...rest } = solution.data;
+  const { weekday, label } = formatServiceDate(solution.service_date);
+  const solved = status === "solved";
+
+  return (
+    <section className="panel flex-1 min-w-0 space-y-4 sticky top-10">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-display text-base text-tc-text">
+            {solution.spec_title}{" "}
+            <span className="text-tc-text-muted">
+              · {weekday} {label}
+            </span>
+          </h2>
+          <p className="font-mono text-xs text-tc-text-dim">{solution.problem_spec_id}</p>
+        </div>
+        <button
+          type="button"
+          className="rounded-panel px-2 font-mono text-sm text-tc-text-dim hover:text-tc-text cursor-pointer"
+          onClick={onClose}
+          aria-label="Close details"
+        >
+          ✕
+        </button>
+      </header>
+
+      <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 font-mono text-xs">
+        <dt className="text-tc-text-dim">status</dt>
+        <dd className={solved ? "text-tc-green" : "text-tc-red"}>{status.replace(/_/g, " ")}</dd>
+        {optimal_duration_seconds !== undefined && (
+          <>
+            <dt className="text-tc-text-dim">optimal</dt>
+            <dd className="text-tc-text">
+              {formatDuration(optimal_duration_seconds)} ({optimal_duration_seconds}s)
+            </dd>
+          </>
+        )}
+        {Object.entries(rest).map(([key, value]) => (
+          <div key={key} className="contents">
+            <dt className="text-tc-text-dim">{key.replace(/_/g, " ")}</dt>
+            <dd className="text-tc-text break-all">{JSON.stringify(value)}</dd>
+          </div>
+        ))}
+        <dt className="text-tc-text-dim">logs</dt>
+        <dd className="text-tc-text break-all">
+          {solution.gtfs_instance_id}/service_{solution.service_date}/{solution.problem_spec_id}
+        </dd>
+      </dl>
+
+      <div className="space-y-2 border-t border-tc-border pt-3">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Timing</h3>
+        {trace ? (
+          <TraceChart root={trace} />
+        ) : (
+          <p className="font-mono text-xs text-tc-text-muted">
+            No timing trace recorded for this run.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function RunPage() {
   const { runId } = Route.useParams();
   usePageTitle(`Solutions ${runId}`);
   const solutionsQuery = trpc.listSolutions.useQuery({ gtfsInstanceId: runId });
-  const groups = groupByTargetStops(solutionsQuery.data ?? []);
+  const solutions = solutionsQuery.data ?? [];
+  const groups = groupByTargetStops(solutions);
+
+  // Held by id rather than by value so that switching runs drops a selection
+  // that the new run has no cell for.
+  const [selectedId, setSelectedId] = useState<string>();
+  const selected = solutions.find((solution) => solution.problem_instance_id === selectedId);
 
   return (
     <div className="min-h-screen px-6 py-10 flex justify-center">
-      <div className="w-full max-w-6xl space-y-6">
+      <div className="w-full max-w-7xl space-y-6">
         <header className="border-b border-tc-border pb-2">
           <h1 className="font-mono text-sm tracking-widest uppercase text-tc-text-muted">
             Solutions
@@ -311,9 +522,17 @@ function RunPage() {
         <div className="flex items-start gap-6">
           <div className="flex flex-col items-start gap-6">
             {groups.map((group) => (
-              <GroupTable key={group.targetStopsId} group={group} />
+              <GroupTable
+                key={group.targetStopsId}
+                group={group}
+                selectedId={selectedId}
+                onSelect={(solution) => setSelectedId(solution.problem_instance_id)}
+              />
             ))}
           </div>
+          {selected && (
+            <SolutionDetails solution={selected} onClose={() => setSelectedId(undefined)} />
+          )}
         </div>
       </div>
     </div>

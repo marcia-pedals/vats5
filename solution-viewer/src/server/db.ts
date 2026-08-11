@@ -33,14 +33,36 @@ async function query(sql: string, params: unknown[] = []): Promise<unknown[]> {
 
 // --- Schemas ---
 
+// One span of the hierarchical timing trace pipeline/run.py records for a
+// solve. `start_seconds` is relative to the start of the root span.
+export type TraceNode = {
+  name: string;
+  start_seconds: number;
+  duration_seconds: number;
+  metadata?: Record<string, unknown>;
+  children?: TraceNode[];
+};
+
+const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
+  z.object({
+    name: z.string(),
+    start_seconds: z.number(),
+    duration_seconds: z.number(),
+    metadata: z.record(z.unknown()).optional(),
+    children: z.array(TraceNodeSchema).optional(),
+  })
+);
+
 // What pipeline/run.py stores in problem_instance.data. `status` is "solved",
 // "timeout", or one of the failure statuses; the other fields depend on it.
+// `trace` is absent for rows written before it was recorded.
 const SolutionDataSchema = z
   .object({
     status: z.string(),
     optimal_duration_seconds: z.number().optional(),
     timeout_seconds: z.number().optional(),
     returncode: z.number().nullable().optional(),
+    trace: TraceNodeSchema.optional(),
   })
   .passthrough();
 
