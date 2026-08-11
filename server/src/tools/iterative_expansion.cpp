@@ -5,9 +5,11 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <numeric>
 #include <optional>
@@ -394,45 +396,129 @@ PartialSolutionPath GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
   return result;
 }
 
-// // Tries all permutations of `required_subset` as intermediate stops between
-// start and
-// // end, and returns the permutation yielding the shortest feasible path.
-// PartialSolution PartialSolveBruteForce(
-//     std::unordered_set<StopId> required_subset,
-//     const ProblemState& state) {
-//   std::vector<StopId> candidate_perm(required_subset.begin(),
-//   required_subset.end()); std::sort(candidate_perm.begin(),
-//   candidate_perm.end());
+// Solves the same partial problem as PartialSolveBranchAndBound, by trying
+// every order in which `required_subset` can be visited.
+//
+// The number of orders is factorial in the number of required groups, so this
+// is only worth doing for small subsets. It searches the orders as a tree so
+// that a shared prefix is only merged once, and prunes a prefix as soon as it
+// already takes longer than the best complete tour found so far.
+PartialSolution PartialSolveBruteForce(
+    const std::unordered_set<StopId>& required_subset,
+    const ProblemState& original_problem,
+    const std::function<void()>& check_deadline
+) {
+  StopId start = original_problem.boundary.start;
+  StopId end = original_problem.boundary.end;
 
-//   int best_duration = INT_MAX;
-//   PartialSolution best;
+  // Visiting any one stop of a group satisfies the whole group, so an order is
+  // a permutation of the groups together with a choice of stop within each.
+  std::map<StopId, std::vector<StopId>> stops_by_representative;
+  for (StopId stop : required_subset) {
+    if (stop == start || stop == end) {
+      continue;
+    }
+    stops_by_representative[original_problem.required.Representative(stop)]
+        .push_back(stop);
+  }
+  std::vector<std::vector<StopId>> groups;
+  for (auto& [representative, stops] : stops_by_representative) {
+    std::ranges::sort(stops);
+    groups.push_back(std::move(stops));
+  }
 
-//   do {
-//     std::vector<StopId> sequence;
-//     sequence.push_back(state.boundary.start);
-//     sequence.insert(sequence.end(), candidate_perm.begin(),
-//     candidate_perm.end()); sequence.push_back(state.boundary.end);
+  // All the paths between the stops a tour can visit, so that evaluating one
+  // more stop of an order is just a merge.
+  std::unordered_set<StopId> tour_stops = required_subset;
+  tour_stops.insert(start);
+  tour_stops.insert(end);
+  StepPathsAdjacencyList completed =
+      CompleteShortestPathsGraph(original_problem.minimal, tour_stops);
 
-//     std::vector<Path> paths =
-//         ComputeMinimalFeasiblePathsAlong(sequence, state.completed);
+  auto min_duration = [](const std::vector<Path>& paths) {
+    int result = std::numeric_limits<int>::max();
+    for (const Path& path : paths) {
+      result = std::min(result, path.DurationSeconds());
+    }
+    return result;
+  };
 
-//     auto min_it = std::min_element(
-//         paths.begin(), paths.end(),
-//         [](const Path& a, const Path& b) {
-//           return a.DurationSeconds() < b.DurationSeconds();
-//         });
-//     if (min_it != paths.end() && min_it->DurationSeconds() < best_duration) {
-//       best_duration = min_it->DurationSeconds();
-//       std::erase_if(paths, [&](const Path& p) {
-//         return p.DurationSeconds() != best_duration;
-//       });
-//       best.paths = std::move(paths);
-//     }
-//   } while (std::next_permutation(candidate_perm.begin(),
-//   candidate_perm.end()));
+  int best_duration = std::numeric_limits<int>::max();
+  std::vector<PartialSolutionPath> best_paths;
 
-//   return best;
-// }
+  // The order being searched, and the groups it has visited so far.
+  std::vector<StopId> tour{start};
+  std::vector<bool> visited(groups.size(), false);
+  size_t num_visited = 0;
+
+  // The paths from START along `tour`, extended to `next`.
+  auto extend = [&](const std::vector<Path>& paths, StopId next) {
+    std::span<const Path> edge_paths =
+        completed.PathsBetween(tour.back(), next);
+    if (tour.size() == 1) {
+      return std::vector<Path>(edge_paths.begin(), edge_paths.end());
+    }
+    return ExtendMinimalFeasiblePaths(paths, edge_paths);
+  };
+
+  // Visits every completion of `tour`, whose paths from START are `paths`.
+  auto search = [&](this auto&& self, const std::vector<Path>& paths) -> void {
+    check_deadline();
+
+    if (num_visited == groups.size()) {
+      std::vector<Path> complete = extend(paths, end);
+      // Same as ComputeMinimalFeasiblePathsAlong: paths that depart before
+      // 00:00:00 don't count.
+      std::erase_if(complete, [](const Path& path) {
+        return path.merged_step.origin.time < TimeSinceServiceStart{0};
+      });
+      int duration = min_duration(complete);
+      if (duration > best_duration) {
+        return;
+      }
+      if (duration < best_duration) {
+        best_duration = duration;
+        best_paths.clear();
+      }
+      tour.push_back(end);
+      for (Path& path : complete) {
+        if (path.DurationSeconds() != best_duration) {
+          continue;
+        }
+        NormalizeConsecutiveSteps(path.steps);
+        assert(ConsecutiveMergedSteps(path.steps) == path.merged_step);
+        best_paths.push_back(
+            PartialSolutionPath{.path = std::move(path), .subset_tour = tour}
+        );
+      }
+      tour.pop_back();
+      return;
+    }
+
+    for (size_t group = 0; group < groups.size(); ++group) {
+      if (visited[group]) {
+        continue;
+      }
+      visited[group] = true;
+      num_visited++;
+      for (StopId stop : groups[group]) {
+        std::vector<Path> extended = extend(paths, stop);
+        // Extending these paths any further only makes them longer.
+        if (extended.empty() || min_duration(extended) > best_duration) {
+          continue;
+        }
+        tour.push_back(stop);
+        self(extended);
+        tour.pop_back();
+      }
+      visited[group] = false;
+      num_visited--;
+    }
+  };
+  search({});
+
+  return PartialSolution{.paths = std::move(best_paths)};
+}
 
 // For each required stop not on the path, computes its shortest "distance" to
 // the path. Distance from required stop x to path stop p: find the
@@ -582,6 +668,12 @@ void WriteRequiredSubsetToml(
   }
 }
 
+// Up to this many required groups, PartialSolveBruteForce beats
+// PartialSolveBranchAndBound. Measured on the bart and vtalr instances, where
+// brute force is 2-5x faster at 10 groups and 2x slower at 11: its cost grows
+// by about 4x per group, branch and bound's by much less.
+constexpr int kDefaultBruteForceMaxGroups = 10;
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
 
@@ -599,6 +691,14 @@ int main(int argc, char* argv[]) {
   std::string solution_json_path;
   app.add_option(
       "--solution_json", solution_json_path, "Path to write solution info JSON"
+  );
+
+  int brute_force_max_groups = kDefaultBruteForceMaxGroups;
+  app.add_option(
+      "--brute_force_max_groups",
+      brute_force_max_groups,
+      "Solve an iteration by brute force rather than branch and bound when it "
+      "has at most this many required groups"
   );
 
   double timeout_seconds = 0.0;
@@ -752,15 +852,32 @@ int main(int argc, char* argv[]) {
   try {
     for (int iteration = 0;; iteration++) {
       check_deadline();
+      // How many groups the subset is made of, which is what the cost of
+      // solving it depends on: a tour visits one stop of each group.
+      std::unordered_set<StopId> subset_representatives;
+      for (StopId stop : required_subset) {
+        subset_representatives.insert(state.required.Representative(stop));
+      }
+      bool brute_force =
+          subset_representatives.size() <=
+          static_cast<size_t>(std::max(brute_force_max_groups, 0));
+
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
+      iteration_span.SetMetadata("solver", brute_force ? "brute" : "bnb");
       WriteRequiredSubsetToml(
           state, required_subset_dir, iteration, required_subset
       );
-      std::cout << "=== Iteration " << iteration << ": branch and bound on "
-                << required_subset.size() << " leaves ===\n";
-      auto solution =
-          PartialSolveBranchAndBound(required_subset, state, on_search_event);
+      std::cout << "=== Iteration " << iteration << ": "
+                << (brute_force ? "brute force" : "branch and bound") << " on "
+                << required_subset.size() << " leaves in "
+                << subset_representatives.size() << " groups ===\n";
+      PartialSolution solution =
+          brute_force
+              ? PartialSolveBruteForce(required_subset, state, check_deadline)
+              : PartialSolveBranchAndBound(
+                    required_subset, state, on_search_event
+                );
 
       // Choose the path that visits the most required stops.
       auto best_solution_path_it =

@@ -8,6 +8,44 @@
 
 namespace vats5 {
 
+std::vector<Path> ExtendMinimalFeasiblePaths(
+    std::span<const Path> ab_paths, std::span<const Path> bc_paths
+) {
+  // Extract merged steps from each side.
+  std::vector<Step> ab_steps;
+  ab_steps.reserve(ab_paths.size());
+  for (const Path& p : ab_paths) {
+    ab_steps.push_back(p.merged_step);
+  }
+
+  std::vector<Step> bc_steps;
+  bc_steps.reserve(bc_paths.size());
+  for (const Path& p : bc_paths) {
+    bc_steps.push_back(p.merged_step);
+  }
+
+  // Merge steps with provenance tracking.
+  std::vector<StepProvenance> provenance;
+  std::vector<Step> merged =
+      PairwiseMergedSteps(ab_steps, bc_steps, &provenance);
+
+  // Build new paths by combining the constituent paths from each side.
+  std::vector<Path> new_paths;
+  new_paths.reserve(merged.size());
+  for (size_t j = 0; j < merged.size(); ++j) {
+    Path path{
+        .merged_step = merged[j],
+        .steps = ab_paths[provenance[j].ab_index].steps
+    };
+    const std::vector<Step>& next_steps =
+        bc_paths[provenance[j].bc_index].steps;
+    path.steps.insert(path.steps.end(), next_steps.begin(), next_steps.end());
+    new_paths.push_back(std::move(path));
+  }
+
+  return new_paths;
+}
+
 namespace {
 
 // Common implementation for ComputeMinimalFeasiblePathsAlong.
@@ -32,40 +70,8 @@ std::vector<Path> ComputeMinimalFeasiblePathsAlongImpl(
     if (next_edge.empty()) {
       return {};
     }
-    const auto& next_paths = next_edge;
 
-    // Extract merged steps from current and next paths.
-    std::vector<Step> ab_steps;
-    ab_steps.reserve(paths.size());
-    for (const Path& p : paths) {
-      ab_steps.push_back(p.merged_step);
-    }
-
-    std::vector<Step> bc_steps;
-    bc_steps.reserve(next_paths.size());
-    for (const Path& p : next_paths) {
-      bc_steps.push_back(p.merged_step);
-    }
-
-    // Merge steps with provenance tracking.
-    std::vector<StepProvenance> provenance;
-    std::vector<Step> merged =
-        PairwiseMergedSteps(ab_steps, bc_steps, &provenance);
-
-    // Build new paths by combining the constituent paths from each side.
-    std::vector<Path> new_paths;
-    new_paths.reserve(merged.size());
-    for (size_t j = 0; j < merged.size(); ++j) {
-      Path path{
-          .merged_step = merged[j], .steps = paths[provenance[j].ab_index].steps
-      };
-      const std::vector<Step>& next_steps =
-          next_paths[provenance[j].bc_index].steps;
-      path.steps.insert(path.steps.end(), next_steps.begin(), next_steps.end());
-      new_paths.push_back(std::move(path));
-    }
-
-    paths = std::move(new_paths);
+    paths = ExtendMinimalFeasiblePaths(paths, std::span<const Path>(next_edge));
   }
 
   // TODO: Reference thing about 00:00:00.
