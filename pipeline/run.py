@@ -12,9 +12,7 @@ Each run gets its own directory under ~/vats5-pipeline:
                 problem_state.json             its output (+ .sqlite for viz)
                 initialize_problem_state.log
                 iterative_expansion.log
-                solution.json                  status + its own timing trace,
-                                               which this script folds into the
-                                               trace it stores in the db
+                solution.json                  what gets stored in the db
 
 The run directory name doubles as the gtfs_instance_id. Older run directories
 are pruned, which does not affect the rows already written for them.
