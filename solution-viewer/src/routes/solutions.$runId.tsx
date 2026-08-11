@@ -338,7 +338,7 @@ const SOLVER_CLASS: Record<string, string> = {
 };
 
 /**
- * A flame chart of one solve: every span laid out against the root's span, so
+ * A chart of one solve: every span laid out against the root's span, so
  * gaps (time inside a span that nothing below accounts for) are visible.
  */
 function TraceChart({ root }: { root: TraceNode }) {
