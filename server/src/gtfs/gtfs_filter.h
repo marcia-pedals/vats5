@@ -37,6 +37,11 @@ Gtfs GtfsFilterByPrefixes(
 // own trips (and from the other subsequent days'). Empty for day 0.
 std::string ServiceDayTripIdSuffix(int day);
 
+// The inverse of ServiceDayTripIdSuffix: which service day of a combined
+// GtfsDay a trip id belongs to, 0 being the target date. Throws on a trip id
+// carrying a malformed suffix.
+int ServiceDayFromTripId(const GtfsTripId& trip_id);
+
 // Filter GTFS data for a given date and combine it with the
 // `subsequent_service_days` days that follow it, each shifted forward by 24:00
 // per day and with its trip ids suffixed by ServiceDayTripIdSuffix.

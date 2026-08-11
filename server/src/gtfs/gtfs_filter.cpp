@@ -1,6 +1,7 @@
 #include "gtfs/gtfs_filter.h"
 
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -151,6 +152,25 @@ std::string ServiceDayTripIdSuffix(int day) {
     return "";
   }
   return ":next-sd-" + std::to_string(day);
+}
+
+int ServiceDayFromTripId(const GtfsTripId& trip_id) {
+  constexpr std::string_view kPrefix = ":next-sd-";
+  size_t prefix_pos = trip_id.v.rfind(kPrefix);
+  if (prefix_pos == std::string::npos) {
+    return 0;
+  }
+  std::string_view digits =
+      std::string_view(trip_id.v).substr(prefix_pos + kPrefix.size());
+  int day = 0;
+  auto [end, error] =
+      std::from_chars(digits.data(), digits.data() + digits.size(), day);
+  if (error != std::errc{} || end != digits.data() + digits.size() || day < 1) {
+    throw std::runtime_error(
+        "Trip id '" + trip_id.v + "' has a malformed service day suffix"
+    );
+  }
+  return day;
 }
 
 GtfsDay GtfsFilterDateWithServiceDays(

@@ -31,6 +31,11 @@ function formatServiceDate(serviceDate: string): { weekday: string; label: strin
   };
 }
 
+// A service date whose active services are identical to an already-solved
+// date's poses the same problem, so pipeline/run.py records it with this status
+// instead of solving it again. It has no result to show.
+const DUPLICATE_STATUS = "duplicate_service_pattern";
+
 /** One target stop set: service dates down, the specs using it across. */
 type Group = {
   targetStopsId: string;
@@ -474,7 +479,11 @@ function RunPage() {
   const { runId } = Route.useParams();
   usePageTitle(`Solutions ${runId}`);
   const solutionsQuery = trpc.listSolutions.useQuery({ gtfsInstanceId: runId });
-  const solutions = solutionsQuery.data ?? [];
+  // Skipped dates get no row of their own: what they would show is already on
+  // the row of the date they duplicate.
+  const solutions = (solutionsQuery.data ?? []).filter(
+    (solution) => solution.data.status !== DUPLICATE_STATUS
+  );
   const groups = groupByTargetStops(solutions);
 
   // Held by id rather than by value so that switching runs drops a selection
