@@ -39,9 +39,20 @@ export type Grid = {
   cells: Map<string, Solution>;
 };
 
+// A service date whose active services are identical to an already-solved
+// date's poses the same problem, so pipeline/run.py records it with this status
+// instead of solving it again.
+const DUPLICATE_STATUS = "duplicate_service_pattern";
+
 export function buildGrid(solutions: Solution[]): Grid {
   const grid: Grid = { specs: [], serviceDates: [], cells: new Map() };
   for (const solution of solutions) {
+    // Skipped dates get no cell of their own: what they would show is already
+    // on the cell of the date they duplicate. Dropped here rather than at each
+    // page so that nothing can land on or link to one either.
+    if (solution.data.status === DUPLICATE_STATUS) {
+      continue;
+    }
     if (!grid.specs.some((spec) => spec.id === solution.problem_spec_id)) {
       grid.specs.push({ id: solution.problem_spec_id, title: solution.spec_title });
     }

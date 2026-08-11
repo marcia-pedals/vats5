@@ -8,6 +8,7 @@
 
 #include "gtfs/gtfs_filter.h"
 #include "solver/data.h"
+#include "solver/service_pattern.h"
 #include "solver/tarel_graph.h"
 #include "visualization/visualization.h"
 
@@ -19,6 +20,7 @@ int main(int argc, char* argv[]) {
   std::string world_config_path;
   std::string required_stops_config;
   std::string output_path;
+  std::string solved_service_patterns_path;
   double max_walking_distance = 500.0;
   double walking_speed = 1.0;
   int subsequent_service_days = 1;
@@ -52,6 +54,13 @@ int main(int argc, char* argv[]) {
          "forward by 24:00 per day"
   )
       ->default_val(1);
+  app.add_option(
+      "--solved-service-patterns",
+      solved_service_patterns_path,
+      "Path to a JSON list of the service patterns of already-solved service "
+      "dates. If this date's services are identical to one of them, exit "
+      "early with status 3 instead of solving it again."
+  );
 
   CLI11_PARSE(app, argc, argv);
 
@@ -71,6 +80,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  std::vector<ServicePattern> solved_patterns;
+  if (!solved_service_patterns_path.empty()) {
+    solved_patterns = LoadServicePatterns(solved_service_patterns_path);
+    std::cout << "Loaded " << solved_patterns.size()
+              << " already-solved service patterns\n";
+  }
+
   GetStepsOptions options{
       .max_walking_distance_meters = max_walking_distance,
       .walking_speed_ms = walking_speed,
@@ -80,6 +96,31 @@ int main(int argc, char* argv[]) {
   GtfsDay gtfs_day = GtfsNormalizeStops(
       GtfsFilterFromConfig(filter_config, subsequent_service_days)
   );
+
+  // Which services run at all decides the whole problem, so a date matching an
+  // already-solved one can be dropped before any of the expensive work.
+  const int num_service_days = subsequent_service_days + 1;
+  const std::string active_services_path = ActiveServicesPath(output_path);
+  ServicePattern pattern{
+      .service_date = filter_config.date,
+      .all_services = GetAllActiveServices(gtfs_day, num_service_days),
+  };
+  auto report_services = [](const char* what, const ActiveServices& services) {
+    std::cout << what << " by service day:";
+    for (const std::vector<GtfsServiceId>& day : services.by_service_day) {
+      std::cout << " " << day.size();
+    }
+    std::cout << "\n";
+  };
+  report_services("Active services", pattern.all_services);
+  if (const ServicePattern* match =
+          FindMatchingAllServices(solved_patterns, pattern.all_services)) {
+    pattern.duplicate_of = DuplicateOf{match->service_date, "all_services"};
+    WriteServicePattern(pattern, active_services_path);
+    std::cout << "All active services are identical to those of "
+              << match->service_date << "; nothing to solve.\n";
+    return kDuplicateServicePatternExitCode;
+  }
 
   toml::table required_stops_toml;
   try {
@@ -171,6 +212,29 @@ int main(int argc, char* argv[]) {
       /*optimize_edges=*/true,
       SearchHorizonSeconds(subsequent_service_days)
   );
+
+  // Most services drop out of the pruned steps, so two dates can differ in
+  // which services run and still pose the same pruned problem.
+  pattern.pruned_services = GetPrunedActiveServices(
+      init_result.minimal_paths_sparse,
+      steps_from_gtfs.mapping,
+      gtfs_day,
+      num_service_days
+  );
+  report_services(
+      "Services contributing to pruned steps", *pattern.pruned_services
+  );
+  if (const ServicePattern* match = FindMatchingPrunedServices(
+          solved_patterns, *pattern.pruned_services
+      )) {
+    pattern.duplicate_of = DuplicateOf{match->service_date, "pruned_services"};
+    WriteServicePattern(pattern, active_services_path);
+    std::cout << "Services of the pruned steps are identical to those of "
+              << match->service_date << "; nothing to solve.\n";
+    return kDuplicateServicePatternExitCode;
+  }
+  WriteServicePattern(pattern, active_services_path);
+  std::cout << "Saved active services to: " << active_services_path << "\n";
 
   // Build stop group representative map and update RequiredStops.
   if (!stop_groups.empty()) {
