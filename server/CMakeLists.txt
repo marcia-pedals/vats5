@@ -186,9 +186,14 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
 target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 
+# Create iterative_expansion_partial_solve library target
+add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)
+target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound steps_shortest_path)
+target_include_directories(iterative_expansion_partial_solve PUBLIC src)
+
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound union_find CLI11::CLI11 visualization)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
@@ -268,6 +273,11 @@ add_executable(trace_test src/util/trace_test.cpp)
 target_link_libraries(trace_test PUBLIC gunit nlohmann_json::nlohmann_json)
 target_include_directories(trace_test PUBLIC src)
 add_test(NAME trace_test COMMAND trace_test)
+
+# Add iterative_expansion_partial_solve test executable
+add_executable(iterative_expansion_partial_solve_test src/solver/iterative_expansion_partial_solve_test.cpp)
+target_link_libraries(iterative_expansion_partial_solve_test PUBLIC gunit iterative_expansion_partial_solve problem_state_gen rapidcheck_gtest)
+add_test(NAME iterative_expansion_partial_solve_test COMMAND iterative_expansion_partial_solve_test)
 
 # Add branch_and_bound test executable
 add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)

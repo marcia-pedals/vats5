@@ -11,11 +11,9 @@ namespace vats5 {
 // Returns the sorted and minimal (in the sense of CheckSortedAndMinimal) set of
 // paths made of a path from `ab_paths` followed by a path from `bc_paths`.
 //
-// This is one step of ComputeMinimalFeasiblePathsAlong, exposed so that callers
-// evaluating many stop sequences can extend a shared prefix rather than
-// recomputing it. Unlike ComputeMinimalFeasiblePathsAlong, the results are not
-// normalized and paths departing before 00:00:00 are not removed; do both once
-// the sequence is complete.
+// Unlike ComputeMinimalFeasiblePathsAlong, the results are not normalized and
+// paths departing before 00:00:00 are not removed; do both once the sequence is
+// complete.
 std::vector<Path> ExtendMinimalFeasiblePaths(
     std::span<const Path> ab_paths, std::span<const Path> bc_paths
 );
