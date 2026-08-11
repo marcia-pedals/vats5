@@ -20,10 +20,6 @@ std::vector<Path> ExtendMinimalFeasiblePaths(
 );
 
 // The minimal path sets between pairs of stops, computed on demand and kept.
-//
-// A caller evaluating many stop sequences asks for the same pairs over and over
-// — each search is a whole-day scan of the graph, so answering one from memory
-// is orders of magnitude cheaper than repeating it.
 class MinimalPathSetCache {
  public:
   explicit MinimalPathSetCache(const StepsAdjacencyList& minimal)
