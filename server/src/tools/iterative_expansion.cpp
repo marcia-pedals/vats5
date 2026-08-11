@@ -26,6 +26,7 @@
 #include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
+#include "util/trace.h"
 #include "visualization/sqlite_wrapper.h"
 #include "visualization/visualization.h"
 
@@ -611,6 +612,10 @@ int main(int argc, char* argv[]) {
 
   CLI11_PARSE(app, argc, argv);
 
+  // Reported via --solution_json, so that the pipeline can store it alongside
+  // the timings it measures itself.
+  Trace trace("iterative_expansion");
+
   std::optional<std::chrono::steady_clock::time_point> deadline;
   if (timeout_seconds > 0.0) {
     deadline = std::chrono::steady_clock::now() +
@@ -747,6 +752,8 @@ int main(int argc, char* argv[]) {
   try {
     for (int iteration = 0;; iteration++) {
       check_deadline();
+      TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
+      iteration_span.SetMetadata("stops", required_subset.size());
       WriteRequiredSubsetToml(
           state, required_subset_dir, iteration, required_subset
       );
@@ -842,6 +849,7 @@ int main(int argc, char* argv[]) {
     if (status == "timeout") {
       solution_info["timeout_seconds"] = timeout_seconds;
     }
+    solution_info["trace"] = trace.ToJson();
     std::ofstream solution_out(solution_json_path);
     if (!solution_out.is_open()) {
       std::cerr << "Error: could not write " << solution_json_path << "\n";

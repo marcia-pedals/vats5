@@ -20,15 +20,17 @@ are pruned, which does not affect the rows already written for them.
 Problem specs are read from the database, so run pipeline/sync_configs.py first.
 
 Usage:
-    python3 pipeline/run.py
+    python3 pipeline/run.py [--service-dates N]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -54,12 +56,12 @@ BUILD_DIR = REPO_ROOT / "server" / "build-debug"
 MAX_RUN_DIRS = 5
 
 # Service dates to solve: this many days, starting the day after the fetch.
-SERVICE_DATE_COUNT = 7
+DEFAULT_SERVICE_DATE_COUNT = 7
 
 # Passed to iterative_expansion, which checks it between iterations and on each
 # search event. The subprocess gets a slightly longer hard limit as a backstop
 # for a single Concorde solve that blows through the cooperative check.
-SOLVE_TIMEOUT_SECONDS = 300
+SOLVE_TIMEOUT_SECONDS = 600
 SOLVE_KILL_GRACE_SECONDS = 60
 
 
@@ -132,10 +134,47 @@ def run_tool(command: list[str], log_path: Path, timeout: float | None) -> int |
     return completed.returncode
 
 
+def trace_node(
+    name: str,
+    start_seconds: float,
+    duration_seconds: float,
+    children: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One span of a hierarchical timing trace.
+
+    `start_seconds` is relative to the start of the trace's root span, so a
+    whole trace can be laid out without walking it.
+    """
+    node: dict[str, Any] = {
+        "name": name,
+        "start_seconds": start_seconds,
+        "duration_seconds": duration_seconds,
+    }
+    if metadata:
+        node["metadata"] = metadata
+    if children:
+        node["children"] = children
+    return node
+
+
+def shift_trace(node: dict[str, Any], offset: float) -> dict[str, Any]:
+    """Rebase a trace produced by a subprocess onto this run's timeline."""
+    shifted = dict(node)
+    shifted["start_seconds"] = node["start_seconds"] + offset
+    if "children" in node:
+        shifted["children"] = [shift_trace(c, offset) for c in node["children"]]
+    return shifted
+
+
 def solve_one(
     spec: dict[str, Any], spec_dir: Path, feed_dir: Path, service_date: str
 ) -> dict[str, Any]:
-    """Initialize and solve one spec for one service date; return solution info."""
+    """Initialize and solve one spec for one service date; return solution info.
+
+    The returned info carries a `trace` of how long each part took: the two
+    tools as timed here, with whatever spans they reported nested underneath.
+    """
     spec_dir.mkdir(parents=True, exist_ok=True)
 
     world_toml = spec_dir / "world.toml"
@@ -161,13 +200,30 @@ def solve_one(
     if "walking_speed" in spec_data:
         initialize_command += ["--walking-speed", str(spec_data["walking_speed"])]
 
+    started = time.monotonic()
     returncode = run_tool(
         initialize_command, spec_dir / "initialize_problem_state.log", timeout=None
     )
-    if returncode != 0:
-        print(f"    initialize_problem_state failed (exit {returncode})")
-        return {"status": "initialize_failed", "returncode": returncode}
+    initialize_node = trace_node(
+        "initialize_problem_state", 0.0, time.monotonic() - started
+    )
 
+    def finish(
+        solution: dict[str, Any], children: list[dict[str, Any]], outcome: str
+    ) -> dict[str, Any]:
+        """Report how this instance went and how long it took, and trace it."""
+        elapsed = time.monotonic() - started
+        print(f"    {outcome} in {elapsed:.0f}s")
+        return solution | {"trace": trace_node("solve", 0.0, elapsed, children)}
+
+    if returncode != 0:
+        return finish(
+            {"status": "initialize_failed", "returncode": returncode},
+            [initialize_node],
+            f"initialize_problem_state failed (exit {returncode})",
+        )
+
+    expansion_start = time.monotonic() - started
     returncode = run_tool(
         [
             str(tool_path("iterative_expansion")),
@@ -180,17 +236,33 @@ def solve_one(
         spec_dir / "iterative_expansion.log",
         timeout=SOLVE_TIMEOUT_SECONDS + SOLVE_KILL_GRACE_SECONDS,
     )
+    expansion_duration = time.monotonic() - started - expansion_start
 
     # iterative_expansion writes solution.json for every outcome it reaches on
     # its own, including a timeout; a missing file means it died first.
     if solution_json.exists():
         solution = json.loads(solution_json.read_text())
-        print(f"    {solution['status']}: {solution.get('optimal_duration_seconds')}")
-        return solution
+        outcome = f"{solution['status']}: {solution.get('optimal_duration_seconds')}"
+    else:
+        solution = {
+            "status": "killed" if returncode is None else "solve_failed",
+            "returncode": returncode,
+        }
+        outcome = f"{solution['status']} (exit {returncode})"
 
-    status = "killed" if returncode is None else "solve_failed"
-    print(f"    {status} (exit {returncode})")
-    return {"status": status, "returncode": returncode}
+    # iterative_expansion times itself from its own start, which is a process
+    # spawn after ours; its spans go under the span timed here.
+    inner_trace = solution.pop("trace", None)
+    expansion_node = trace_node(
+        "iterative_expansion",
+        expansion_start,
+        expansion_duration,
+        [
+            shift_trace(child, expansion_start)
+            for child in (inner_trace or {}).get("children", [])
+        ],
+    )
+    return finish(solution, [initialize_node, expansion_node], outcome)
 
 
 def load_specs(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
@@ -217,7 +289,7 @@ def load_specs(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
     return specs
 
 
-def main() -> None:
+def main(service_date_count: int) -> None:
     # Resolve both tools up front so a missing build fails before downloading.
     tool_path("initialize_problem_state")
     tool_path("iterative_expansion")
@@ -236,7 +308,7 @@ def main() -> None:
     first_service_date = date.today() + timedelta(days=1)
     service_dates = [
         f"{first_service_date + timedelta(days=offset):%Y%m%d}"
-        for offset in range(SERVICE_DATE_COUNT)
+        for offset in range(service_date_count)
     ]
     print(f"service dates: {service_dates[0]}..{service_dates[-1]}")
 
@@ -279,8 +351,20 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--service-dates",
+        type=int,
+        default=DEFAULT_SERVICE_DATE_COUNT,
+        help="how many service dates to solve, starting the day after the fetch "
+        f"(default {DEFAULT_SERVICE_DATE_COUNT})",
+    )
+    args = parser.parse_args()
+    if args.service_dates < 1:
+        parser.error("--service-dates must be at least 1")
+
     try:
-        main()
+        main(args.service_dates)
     except RunError as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)

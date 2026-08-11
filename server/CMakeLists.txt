@@ -263,6 +263,12 @@ add_executable(date_test src/util/date_test.cpp)
 target_link_libraries(date_test PUBLIC gunit date)
 add_test(NAME date_test COMMAND date_test)
 
+# Add trace test executable (trace is header-only)
+add_executable(trace_test src/util/trace_test.cpp)
+target_link_libraries(trace_test PUBLIC gunit nlohmann_json::nlohmann_json)
+target_include_directories(trace_test PUBLIC src)
+add_test(NAME trace_test COMMAND trace_test)
+
 # Add branch_and_bound test executable
 add_executable(branch_and_bound_test src/solver/branch_and_bound_test.cpp)
 target_link_libraries(branch_and_bound_test PUBLIC gunit branch_and_bound problem_state_gen naive_solve rapidcheck_gtest)
