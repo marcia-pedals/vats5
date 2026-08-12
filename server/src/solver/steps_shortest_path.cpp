@@ -543,8 +543,16 @@ namespace {
 StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
     const StepsAdjacencyList& adjacency_list,
     const std::unordered_set<StopId>& system_stops,
+    int origin_time_horizon_seconds,
     bool keep_through_other_destination
 ) {
+  if (origin_time_horizon_seconds <= 0) {
+    throw std::runtime_error(
+        "Origin time horizon must be positive, got " +
+        std::to_string(origin_time_horizon_seconds)
+    );
+  }
+
   // Convert to vector for indexed access
   std::vector<StopId> origins(system_stops.begin(), system_stops.end());
   const size_t num_origins = origins.size();
@@ -552,11 +560,12 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
   RelaxedDistances relaxed_distances =
       ComputeRelaxedDistances(adjacency_list, system_stops);
 
-  // Split into 6-hour chunks: 36 hours / 6 hours = 6 chunks per origin
+  // Split the horizon into 6-hour chunks per origin, rounding up so that all
+  // of it is covered; the last chunk is short when it does not divide evenly.
   constexpr int kChunkSeconds = 6 * 3600;
-  constexpr int kTotalSeconds = 36 * 3600;
-  constexpr int kNumChunks = kTotalSeconds / kChunkSeconds;  // 6 chunks
-  const size_t num_work_items = num_origins * kNumChunks;
+  const int num_chunks =
+      (origin_time_horizon_seconds + kChunkSeconds - 1) / kChunkSeconds;
+  const size_t num_work_items = num_origins * num_chunks;
 
   // Per-work-item results: map from destination to paths
   std::vector<std::unordered_map<StopId, std::vector<Path>>> per_item_results(
@@ -589,15 +598,17 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
         break;
       }
 
-      const size_t origin_index = i / kNumChunks;
-      const int chunk_index = i % kNumChunks;
+      const size_t origin_index = i / num_chunks;
+      const int chunk_index = i % num_chunks;
       const StopId origin = origins[origin_index];
 
       std::unordered_set<StopId> destinations = system_stops;
       destinations.erase(origin);
 
       TimeSinceServiceStart lb{chunk_index * kChunkSeconds};
-      TimeSinceServiceStart ub{(chunk_index + 1) * kChunkSeconds};
+      TimeSinceServiceStart ub{std::min(
+          (chunk_index + 1) * kChunkSeconds, origin_time_horizon_seconds
+      )};
 
       per_item_results[i] = FindMinimalPathSet(
           adjacency_list,
@@ -642,8 +653,8 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
     // Collect all paths from all chunks for this origin, grouped by destination
     std::unordered_map<StopId, std::vector<Path>> dest_to_paths;
 
-    for (int c = 0; c < kNumChunks; ++c) {
-      size_t item_idx = origin_idx * kNumChunks + c;
+    for (int c = 0; c < num_chunks; ++c) {
+      size_t item_idx = origin_idx * num_chunks + c;
       for (auto& [dest, paths] : per_item_results[item_idx]) {
         for (Path& path : paths) {
           dest_to_paths[dest].push_back(std::move(path));
@@ -687,16 +698,41 @@ StepPathsAdjacencyList ReduceToMinimalSystemPathsImpl(
 
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    int origin_time_horizon_seconds
 ) {
   return ReduceToMinimalSystemPathsImpl(
-      adjacency_list, system_stops, /*keep_through_other_destination=*/false
+      adjacency_list,
+      system_stops,
+      origin_time_horizon_seconds,
+      /*keep_through_other_destination=*/false
   );
+}
+
+int SearchHorizonSeconds(int subsequent_service_days) {
+  if (subsequent_service_days < 0) {
+    throw std::runtime_error(
+        "subsequent_service_days must not be negative, got " +
+        std::to_string(subsequent_service_days)
+    );
+  }
+  constexpr int kHoursIntoLastServiceDay = 4;
+  return (subsequent_service_days * 24 + kHoursIntoLastServiceDay) * 3600;
+}
+
+int HorizonCoveringAllDepartures(const StepsAdjacencyList& adjacency_list) {
+  int latest = 0;
+  for (const AdjacencyListStep& step : adjacency_list.steps) {
+    latest = std::max(latest, step.origin_time.seconds);
+  }
+  // The horizon is exclusive, so reach just past the latest departure.
+  return latest + 1;
 }
 
 StepPathsAdjacencyList CompleteShortestPathsGraph(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    int origin_time_horizon_seconds
 ) {
   assert(
       system_stops.size() < 100 &&
@@ -704,7 +740,10 @@ StepPathsAdjacencyList CompleteShortestPathsGraph(
       "consider making this call lazy instead"
   );
   return ReduceToMinimalSystemPathsImpl(
-      adjacency_list, system_stops, /*keep_through_other_destination=*/true
+      adjacency_list,
+      system_stops,
+      origin_time_horizon_seconds,
+      /*keep_through_other_destination=*/true
   );
 }
 

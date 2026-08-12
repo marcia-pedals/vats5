@@ -15,6 +15,7 @@
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/search_event.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/steps_shortest_path.h"
 
 namespace vats5 {
 
@@ -392,10 +393,14 @@ struct InitializeProblemStateResult {
   StepPathsAdjacencyList minimal_paths_sparse;
 };
 
+// `origin_time_horizon_seconds` bounds how late a path may set off; see
+// SearchHorizonSeconds. The default is the horizon of a problem spanning the
+// target date and the one service day after it.
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
-    bool optimize_edges = false
+    bool optimize_edges = false,
+    int origin_time_horizon_seconds = SearchHorizonSeconds(1)
 );
 
 struct TarelStateRemapResult {

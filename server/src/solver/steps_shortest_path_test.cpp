@@ -1271,7 +1271,11 @@ TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   );
 
   StepsAdjacencyList reduced = MakeAdjacencyList(
-      ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops)
+      ReduceToMinimalSystemPaths(
+          test_data.adjacency_list,
+          bart_stops,
+          HorizonCoveringAllDepartures(test_data.adjacency_list)
+      )
           .AllMergedSteps()
   );
 
@@ -1314,8 +1318,11 @@ TEST(ShortestPathTest, ReduceToMinimalSystemPaths_RandomQueryEquivalence) {
       test_data.gtfs_day, test_data.steps_from_gtfs.mapping, "BA:"
   );
 
-  StepPathsAdjacencyList reduced_paths =
-      ReduceToMinimalSystemPaths(test_data.adjacency_list, bart_stops);
+  StepPathsAdjacencyList reduced_paths = ReduceToMinimalSystemPaths(
+      test_data.adjacency_list,
+      bart_stops,
+      HorizonCoveringAllDepartures(test_data.adjacency_list)
+  );
   StepsAdjacencyList reduced_adjacency_list =
       MakeAdjacencyList(reduced_paths.AllMergedSteps());
 

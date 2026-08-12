@@ -241,8 +241,9 @@ ProblemState MakeProblemState(
 }
 
 StepPathsAdjacencyList ProblemState::ComputeCompletedGraph() const {
-  StepPathsAdjacencyList completed =
-      CompleteShortestPathsGraph(minimal, required.AllFlat());
+  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(
+      minimal, required.AllFlat(), HorizonCoveringAllDepartures(minimal)
+  );
   // Add END->START edge to complete the cycle for TSP formulation.
   completed.adjacent[boundary.end].push_back(
       {ZeroPath(boundary.end, boundary.start)}
@@ -355,7 +356,8 @@ GoodnessResult ComputeStopGoodness(
 InitializeProblemStateResult InitializeProblemState(
     const StepsFromGtfs& steps_from_gtfs,
     const std::unordered_set<StopId> system_stops,
-    bool optimize_edges
+    bool optimize_edges,
+    int origin_time_horizon_seconds
 ) {
   // Assign partitions to steps based on their trips.
   std::unordered_map<std::string, StepPartitionId> route_desc_to_step_partition;
@@ -379,7 +381,9 @@ InitializeProblemStateResult InitializeProblemState(
 
   // Compute minimal adj list.
   StepPathsAdjacencyList minimal_paths_sparse = ReduceToMinimalSystemPaths(
-      MakeAdjacencyList(steps_with_partitions), system_stops
+      MakeAdjacencyList(steps_with_partitions),
+      system_stops,
+      origin_time_horizon_seconds
   );
 
   if (optimize_edges) {

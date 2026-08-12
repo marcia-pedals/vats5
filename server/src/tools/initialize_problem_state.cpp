@@ -166,7 +166,10 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Initializing solution state...\n";
   auto init_result = InitializeProblemState(
-      steps_from_gtfs, required_stops, /*optimize_edges=*/true
+      steps_from_gtfs,
+      required_stops,
+      /*optimize_edges=*/true,
+      SearchHorizonSeconds(subsequent_service_days)
   );
 
   // Build stop group representative map and update RequiredStops.
