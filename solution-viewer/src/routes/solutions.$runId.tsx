@@ -1,48 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { trpc } from "../client/trpc";
-import {
-  type SolutionPath,
-  SolutionPathView,
-  type SolutionRoute,
-  type SolutionStop,
-} from "../components/SolutionPath";
+import { SolutionPathView } from "../components/SolutionPath";
+import type { Solution, TraceNode } from "../schemas";
 import { usePageTitle } from "./__root";
 
 export const Route = createFileRoute("/solutions/$runId")({
   component: RunPage,
 });
-
-/** One span of a solve's timing trace; see pipeline/run.py. */
-type TraceNode = {
-  name: string;
-  start_seconds: number;
-  duration_seconds: number;
-  metadata?: Record<string, unknown>;
-  children?: TraceNode[];
-};
-
-type Solution = {
-  problem_instance_id: string;
-  problem_spec_id: string;
-  spec_title: string;
-  target_stops_id: string;
-  target_stops_title: string;
-  service_date: string;
-  gtfs_instance_id: string;
-  data: {
-    status: string;
-    optimal_duration_seconds?: number;
-    timeout_seconds?: number;
-    returncode?: number | null;
-    trace?: TraceNode;
-    // Reported by iterative_expansion; absent for rows written before it did.
-    // Only a solve has a path, and `routes` covers the routes it uses.
-    stops?: SolutionStop[];
-    routes?: SolutionRoute[];
-    solution_path?: SolutionPath;
-  };
-};
 
 /** 21300 -> "5h55m", 2040 -> "34m". */
 function formatDuration(seconds: number): string {

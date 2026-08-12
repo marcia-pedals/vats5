@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import type { PathStep, SolutionPath, SolutionRoute, SolutionStop } from "../schemas";
 
 /**
  * The solution path of one problem instance: a map of the tour and the legs it
@@ -6,39 +7,6 @@ import { useCallback, useMemo, useState } from "react";
  * greedy label placement, same green arrows — over the stop, route and path
  * metadata that iterative_expansion reports in its solution JSON.
  */
-
-// Client-side mirrors of the schemas in src/server/db.ts, which cannot be
-// imported here because it pulls in `pg`.
-
-export type SolutionStop = {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  required: boolean;
-};
-
-export type SolutionRoute = {
-  id: string;
-  name: string;
-  color: string;
-  text_color: string;
-};
-
-export type PathStep = {
-  origin_stop_id: string;
-  destination_stop_id: string;
-  depart_time: number;
-  arrive_time: number;
-  is_flex: number;
-  route_direction_id?: string | null;
-};
-
-export type SolutionPath = {
-  steps: PathStep[];
-  original_steps: PathStep[];
-  duration: number;
-};
 
 const MAP_HEIGHT = 420;
 const MAP_PAD = 34; // px of margin around the projected stops
