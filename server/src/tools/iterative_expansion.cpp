@@ -78,6 +78,29 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(
     PartialSolutionData, leaves, paths, best_path
 )
 
+// One stop of the problem, reported via --solution_json so that a viewer can
+// place the solution path on a map without the problem state or the viz
+// SQLite.
+struct SolutionStop {
+  std::string id;  // GTFS stop id, which is what a VizStep refers to
+  std::string name;
+  double lat;
+  double lon;
+  // Whether the problem requires visiting this stop, as opposed to it only
+  // being somewhere a step can pass through.
+  bool required;
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SolutionStop, id, name, lat, lon, required)
+
+// One GTFS route+direction a step of the solution path travels on.
+struct SolutionRoute {
+  std::string id;  // Matches VizStep::route_direction_id
+  std::string name;
+  std::string color;       // GTFS route_color, without the "#"; may be empty
+  std::string text_color;  // GTFS route_text_color; may be empty
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SolutionRoute, id, name, color, text_color)
+
 // Builds an MST over the required groups (excluding start/end) using min
 // duration as edge weight, and returns the leaves (degree-1 nodes).
 //
@@ -451,8 +474,12 @@ int main(int argc, char* argv[]) {
   std::string run_timestamp = ts.str();
 
   // Build trip_id -> route_direction_id mapping from the viz SQLite trips
-  // table.
+  // table, plus the stop and route metadata reported via --solution_json.
   std::unordered_map<int, std::string> trip_to_route;
+  // The stops a step of this problem can start or end at: "original" stops are
+  // the rest of the feed, which no step of the problem state touches.
+  std::vector<SolutionStop> solution_stops;
+  std::unordered_map<std::string, SolutionRoute> routes_by_id;
   {
     viz::SqliteDb db(viz_sqlite_path);
     sqlite3_stmt* stmt = nullptr;
@@ -468,6 +495,56 @@ int main(int argc, char* argv[]) {
       const char* route_direction_id =
           reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
       trip_to_route[trip_id] = route_direction_id;
+    }
+    sqlite3_finalize(stmt);
+
+    stmt = nullptr;
+    sqlite3_prepare_v2(
+        db.handle(),
+        "SELECT stop_id, stop_name, lat, lon, stop_type FROM stops "
+        "WHERE stop_type != 'original' ORDER BY stop_id",
+        -1,
+        &stmt,
+        nullptr
+    );
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      auto column_text = [&stmt](int column) {
+        return std::string(
+            reinterpret_cast<const char*>(sqlite3_column_text(stmt, column))
+        );
+      };
+      solution_stops.push_back({
+          .id = column_text(0),
+          .name = column_text(1),
+          .lat = sqlite3_column_double(stmt, 2),
+          .lon = sqlite3_column_double(stmt, 3),
+          .required = column_text(4) == "required",
+      });
+    }
+    sqlite3_finalize(stmt);
+
+    stmt = nullptr;
+    sqlite3_prepare_v2(
+        db.handle(),
+        "SELECT route_direction_id, route_name, route_color, route_text_color "
+        "FROM routes",
+        -1,
+        &stmt,
+        nullptr
+    );
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      auto column_text = [&stmt](int column) {
+        return std::string(
+            reinterpret_cast<const char*>(sqlite3_column_text(stmt, column))
+        );
+      };
+      SolutionRoute route{
+          .id = column_text(0),
+          .name = column_text(1),
+          .color = column_text(2),
+          .text_color = column_text(3),
+      };
+      routes_by_id[route.id] = route;
     }
     sqlite3_finalize(stmt);
   }
@@ -528,6 +605,19 @@ int main(int argc, char* argv[]) {
     return vp;
   };
 
+  // Same, without the synthetic START->first and last->END edges. They are
+  // zero-duration, so dropping them keeps the path's duration, and their
+  // boundary stop has no GTFS id to place on a map.
+  auto ToReportedVizPath = [&ToVizPath](const Path& path) -> VizPath {
+    VizPath vp = ToVizPath(path);
+    auto is_boundary = [](const VizStep& step) {
+      return step.origin_stop_id.empty() || step.destination_stop_id.empty();
+    };
+    std::erase_if(vp.steps, is_boundary);
+    std::erase_if(vp.original_steps, is_boundary);
+    return vp;
+  };
+
   // Create required_subset_dir if specified.
   if (!required_subset_dir.empty()) {
     std::filesystem::create_directories(required_subset_dir);
@@ -540,6 +630,7 @@ int main(int argc, char* argv[]) {
   // Outcome of the loop below, reported via --solution_json.
   std::string status = "solved";
   std::optional<int> optimal_duration_seconds;
+  std::optional<VizPath> solution_path;
 
   try {
     for (int iteration = 0;; iteration++) {
@@ -624,6 +715,7 @@ int main(int argc, char* argv[]) {
       if (distances.empty()) {
         std::cout << "\nAll required stops are visited.\n";
         optimal_duration_seconds = best_path.DurationSeconds();
+        solution_path = ToReportedVizPath(best_path);
         break;
       }
 
@@ -657,6 +749,23 @@ int main(int argc, char* argv[]) {
     }
     if (status == "timeout") {
       solution_info["timeout_seconds"] = timeout_seconds;
+    }
+    solution_info["stops"] = solution_stops;
+    if (solution_path.has_value()) {
+      solution_info["solution_path"] = *solution_path;
+      // Only the routes the path travels on: the rest of the feed's routes
+      // would be dead weight in every stored solution.
+      std::set<std::string> used_route_ids;
+      for (const VizStep& step : solution_path->steps) {
+        if (step.route_direction_id.has_value()) {
+          used_route_ids.insert(*step.route_direction_id);
+        }
+      }
+      std::vector<SolutionRoute> used_routes;
+      for (const std::string& route_id : used_route_ids) {
+        used_routes.push_back(routes_by_id.at(route_id));
+      }
+      solution_info["routes"] = used_routes;
     }
     solution_info["trace"] = trace.ToJson();
     std::ofstream solution_out(solution_json_path);

@@ -1,5 +1,6 @@
 import { Pool, type PoolConfig } from "pg";
 import { z } from "zod";
+import { type Run, type Solution, SolutionSchema } from "../schemas";
 
 /**
  * Connection settings from DATABASE_URL. Local development talks to a plain,
@@ -31,61 +32,17 @@ async function query(sql: string, params: unknown[] = []): Promise<unknown[]> {
   return result.rows;
 }
 
-// --- Schemas ---
+// --- Row schemas ---
+//
+// The shapes of the data itself live in src/schemas.ts, shared with the client.
+// What is here is how a row comes back from postgres.
 
-// One span of the hierarchical timing trace pipeline/run.py records for a
-// solve. `start_seconds` is relative to the start of the root span.
-export type TraceNode = {
-  name: string;
-  start_seconds: number;
-  duration_seconds: number;
-  metadata?: Record<string, unknown>;
-  children?: TraceNode[];
-};
-
-const TraceNodeSchema: z.ZodType<TraceNode> = z.lazy(() =>
-  z.object({
-    name: z.string(),
-    start_seconds: z.number(),
-    duration_seconds: z.number(),
-    metadata: z.record(z.unknown()).optional(),
-    children: z.array(TraceNodeSchema).optional(),
-  })
-);
-
-// What pipeline/run.py stores in problem_instance.data. `status` is "solved",
-// "timeout", or one of the failure statuses; the other fields depend on it.
-// `trace` is absent for rows written before it was recorded.
-const SolutionDataSchema = z
-  .object({
-    status: z.string(),
-    optimal_duration_seconds: z.number().optional(),
-    timeout_seconds: z.number().optional(),
-    returncode: z.number().nullable().optional(),
-    trace: TraceNodeSchema.optional(),
-  })
-  .passthrough();
-
-const SolutionRowSchema = z.object({
-  problem_instance_id: z.string(),
-  problem_spec_id: z.string(),
-  spec_title: z.string(),
-  target_stops_id: z.string(),
-  target_stops_title: z.string(),
-  service_date: z.string(),
-  gtfs_instance_id: z.string(),
-  data: SolutionDataSchema,
-});
-export type Solution = z.infer<typeof SolutionRowSchema>;
-
-// One GTFS fetch, i.e. one pipeline run.
+// One GTFS fetch, i.e. one pipeline run. `fetched_at` arrives as a Date and is
+// sent to the client as an ISO string.
 const RunRowSchema = z.object({
   gtfs_instance_id: z.string(),
   fetched_at: z.date(),
 });
-
-const RunSchema = RunRowSchema.extend({ fetched_at: z.string() });
-export type Run = z.infer<typeof RunSchema>;
 
 // --- Queries ---
 
@@ -126,5 +83,5 @@ export async function listSolutions(gtfsInstanceId: string): Promise<Solution[]>
   `,
     [gtfsInstanceId]
   );
-  return z.array(SolutionRowSchema).parse(rows);
+  return z.array(SolutionSchema).parse(rows);
 }

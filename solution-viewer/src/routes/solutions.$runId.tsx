@@ -1,37 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { trpc } from "../client/trpc";
+import { SolutionPathView } from "../components/SolutionPath";
+import type { Solution, TraceNode } from "../schemas";
 import { usePageTitle } from "./__root";
 
 export const Route = createFileRoute("/solutions/$runId")({
   component: RunPage,
 });
-
-/** One span of a solve's timing trace; see pipeline/run.py. */
-type TraceNode = {
-  name: string;
-  start_seconds: number;
-  duration_seconds: number;
-  metadata?: Record<string, unknown>;
-  children?: TraceNode[];
-};
-
-type Solution = {
-  problem_instance_id: string;
-  problem_spec_id: string;
-  spec_title: string;
-  target_stops_id: string;
-  target_stops_title: string;
-  service_date: string;
-  gtfs_instance_id: string;
-  data: {
-    status: string;
-    optimal_duration_seconds?: number;
-    timeout_seconds?: number;
-    returncode?: number | null;
-    trace?: TraceNode;
-  };
-};
 
 /** 21300 -> "5h55m", 2040 -> "34m". */
 function formatDuration(seconds: number): string {
@@ -419,7 +395,8 @@ function TraceChart({ root }: { root: TraceNode }) {
 }
 
 function SolutionDetails({ solution, onClose }: { solution: Solution; onClose: () => void }) {
-  const { status, optimal_duration_seconds, trace, ...rest } = solution.data;
+  const { status, optimal_duration_seconds, trace, stops, routes, solution_path, ...rest } =
+    solution.data;
   const { weekday, label } = formatServiceDate(solution.service_date);
   const solved = status === "solved";
 
@@ -467,6 +444,17 @@ function SolutionDetails({ solution, onClose }: { solution: Solution; onClose: (
           {solution.gtfs_instance_id}/service_{solution.service_date}/{solution.problem_spec_id}
         </dd>
       </dl>
+
+      <div className="space-y-2 border-t border-tc-border pt-3">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Path</h3>
+        {solution_path && stops ? (
+          <SolutionPathView stops={stops} routes={routes ?? []} path={solution_path} />
+        ) : (
+          <p className="font-mono text-xs text-tc-text-muted">
+            {solved ? "No path recorded for this run." : "Only a solved instance has a path."}
+          </p>
+        )}
+      </div>
 
       <div className="space-y-2 border-t border-tc-border pt-3">
         <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Timing</h3>
