@@ -53,28 +53,30 @@ struct FrontierEntryComparator {
 // Precondition: `steps` contains only fixed-schedule steps (no flex).
 size_t FindDepartureAtOrAfter(
     std::span<const AdjacencyListStep> steps,
-    std::span<const int16_t> departure_times_div10,
+    std::span<const int16_t> departure_times_packed,
     TimeSinceServiceStart t
 ) {
   if (steps.empty()) {
     return steps.size();
   }
 
-  // Binary search on the cache-friendly departure_times_div10 array.
-  // We search for t.seconds / 10, which may undershoot due to rounding.
-  int16_t target_div10 = static_cast<int16_t>(t.seconds / 10);
+  // Binary search on the cache-friendly departure_times_packed array.
+  // The packed target may undershoot due to rounding.
+  int16_t packed_target = PackDepartureTimeForSearch(t);
   auto lower_bound_it = std::lower_bound(
-      departure_times_div10.begin(), departure_times_div10.end(), target_div10
+      departure_times_packed.begin(),
+      departure_times_packed.end(),
+      packed_target
   );
 
-  if (lower_bound_it == departure_times_div10.end()) {
+  if (lower_bound_it == departure_times_packed.end()) {
     return steps.size();
   }
 
   // Linear scan forward to fix rounding errors.
   // The binary search may have landed on a step that departs before t
   // due to integer division truncation.
-  size_t idx = lower_bound_it - departure_times_div10.begin();
+  size_t idx = lower_bound_it - departure_times_packed.begin();
   while (idx < steps.size() && steps[idx].origin_time.seconds < t.seconds) {
     ++idx;
   }

@@ -111,7 +111,7 @@ StepsAdjacencyList MakeAdjacencyList(const std::vector<Step>& steps) {
       // Append fixed steps to flat vector
       for (const AdjacencyListStep& step : tsg.fixed_steps) {
         adjacency_list.steps.push_back(step);
-        adjacency_list.departure_times_div10.push_back(
+        adjacency_list.departure_times_packed.push_back(
             PackDepartureTime(step.origin_time)
         );
       }
@@ -204,7 +204,7 @@ CompactStopIdsResult CompactStopIds(const StepsAdjacencyList& original) {
       auto orig_times = original.GetDepartureTimes(orig_group);
       for (size_t j = 0; j < orig_steps.size(); ++j) {
         remapped.steps.push_back(orig_steps[j]);
-        remapped.departure_times_div10.push_back(orig_times[j]);
+        remapped.departure_times_packed.push_back(orig_times[j]);
       }
 
       steps_offset = static_cast<int>(remapped.steps.size());

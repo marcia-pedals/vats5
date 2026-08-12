@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <vector>
@@ -138,13 +139,19 @@ inline void from_json(const nlohmann::json& j, StepGroup& sg) {
   sg.steps_end = j.at("steps_end").get<int>();
 }
 
-// Departure times are packed into an int16_t at 10-second resolution, so the
-// combined service day cannot run past this. Times before the service start
-// are legitimate, and get the same headroom in the other direction.
-inline constexpr int kMaxRepresentableTimeSeconds = 32767 * 10;
-inline constexpr int kMinRepresentableTimeSeconds = -32768 * 10;
+// Departure times are packed into an int16_t at this resolution, which is what
+// bounds how long a combined service day can be. The packing is deliberately
+// lossy: it only accelerates a binary search that undershoots and then scans
+// forward on exact times, so a coarser resolution costs a slightly longer scan
+// and buys a much longer service day. Times before the service start are
+// legitimate, and get the same headroom in the other direction.
+inline constexpr int kDepartureTimeResolutionSeconds = 120;
+inline constexpr int kMaxRepresentableTimeSeconds =
+    32767 * kDepartureTimeResolutionSeconds;
+inline constexpr int kMinRepresentableTimeSeconds =
+    -32768 * kDepartureTimeResolutionSeconds;
 
-// Pack a departure time for `departure_times_div10`. Throws rather than let a
+// Pack a departure time for `departure_times_packed`. Throws rather than let a
 // service day too long to represent silently wrap around.
 inline int16_t PackDepartureTime(TimeSinceServiceStart time) {
   if (time.seconds < kMinRepresentableTimeSeconds ||
@@ -156,7 +163,18 @@ inline int16_t PackDepartureTime(TimeSinceServiceStart time) {
         " to " + TimeSinceServiceStart{kMaxRepresentableTimeSeconds}.ToString()
     );
   }
-  return static_cast<int16_t>(time.seconds / 10);
+  return static_cast<int16_t>(time.seconds / kDepartureTimeResolutionSeconds);
+}
+
+// A time packed for searching `departure_times_packed`, clamped instead of
+// rejected: a target beyond the representable range simply has no step at or
+// after it. Truncation is monotonic, so this never overshoots the first
+// matching step, which is what lets the caller fix it up by scanning forward.
+inline int16_t PackDepartureTimeForSearch(TimeSinceServiceStart time) {
+  int clamped = std::clamp(
+      time.seconds, kMinRepresentableTimeSeconds, kMaxRepresentableTimeSeconds
+  );
+  return static_cast<int16_t>(clamped / kDepartureTimeResolutionSeconds);
 }
 
 struct StepsAdjacencyList {
@@ -175,10 +193,9 @@ struct StepsAdjacencyList {
   // The origin_stop, destination_stop, and is_flex are stored in the StepGroup.
   std::vector<AdjacencyListStep> steps;
 
-  // Parallel array to steps: departure_times_div10[i] =
-  // steps[i].origin_time.seconds / 10. Divided by 10 to fit in int16_t
-  // (max 32767 * 10 = 327670 seconds ≈ 91 hours).
-  std::vector<int16_t> departure_times_div10;
+  // Parallel array to steps: departure_times_packed[i] is
+  // steps[i].origin_time packed by PackDepartureTime.
+  std::vector<int16_t> departure_times_packed;
 
   // Strict upper bound on all StopId values in this adjacency list.
   // All stop IDs s satisfy s.v < NumStops().
@@ -205,7 +222,7 @@ struct StepsAdjacencyList {
   // Get the departure times (div 10) for a StepGroup.
   std::span<const int16_t> GetDepartureTimes(const StepGroup& group) const {
     return std::span<const int16_t>(
-        departure_times_div10.data() + group.steps_start,
+        departure_times_packed.data() + group.steps_start,
         group.steps_end - group.steps_start
     );
   }
@@ -234,7 +251,8 @@ struct StepsAdjacencyList {
   bool operator==(const StepsAdjacencyList& other) const {
     return group_offsets == other.group_offsets && groups == other.groups &&
            steps == other.steps;
-    // Note: departure_times_div10 is derived from steps, so we don't compare it
+    // Note: departure_times_packed is derived from steps, so we don't compare
+    // it
   }
 };
 
@@ -251,9 +269,9 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   adj.group_offsets = j.at("group_offsets").get<std::vector<int>>();
   adj.groups = j.at("groups").get<std::vector<StepGroup>>();
   adj.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
-  adj.departure_times_div10.reserve(adj.steps.size());
+  adj.departure_times_packed.reserve(adj.steps.size());
   for (const auto& step : adj.steps) {
-    adj.departure_times_div10.push_back(PackDepartureTime(step.origin_time));
+    adj.departure_times_packed.push_back(PackDepartureTime(step.origin_time));
   }
 }
 
