@@ -21,23 +21,30 @@ The rows come from `pipeline/run.py` — see `pipeline/` for how they get there.
 Everything below assumes the nix dev shell (direnv does this automatically).
 
 ```bash
-bin/pg init                # create + start the local cluster, write .env.local
+bin/pg init                # start the shared cluster, write .env.local
 cd solution-viewer
 npm install
-npm run migrate            # apply migrations/
+npm run migrate            # apply migrations/ (no-op if another checkout did)
 cd ..
 bin/sv start               # start the dev server
 bin/sv url                 # print the URL
 ```
 
-`bin/pg` manages a PostgreSQL cluster that lives entirely inside the checkout
-(`solution-viewer/.pgdata`) and listens on a port derived from the checkout
-path, so several checkouts — and any system postgres — can run side by side.
+`bin/pg` manages a PostgreSQL cluster that is **shared by every checkout on the
+machine**: it lives at `~/.local/share/vats5/pgdata` (override with
+`VATS5_PGDATA`) and listens on port 15432 (override with `VATS5_PGPORT`), so a
+solve recorded from one checkout shows up in every other one. Only one checkout
+needs to have started it; `bin/pg init` in a fresh checkout finds the running
+cluster and just writes that checkout's `.env.local`.
 
 ```
-bin/pg {init|start|stop|restart|status|psql|url|destroy|logs}
+bin/pg {init|start|stop|restart|status|psql|url|destroy [--force]|logs}
 bin/sv {start|stop|restart|status|url|logs}
 ```
+
+`bin/pg destroy` wipes the shared data for all checkouts, so it asks for
+confirmation unless given `--force`. The dev *servers* are still per-checkout —
+`bin/sv` derives its ports from the checkout path as before.
 
 The app reads `DATABASE_URL` from `solution-viewer/.env.local` (written by
 `bin/pg init`, gitignored). See `.env.example` for the shape. A real
