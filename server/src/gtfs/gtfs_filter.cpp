@@ -62,7 +62,9 @@ GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path) {
   };
 }
 
-GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config) {
+GtfsDay GtfsFilterFromConfig(
+    const GtfsFilterConfig& config, int subsequent_service_days
+) {
   std::cerr << "Loading GTFS data from: " << config.input_dir << std::endl;
   std::cerr << "Filtering for date: " << config.date << std::endl;
   if (config.prefixes.empty()) {
@@ -85,8 +87,11 @@ GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config) {
               << std::endl;
   }
 
-  GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, config.date);
-  std::cerr << "Combined result: " << FormatGtfsSizes(result) << std::endl;
+  GtfsDay result =
+      GtfsFilterDateWithServiceDays(gtfs, config.date, subsequent_service_days);
+  std::cerr << "Combined result (with " << subsequent_service_days
+            << " subsequent service day(s)): " << FormatGtfsSizes(result)
+            << std::endl;
 
   return result;
 }
@@ -136,29 +141,55 @@ Gtfs GtfsFilterByPrefixes(
   return GtfsFilterByTrips(gtfs, trip_ids_set);
 }
 
+std::string ServiceDayTripIdSuffix(int day) {
+  if (day < 0) {
+    throw std::runtime_error(
+        "Service day offset must not be negative, got " + std::to_string(day)
+    );
+  }
+  if (day == 0) {
+    return "";
+  }
+  return ":next-sd-" + std::to_string(day);
+}
+
 GtfsDay GtfsFilterDateWithServiceDays(
-    const Gtfs& gtfs, const std::string& date
+    const Gtfs& gtfs, const std::string& date, int subsequent_service_days
 ) {
   constexpr int kSecondsPerDay = 24 * 3600;
 
-  // Filter to the target date.
-  GtfsDay gtfs_day = GtfsFilterByDate(gtfs, date);
-
-  // Take all <24:00 stop times from the next day and add them to `gtfs_day`
-  // with time +24:00.
-  const std::string next_date = OffsetDate(date, 1);
-  GtfsDay next_gtfs_day = GtfsFilterByDate(gtfs, next_date);
-  next_gtfs_day.AppendToTripIds(":next-sd");
-  std::erase_if(next_gtfs_day.stop_times, [](const GtfsStopTime& st) {
-    return st.arrival_time.seconds >= kSecondsPerDay;
-  });
-  RemoveUnreferencedTripsRoutesAndDirections(next_gtfs_day);
-  for (auto& stop_time : next_gtfs_day.stop_times) {
-    stop_time.arrival_time.seconds += kSecondsPerDay;
-    stop_time.departure_time.seconds += kSecondsPerDay;
+  if (subsequent_service_days < 0) {
+    throw std::runtime_error(
+        "subsequent_service_days must not be negative, got " +
+        std::to_string(subsequent_service_days)
+    );
   }
 
-  return GtfsDayCombine({gtfs_day, next_gtfs_day});
+  // The target date, with all of its trips including those past midnight.
+  std::vector<GtfsDay> service_days{GtfsFilterByDate(gtfs, date)};
+
+  for (int day = 1; day <= subsequent_service_days; ++day) {
+    GtfsDay service_day = GtfsFilterByDate(gtfs, OffsetDate(date, day));
+    service_day.AppendToTripIds(ServiceDayTripIdSuffix(day));
+
+    // The last day is where the modelled world ends, so its trips running past
+    // midnight are dropped: they belong to a day we know nothing else about.
+    // Days before it keep theirs, just like the target date does.
+    if (day == subsequent_service_days) {
+      std::erase_if(service_day.stop_times, [](const GtfsStopTime& st) {
+        return st.arrival_time.seconds >= kSecondsPerDay;
+      });
+      RemoveUnreferencedTripsRoutesAndDirections(service_day);
+    }
+
+    for (auto& stop_time : service_day.stop_times) {
+      stop_time.arrival_time.seconds += day * kSecondsPerDay;
+      stop_time.departure_time.seconds += day * kSecondsPerDay;
+    }
+    service_days.push_back(std::move(service_day));
+  }
+
+  return GtfsDayCombine(service_days);
 }
 
 }  // namespace vats5

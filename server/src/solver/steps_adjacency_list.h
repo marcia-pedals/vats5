@@ -138,6 +138,27 @@ inline void from_json(const nlohmann::json& j, StepGroup& sg) {
   sg.steps_end = j.at("steps_end").get<int>();
 }
 
+// Departure times are packed into an int16_t at 10-second resolution, so the
+// combined service day cannot run past this. Times before the service start
+// are legitimate, and get the same headroom in the other direction.
+inline constexpr int kMaxRepresentableTimeSeconds = 32767 * 10;
+inline constexpr int kMinRepresentableTimeSeconds = -32768 * 10;
+
+// Pack a departure time for `departure_times_div10`. Throws rather than let a
+// service day too long to represent silently wrap around.
+inline int16_t PackDepartureTime(TimeSinceServiceStart time) {
+  if (time.seconds < kMinRepresentableTimeSeconds ||
+      time.seconds > kMaxRepresentableTimeSeconds) {
+    throw std::runtime_error(
+        "Departure time " + time.ToString() +
+        " is outside the representable range of " +
+        TimeSinceServiceStart{kMinRepresentableTimeSeconds}.ToString() +
+        " to " + TimeSinceServiceStart{kMaxRepresentableTimeSeconds}.ToString()
+    );
+  }
+  return static_cast<int16_t>(time.seconds / 10);
+}
+
 struct StepsAdjacencyList {
   // CSR (Compressed Sparse Row) representation of step groups per stop.
   // group_offsets[stop_id.v] is the start index into `groups` for that stop.
@@ -232,9 +253,7 @@ inline void from_json(const nlohmann::json& j, StepsAdjacencyList& adj) {
   adj.steps = j.at("steps").get<std::vector<AdjacencyListStep>>();
   adj.departure_times_div10.reserve(adj.steps.size());
   for (const auto& step : adj.steps) {
-    adj.departure_times_div10.push_back(
-        static_cast<int16_t>(step.origin_time.seconds / 10)
-    );
+    adj.departure_times_div10.push_back(PackDepartureTime(step.origin_time));
   }
 }
 

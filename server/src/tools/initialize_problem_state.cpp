@@ -21,6 +21,7 @@ int main(int argc, char* argv[]) {
   std::string output_path;
   double max_walking_distance = 500.0;
   double walking_speed = 1.0;
+  int subsequent_service_days = 1;
 
   app.add_option(
          "world_config_path",
@@ -44,8 +45,31 @@ int main(int argc, char* argv[]) {
       ->default_val(500.0);
   app.add_option("--walking-speed", walking_speed, "Walking speed in m/s")
       ->default_val(1.0);
+  app.add_option(
+         "--subsequent-service-days",
+         subsequent_service_days,
+         "How many service days after the target date to include, each shifted "
+         "forward by 24:00 per day"
+  )
+      ->default_val(1);
 
   CLI11_PARSE(app, argc, argv);
+
+  if (subsequent_service_days < 0) {
+    std::cerr << "--subsequent-service-days must not be negative\n";
+    return 1;
+  }
+  // Every day but the last can also carry trips running past midnight, but the
+  // last one is truncated, so this is where the times top out.
+  constexpr int kSecondsPerDay = 24 * 3600;
+  if ((subsequent_service_days + 1) * kSecondsPerDay >
+      kMaxRepresentableTimeSeconds) {
+    std::cerr << "--subsequent-service-days " << subsequent_service_days
+              << " would run past "
+              << TimeSinceServiceStart{kMaxRepresentableTimeSeconds}.ToString()
+              << ", the longest service day the solver can represent\n";
+    return 1;
+  }
 
   GetStepsOptions options{
       .max_walking_distance_meters = max_walking_distance,
@@ -53,7 +77,9 @@ int main(int argc, char* argv[]) {
   };
 
   GtfsFilterConfig filter_config = GtfsFilterConfigLoad(world_config_path);
-  GtfsDay gtfs_day = GtfsNormalizeStops(GtfsFilterFromConfig(filter_config));
+  GtfsDay gtfs_day = GtfsNormalizeStops(
+      GtfsFilterFromConfig(filter_config, subsequent_service_days)
+  );
 
   toml::table required_stops_toml;
   try {
