@@ -1,6 +1,6 @@
 import { Pool, type PoolConfig } from "pg";
 import { z } from "zod";
-import { type Run, SolutionSchema, type Solution } from "../schemas";
+import { type Run, type Solution, SolutionSchema } from "../schemas";
 
 /**
  * Connection settings from DATABASE_URL. Local development talks to a plain,
