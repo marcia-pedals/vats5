@@ -123,6 +123,11 @@ add_library(tour_paths STATIC src/solver/tour_paths.cpp)
 target_link_libraries(tour_paths PUBLIC steps_adjacency_list)
 target_include_directories(tour_paths PUBLIC src)
 
+# Create branch_and_cut library target
+add_library(branch_and_cut STATIC src/solver/branch_and_cut.cpp)
+target_link_libraries(branch_and_cut PUBLIC tarel_graph)
+target_include_directories(branch_and_cut PUBLIC src)
+
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
@@ -279,4 +284,9 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
 target_link_libraries(tour_paths_test PUBLIC gunit tour_paths steps_shortest_path)
 add_test(NAME tour_paths_test COMMAND tour_paths_test)
+
+# Add branch_and_cut test executable
+add_executable(branch_and_cut_test src/solver/branch_and_cut_test.cpp)
+target_link_libraries(branch_and_cut_test PUBLIC gunit branch_and_cut)
+add_test(NAME branch_and_cut_test COMMAND branch_and_cut_test)
 
