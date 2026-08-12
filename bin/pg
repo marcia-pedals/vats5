@@ -1,36 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Manage a project-local PostgreSQL instance for the solution-viewer app.
-# The cluster lives entirely inside the checkout (solution-viewer/.pgdata) and
-# listens on a port derived from the checkout path, so multiple checkouts and
-# any system-wide postgres can coexist.
+# Manage the PostgreSQL instance backing the solution-viewer app.
 #
-# Usage: pg {init|start|stop|restart|status|psql|url|destroy|logs}
+# The cluster is shared by every checkout on this machine: it lives outside the
+# working copy (~/.local/share/vats5/pgdata by default) and listens on a fixed
+# port, so all checkouts see the same data. Set VATS5_PGDATA / VATS5_PGPORT to
+# move it elsewhere — every checkout must agree on both.
+#
+# Usage: pg {init|start|stop|restart|status|psql|url|destroy [--force]|logs}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 APP_DIR="$PROJECT_ROOT/solution-viewer"
 
-export PGDATA="$APP_DIR/.pgdata"
-LOG_FILE="$APP_DIR/.pgdata/postgres.log"
+export PGDATA="${VATS5_PGDATA:-$HOME/.local/share/vats5/pgdata}"
+LOG_FILE="$PGDATA/postgres.log"
 ENV_FILE="$APP_DIR/.env.local"
 
 DB_NAME="solution_viewer"
 DB_USER="$(whoami)"
+ENV_MARKER="# Shared development database, managed by bin/pg. Not committed."
 
-# --- port derivation (same scheme as bin/viz, different base) ---
-if command -v md5 &>/dev/null; then
-  hex=$(echo -n "$PROJECT_ROOT" | md5 | head -c 4)
-elif command -v md5sum &>/dev/null; then
-  hex=$(echo -n "$PROJECT_ROOT" | md5sum | head -c 4)
-else
-  echo "error: neither md5 nor md5sum found" >&2
-  exit 1
-fi
-uint16=$((16#$hex))
-offset=$((uint16 % 1000))
-export PGPORT=$((15000 + offset))
+# Fixed (not derived from the checkout path) so every checkout reaches the same
+# cluster. High enough to stay clear of a system postgres on 5432.
+export PGPORT="${VATS5_PGPORT:-15432}"
 export PGHOST=localhost
 
 DATABASE_URL="postgresql://$DB_USER@localhost:$PGPORT/$DB_NAME"
@@ -95,6 +89,7 @@ do_init() {
     echo "cluster already exists at $PGDATA"
   else
     echo "creating cluster at $PGDATA..."
+    mkdir -p "$(dirname "$PGDATA")"
     mkdir -p "$PGDATA"
     # Restrictive perms are required by initdb.
     chmod 700 "$PGDATA"
@@ -111,12 +106,14 @@ do_init() {
     echo "created database '$DB_NAME'"
   fi
 
-  if [[ -f "$ENV_FILE" ]]; then
-    echo "$ENV_FILE already exists — leaving it alone"
+  # The file is rewritten whenever bin/pg wrote it, so a checkout that still
+  # points at an older per-checkout cluster gets moved onto the shared one.
+  if [[ -f "$ENV_FILE" ]] && ! grep -q 'managed by bin/pg' "$ENV_FILE"; then
+    echo "$ENV_FILE is hand-written — leaving it alone"
     echo "  (expected DATABASE_URL: $DATABASE_URL)"
   else
     cat > "$ENV_FILE" <<EOF
-# Local development database, managed by bin/pg. Not committed.
+$ENV_MARKER
 DATABASE_URL=$DATABASE_URL
 EOF
     echo "wrote $ENV_FILE"
@@ -131,6 +128,15 @@ do_destroy() {
   if ! cluster_exists; then
     echo "no cluster at $PGDATA"
     return 0
+  fi
+  # The cluster is shared, so destroying it takes every checkout's data with it.
+  if [[ "${1:-}" != "--force" ]]; then
+    echo "$PGDATA is shared by every checkout on this machine."
+    read -r -p "delete it and all its data? type 'yes' to confirm: " reply
+    if [[ "$reply" != "yes" ]]; then
+      echo "aborted"
+      return 1
+    fi
   fi
   if is_running; then
     do_stop
@@ -147,7 +153,7 @@ print_status() {
     return 0
   fi
   if is_running; then
-    echo "postgres is running"
+    echo "postgres is running (shared by all checkouts)"
     echo "  port: $PGPORT"
     echo "  data: $PGDATA"
     echo "  url:  $DATABASE_URL"
@@ -183,7 +189,8 @@ case "${1:-}" in
     echo "$DATABASE_URL"
     ;;
   destroy)
-    do_destroy
+    shift
+    do_destroy "$@"
     ;;
   logs)
     if [[ -f "$LOG_FILE" ]]; then
@@ -194,7 +201,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: pg {init|start|stop|restart|status|psql|url|destroy|logs}"
+    echo "usage: pg {init|start|stop|restart|status|psql|url|destroy [--force]|logs}"
     exit 1
     ;;
 esac
