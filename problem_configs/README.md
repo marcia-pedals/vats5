@@ -10,6 +10,6 @@ A `problem_spec` carries `problem_spec_id`, `gtfs_source_id`, `target_stops_id` 
 - `walking_speed` -- how fast it is walked, in m/s.
 - `subsequent_service_days` -- how many days after the service date the solve may run into, defaulting to 1. Each one is another day of trips shifted forward by 24:00, and it also sets how late a tour may set off: 4 hours into the last of those days. Raise it for a network a tour cannot get around in a day.
 
-Every stop in a `target_stops` set has to be served on every date being solved. A stop with no service on some date makes that date fail, so seasonal and weekday-only stops are excluded when the set is generated.
+A `target_stops` set can include stops that are not served on every date. Filtering the GTFS to a date keeps every stop in `stops.txt`, so such a stop still resolves on a date it has no service of its own -- it stays required, and the tour has to reach it on some other operator. Generating a set from a Friday is a good way to catch both the weekday-only and the weekend-only stops in one go, since the window spans both.
 
 There are some older configs in `server/configs` and derived data in `server/data`. It might be good to migrate to this new place and delete those eventually.
