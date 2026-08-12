@@ -231,6 +231,11 @@ def solve_one(
         ]
     if "walking_speed" in spec_data:
         initialize_command += ["--walking-speed", str(spec_data["walking_speed"])]
+    if "subsequent_service_days" in spec_data:
+        initialize_command += [
+            "--subsequent-service-days",
+            str(spec_data["subsequent_service_days"]),
+        ]
 
     started = time.monotonic()
     returncode = run_tool(
