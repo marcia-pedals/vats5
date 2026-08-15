@@ -73,7 +73,9 @@ export type SolutionPath = z.infer<typeof SolutionPathSchema>;
 // "timeout", or one of the failure statuses; the other fields depend on it.
 // `trace` is absent for rows written before it was recorded, and so are
 // `stops`/`solution_path`/`routes`. Only a solve has a path; `routes` covers
-// exactly the routes that path uses.
+// exactly the routes that path uses. A "duplicate_service_pattern" row has no
+// path either, but does carry the `optimal_duration_seconds` of the date it
+// duplicates.
 export const SolutionDataSchema = z
   .object({
     status: z.string(),

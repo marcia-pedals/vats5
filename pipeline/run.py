@@ -18,7 +18,9 @@ Each run gets its own directory under ~/vats5-pipeline:
 
 A service date whose active services are identical to an already-solved one
 poses the same problem, so initialize_problem_state stops as soon as it sees
-that and the date is recorded as a duplicate instead of being solved again.
+that and the date is recorded as a duplicate instead of being solved again. Its
+row copies the duplicated date's optimal duration, so that querying for a date's
+duration never has to follow the duplicate to another row.
 
 The run directory name doubles as the gtfs_instance_id. Older run directories
 are pruned, which does not affect the rows already written for them.
@@ -194,6 +196,7 @@ def solve_one(
     feed_dir: Path,
     service_date: str,
     solved_patterns_json: Path,
+    solved_solutions: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Initialize and solve one spec for one service date.
 
@@ -201,6 +204,10 @@ def solve_one(
     when there is one to add to `solved_patterns_json` for later dates -- a
     duplicate date contributes nothing new, and a failed initialization has no
     pattern at all.
+
+    `solved_solutions` holds this spec's already-solved dates by service date,
+    matching `solved_patterns_json`, so that a duplicate date can carry the
+    result of the date it duplicates.
 
     The solution info carries a `trace` of how long each part took: the two
     tools as timed here, with whatever spans they reported nested underneath.
@@ -257,15 +264,31 @@ def solve_one(
         duplicate_of = json.loads(active_services_path(problem_state).read_text())[
             "duplicate_of"
         ]
+        duplicated_date = duplicate_of["service_date"]
+        if duplicated_date not in solved_solutions:
+            raise RunError(
+                f"{service_date} was skipped as a duplicate of {duplicated_date}, "
+                "which is not one of this spec's solved service dates "
+                f"({sorted(solved_solutions)})"
+            )
+        solution: dict[str, Any] = {
+            "status": DUPLICATE_STATUS,
+            "duplicate_of_service_date": duplicated_date,
+            "matched_on": duplicate_of["matched_on"],
+        }
+        # Copied so that a query for the duration of this date does not have to
+        # join with the duplicated date's row. Absent when that date has no
+        # duration either, e.g. when its solve timed out.
+        duplicated_duration = solved_solutions[duplicated_date].get(
+            "optimal_duration_seconds"
+        )
+        if duplicated_duration is not None:
+            solution["optimal_duration_seconds"] = duplicated_duration
         return finish(
-            {
-                "status": DUPLICATE_STATUS,
-                "duplicate_of_service_date": duplicate_of["service_date"],
-                "matched_on": duplicate_of["matched_on"],
-            },
+            solution,
             [initialize_node],
-            f"same {duplicate_of['matched_on']} as "
-            f"{duplicate_of['service_date']}, skipped",
+            f"same {duplicate_of['matched_on']} as {duplicated_date} "
+            f"({duplicated_duration}), skipped",
         )
 
     if returncode != 0:
@@ -384,6 +407,11 @@ def main(service_date_count: int) -> None:
             solved_patterns: dict[str, list[dict[str, Any]]] = {
                 spec["problem_spec_id"]: [] for spec in specs
             }
+            # The solutions those patterns came from, by service date, so that a
+            # duplicate date can copy the result of the date it duplicates.
+            solved_solutions: dict[str, dict[str, dict[str, Any]]] = {
+                spec["problem_spec_id"]: {} for spec in specs
+            }
             skipped = 0
 
             for service_date in service_dates:
@@ -400,9 +428,11 @@ def main(service_date_count: int) -> None:
                         feed_dir,
                         service_date,
                         patterns_json,
+                        solved_solutions[spec_id],
                     )
                     if pattern is not None:
                         solved_patterns[spec_id].append(pattern)
+                        solved_solutions[spec_id][service_date] = solution
                     if solution["status"] == DUPLICATE_STATUS:
                         skipped += 1
                     cursor.execute(
