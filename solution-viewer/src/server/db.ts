@@ -1,6 +1,12 @@
 import { Pool, type PoolConfig } from "pg";
 import { z } from "zod";
-import { type Run, type Solution, SolutionSchema } from "../schemas";
+import {
+  type Run,
+  type Solution,
+  SolutionSchema,
+  type TargetStops,
+  TargetStopsSchema,
+} from "../schemas";
 
 /**
  * Connection settings from DATABASE_URL. Local development talks to a plain,
@@ -46,21 +52,58 @@ const RunRowSchema = z.object({
 
 // --- Queries ---
 
-/** Every GTFS fetch that the pipeline has run against, newest first. */
-export async function listRuns(): Promise<Run[]> {
+/**
+ * Every target stop set something has actually been solved for. The set is the
+ * outer axis the viewer navigates by, so one with no instances behind it would
+ * only be an entry that leads nowhere.
+ */
+export async function listTargetStops(): Promise<TargetStops[]> {
   const rows = await query(`
-    SELECT gtfs_instance_id, fetched_at
-    FROM gtfs_instance
-    ORDER BY fetched_at DESC
+    SELECT DISTINCT stops.target_stops_id, stops.title
+    FROM target_stops AS stops
+    JOIN problem_spec AS spec
+      ON spec.target_stops_id = stops.target_stops_id
+     AND spec.gtfs_source_id = stops.gtfs_source_id
+    JOIN problem_instance AS instance
+      ON instance.problem_spec_id = spec.problem_spec_id
+     AND instance.gtfs_source_id = spec.gtfs_source_id
+    ORDER BY stops.title
   `);
+  return z.array(TargetStopsSchema).parse(rows);
+}
+
+/**
+ * The GTFS fetches that one target stop set was solved against, newest first.
+ * Scoped to the set rather than every fetch there is, so stepping through runs
+ * never lands on one that has nothing to show for the set being viewed.
+ */
+export async function listRuns(targetStopsId: string): Promise<Run[]> {
+  const rows = await query(
+    `
+    SELECT DISTINCT gtfs.gtfs_instance_id, gtfs.fetched_at
+    FROM gtfs_instance AS gtfs
+    JOIN problem_instance AS instance
+      ON instance.gtfs_instance_id = gtfs.gtfs_instance_id
+     AND instance.gtfs_source_id = gtfs.gtfs_source_id
+    JOIN problem_spec AS spec
+      ON spec.problem_spec_id = instance.problem_spec_id
+     AND spec.gtfs_source_id = instance.gtfs_source_id
+    WHERE spec.target_stops_id = $1
+    ORDER BY gtfs.fetched_at DESC
+  `,
+    [targetStopsId]
+  );
   return z
     .array(RunRowSchema)
     .parse(rows)
     .map((row) => ({ ...row, fetched_at: row.fetched_at.toISOString() }));
 }
 
-/** Every problem instance solved against one GTFS fetch. */
-export async function listSolutions(gtfsInstanceId: string): Promise<Solution[]> {
+/** Every problem instance for one target stop set solved against one GTFS fetch. */
+export async function listSolutions(
+  gtfsInstanceId: string,
+  targetStopsId: string
+): Promise<Solution[]> {
   const rows = await query(
     `
     SELECT instance.problem_instance_id,
@@ -79,9 +122,10 @@ export async function listSolutions(gtfsInstanceId: string): Promise<Solution[]>
       ON stops.target_stops_id = spec.target_stops_id
      AND stops.gtfs_source_id = spec.gtfs_source_id
     WHERE instance.gtfs_instance_id = $1
-    ORDER BY stops.title, instance.service_date, instance.problem_spec_id
+      AND spec.target_stops_id = $2
+    ORDER BY instance.service_date, instance.problem_spec_id
   `,
-    [gtfsInstanceId]
+    [gtfsInstanceId, targetStopsId]
   );
   return z.array(SolutionSchema).parse(rows);
 }

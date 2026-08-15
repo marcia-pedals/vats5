@@ -17,6 +17,7 @@ const LABEL_PAD = 2; // collision padding (screen px)
 const LABEL_MIN_NEIGHBOR = 13; // suppress a label whose nearest dot is closer
 
 // Arrow colors, as CSS variable values so SVG matches the rest of the theme.
+// Each is set on the line and, via its own marker, on the arrowhead.
 const PATH_COLOR = "var(--color-tc-green)";
 const WALK_COLOR = "var(--color-tc-cyan)";
 const HIGHLIGHT_COLOR = "var(--color-tc-magenta)";
@@ -160,6 +161,11 @@ function useContainerWidth(): [(node: HTMLDivElement | null) => void, number] {
   return [ref, width];
 }
 
+/**
+ * An arrowhead in one fixed color. A head cannot read the color off the line
+ * it sits on -- `context-stroke` would, but Safari does not support it and
+ * paints the head black -- so there is one marker per color a line can be.
+ */
 function ArrowMarker({ id, color }: { id: string; color: string }) {
   return (
     <marker
@@ -242,23 +248,41 @@ function PathMap({
     [arrows]
   );
 
-  const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const px = event.clientX - rect.left;
-    const py = event.clientY - rect.top;
-    setTransform((current) => {
-      // Dampen the mouse wheel's large deltas; leave trackpads alone.
-      const delta = Math.abs(event.deltaY) > 50 ? event.deltaY * 0.3 : event.deltaY;
-      const scale = Math.min(Math.max(current.scale * 1.005 ** -delta, 0.5), 40);
-      return {
-        x: px - (px - current.x) * (scale / current.scale),
-        y: py - (py - current.y) * (scale / current.scale),
-        scale,
-      };
-    });
+  /**
+   * A wheel over the map zooms it and nothing else: the page must not scroll
+   * out from under the cursor. React's own onWheel is registered passive and so
+   * cannot preventDefault, so the listener is attached by hand -- from a ref
+   * callback, since the svg mounts only once the container has been measured.
+   */
+  const svgRef = useCallback((svg: SVGSVGElement | null) => {
+    if (!svg) return;
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      setTransform((current) => {
+        // Dampen the mouse wheel's large deltas; leave trackpads alone.
+        const delta = Math.abs(event.deltaY) > 50 ? event.deltaY * 0.3 : event.deltaY;
+        const scale = Math.min(Math.max(current.scale * 1.005 ** -delta, 0.5), 40);
+        return {
+          x: px - (px - current.x) * (scale / current.scale),
+          y: py - (py - current.y) * (scale / current.scale),
+          scale,
+        };
+      });
+    };
+
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
   }, []);
 
-  const requiredCount = stops.filter((stop) => stop.required).length;
+  // Panned or zoomed away from the fitted view, and so with something to reset.
+  const moved =
+    transform.x !== DEFAULT_TRANSFORM.x ||
+    transform.y !== DEFAULT_TRANSFORM.y ||
+    transform.scale !== DEFAULT_TRANSFORM.scale;
 
   // Where the tour begins and ends, which the arrows alone do not say.
   const endpoints = useMemo(() => {
@@ -272,119 +296,125 @@ function PathMap({
   }, [path, coords]);
 
   return (
-    <div className="space-y-1.5">
-      <div
-        ref={containerRef}
-        className="relative overflow-hidden rounded-panel border border-tc-border bg-tc-base"
-        style={{ height: MAP_HEIGHT }}
-      >
-        {placed && (
-          <svg
-            width="100%"
-            height="100%"
-            className={`block touch-none ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
-            role="img"
-            aria-label="Solution path map"
-            onWheel={onWheel}
-            onPointerDown={(event) => {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              setDragging(true);
-            }}
-            onPointerMove={(event) => {
-              if (!dragging) return;
-              setTransform((current) => ({
-                ...current,
-                x: current.x + event.movementX,
-                y: current.y + event.movementY,
-              }));
-            }}
-            onPointerUp={() => setDragging(false)}
-            onPointerCancel={() => setDragging(false)}
-          >
-            <defs>
-              <ArrowMarker id="path-arrow" color={PATH_COLOR} />
-              <ArrowMarker id="path-arrow-walk" color={WALK_COLOR} />
-              <ArrowMarker id="path-arrow-highlight" color={HIGHLIGHT_COLOR} />
-            </defs>
-            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-              {placed.map((stop) => (
-                <circle
-                  key={stop.id}
-                  cx={stop.cx}
-                  cy={stop.cy}
-                  r={(stop.required ? DOT_R : DOT_R - 1.5) / transform.scale}
-                  fill={stop.required ? "var(--color-tc-cyan)" : "var(--color-tc-text-dim)"}
-                  stroke={stop.required ? "var(--color-tc-blue)" : "var(--color-tc-text-muted)"}
-                  strokeWidth={1 / transform.scale}
-                  opacity={stop.required || onPath.has(stop.id) ? 0.85 : 0.4}
-                >
-                  <title>{stop.name}</title>
-                </circle>
-              ))}
+    <div
+      ref={containerRef}
+      className="relative overflow-hidden rounded-panel border border-tc-border bg-tc-base"
+      style={{ height: MAP_HEIGHT }}
+    >
+      {placed && (
+        <svg
+          ref={svgRef}
+          width="100%"
+          height="100%"
+          // Not selectable: dragging the map is a pan, not a text selection of
+          // the stop labels it drags past.
+          className={`block touch-none select-none ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
+          role="img"
+          aria-label="Solution path map"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDragging(true);
+          }}
+          onPointerMove={(event) => {
+            if (!dragging) return;
+            setTransform((current) => ({
+              ...current,
+              x: current.x + event.movementX,
+              y: current.y + event.movementY,
+            }));
+          }}
+          onPointerUp={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
+        >
+          <defs>
+            <ArrowMarker id="path-arrow" color={PATH_COLOR} />
+            <ArrowMarker id="path-arrow-walk" color={WALK_COLOR} />
+            <ArrowMarker id="path-arrow-highlight" color={HIGHLIGHT_COLOR} />
+          </defs>
+          <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+            {placed.map((stop) => (
+              <circle
+                key={stop.id}
+                cx={stop.cx}
+                cy={stop.cy}
+                r={(stop.required ? DOT_R : DOT_R - 1.5) / transform.scale}
+                fill={stop.required ? "var(--color-tc-cyan)" : "var(--color-tc-text-dim)"}
+                stroke={stop.required ? "var(--color-tc-blue)" : "var(--color-tc-text-muted)"}
+                strokeWidth={1 / transform.scale}
+                opacity={stop.required || onPath.has(stop.id) ? 0.85 : 0.4}
+              >
+                <title>{stop.name}</title>
+              </circle>
+            ))}
 
-              {endpoints.map((endpoint) => (
-                <circle
-                  key={endpoint.role}
-                  cx={endpoint.at.cx}
-                  cy={endpoint.at.cy}
-                  r={(DOT_R + 4) / transform.scale}
-                  fill="none"
-                  stroke={endpoint.color}
+            {endpoints.map((endpoint) => (
+              <circle
+                key={endpoint.role}
+                cx={endpoint.at.cx}
+                cy={endpoint.at.cy}
+                r={(DOT_R + 4) / transform.scale}
+                fill="none"
+                stroke={endpoint.color}
+                strokeWidth={2 / transform.scale}
+              >
+                <title>{endpoint.role}</title>
+              </circle>
+            ))}
+
+            {orderedArrows.map((arrow) => {
+              const color = arrow.highlighted
+                ? HIGHLIGHT_COLOR
+                : arrow.walk
+                  ? WALK_COLOR
+                  : PATH_COLOR;
+              const marker = arrow.highlighted
+                ? "path-arrow-highlight"
+                : arrow.walk
+                  ? "path-arrow-walk"
+                  : "path-arrow";
+              return (
+                <line
+                  key={arrow.key}
+                  x1={arrow.x1}
+                  y1={arrow.y1}
+                  x2={arrow.x2}
+                  y2={arrow.y2}
+                  stroke={color}
+                  // Constant: the arrowheads are markerUnits="strokeWidth", so
+                  // a thicker hovered line would resize its head too.
                   strokeWidth={2 / transform.scale}
+                  markerEnd={`url(#${marker})`}
+                  strokeDasharray={
+                    arrow.walk ? `${4 / transform.scale} ${3 / transform.scale}` : undefined
+                  }
+                  opacity={arrow.highlighted ? 0.95 : 0.7}
+                  style={{ pointerEvents: "none" }}
+                />
+              );
+            })}
+
+            {labels?.map((label, index) =>
+              label.visible ? (
+                <text
+                  key={placed[index].id}
+                  x={label.dataX}
+                  y={label.dataY}
+                  fontSize={LABEL_FONT_SIZE / transform.scale}
+                  fontFamily="var(--font-mono)"
+                  fill="var(--color-tc-text-muted)"
+                  style={{ pointerEvents: "none" }}
                 >
-                  <title>{endpoint.role}</title>
-                </circle>
-              ))}
+                  {placed[index].name}
+                </text>
+              ) : null
+            )}
+          </g>
+        </svg>
+      )}
 
-              {orderedArrows.map((arrow) => {
-                const color = arrow.highlighted
-                  ? HIGHLIGHT_COLOR
-                  : arrow.walk
-                    ? WALK_COLOR
-                    : PATH_COLOR;
-                const marker = arrow.highlighted
-                  ? "path-arrow-highlight"
-                  : arrow.walk
-                    ? "path-arrow-walk"
-                    : "path-arrow";
-                return (
-                  <line
-                    key={arrow.key}
-                    x1={arrow.x1}
-                    y1={arrow.y1}
-                    x2={arrow.x2}
-                    y2={arrow.y2}
-                    stroke={color}
-                    strokeWidth={(arrow.highlighted ? 3 : 2) / transform.scale}
-                    strokeDasharray={
-                      arrow.walk ? `${4 / transform.scale} ${3 / transform.scale}` : undefined
-                    }
-                    markerEnd={`url(#${marker})`}
-                    opacity={arrow.highlighted ? 0.95 : 0.7}
-                    style={{ pointerEvents: "none" }}
-                  />
-                );
-              })}
-
-              {labels?.map((label, index) =>
-                label.visible ? (
-                  <text
-                    key={placed[index].id}
-                    x={label.dataX}
-                    y={label.dataY}
-                    fontSize={LABEL_FONT_SIZE / transform.scale}
-                    fontFamily="var(--font-mono)"
-                    fill="var(--color-tc-text-muted)"
-                    style={{ pointerEvents: "none" }}
-                  >
-                    {placed[index].name}
-                  </text>
-                ) : null
-              )}
-            </g>
-          </svg>
-        )}
-
+      {/* Only once there is something to reset to; on an untouched map the
+          button is a control for a state you are already in. */}
+      {moved && (
         <button
           type="button"
           className="absolute right-2 top-2 rounded-panel border border-tc-border bg-tc-raised px-2 py-0.5 font-mono text-[10px] text-tc-text-muted hover:border-tc-border-bright hover:text-tc-text cursor-pointer"
@@ -392,10 +422,7 @@ function PathMap({
         >
           reset view
         </button>
-        <span className="absolute bottom-2 left-2 rounded-panel border border-tc-border bg-tc-raised/85 px-2 py-0.5 font-mono text-[10px] text-tc-text-dim">
-          {requiredCount} required / {stops.length} stops · {path.steps.length} legs
-        </span>
-      </div>
+      )}
     </div>
   );
 }
@@ -509,31 +536,15 @@ export function SolutionPathView({
   }
 
   const first = path.steps[0];
-  const last = path.steps[path.steps.length - 1];
 
   return (
-    <div className="space-y-3">
-      <PathMap
-        stops={stops}
-        path={path}
-        highlight={hoveredLeg === null ? null : ranges[hoveredLeg]}
-      />
-
-      <div className="flex items-baseline justify-between gap-4 font-mono text-xs">
-        {/* Matches the green and amber rings the map draws on these two. */}
-        <span className="min-w-0 truncate text-tc-text-muted">
-          <span className="text-tc-green">●</span> {formatTimeOfDay(first.depart_time)}{" "}
-          {stopNames.get(first.origin_stop_id) ?? first.origin_stop_id} →{" "}
-          <span className="text-tc-amber">●</span> {formatTimeOfDay(last.arrive_time)}{" "}
-          {stopNames.get(last.destination_stop_id) ?? last.destination_stop_id}
-        </span>
-        <span className="text-tc-text-dim">
-          {path.steps.length} leg{path.steps.length === 1 ? "" : "s"} · {formatSpan(path.duration)}{" "}
-          total
-        </span>
-      </div>
-
-      <div className="max-h-96 overflow-y-auto rounded-panel border border-tc-border">
+    // Legs beside the map rather than under it: hovering a leg highlights it on
+    // the map, and side by side both are on screen at once.
+    <div className="flex items-start gap-3">
+      <div
+        className="w-64 shrink-0 overflow-y-auto rounded-panel border border-tc-border"
+        style={{ maxHeight: MAP_HEIGHT }}
+      >
         <table className="w-full border-collapse font-mono text-[11px]">
           <tbody>
             <tr className="border-b border-tc-border bg-tc-surface">
@@ -558,6 +569,57 @@ export function SolutionPathView({
           ))}
         </table>
       </div>
+
+      <div className="min-w-0 flex-1">
+        <PathMap
+          stops={stops}
+          path={path}
+          // `?? null` because a path swapped under a held hover can leave the
+          // index past the end of the new path's legs.
+          highlight={hoveredLeg === null ? null : (ranges[hoveredLeg] ?? null)}
+        />
+      </div>
     </div>
+  );
+}
+
+/**
+ * The gist of a path in one line: where it starts and ends, and how much of it
+ * there is. Kept apart from the view above so the details card can sit it on
+ * the same row as its own title rather than spending a row on it.
+ */
+export function SolutionPathSummary({
+  stops,
+  path,
+}: {
+  stops: SolutionStop[];
+  path: SolutionPath;
+}) {
+  const stopNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const stop of stops) names.set(stop.id, stop.name);
+    return names;
+  }, [stops]);
+
+  const first = path.steps[0];
+  const last = path.steps[path.steps.length - 1];
+  if (!first || !last) {
+    return null;
+  }
+
+  return (
+    <span className="flex min-w-0 items-baseline gap-3 font-mono text-xs">
+      {/* Matches the green and amber rings the map draws on these two. */}
+      <span className="min-w-0 truncate text-tc-text-muted">
+        <span className="text-tc-green">●</span> {formatTimeOfDay(first.depart_time)}{" "}
+        {stopNames.get(first.origin_stop_id) ?? first.origin_stop_id} →{" "}
+        <span className="text-tc-amber">●</span> {formatTimeOfDay(last.arrive_time)}{" "}
+        {stopNames.get(last.destination_stop_id) ?? last.destination_stop_id}
+      </span>
+      <span className="whitespace-nowrap text-tc-text-dim">
+        {path.steps.length} leg{path.steps.length === 1 ? "" : "s"} · {formatSpan(path.duration)}{" "}
+        total
+      </span>
+    </span>
   );
 }
