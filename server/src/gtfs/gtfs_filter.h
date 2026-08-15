@@ -17,7 +17,10 @@ struct GtfsFilterConfig {
 GtfsFilterConfig GtfsFilterConfigLoad(const std::string& config_path);
 
 // Load GTFS data, apply prefix and date filters, and return the result.
-GtfsDay GtfsFilterFromConfig(const GtfsFilterConfig& config);
+// `subsequent_service_days` is passed on to GtfsFilterDateWithServiceDays.
+GtfsDay GtfsFilterFromConfig(
+    const GtfsFilterConfig& config, int subsequent_service_days = 1
+);
 
 // Removes trips not referenced by stop_times, then removes routes and
 // directions not referenced by remaining trips.
@@ -29,11 +32,23 @@ Gtfs GtfsFilterByPrefixes(
     const Gtfs& gtfs, const std::vector<std::string>& prefixes
 );
 
-// Filter GTFS data for a given date and combine with the next service day.
-// Takes the target day and the next day's early morning trips (times < 24:00,
-// shifted to +24:00). Returns a single combined GtfsDay.
+// The suffix that marks a trip id as belonging to the `day`'th service day
+// after the target date, which is what distinguishes it from the target day's
+// own trips (and from the other subsequent days'). Empty for day 0.
+std::string ServiceDayTripIdSuffix(int day);
+
+// Filter GTFS data for a given date and combine it with the
+// `subsequent_service_days` days that follow it, each shifted forward by 24:00
+// per day and with its trip ids suffixed by ServiceDayTripIdSuffix.
+//
+// Every day but the last contributes all of its trips, including those running
+// past midnight into the following day, which is also how the target day is
+// treated. The last day is the horizon: its trips at or after 24:00 would land
+// on a day that is not modelled at all, so they are dropped.
+//
+// Returns a single combined GtfsDay.
 GtfsDay GtfsFilterDateWithServiceDays(
-    const Gtfs& gtfs, const std::string& date
+    const Gtfs& gtfs, const std::string& date, int subsequent_service_days = 1
 );
 
 }  // namespace vats5

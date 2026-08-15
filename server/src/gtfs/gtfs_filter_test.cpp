@@ -3,6 +3,7 @@
 #include <GUnit.h>
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 using namespace vats5;
@@ -363,7 +364,7 @@ GTEST("GtfsFilterDateWithServiceDays includes next day early-morning trips") {
 
   // 20250708 is Tuesday. Next day (Wednesday) also has weekday service.
   // T5 runs at 06:00 (< 24:00) on the next day, so it should appear with
-  // :next-sd suffix and times shifted by +24h.
+  // :next-sd-1 suffix and times shifted by +24h.
   GtfsDay result = GtfsFilterDateWithServiceDays(gtfs, "20250708");
 
   std::unordered_set<std::string> trip_ids;
@@ -371,16 +372,16 @@ GTEST("GtfsFilterDateWithServiceDays includes next day early-morning trips") {
     trip_ids.insert(trip.trip_id.v);
   }
 
-  EXPECT_TRUE(trip_ids.count("T5:next-sd"))
-      << "Next day early-morning trip T5:next-sd should be present";
+  EXPECT_TRUE(trip_ids.count("T5:next-sd-1"))
+      << "Next day early-morning trip T5:next-sd-1 should be present";
 
   // Check that times are shifted by +24h: 06:00 + 24:00 = 30:00 = 108000s
   for (const auto& st : result.stop_times) {
-    if (st.trip_id.v == "T5:next-sd" && st.stop_sequence == 1) {
+    if (st.trip_id.v == "T5:next-sd-1" && st.stop_sequence == 1) {
       EXPECT_EQ(st.arrival_time.seconds, 30 * 3600)
           << "Next day trip time should be shifted by +24h";
     }
-    if (st.trip_id.v == "T5:next-sd" && st.stop_sequence == 2) {
+    if (st.trip_id.v == "T5:next-sd-1" && st.stop_sequence == 2) {
       EXPECT_EQ(st.arrival_time.seconds, 30 * 3600 + 1800)
           << "Next day trip time should be shifted by +24h";
     }
@@ -421,6 +422,74 @@ GTEST("GtfsFilterDateWithServiceDays all stop_times reference valid trips") {
     EXPECT_TRUE(trip_ids.count(st.trip_id.v))
         << "Stop time references unknown trip: " << st.trip_id.v;
   }
+}
+
+GTEST("GtfsFilterDateWithServiceDays with no subsequent days is one day") {
+  Gtfs gtfs = MakeSyntheticGtfs();
+
+  GtfsDay result =
+      GtfsFilterDateWithServiceDays(gtfs, "20250708", /*subsequent=*/0);
+
+  std::unordered_set<std::string> trip_ids;
+  for (const auto& trip : result.trips) {
+    trip_ids.insert(trip.trip_id.v);
+  }
+
+  EXPECT_TRUE(trip_ids.count("T1")) << "Target day trip T1 should be present";
+  // The target day keeps its own past-midnight trips even with no day after it.
+  EXPECT_TRUE(trip_ids.count("T4")) << "Latenight trip T4 should be present";
+  for (const std::string& trip_id : trip_ids) {
+    EXPECT_EQ(trip_id.find(":next-sd"), std::string::npos)
+        << trip_id << " should not come from a subsequent service day";
+  }
+}
+
+GTEST("GtfsFilterDateWithServiceDays shifts each subsequent day by a day") {
+  Gtfs gtfs = MakeSyntheticGtfs();
+
+  // 20250708 is a Tuesday, so Wednesday and Thursday follow with the same
+  // weekday service. T5 runs at 06:00 on each of them.
+  GtfsDay result =
+      GtfsFilterDateWithServiceDays(gtfs, "20250708", /*subsequent=*/2);
+
+  std::unordered_map<std::string, int> arrival_by_trip;
+  for (const auto& st : result.stop_times) {
+    if (st.stop_sequence == 1) {
+      arrival_by_trip[st.trip_id.v] = st.arrival_time.seconds;
+    }
+  }
+
+  EXPECT_EQ(arrival_by_trip["T5"], 6 * 3600);
+  EXPECT_EQ(arrival_by_trip["T5:next-sd-1"], 30 * 3600);
+  EXPECT_EQ(arrival_by_trip["T5:next-sd-2"], 54 * 3600);
+}
+
+GTEST("GtfsFilterDateWithServiceDays truncates only the last service day") {
+  Gtfs gtfs = MakeSyntheticGtfs();
+
+  // T4 runs at 25:00, i.e. past midnight. The target day and every subsequent
+  // day but the last keep it; the last day is the horizon, so it does not.
+  GtfsDay result =
+      GtfsFilterDateWithServiceDays(gtfs, "20250708", /*subsequent=*/2);
+
+  std::unordered_map<std::string, int> arrival_by_trip;
+  for (const auto& st : result.stop_times) {
+    if (st.stop_sequence == 1) {
+      arrival_by_trip[st.trip_id.v] = st.arrival_time.seconds;
+    }
+  }
+
+  EXPECT_EQ(arrival_by_trip["T4"], 25 * 3600);
+  EXPECT_EQ(arrival_by_trip["T4:next-sd-1"], 49 * 3600);
+  EXPECT_FALSE(arrival_by_trip.contains("T4:next-sd-2"))
+      << "The last service day's past-midnight trips should be dropped";
+}
+
+GTEST("ServiceDayTripIdSuffix names each service day") {
+  EXPECT_EQ(ServiceDayTripIdSuffix(0), "");
+  EXPECT_EQ(ServiceDayTripIdSuffix(1), ":next-sd-1");
+  EXPECT_EQ(ServiceDayTripIdSuffix(12), ":next-sd-12");
+  EXPECT_THROW(ServiceDayTripIdSuffix(-1), std::runtime_error);
 }
 
 // ============================================================================
@@ -525,7 +594,7 @@ GTEST("GtfsFilterDateWithServiceDays on real data includes next-sd CT:101") {
 
   std::vector<GtfsStopTime> trip_101_times;
   for (const auto& st : result.stop_times) {
-    if (st.trip_id.v == "CT:101:next-sd") {
+    if (st.trip_id.v == "CT:101:next-sd-1") {
       trip_101_times.push_back(st);
     }
   }
@@ -551,16 +620,16 @@ GTEST("GtfsFilterDateWithServiceDays on real data includes next-sd CT:101") {
   EXPECT_EQ(trip_101_times[21].stop_sequence, 22);
   EXPECT_EQ(trip_101_times[21].arrival_time.seconds, 108060);
 
-  // Verify the trip itself has :next-sd suffix and correct route
+  // Verify the trip itself has :next-sd-1 suffix and correct route
   bool found = false;
   for (const auto& trip : result.trips) {
-    if (trip.trip_id.v == "CT:101:next-sd") {
+    if (trip.trip_id.v == "CT:101:next-sd-1") {
       found = true;
       EXPECT_EQ(trip.route_direction_id.route_id.v, "CT:Local Weekday");
       EXPECT_EQ(trip.route_direction_id.direction_id, 0);
     }
   }
-  EXPECT_TRUE(found) << "CT:101:next-sd should be present";
+  EXPECT_TRUE(found) << "CT:101:next-sd-1 should be present";
 }
 
 GTEST("GtfsFilterDateWithServiceDays excludes weekend trip on weekday") {

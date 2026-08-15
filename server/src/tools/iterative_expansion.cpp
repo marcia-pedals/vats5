@@ -122,8 +122,11 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   // Compute the minimal graph on the required stops. We can't use
   // `state.minimal` directly because it may include intermediate non-required
   // stops and we don't want those to participate in the MST.
-  StepPathsAdjacencyList minimal =
-      ReduceToMinimalSystemPaths(state.minimal, state.required.AllFlat());
+  StepPathsAdjacencyList minimal = ReduceToMinimalSystemPaths(
+      state.minimal,
+      state.required.AllFlat(),
+      HorizonCoveringAllDepartures(state.minimal)
+  );
 
   std::vector weights(n * n, std::numeric_limits<int>::max());
   weights.reserve(n * n);

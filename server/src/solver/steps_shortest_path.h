@@ -101,18 +101,31 @@ std::unordered_map<StopId, std::vector<Path>> FindMinimalPathSet(
 // "path" made up of multiple steps on a graph).
 //
 // [1] Usually-unimportant qualification: All departures from `system_stops` in
-// the path happen at <36:00.
+// the path happen before `origin_time_horizon_seconds`.
 StepPathsAdjacencyList ReduceToMinimalSystemPaths(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    int origin_time_horizon_seconds
 );
+
+// How late a tour may set off, for a problem spanning the target service date
+// and `subsequent_service_days` days after it: 4 hours into the last of them.
+// Departures later than this are not searched for at all, so this is also how
+// much of the loaded GTFS the reduction actually looks at.
+int SearchHorizonSeconds(int subsequent_service_days);
+
+// A horizon reaching past every departure in `adjacency_list`. For reducing a
+// graph that some earlier reduction already cut down to a horizon, where the
+// choice has been made and the only sensible thing is to keep what is there.
+int HorizonCoveringAllDepartures(const StepsAdjacencyList& adjacency_list);
 
 // Return a "completed" graph where the "steps" from a to b are a minimal cover
 // of all the paths from a to b on `adjacency_list`. ("Steps" used in the same
 // sense as in (b) above).
 StepPathsAdjacencyList CompleteShortestPathsGraph(
     const StepsAdjacencyList& adjacency_list,
-    const std::unordered_set<StopId>& system_stops
+    const std::unordered_set<StopId>& system_stops,
+    int origin_time_horizon_seconds
 );
 
 }  // namespace vats5

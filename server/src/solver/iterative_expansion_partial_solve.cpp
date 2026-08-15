@@ -62,7 +62,11 @@ PartialSolution PartialSolveBranchAndBound(
 
   ProblemState partial_problem = MakeProblemState(
       MakeAdjacencyList(
-          ReduceToMinimalSystemPaths(original_problem.minimal, required_subset)
+          ReduceToMinimalSystemPaths(
+              original_problem.minimal,
+              required_subset,
+              HorizonCoveringAllDepartures(original_problem.minimal)
+          )
               .AllMergedSteps()
       ),
       original_problem.boundary,
@@ -165,8 +169,11 @@ PartialSolution PartialSolveBruteForce(
   std::unordered_set<StopId> tour_stops = required_subset;
   tour_stops.insert(start);
   tour_stops.insert(end);
-  StepPathsAdjacencyList completed =
-      CompleteShortestPathsGraph(original_problem.minimal, tour_stops);
+  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(
+      original_problem.minimal,
+      tour_stops,
+      HorizonCoveringAllDepartures(original_problem.minimal)
+  );
 
   auto min_duration = [](const std::vector<Path>& paths) {
     int result = std::numeric_limits<int>::max();

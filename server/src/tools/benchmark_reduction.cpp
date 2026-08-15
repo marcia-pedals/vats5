@@ -75,8 +75,11 @@ int main(int argc, char* argv[]) {
   std::cout << "Benchmarking ReduceToMinimalSystemPaths..." << std::endl;
 
   auto start = std::chrono::high_resolution_clock::now();
-  StepPathsAdjacencyList minimal =
-      ReduceToMinimalSystemPaths(adjacency_list, bart_stops);
+  // The input is a combined day saved by gtfs_filter_tool, which takes the
+  // default one subsequent service day.
+  StepPathsAdjacencyList minimal = ReduceToMinimalSystemPaths(
+      adjacency_list, bart_stops, SearchHorizonSeconds(1)
+  );
   auto end = std::chrono::high_resolution_clock::now();
 
   auto duration =

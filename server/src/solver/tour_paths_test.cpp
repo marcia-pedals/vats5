@@ -16,7 +16,10 @@ namespace {
 StepPathsAdjacencyList MakeCompleted(
     const std::vector<Step>& steps, const std::unordered_set<StopId>& stops
 ) {
-  return CompleteShortestPathsGraph(MakeAdjacencyList(steps), stops);
+  StepsAdjacencyList adj = MakeAdjacencyList(steps);
+  return CompleteShortestPathsGraph(
+      adj, stops, HorizonCoveringAllDepartures(adj)
+  );
 }
 
 }  // namespace
