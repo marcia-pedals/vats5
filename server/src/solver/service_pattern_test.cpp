@@ -16,31 +16,31 @@ GtfsDay MakeGtfsDay() {
   day.trips = {
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T1"},
+          GtfsTripId{"T1:sd-0"},
           GtfsServiceId{"weekday"},
           "North"
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R2"}, 0},
-          GtfsTripId{"T2"},
+          GtfsTripId{"T2:sd-0"},
           GtfsServiceId{"weekday"},
           "East"
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T3"},
+          GtfsTripId{"T3:sd-0"},
           GtfsServiceId{"latenight"},
           "North"
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R1"}, 0},
-          GtfsTripId{"T1:next-sd-1"},
+          GtfsTripId{"T1:sd-1"},
           GtfsServiceId{"holiday"},
           "North"
       },
       GtfsTrip{
           GtfsRouteDirectionId{GtfsRouteId{"R2"}, 0},
-          GtfsTripId{"T2:next-sd-2"},
+          GtfsTripId{"T2:sd-2"},
           GtfsServiceId{"sunday"},
           "East"
       },
@@ -54,13 +54,11 @@ constexpr int kNumServiceDays = 3;
 // Maps the trips of MakeGtfsDay() to TripIds 1..5, plus a walking trip 6.
 DataGtfsMapping MakeMapping() {
   DataGtfsMapping mapping;
-  mapping.trip_id_to_trip_info[TripId{1}] = TripInfo{GtfsTripId{"T1"}};
-  mapping.trip_id_to_trip_info[TripId{2}] = TripInfo{GtfsTripId{"T2"}};
-  mapping.trip_id_to_trip_info[TripId{3}] = TripInfo{GtfsTripId{"T3"}};
-  mapping.trip_id_to_trip_info[TripId{4}] =
-      TripInfo{GtfsTripId{"T1:next-sd-1"}};
-  mapping.trip_id_to_trip_info[TripId{5}] =
-      TripInfo{GtfsTripId{"T2:next-sd-2"}};
+  mapping.trip_id_to_trip_info[TripId{1}] = TripInfo{GtfsTripId{"T1:sd-0"}};
+  mapping.trip_id_to_trip_info[TripId{2}] = TripInfo{GtfsTripId{"T2:sd-0"}};
+  mapping.trip_id_to_trip_info[TripId{3}] = TripInfo{GtfsTripId{"T3:sd-0"}};
+  mapping.trip_id_to_trip_info[TripId{4}] = TripInfo{GtfsTripId{"T1:sd-1"}};
+  mapping.trip_id_to_trip_info[TripId{5}] = TripInfo{GtfsTripId{"T2:sd-2"}};
   mapping.trip_id_to_trip_info[TripId{6}] =
       TripInfo{FlexTrip{StopId{1}, StopId{2}, 60}};
   return mapping;
@@ -133,7 +131,7 @@ GTEST("GetAllActiveServices throws on a trip beyond the days it spans") {
 GTEST("GetAllActiveServices keeps an entry for a day with no services") {
   GtfsDay day = MakeGtfsDay();
   std::erase_if(day.trips, [](const GtfsTrip& trip) {
-    return trip.trip_id.v == "T1:next-sd-1";
+    return trip.trip_id.v == "T1:sd-1";
   });
 
   ActiveServices services = GetAllActiveServices(day, kNumServiceDays);
@@ -243,17 +241,14 @@ GTEST("Service patterns spanning different day counts never match") {
 GTEST("Active services are keyed by service day in JSON") {
   nlohmann::json j = Services({{"weekday"}, {"holiday"}, {}});
 
-  EXPECT_EQ(
-      j.dump(),
-      R"({"cur_sd":["weekday"],"next_sd_1":["holiday"],"next_sd_2":[]})"
-  );
+  EXPECT_EQ(j.dump(), R"({"sd-0":["weekday"],"sd-1":["holiday"],"sd-2":[]})");
   EXPECT_TRUE(
       j.get<ActiveServices>() == Services({{"weekday"}, {"holiday"}, {}})
   );
 }
 
 GTEST("Active services with a gap in its service days is rejected") {
-  nlohmann::json j = {{"cur_sd", {"weekday"}}, {"next_sd_2", {"holiday"}}};
+  nlohmann::json j = {{"sd-0", {"weekday"}}, {"sd-2", {"holiday"}}};
 
   EXPECT_THROW(j.get<ActiveServices>(), std::runtime_error);
 }

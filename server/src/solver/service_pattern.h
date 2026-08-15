@@ -30,7 +30,7 @@ struct ActiveServices {
   int NumServiceDays() const { return static_cast<int>(by_service_day.size()); }
 };
 // Serialized as an object keyed the same way trip ids are suffixed:
-// {"cur_sd": [...], "next_sd_1": [...], ...}.
+// {"sd-0": [...], "sd-1": [...], ...}.
 void to_json(nlohmann::json& j, const ActiveServices& s);
 void from_json(const nlohmann::json& j, ActiveServices& s);
 

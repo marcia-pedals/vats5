@@ -25,7 +25,7 @@ prefixes = ["BA:"]     # optional; omit to include all trips
 
 These were generated with date + prefix filtering **without** service day
 combining (the tool now adds service day combining by default, which adds
-additional `:next-sd` trips).
+additional `:sd-1` trips and suffixes the target day's own with `:sd-0`).
 
 ```bash
 gtfs_filter_tool configs/world/RG_20250718_BA.toml RG_20250718_BA

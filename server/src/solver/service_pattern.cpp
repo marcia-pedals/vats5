@@ -73,7 +73,7 @@ bool ActiveServices::operator==(const ActiveServices& other) const {
 }
 
 std::string ActiveServicesJsonKey(int day) {
-  return day == 0 ? "cur_sd" : "next_sd_" + std::to_string(day);
+  return "sd-" + std::to_string(day);
 }
 
 void to_json(nlohmann::json& j, const ActiveServices& s) {
