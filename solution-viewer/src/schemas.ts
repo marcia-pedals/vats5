@@ -101,6 +101,14 @@ export const SolutionSchema = z.object({
 });
 export type Solution = z.infer<typeof SolutionSchema>;
 
+// One target stop set, as the navbar lists them. The outer axis of the viewer:
+// a set is chosen first, and the runs on offer are the ones solved for it.
+export const TargetStopsSchema = z.object({
+  target_stops_id: z.string(),
+  title: z.string(),
+});
+export type TargetStops = z.infer<typeof TargetStopsSchema>;
+
 // One GTFS fetch, i.e. one pipeline run, as the client sees it: the server
 // reads `fetched_at` as a Date and sends it as an ISO string.
 export const RunSchema = z.object({

@@ -7,34 +7,38 @@ export const Route = createFileRoute("/solutions/")({
   component: SolutionsIndexPage,
 });
 
-/** /solutions is not a page of its own -- it redirects to the newest run. */
+/**
+ * /solutions is not a page of its own -- the target stop set is the outer axis,
+ * so this redirects to the first one, which in turn takes its own newest run.
+ */
 function SolutionsIndexPage() {
   usePageTitle("Solutions");
   const navigate = useNavigate();
-  const runsQuery = trpc.listRuns.useQuery();
-  const latestRunId = runsQuery.data?.[0]?.gtfs_instance_id;
+
+  const targetStopsQuery = trpc.listTargetStops.useQuery();
+  const first = targetStopsQuery.data?.[0]?.target_stops_id;
 
   useEffect(() => {
-    if (latestRunId) {
+    if (first) {
       navigate({
-        to: "/solutions/$runId",
-        params: { runId: latestRunId },
+        to: "/solutions/$targetStops",
+        params: { targetStops: first },
         replace: true,
       });
     }
-  }, [latestRunId, navigate]);
+  }, [first, navigate]);
 
   return (
-    <div className="min-h-screen px-6 py-10 flex justify-center">
-      <div className="w-full max-w-6xl font-mono text-sm">
-        {runsQuery.error && <p className="text-tc-red">ERR: {runsQuery.error.message}</p>}
-        {runsQuery.data && runsQuery.data.length === 0 && (
-          <p className="text-tc-text-muted">No runs yet — run pipeline/run.py.</p>
-        )}
-        {!runsQuery.error && runsQuery.data?.length !== 0 && (
-          <p className="text-tc-text-muted animate-pulse">Loading...</p>
-        )}
-      </div>
+    <div className="px-3 py-3 font-mono text-sm">
+      {targetStopsQuery.error && (
+        <p className="text-tc-red">ERR: {targetStopsQuery.error.message}</p>
+      )}
+      {targetStopsQuery.data?.length === 0 && (
+        <p className="text-tc-text-muted">No solutions yet — run pipeline/run.py.</p>
+      )}
+      {!targetStopsQuery.error && !targetStopsQuery.data && (
+        <p className="text-tc-text-muted animate-pulse">Loading...</p>
+      )}
     </div>
   );
 }

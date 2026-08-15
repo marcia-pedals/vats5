@@ -13,7 +13,9 @@ export function usePageTitle(page: string) {
 
 function RootLayout() {
   return (
-    <div className="min-h-screen bg-tc-void text-tc-text antialiased">
+    // Exactly one viewport tall, so the page itself never scrolls; the panels
+    // inside a page take their own overflow.
+    <div className="h-screen overflow-hidden bg-tc-void text-tc-text antialiased">
       <Outlet />
     </div>
   );
