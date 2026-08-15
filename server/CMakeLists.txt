@@ -88,6 +88,11 @@ add_library(steps_adjacency_list STATIC src/solver/steps_adjacency_list.cpp)
 target_link_libraries(steps_adjacency_list PUBLIC step_merge)
 target_include_directories(steps_adjacency_list PUBLIC src)
 
+# Create service_pattern library target
+add_library(service_pattern STATIC src/solver/service_pattern.cpp)
+target_link_libraries(service_pattern PUBLIC steps_adjacency_list gtfs_filter)
+target_include_directories(service_pattern PUBLIC src)
+
 # Create relaxed_adjacency_list library target
 add_library(relaxed_adjacency_list STATIC src/solver/relaxed_adjacency_list.cpp)
 target_link_libraries(relaxed_adjacency_list PUBLIC steps_adjacency_list)
@@ -176,7 +181,7 @@ target_link_libraries(reduction_diff PUBLIC steps_shortest_path CLI11::CLI11)
 
 # Add initialize_problem_state tool
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
-target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter visualization CLI11::CLI11)
+target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter service_pattern visualization CLI11::CLI11)
 
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
@@ -241,6 +246,11 @@ add_test(NAME step_merge_test COMMAND step_merge_test)
 add_executable(steps_adjacency_list_test src/solver/steps_adjacency_list_test.cpp)
 target_link_libraries(steps_adjacency_list_test PUBLIC gunit steps_adjacency_list rapidcheck rapidcheck_gtest)
 add_test(NAME steps_adjacency_list_test COMMAND steps_adjacency_list_test)
+
+# Add service_pattern test executable
+add_executable(service_pattern_test src/solver/service_pattern_test.cpp)
+target_link_libraries(service_pattern_test PUBLIC gunit service_pattern)
+add_test(NAME service_pattern_test COMMAND service_pattern_test)
 
 # Add relaxed_adjacency_list test executable
 add_executable(relaxed_adjacency_list_test src/solver/relaxed_adjacency_list_test.cpp)

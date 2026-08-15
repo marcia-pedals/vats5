@@ -5,14 +5,22 @@ Each run gets its own directory under ~/vats5-pipeline:
 
     run_{timestamp}/
         gtfs/                                  the downloaded RG feed
+        service_patterns_{problem_spec_id}.json  services of the dates solved so far
         service_{date}/
             {problem_spec_id}/
                 world.toml                     input for initialize_problem_state
                 target_stops.toml              input for initialize_problem_state
                 problem_state.json             its output (+ .sqlite for viz)
+                problem_state-active-services.json  the services this date uses
                 initialize_problem_state.log
                 iterative_expansion.log
                 solution.json                  what gets stored in the db
+
+A service date whose active services are identical to an already-solved one
+poses the same problem, so initialize_problem_state stops as soon as it sees
+that and the date is recorded as a duplicate instead of being solved again. Its
+row copies the duplicated date's optimal duration, so that querying for a date's
+duration never has to follow the duplicate to another row.
 
 The run directory name doubles as the gtfs_instance_id. Older run directories
 are pruned, which does not affect the rows already written for them.
@@ -63,6 +71,13 @@ DEFAULT_SERVICE_DATE_COUNT = 7
 # for a single Concorde solve that blows through the cooperative check.
 SOLVE_TIMEOUT_SECONDS = 600
 SOLVE_KILL_GRACE_SECONDS = 60
+
+# What initialize_problem_state exits with when this service date's services are
+# identical to an already-solved one's; see kDuplicateServicePatternExitCode.
+DUPLICATE_SERVICE_PATTERN_EXIT_CODE = 3
+
+# The status stored for such a date. The solution-viewer leaves these rows out.
+DUPLICATE_STATUS = "duplicate_service_pattern"
 
 
 class RunError(Exception):
@@ -167,12 +182,34 @@ def shift_trace(node: dict[str, Any], offset: float) -> dict[str, Any]:
     return shifted
 
 
-def solve_one(
-    spec: dict[str, Any], spec_dir: Path, feed_dir: Path, service_date: str
-) -> dict[str, Any]:
-    """Initialize and solve one spec for one service date; return solution info.
+def active_services_path(problem_state: Path) -> Path:
+    """Where initialize_problem_state writes its service pattern.
 
-    The returned info carries a `trace` of how long each part took: the two
+    Mirrors ActiveServicesPath in server/src/solver/service_pattern.h.
+    """
+    return problem_state.with_name(f"{problem_state.stem}-active-services.json")
+
+
+def solve_one(
+    spec: dict[str, Any],
+    spec_dir: Path,
+    feed_dir: Path,
+    service_date: str,
+    solved_patterns_json: Path,
+    solved_solutions: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Initialize and solve one spec for one service date.
+
+    Returns the solution info and this date's service pattern, the latter only
+    when there is one to add to `solved_patterns_json` for later dates -- a
+    duplicate date contributes nothing new, and a failed initialization has no
+    pattern at all.
+
+    `solved_solutions` holds this spec's already-solved dates by service date,
+    matching `solved_patterns_json`, so that a duplicate date can carry the
+    result of the date it duplicates.
+
+    The solution info carries a `trace` of how long each part took: the two
     tools as timed here, with whatever spans they reported nested underneath.
     """
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -191,6 +228,8 @@ def solve_one(
         str(world_toml),
         str(target_stops_toml),
         str(problem_state),
+        "--solved-service-patterns",
+        str(solved_patterns_json),
     ]
     if "max_walking_distance" in spec_data:
         initialize_command += [
@@ -209,12 +248,48 @@ def solve_one(
     )
 
     def finish(
-        solution: dict[str, Any], children: list[dict[str, Any]], outcome: str
-    ) -> dict[str, Any]:
+        solution: dict[str, Any],
+        children: list[dict[str, Any]],
+        outcome: str,
+        pattern: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Report how this instance went and how long it took, and trace it."""
         elapsed = time.monotonic() - started
         print(f"    {outcome} in {elapsed:.0f}s")
-        return solution | {"trace": trace_node("solve", 0.0, elapsed, children)}
+        solution = solution | {"trace": trace_node("solve", 0.0, elapsed, children)}
+        return solution, pattern
+
+    if returncode == DUPLICATE_SERVICE_PATTERN_EXIT_CODE:
+        # The pattern it wrote says which already-solved date this one matched.
+        duplicate_of = json.loads(active_services_path(problem_state).read_text())[
+            "duplicate_of"
+        ]
+        duplicated_date = duplicate_of["service_date"]
+        if duplicated_date not in solved_solutions:
+            raise RunError(
+                f"{service_date} was skipped as a duplicate of {duplicated_date}, "
+                "which is not one of this spec's solved service dates "
+                f"({sorted(solved_solutions)})"
+            )
+        solution: dict[str, Any] = {
+            "status": DUPLICATE_STATUS,
+            "duplicate_of_service_date": duplicated_date,
+            "matched_on": duplicate_of["matched_on"],
+        }
+        # Copied so that a query for the duration of this date does not have to
+        # join with the duplicated date's row. Absent when that date has no
+        # duration either, e.g. when its solve timed out.
+        duplicated_duration = solved_solutions[duplicated_date].get(
+            "optimal_duration_seconds"
+        )
+        if duplicated_duration is not None:
+            solution["optimal_duration_seconds"] = duplicated_duration
+        return finish(
+            solution,
+            [initialize_node],
+            f"same {duplicate_of['matched_on']} as {duplicated_date} "
+            f"({duplicated_duration}), skipped",
+        )
 
     if returncode != 0:
         return finish(
@@ -222,6 +297,8 @@ def solve_one(
             [initialize_node],
             f"initialize_problem_state failed (exit {returncode})",
         )
+
+    pattern = json.loads(active_services_path(problem_state).read_text())
 
     expansion_start = time.monotonic() - started
     returncode = run_tool(
@@ -262,7 +339,9 @@ def solve_one(
             for child in (inner_trace or {}).get("children", [])
         ],
     )
-    return finish(solution, [initialize_node, expansion_node], outcome)
+    # The pattern goes on the solved list whatever the solve did with it: a
+    # later date with the same services would reach the same outcome.
+    return finish(solution, [initialize_node, expansion_node], outcome, pattern)
 
 
 def load_specs(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
@@ -322,15 +401,40 @@ def main(service_date_count: int) -> None:
             )
             connection.commit()
 
+            # Kept per spec: which services matter depends on the spec's target
+            # stops and walking options, so patterns are not comparable across
+            # specs.
+            solved_patterns: dict[str, list[dict[str, Any]]] = {
+                spec["problem_spec_id"]: [] for spec in specs
+            }
+            # The solutions those patterns came from, by service date, so that a
+            # duplicate date can copy the result of the date it duplicates.
+            solved_solutions: dict[str, dict[str, dict[str, Any]]] = {
+                spec["problem_spec_id"]: {} for spec in specs
+            }
+            skipped = 0
+
             for service_date in service_dates:
                 service_dir = run_dir / f"service_{service_date}"
                 print(f"{service_date}:")
                 for spec in specs:
                     spec_id = spec["problem_spec_id"]
                     print(f"  {spec_id}")
-                    solution = solve_one(
-                        spec, service_dir / spec_id, feed_dir, service_date
+                    patterns_json = run_dir / f"service_patterns_{spec_id}.json"
+                    patterns_json.write_text(json.dumps(solved_patterns[spec_id]))
+                    solution, pattern = solve_one(
+                        spec,
+                        service_dir / spec_id,
+                        feed_dir,
+                        service_date,
+                        patterns_json,
+                        solved_solutions[spec_id],
                     )
+                    if pattern is not None:
+                        solved_patterns[spec_id].append(pattern)
+                        solved_solutions[spec_id][service_date] = solution
+                    if solution["status"] == DUPLICATE_STATUS:
+                        skipped += 1
                     cursor.execute(
                         "INSERT INTO problem_instance (problem_instance_id, "
                         "gtfs_source_id, gtfs_instance_id, problem_spec_id, "
@@ -347,7 +451,11 @@ def main(service_date_count: int) -> None:
                     # Commit per instance so a later failure keeps this work.
                     connection.commit()
 
-    print(f"done: {len(service_dates) * len(specs)} problem instances")
+    total = len(service_dates) * len(specs)
+    print(
+        f"done: {total} problem instances, {skipped} of them skipped as "
+        "duplicates of an earlier service date"
+    )
 
 
 if __name__ == "__main__":

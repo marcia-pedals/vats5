@@ -1,6 +1,7 @@
 #include "gtfs/gtfs_filter.h"
 
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -147,10 +148,28 @@ std::string ServiceDayTripIdSuffix(int day) {
         "Service day offset must not be negative, got " + std::to_string(day)
     );
   }
-  if (day == 0) {
-    return "";
+  return ":sd-" + std::to_string(day);
+}
+
+int ServiceDayFromTripId(const GtfsTripId& trip_id) {
+  constexpr std::string_view kPrefix = ":sd-";
+  size_t prefix_pos = trip_id.v.rfind(kPrefix);
+  if (prefix_pos == std::string::npos) {
+    throw std::runtime_error(
+        "Trip id '" + trip_id.v + "' has no service day suffix"
+    );
   }
-  return ":next-sd-" + std::to_string(day);
+  std::string_view digits =
+      std::string_view(trip_id.v).substr(prefix_pos + kPrefix.size());
+  int day = 0;
+  auto [end, error] =
+      std::from_chars(digits.data(), digits.data() + digits.size(), day);
+  if (error != std::errc{} || end != digits.data() + digits.size() || day < 0) {
+    throw std::runtime_error(
+        "Trip id '" + trip_id.v + "' has a malformed service day suffix"
+    );
+  }
+  return day;
 }
 
 GtfsDay GtfsFilterDateWithServiceDays(
@@ -166,7 +185,9 @@ GtfsDay GtfsFilterDateWithServiceDays(
   }
 
   // The target date, with all of its trips including those past midnight.
-  std::vector<GtfsDay> service_days{GtfsFilterByDate(gtfs, date)};
+  GtfsDay target_day = GtfsFilterByDate(gtfs, date);
+  target_day.AppendToTripIds(ServiceDayTripIdSuffix(0));
+  std::vector<GtfsDay> service_days{std::move(target_day)};
 
   for (int day = 1; day <= subsequent_service_days; ++day) {
     GtfsDay service_day = GtfsFilterByDate(gtfs, OffsetDate(date, day));
