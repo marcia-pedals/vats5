@@ -1,6 +1,12 @@
 # VATS5 - "Visit All The Stops"
 
-Computes the **exact fastest route** to visit all the stops in a transit system, including **arbitary walking transfers** and **transfers to other systems**.
+Computes the **exact fastest route** to visit all the stops in a transit system, taking actual schedules into account.
+
+| System | # Stops | # Lines | Other transit?[^other-transit] | Solve time | See solutions
+| --- | --- | --- | --- | --- | --- |
+| BART | 50 | 5 | Yes | 10s | Link!
+
+[^other-transit]: Foo bar baz.
 
 The current implemented approach can solve **BART (50 stops, 5 lines)** or **VTA Light Rail (60 stops, 3 lines)**, including walking and using other systems, in **~1 minute on an M5 MacBook Pro**.
 
