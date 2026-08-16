@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Download the latest Bay Area GTFS, then create and solve problem instances.
+"""Download one GTFS source's latest feed, then create and solve its instances.
+
+Which sources there are, and how each one's feed is fetched, is in
+gtfs_sources.py; this solves the specs of exactly one of them per run.
 
 Each run gets its own directory under ~/vats5-pipeline:
 
-    run_{timestamp}/
-        gtfs/                                  the downloaded RG feed
+    run_{gtfs_source_id}_{timestamp}/
+        gtfs/                                  the downloaded feed
         service_patterns_{problem_spec_id}.json  services of the dates solved so far
         service_{date}/
             {problem_spec_id}/
@@ -22,13 +25,14 @@ that and the date is recorded as a duplicate instead of being solved again. Its
 row copies the duplicated date's optimal duration, so that querying for a date's
 duration never has to follow the duplicate to another row.
 
-The run directory name doubles as the gtfs_instance_id. Older run directories
-are pruned, which does not affect the rows already written for them.
+The run directory name doubles as the gtfs_instance_id. Older run directories of
+the same source are pruned, which does not affect the rows already written for
+them.
 
 Problem specs are read from the database, so run pipeline/sync_configs.py first.
 
 Usage:
-    python3 pipeline/run.py [--service-dates N]
+    python3 pipeline/run.py GTFS_SOURCE_ID [--service-dates N] [--solve-timeout S]
 """
 
 from __future__ import annotations
@@ -51,16 +55,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "download_gtfs"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gtfs_feed import download_feed  # noqa: E402
+from gtfs_feed import FeedDownloadError  # noqa: E402
+from gtfs_sources import GTFS_SOURCES, UnknownGtfsSource, get_source  # noqa: E402
 from sync_configs import database_url  # noqa: E402
-
-OPERATOR_ID = "RG"
-GTFS_SOURCE_ID = "bayarea"
 
 PIPELINE_ROOT = Path.home() / "vats5-pipeline"
 BUILD_DIR = REPO_ROOT / "server" / "build-debug"
 
-# Number of run directories to keep on disk, newest first.
+# Number of run directories to keep on disk per source, newest first.
 MAX_RUN_DIRS = 5
 
 # Service dates to solve: this many days, starting the day after the fetch.
@@ -69,7 +71,7 @@ DEFAULT_SERVICE_DATE_COUNT = 7
 # Passed to iterative_expansion, which checks it between iterations and on each
 # search event. The subprocess gets a slightly longer hard limit as a backstop
 # for a single Concorde solve that blows through the cooperative check.
-SOLVE_TIMEOUT_SECONDS = 600
+DEFAULT_SOLVE_TIMEOUT_SECONDS = 600
 SOLVE_KILL_GRACE_SECONDS = 60
 
 # What initialize_problem_state exits with when this service date's services are
@@ -91,10 +93,24 @@ def tool_path(name: str) -> Path:
     return path
 
 
-def prune_run_dirs(keep: int) -> None:
-    """Delete all but the `keep` newest run directories."""
+def run_dir_prefix(gtfs_source_id: str) -> str:
+    """What every run directory of one source is named after.
+
+    Sources are pruned independently, so a run for one of them never evicts
+    another's work, and the fixed-width timestamp that follows this orders
+    directories by age lexicographically.
+    """
+    return f"run_{gtfs_source_id}_"
+
+
+def prune_run_dirs(gtfs_source_id: str, keep: int) -> None:
+    """Delete all but the `keep` newest run directories of one source."""
     run_dirs = sorted(
-        (path for path in PIPELINE_ROOT.glob("run_*") if path.is_dir()),
+        (
+            path
+            for path in PIPELINE_ROOT.glob(f"{run_dir_prefix(gtfs_source_id)}*")
+            if path.is_dir()
+        ),
         reverse=True,
     )
     for stale in run_dirs[keep:]:
@@ -197,6 +213,7 @@ def solve_one(
     service_date: str,
     solved_patterns_json: Path,
     solved_solutions: dict[str, dict[str, Any]],
+    solve_timeout_seconds: float,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Initialize and solve one spec for one service date.
 
@@ -301,6 +318,13 @@ def solve_one(
     pattern = json.loads(active_services_path(problem_state).read_text())
 
     expansion_start = time.monotonic() - started
+    # A timeout of 0 means iterative_expansion runs to completion, and then
+    # there is no deadline for the hard limit to back up either.
+    kill_timeout = (
+        solve_timeout_seconds + SOLVE_KILL_GRACE_SECONDS
+        if solve_timeout_seconds > 0
+        else None
+    )
     returncode = run_tool(
         [
             str(tool_path("iterative_expansion")),
@@ -308,10 +332,10 @@ def solve_one(
             "--solution_json",
             str(solution_json),
             "--timeout",
-            str(SOLVE_TIMEOUT_SECONDS),
+            str(solve_timeout_seconds),
         ],
         spec_dir / "iterative_expansion.log",
-        timeout=SOLVE_TIMEOUT_SECONDS + SOLVE_KILL_GRACE_SECONDS,
+        timeout=kill_timeout,
     )
     expansion_duration = time.monotonic() - started - expansion_start
 
@@ -344,7 +368,7 @@ def solve_one(
     return finish(solution, [initialize_node, expansion_node], outcome, pattern)
 
 
-def load_specs(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
+def load_specs(cursor: psycopg.Cursor, gtfs_source_id: str) -> list[dict[str, Any]]:
     cursor.execute(
         """
         SELECT spec.problem_spec_id,
@@ -357,32 +381,36 @@ def load_specs(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
         WHERE spec.gtfs_source_id = %s
         ORDER BY spec.problem_spec_id
         """,
-        (GTFS_SOURCE_ID,),
+        (gtfs_source_id,),
     )
     specs = cursor.fetchall()
     if not specs:
         raise RunError(
-            f"no problem_spec rows for {GTFS_SOURCE_ID!r} -- "
+            f"no problem_spec rows for {gtfs_source_id!r} -- "
             "run pipeline/sync_configs.py first"
         )
     return specs
 
 
-def main(service_date_count: int) -> None:
-    # Resolve both tools up front so a missing build fails before downloading.
+def main(
+    gtfs_source_id: str, service_date_count: int, solve_timeout_seconds: float
+) -> None:
+    # Resolve the source and both tools up front so an unknown source or a
+    # missing build fails before downloading.
+    source = get_source(gtfs_source_id)
     tool_path("initialize_problem_state")
     tool_path("iterative_expansion")
 
-    run_id = f"run_{datetime.now():%Y%m%d-%H%M%S}"
+    run_id = f"{run_dir_prefix(gtfs_source_id)}{datetime.now():%Y%m%d-%H%M%S}"
     run_dir = PIPELINE_ROOT / run_id
     run_dir.mkdir(parents=True)
     print(f"run directory: {run_dir}")
-    prune_run_dirs(MAX_RUN_DIRS)
+    prune_run_dirs(gtfs_source_id, MAX_RUN_DIRS)
 
     feed_dir = run_dir / "gtfs"
     fetched_at = datetime.now(timezone.utc)
-    file_count = download_feed(OPERATOR_ID, feed_dir)
-    print(f"downloaded {file_count} GTFS files to {feed_dir}")
+    file_count = source.download(feed_dir)
+    print(f"downloaded {file_count} GTFS files for {source.title} to {feed_dir}")
 
     first_service_date = date.today() + timedelta(days=1)
     service_dates = [
@@ -393,11 +421,11 @@ def main(service_date_count: int) -> None:
 
     with psycopg.connect(database_url(), row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            specs = load_specs(cursor)
+            specs = load_specs(cursor, gtfs_source_id)
             cursor.execute(
                 "INSERT INTO gtfs_instance (gtfs_instance_id, gtfs_source_id, "
                 "fetched_at) VALUES (%s, %s, %s)",
-                (run_id, GTFS_SOURCE_ID, fetched_at),
+                (run_id, gtfs_source_id, fetched_at),
             )
             connection.commit()
 
@@ -429,6 +457,7 @@ def main(service_date_count: int) -> None:
                         service_date,
                         patterns_json,
                         solved_solutions[spec_id],
+                        solve_timeout_seconds,
                     )
                     if pattern is not None:
                         solved_patterns[spec_id].append(pattern)
@@ -441,7 +470,7 @@ def main(service_date_count: int) -> None:
                         "service_date, data) VALUES (%s, %s, %s, %s, %s, %s)",
                         (
                             f"{run_id}-{spec_id}-{service_date}",
-                            GTFS_SOURCE_ID,
+                            gtfs_source_id,
                             run_id,
                             spec_id,
                             service_date,
@@ -461,18 +490,32 @@ def main(service_date_count: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "gtfs_source_id",
+        choices=sorted(GTFS_SOURCES),
+        help="which GTFS source to fetch and solve, as named in gtfs_sources.py",
+    )
+    parser.add_argument(
         "--service-dates",
         type=int,
         default=DEFAULT_SERVICE_DATE_COUNT,
         help="how many service dates to solve, starting the day after the fetch "
         f"(default {DEFAULT_SERVICE_DATE_COUNT})",
     )
+    parser.add_argument(
+        "--solve-timeout",
+        type=float,
+        default=DEFAULT_SOLVE_TIMEOUT_SECONDS,
+        help="how many seconds to give each solve, or 0 to let it run to "
+        f"completion (default {DEFAULT_SOLVE_TIMEOUT_SECONDS})",
+    )
     args = parser.parse_args()
     if args.service_dates < 1:
         parser.error("--service-dates must be at least 1")
+    if args.solve_timeout < 0:
+        parser.error("--solve-timeout must not be negative")
 
     try:
-        main(args.service_dates)
-    except RunError as error:
+        main(args.gtfs_source_id, args.service_dates, args.solve_timeout)
+    except (RunError, UnknownGtfsSource, FeedDownloadError) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)

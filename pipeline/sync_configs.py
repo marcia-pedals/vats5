@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Sync problem_configs/ into the solution-viewer database.
 
-The TOML files under problem_configs/ are the source of truth; this writes a
-projection of them into gtfs_source, target_stops and problem_spec.
+The TOML files under problem_configs/ are the source of truth for target_stops
+and problem_spec; gtfs_sources.py is for gtfs_source. This writes a projection
+of both into those three tables.
 
 Rows that do not exist yet are inserted. A row whose primary key already exists
 is left alone if every synced column matches, and aborts the entire sync
@@ -28,12 +29,11 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from gtfs_sources import GTFS_SOURCES
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIGS_DIR = REPO_ROOT / "problem_configs"
 ENV_FILE = REPO_ROOT / "solution-viewer" / ".env.local"
-
-GTFS_SOURCE_ID = "bayarea"
-GTFS_SOURCE_TITLE = "Bay Area 511.org Regional"
 
 # Columns that live in their own table column; every other key in the TOML file
 # is carried through as the row's JSONB `data`.
@@ -67,10 +67,11 @@ def load_config(path: Path, columns: tuple[str, ...]) -> dict[str, Any]:
     if missing:
         raise SyncError(f"{path}: missing required key(s): {', '.join(missing)}")
 
-    if config["gtfs_source_id"] != GTFS_SOURCE_ID:
+    if config["gtfs_source_id"] not in GTFS_SOURCES:
         raise SyncError(
-            f"{path}: gtfs_source_id is {config['gtfs_source_id']!r}, "
-            f"but only {GTFS_SOURCE_ID!r} is supported"
+            f"{path}: gtfs_source_id is {config['gtfs_source_id']!r}, which is "
+            f"not one of the sources in gtfs_sources.py "
+            f"({', '.join(sorted(GTFS_SOURCES))})"
         )
 
     row = {column: config[column] for column in columns}
@@ -143,14 +144,17 @@ def sync_table(
 
 
 def main() -> None:
-    gtfs_source = {"gtfs_source_id": GTFS_SOURCE_ID, "title": GTFS_SOURCE_TITLE}
+    gtfs_sources = [
+        {"gtfs_source_id": source.gtfs_source_id, "title": source.title}
+        for source in GTFS_SOURCES.values()
+    ]
     target_stops = load_dir("target_stops", TARGET_STOPS_COLUMNS)
     problem_specs = load_dir("problem_spec", PROBLEM_SPEC_COLUMNS)
 
     # One transaction for the whole sync: any mismatch rolls back everything.
     with psycopg.connect(database_url(), row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            sync_table(cursor, "gtfs_source", "gtfs_source_id", [gtfs_source])
+            sync_table(cursor, "gtfs_source", "gtfs_source_id", gtfs_sources)
             sync_table(cursor, "target_stops", "target_stops_id", target_stops)
             sync_table(cursor, "problem_spec", "problem_spec_id", problem_specs)
 

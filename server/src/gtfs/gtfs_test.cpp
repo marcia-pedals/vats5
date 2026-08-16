@@ -25,6 +25,21 @@ static Gtfs* getGlobalGtfs() {
   return gtfs;
 }
 
+GTEST("ParseGtfsTime should accept one- and two-digit hours") {
+  EXPECT_EQ(ParseGtfsTime("07:22:05").seconds, 7 * 3600 + 22 * 60 + 5);
+  // Also valid GTFS, and what VBB writes for times before 10:00.
+  EXPECT_EQ(ParseGtfsTime("7:22:05").seconds, 7 * 3600 + 22 * 60 + 5);
+  // Trips continuing past midnight run the hour up beyond 24.
+  EXPECT_EQ(ParseGtfsTime("25:03:00").seconds, 25 * 3600 + 3 * 60);
+
+  EXPECT_THROW(ParseGtfsTime("0722:05"), std::runtime_error);
+  EXPECT_THROW(ParseGtfsTime("7:2:05"), std::runtime_error);
+  EXPECT_THROW(ParseGtfsTime("7:22"), std::runtime_error);
+  EXPECT_THROW(ParseGtfsTime("ab:22:05"), std::runtime_error);
+  EXPECT_THROW(ParseGtfsTime("7:2x:05"), std::runtime_error);
+  EXPECT_THROW(ParseGtfsTime(""), std::runtime_error);
+}
+
 GTEST("GtfsLoad should work") {
   const Gtfs& gtfs = *getGlobalGtfs();
 

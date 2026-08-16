@@ -15,25 +15,28 @@
 namespace vats5 {
 
 GtfsTimeSinceServiceStart ParseGtfsTime(std::string_view time_str) {
-  // Highly optimized parsing for HH:MM:SS format without string operations
-  if (time_str.size() < 8 || time_str[2] != ':' || time_str[5] != ':') {
+  // Highly optimized parsing without string operations. The hour is one or two
+  // digits -- both are valid GTFS, and VBB writes times before 10:00 as
+  // H:MM:SS -- so everything after it is offset by its width.
+  const size_t hour_width = (time_str.size() > 1 && time_str[1] == ':') ? 1 : 2;
+  if (time_str.size() < hour_width + 6 || time_str[hour_width] != ':' ||
+      time_str[hour_width + 3] != ':') {
     throw std::runtime_error("Invalid time format: " + std::string(time_str));
   }
 
-  // Validate that all time characters are digits
-  if (time_str[0] < '0' || time_str[0] > '9' || time_str[1] < '0' ||
-      time_str[1] > '9' || time_str[3] < '0' || time_str[3] > '9' ||
-      time_str[4] < '0' || time_str[4] > '9' || time_str[6] < '0' ||
-      time_str[6] > '9' || time_str[7] < '0' || time_str[7] > '9') {
-    throw std::runtime_error(
-        "Invalid time format - non-digit characters: " + std::string(time_str)
-    );
-  }
-
   // Parse directly from characters to avoid substr and stoi overhead
-  int hours = (time_str[0] - '0') * 10 + (time_str[1] - '0');
-  int minutes = (time_str[3] - '0') * 10 + (time_str[4] - '0');
-  int seconds = (time_str[6] - '0') * 10 + (time_str[7] - '0');
+  auto digit = [&time_str](size_t index) {
+    if (time_str[index] < '0' || time_str[index] > '9') {
+      throw std::runtime_error(
+          "Invalid time format - non-digit characters: " + std::string(time_str)
+      );
+    }
+    return time_str[index] - '0';
+  };
+
+  int hours = hour_width == 1 ? digit(0) : digit(0) * 10 + digit(1);
+  int minutes = digit(hour_width + 1) * 10 + digit(hour_width + 2);
+  int seconds = digit(hour_width + 4) * 10 + digit(hour_width + 5);
 
   return GtfsTimeSinceServiceStart{hours * 3600 + minutes * 60 + seconds};
 }
