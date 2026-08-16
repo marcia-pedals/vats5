@@ -2,15 +2,16 @@
 
 Computes the **exact fastest route** to visit all the stops in a transit system, taking actual schedules into account.
 
-| System | # Stops | # Lines | Other transit?[^other-transit] | Solve time | See solutions
+| System | # Stops | # Lines | Other transit?[^other-transit] | Approx solve time[^solve-time] | |
 | --- | --- | --- | --- | --- | --- |
-| BART | 50 | 5 | Yes | 10s | Link!
+| BART | 50 | 5 | Yes | 30 seconds | [View solutions](https://vats5.vercel.app/solutions/bart-202608)
+| VTA Light Rail | 62 | 3 | Yes | 2 minutes | [View solutions](https://vats5.vercel.app/solutions/vtalr-202608)
+| Munich U-Bahn | 96 | 8 | No | 30 minutes | [View solutions](https://vats5.vercel.app/solutions/munich-ubahn-202608)
+| Munich U-Bahn | 96 | 8 | Yes | - |
+| NYC Subway | 400 | 30 | No | - |
 
-[^other-transit]: Foo bar baz.
-
-The current implemented approach can solve **BART (50 stops, 5 lines)** or **VTA Light Rail (60 stops, 3 lines)**, including walking and using other systems, in **~1 minute on an M5 MacBook Pro**.
-
-NYC Subway (~400 stops, ~30 lines) is in progress. I do not yet know if there exist computationally feasible exact algorithms. Maybe I will adapt some approximate TSP approaches to find an approximate solution.
+[^other-transit]: Whether other transit is allowed on the route. This makes the problem harder because there are more routes to consider.
+[^solve-time]: How long it takes the implementation to solve one instance of this problem on a M5 MacBook Pro, as of 2026-08-16.
 
 ## Why?
 
@@ -43,8 +44,6 @@ The main idea for finding these sets of shortest paths is to run a multi-target 
 Searching from every second-resolution time is too much work, so there is one imporant optimization: Instead of stepping forwards by one second after each query, step forwards to the next reachable departure time, which gives the same results with fewer searches. (TODO: Explain about walking, both why this is valid in light of walking and the trick about walking-reachable departures).
 
 The implementation also has a few straightforward memory layout optimizations and parallelizations of embarassingly-parallel bits.
-
-With all optimizations combined, this prunes the entire Bay Area Regional GTFS for BART or VTA Light Rail problem instances in seconds.
 
 ### Covering sets
 
