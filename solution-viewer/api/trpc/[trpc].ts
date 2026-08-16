@@ -1,19 +1,11 @@
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { appRouter } from "../../src/server/trpc";
-
-// Vercel serverless function. Locally the same router is served by
-// server.ts (Express); here it runs on the platform's Node.js runtime using
-// the Web-standard Request/Response signature.
-export default function handler(request: Request): Promise<Response> {
-  // vercel.json rewrites /trpc/* to this function, so requests can arrive
-  // under either prefix; the handler needs the one actually in the URL.
-  const { pathname } = new URL(request.url);
-  const endpoint = pathname.startsWith("/api/trpc") ? "/api/trpc" : "/trpc";
-
-  return fetchRequestHandler({
-    endpoint,
-    req: request,
-    router: appRouter,
-    createContext: () => ({}),
-  });
-}
+// Vercel does not bundle functions the way a framework does: it compiles each
+// .ts file it can reach to .js in place and leaves the import specifiers
+// untouched, so extensionless relative imports — fine under tsx and Vite —
+// cannot be resolved by Node in the deployed ES module.
+//
+// Rather than obey those rules everywhere, this function imports exactly one
+// thing: the pre-bundled server that `npm run build` writes to server-bundle/.
+// Vercel runs the build command before it compiles anything under api/, so the
+// file is on disk by then. Any new function here should follow the same shape —
+// re-export from a bundle, never import src/ directly.
+export { default } from "../../server-bundle/trpc-handler.js";
