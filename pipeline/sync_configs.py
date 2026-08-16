@@ -10,11 +10,6 @@ config is gone are deleted along with everything that depends on them -- a
 deleted problem_spec takes its problem_instances (the stored solutions) with it,
 and a deleted gtfs_source takes its gtfs_instances too.
 
-Stored solutions are keyed off these ids, so both overwriting and deleting throw
-away work: instances already solved under an overwritten config stay in the
-database but no longer describe the config they name. Reusing an id for a
-different problem is still a mistake; this just stops guarding against it.
-
 Usage:
     python3 pipeline/sync_configs.py
 
@@ -210,17 +205,6 @@ def sync_table(
     return [pk for pk, (outcome, _) in results.items() if outcome == "updated"]
 
 
-def retire_stale_titles(cursor: psycopg.Cursor, live: dict[str, list[str]]) -> None:
-    """Park the titles of rows this sync is going to delete, freeing them for reuse."""
-    for table, pk_column, condition in STALE_CONFIGS:
-        cursor.execute(
-            sql.SQL("UPDATE {} SET title = %(prefix)s || {} WHERE {}").format(
-                sql.Identifier(table), sql.Identifier(pk_column), sql.SQL(condition)
-            ),
-            live | {"prefix": RETIRED_TITLE_PREFIX},
-        )
-
-
 def delete_stale(cursor: psycopg.Cursor, live: dict[str, list[str]]) -> None:
     """Delete every row whose config is gone, plus everything that depends on it."""
     for table, pk_column, condition in STALE_DERIVED + STALE_CONFIGS:
@@ -284,7 +268,6 @@ def main() -> None:
     # One transaction for the whole sync: any failure rolls back everything.
     with psycopg.connect(database_url(), row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            retire_stale_titles(cursor, live)
             sync_table(cursor, "gtfs_source", "gtfs_source_id", [gtfs_source])
             updated_stops = sync_table(
                 cursor, "target_stops", "target_stops_id", target_stops
