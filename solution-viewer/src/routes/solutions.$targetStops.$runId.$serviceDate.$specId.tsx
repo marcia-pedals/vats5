@@ -123,7 +123,6 @@ function GridTable({
       <table className="w-auto table-fixed font-mono text-sm border-collapse">
         <thead>
           <tr className="text-tc-text-dim text-xs uppercase tracking-wider">
-            {/* The dates below label themselves, so this column needs no header. */}
             <th className="w-28 py-1 pr-4" />
             {grid.specs.map((spec) => (
               <th
