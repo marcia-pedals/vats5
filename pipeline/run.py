@@ -45,9 +45,10 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import psycopg
 from psycopg.rows import dict_row
@@ -382,6 +383,24 @@ def solve_one(
     return finish(solution, [initialize_node, expansion_node], outcome, pattern)
 
 
+@contextmanager
+def db() -> Iterator[psycopg.Cursor]:
+    """A connection held only for as long as one burst of statements.
+
+    A solve runs for as long as it needs to, and a connection left open across
+    one is closed under us: the production database drops idle connections and
+    suspends its compute minutes into a solve that can take half an hour. The
+    close is only noticed by whatever statement comes next, so a connection
+    spanning a solve fails when the solution is stored rather than when it is
+    lost. Nothing here holds a connection while a solve is running.
+
+    Leaving the block commits, so the caller does not have to.
+    """
+    with psycopg.connect(database_url(), row_factory=dict_row) as connection:
+        with connection.cursor() as cursor:
+            yield cursor
+
+
 def load_specs(cursor: psycopg.Cursor, gtfs_source_id: str) -> list[dict[str, Any]]:
     cursor.execute(
         """
@@ -455,71 +474,69 @@ def main(
     file_count = source.download(feed_dir)
     print(f"downloaded {file_count} GTFS files for {source.title} to {feed_dir}")
 
-    with psycopg.connect(database_url(), row_factory=dict_row) as connection:
-        with connection.cursor() as cursor:
-            specs = load_specs(cursor, gtfs_source_id)
-            cursor.execute(
-                "INSERT INTO gtfs_instance (gtfs_instance_id, gtfs_source_id, "
-                "fetched_at) VALUES (%s, %s, %s)",
-                (run_id, gtfs_source_id, fetched_at),
+    with db() as cursor:
+        specs = load_specs(cursor, gtfs_source_id)
+        cursor.execute(
+            "INSERT INTO gtfs_instance (gtfs_instance_id, gtfs_source_id, "
+            "fetched_at) VALUES (%s, %s, %s)",
+            (run_id, gtfs_source_id, fetched_at),
+        )
+
+    # Kept per spec: which services matter depends on the spec's target stops
+    # and walking options, so patterns are not comparable across specs.
+    solved_patterns: dict[str, list[dict[str, Any]]] = {
+        spec["problem_spec_id"]: [] for spec in specs
+    }
+    # The solutions those patterns came from, by service date, so that a
+    # duplicate date can copy the result of the date it duplicates.
+    solved_solutions: dict[str, dict[str, dict[str, Any]]] = {
+        spec["problem_spec_id"]: {} for spec in specs
+    }
+    skipped = 0
+    total = 0
+
+    # Specs are the outer loop because each one has its own dates, and because a
+    # date is only a duplicate of the ones already solved for the same spec.
+    for spec in specs:
+        spec_id = spec["problem_spec_id"]
+        service_dates = spec_service_dates(spec, service_date_count)
+        print(f"{spec_id}: {service_dates[0]}..{service_dates[-1]}")
+        total += len(service_dates)
+        for service_date in service_dates:
+            print(f"  {service_date}")
+            patterns_json = run_dir / f"service_patterns_{spec_id}.json"
+            patterns_json.write_text(json.dumps(solved_patterns[spec_id]))
+            solution, pattern = solve_one(
+                spec,
+                run_dir / f"service_{service_date}" / spec_id,
+                feed_dir,
+                service_date,
+                patterns_json,
+                solved_solutions[spec_id],
+                solve_timeout_seconds,
             )
-            connection.commit()
-
-            # Kept per spec: which services matter depends on the spec's target
-            # stops and walking options, so patterns are not comparable across
-            # specs.
-            solved_patterns: dict[str, list[dict[str, Any]]] = {
-                spec["problem_spec_id"]: [] for spec in specs
-            }
-            # The solutions those patterns came from, by service date, so that a
-            # duplicate date can copy the result of the date it duplicates.
-            solved_solutions: dict[str, dict[str, dict[str, Any]]] = {
-                spec["problem_spec_id"]: {} for spec in specs
-            }
-            skipped = 0
-            total = 0
-
-            # Specs are the outer loop because each one has its own dates, and
-            # because a date is only a duplicate of the ones already solved for
-            # the same spec.
-            for spec in specs:
-                spec_id = spec["problem_spec_id"]
-                service_dates = spec_service_dates(spec, service_date_count)
-                print(f"{spec_id}: {service_dates[0]}..{service_dates[-1]}")
-                total += len(service_dates)
-                for service_date in service_dates:
-                    print(f"  {service_date}")
-                    patterns_json = run_dir / f"service_patterns_{spec_id}.json"
-                    patterns_json.write_text(json.dumps(solved_patterns[spec_id]))
-                    solution, pattern = solve_one(
-                        spec,
-                        run_dir / f"service_{service_date}" / spec_id,
-                        feed_dir,
+            if pattern is not None:
+                solved_patterns[spec_id].append(pattern)
+                solved_solutions[spec_id][service_date] = solution
+            if solution["status"] == DUPLICATE_STATUS:
+                skipped += 1
+            # One connection per instance, opened once the solve it stores is
+            # over: a connection older than the solve would be dead by now. Each
+            # one commits on its own, so a later failure keeps this work.
+            with db() as cursor:
+                cursor.execute(
+                    "INSERT INTO problem_instance (problem_instance_id, "
+                    "gtfs_source_id, gtfs_instance_id, problem_spec_id, "
+                    "service_date, data) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (
+                        f"{run_id}-{spec_id}-{service_date}",
+                        gtfs_source_id,
+                        run_id,
+                        spec_id,
                         service_date,
-                        patterns_json,
-                        solved_solutions[spec_id],
-                        solve_timeout_seconds,
-                    )
-                    if pattern is not None:
-                        solved_patterns[spec_id].append(pattern)
-                        solved_solutions[spec_id][service_date] = solution
-                    if solution["status"] == DUPLICATE_STATUS:
-                        skipped += 1
-                    cursor.execute(
-                        "INSERT INTO problem_instance (problem_instance_id, "
-                        "gtfs_source_id, gtfs_instance_id, problem_spec_id, "
-                        "service_date, data) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (
-                            f"{run_id}-{spec_id}-{service_date}",
-                            gtfs_source_id,
-                            run_id,
-                            spec_id,
-                            service_date,
-                            Jsonb(solution),
-                        ),
-                    )
-                    # Commit per instance so a later failure keeps this work.
-                    connection.commit()
+                        Jsonb(solution),
+                    ),
+                )
 
     print(
         f"done: {total} problem instances, {skipped} of them skipped as "
