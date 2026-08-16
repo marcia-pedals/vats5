@@ -39,7 +39,13 @@ ENV_FILE = REPO_ROOT / "solution-viewer" / ".env.local"
 # Columns that live in their own table column; every other key in the TOML file
 # is carried through as the row's JSONB `data`.
 TARGET_STOPS_COLUMNS = ("target_stops_id", "gtfs_source_id", "title")
-PROBLEM_SPEC_COLUMNS = ("problem_spec_id", "gtfs_source_id", "target_stops_id", "title")
+PROBLEM_SPEC_COLUMNS = (
+    "problem_spec_id",
+    "gtfs_source_id",
+    "target_stops_id",
+    "title",
+    "description",
+)
 
 # Rows whose config is gone, as (table, primary key, condition on the ids the
 # configs still define). Each condition matches the rows that are stale

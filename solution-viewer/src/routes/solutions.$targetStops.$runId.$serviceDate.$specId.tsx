@@ -289,8 +289,16 @@ function SolutionDetails({ solution }: { solution: Solution }) {
   // Everything named here is either laid out below or, like the optimal
   // duration -- which the summary in the title row already gives -- pulled out
   // so `rest` does not render it again as a generic metadata row.
-  const { status, optimal_duration_seconds, trace, stops, routes, solution_path, ...rest } =
-    solution.data;
+  const {
+    status,
+    optimal_duration_seconds,
+    problem_spec_description,
+    trace,
+    stops,
+    routes,
+    solution_path,
+    ...rest
+  } = solution.data;
   const { weekday, label } = formatServiceDate(solution.service_date);
   const solved = status === "solved";
 
@@ -315,6 +323,23 @@ function SolutionDetails({ solution }: { solution: Solution }) {
           {solved ? "No path recorded for this run." : "Only a solved instance has a path."}
         </p>
       )}
+
+      {/* What problem this was a solution to, as the spec described it when it
+          was solved -- the grid's column heading is only the short title. */}
+      <div className="space-y-2 border-t border-tc-border pt-3">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">
+          Description
+        </h3>
+        {problem_spec_description ? (
+          <p className="max-w-prose whitespace-pre-line text-sm leading-relaxed text-tc-text">
+            {problem_spec_description}
+          </p>
+        ) : (
+          <p className="font-mono text-xs text-tc-text-muted">
+            No description recorded for this run.
+          </p>
+        )}
+      </div>
 
       <div className="space-y-2 border-t border-tc-border pt-3">
         <h3 className="font-mono text-xs uppercase tracking-wider text-tc-text-muted">Timing</h3>
