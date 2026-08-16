@@ -59,7 +59,7 @@ The idea is that many transit systems are "tree-like" in the sense that a route 
 | VTA Light Rail | 62 | 9 - 12
 | Munich U-Bahn | 96 | 21
 
-^[covering-set-range]: Ranges observed over a few instances of the problem with varying dates and varying walking speed parameters.
+[^covering-set-range]: Ranges observed over a few instances of the problem with varying dates and varying walking speed parameters.
 
 This reduction is important, because the next component of the solver takes ~10 minutes to solve a problem with ~20 stations, and gets exponentially slower from there. Even BART's 50 stations would be completely infeasible without this reduction.
 
