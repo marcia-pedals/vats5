@@ -8,6 +8,10 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    // Server-side imports name their targets with the `.ts` extension so that
+    // Vercel's file tracer finds them; emitting rewrites those specifiers to
+    // `.js` to match the compiled output.
+    "rewriteRelativeImportExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

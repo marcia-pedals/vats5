@@ -6,7 +6,7 @@ import {
   SolutionSchema,
   type TargetStops,
   TargetStopsSchema,
-} from "../schemas";
+} from "../schemas.ts";
 
 /**
  * Connection settings from DATABASE_URL. Local development talks to a plain,

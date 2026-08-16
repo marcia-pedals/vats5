@@ -3,8 +3,8 @@ import cors from "cors";
 import express from "express";
 // Loads DATABASE_URL from .env.local for local development. Reading env is
 // lazy in db.ts, so this side-effect import is fine anywhere in the list.
-import "./src/server/env";
-import { appRouter } from "./src/server/trpc";
+import "./src/server/env.ts";
+import { appRouter } from "./src/server/trpc.ts";
 
 const TRPC_PORT = Number(process.env.TRPC_PORT);
 const CHECKOUT_NAME = process.env.CHECKOUT_NAME ?? "unknown";
