@@ -123,7 +123,7 @@ function GridTable({
       <table className="w-auto table-fixed font-mono text-sm border-collapse">
         <thead>
           <tr className="text-tc-text-dim text-xs uppercase tracking-wider">
-            <th className="w-28 text-left font-medium py-1 pr-4 whitespace-nowrap">service date</th>
+            <th className="w-28 py-1 pr-4" />
             {grid.specs.map((spec) => (
               <th
                 key={spec.id}
