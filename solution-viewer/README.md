@@ -79,11 +79,28 @@ Neon's pooled (`-pooler`) connection string is the right one for serverless
 functions — each invocation opens its own connection, and the pooler keeps that
 from exhausting the database's connection limit.
 
+### Why the server is bundled
+
+Vercel builds a function under `api/` by compiling every `.ts` file it can
+reach to `.js` and leaving the import specifiers alone. Extensionless relative
+imports work locally — `tsx` and Vite both accept them — and then fail in the
+deployed function, where plain Node applies strict ES module resolution and
+demands the extension. Nothing you run locally exercises that difference.
+
+So `npm run build:server` bundles `src/server/vercel-handler.ts` and everything
+it imports into `server-bundle/trpc-handler.js`, and `api/trpc/[trpc].ts` does
+nothing but re-export it. That leaves one relative import in the deployed
+function, pointing at a real `.js` file — the arrangement a framework like
+Next.js produces for you. Dependencies stay external and are resolved from
+`node_modules` as usual. Adding a function means following the same shape:
+re-export from a bundle rather than importing `src/` directly.
+
 ## Structure
 
 ```
 solution-viewer/
-├── api/trpc/[trpc].ts     # Vercel serverless entrypoint (fetch adapter)
+├── api/trpc/[trpc].ts     # Vercel serverless entrypoint (re-exports the bundle)
+├── server-bundle/         # generated server bundle (gitignored) + its types
 ├── server.ts              # local Express + tRPC server
 ├── migrations/            # numbered .sql files
 ├── scripts/migrate.ts     # migration runner
@@ -91,7 +108,8 @@ solution-viewer/
 │   ├── server/
 │   │   ├── db.ts          # pg pool + queries, zod-validated
 │   │   ├── env.ts         # loads .env.local in development
-│   │   └── trpc.ts        # tRPC router
+│   │   ├── trpc.ts        # tRPC router
+│   │   └── vercel-handler.ts  # deployed fetch handler; bundle entry point
 │   ├── client/trpc.ts     # tRPC client
 │   └── routes/            # TanStack Router file routes
 ├── vercel.json

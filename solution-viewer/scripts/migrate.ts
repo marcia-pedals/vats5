@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
-import "../src/server/env.ts";
+import "../src/server/env";
 import { getConnectionConfig } from "../src/server/db";
 
 // Applies every .sql file in migrations/ that hasn't been applied yet, in

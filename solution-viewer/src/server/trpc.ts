@@ -1,6 +1,6 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
-import { listRuns, listSolutions, listTargetStops } from "./db.ts";
+import { listRuns, listSolutions, listTargetStops } from "./db";
 
 const t = initTRPC.create();
 

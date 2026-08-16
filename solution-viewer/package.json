@@ -6,7 +6,8 @@
     "dev": "concurrently --kill-others \"npm run server\" \"npm run client\"",
     "server": "tsx server.ts",
     "client": "vite",
-    "build": "vite build",
+    "build": "npm run build:server && vite build",
+    "build:server": "esbuild src/server/vercel-handler.ts --bundle --packages=external --platform=node --format=esm --target=node22 --outfile=server-bundle/trpc-handler.js",
     "migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.2.0",
     "tsx": "^4.7.1",
     "typescript": "^5.9.3",
