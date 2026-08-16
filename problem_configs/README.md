@@ -6,4 +6,6 @@ These are the source of truth -- projections of these are synced into the `solut
 
 Because stored solutions are keyed off of these configuration ids, edits to these configurations have backwards-compatibility implications. Editing a config in place leaves the solutions already stored under its id describing the old problem; giving the new problem a new id instead retires the old one cleanly.
 
+Every config names the GTFS source it belongs to. The sources themselves, and how each one's feed is fetched, live in `pipeline/gtfs_sources.py`; `pipeline/run.py` solves one source per run.
+
 There are some older configs in `server/configs` and derived data in `server/data`. It might be good to migrate to this new place and delete those eventually.

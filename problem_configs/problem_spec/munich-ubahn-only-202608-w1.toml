@@ -1,0 +1,20 @@
+problem_spec_id = "munich-ubahn-only-202608-w1"
+gtfs_source_id = "munich"
+target_stops_id = "munich-ubahn-202608"
+title = "walk 1m/s, only U-Bahn"
+
+max_walking_distance = 500
+walking_speed = 1
+
+trip_id_prefixes = [
+  "de:mvg:1|U1|",
+  "de:mvg:2|U2|",
+  "de:mvg:3|U3|",
+  "de:mvg:4|U4|",
+  "de:mvg:5|U5|",
+  "de:mvg:6|U6|",
+  "de:mvg:7|U7|",
+  "de:mvg:8|U8|",
+]
+
+start_service_date = "20260921"
