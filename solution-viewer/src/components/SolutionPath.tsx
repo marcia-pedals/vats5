@@ -374,7 +374,12 @@ function PathMap({
                   : "path-arrow";
               return (
                 <line
-                  key={arrow.key}
+                  // Keyed by marker too, so a leg going in or out of the
+                  // highlight remounts rather than being patched in place:
+                  // Safari before 26.4 does not repaint a marker when
+                  // `marker-end` changes on a live element, and would keep the
+                  // magenta arrowhead after the line had gone back to green.
+                  key={`${arrow.key}-${marker}`}
                   x1={arrow.x1}
                   y1={arrow.y1}
                   x2={arrow.x2}
