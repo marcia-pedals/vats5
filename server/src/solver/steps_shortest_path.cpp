@@ -84,6 +84,16 @@ size_t FindDepartureAtOrAfter(
   return idx;
 }
 
+size_t FindDepartureAtOrAfter(
+    const StepsAdjacencyList& adjacency_list,
+    const StepGroup& group,
+    TimeSinceServiceStart t
+) {
+  return FindDepartureAtOrAfter(
+      adjacency_list.GetSteps(group), adjacency_list.GetDepartureTimes(group), t
+  );
+}
+
 // Backtrack through the search results to reconstruct the full path.
 // Returns the steps in order from origin to destination.
 std::vector<Step> BacktrackPath(

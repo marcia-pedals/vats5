@@ -128,6 +128,11 @@ add_library(tour_paths STATIC src/solver/tour_paths.cpp)
 target_link_libraries(tour_paths PUBLIC steps_adjacency_list)
 target_include_directories(tour_paths PUBLIC src)
 
+# Create embiggener library target
+add_library(embiggener STATIC src/solver/embiggener.cpp)
+target_link_libraries(embiggener PUBLIC steps_shortest_path tarel_graph)
+target_include_directories(embiggener PUBLIC src)
+
 # Create tarel_graph library target
 add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
@@ -199,6 +204,10 @@ target_include_directories(iterative_expansion_partial_solve PUBLIC src)
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
 target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
+
+# Add refine tool
+add_executable(refine src/tools/refine.cpp)
+target_link_libraries(refine PUBLIC embiggener CLI11::CLI11)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
@@ -300,6 +309,11 @@ add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+
+# Add embiggener test executable
+add_executable(embiggener_test src/solver/embiggener_test.cpp)
+target_link_libraries(embiggener_test PUBLIC gunit embiggener problem_state_gen rapidcheck_gtest)
+add_test(NAME embiggener_test COMMAND embiggener_test)
 
 # Add tour_paths test executable
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
