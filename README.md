@@ -2,13 +2,13 @@
 
 Computes the **exact fastest route** to visit all the stops in a transit system, taking actual schedules into account.
 
-| System | # Stops | # Lines | Other transit?[^other-transit] | Approx solve time[^solve-time] | |
+| System | # Stops | # Lines | Other transit?[^other-transit] | Solve time[^solve-time] | |
 | --- | --- | --- | --- | --- | --- |
 | BART | 50 | 5 | Yes | 30 seconds | [View solutions](https://vats5.vercel.app/solutions/bart-202608)
 | VTA Light Rail | 62 | 3 | Yes | 2 minutes | [View solutions](https://vats5.vercel.app/solutions/vtalr-202608)
 | Munich U-Bahn | 96 | 8 | No | 30 minutes | [View solutions](https://vats5.vercel.app/solutions/munich-ubahn-202608)
-| Munich U-Bahn | 96 | 8 | Yes | - |
-| NYC Subway | 400 | 30 | No | - |
+| Munich U-Bahn | 96 | 8 | Yes | Too big | N/A
+| NYC Subway | 400 | 30 | No | Too big | N/A
 
 [^other-transit]: Whether other transit is allowed on the route. This makes the problem harder because there are more routes to consider.
 [^solve-time]: How long it takes the implementation to solve one instance of this problem on a M5 MacBook Pro, as of 2026-08-16.
