@@ -1,15 +1,11 @@
 problem_spec_id = "munich-ubahn-only-202608-w1"
 gtfs_source_id = "munich"
 target_stops_id = "munich-ubahn-202608"
-title = "walk 1m/s, U-Bahn trips only"
+title = "walk 1m/s, only U-Bahn"
 
 max_walking_distance = 500
 walking_speed = 1
 
-# Every U-Bahn stop, reachable only by U-Bahn: the MVV feed's U-Bahn trip ids
-# are "de:mvg:{line}|U{line}|U:...", and no other route's trips start with one
-# of these. Rail replacement buses are deliberately not included, so this is the
-# network as built rather than as operated on any particular day.
 trip_id_prefixes = [
   "de:mvg:1|U1|",
   "de:mvg:2|U2|",
@@ -21,9 +17,4 @@ trip_id_prefixes = [
   "de:mvg:8|U8|",
 ]
 
-# Which makes the date this is solved for part of the problem. The U3/U6 trunk
-# between Implerstraße and Sendlinger Tor is closed from 18 May to 18 September
-# 2026, and with no replacement bus to bridge it the U-Bahn splits into two
-# components that no single tour can cover -- the solve comes back infeasible.
-# 2026-09-21 is the first Monday after it reopens.
 start_service_date = "20260921"
