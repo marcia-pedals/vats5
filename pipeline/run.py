@@ -239,7 +239,9 @@ def solve_one(
     result of the date it duplicates.
 
     The solution info carries a `trace` of how long each part took: the two
-    tools as timed here, with whatever spans they reported nested underneath.
+    tools as timed here, with whatever spans they reported nested underneath,
+    and the spec's `description`, so a stored solution says what problem it was
+    a solution to even after the config has moved on.
     """
     spec_dir.mkdir(parents=True, exist_ok=True)
 
@@ -287,7 +289,10 @@ def solve_one(
         """Report how this instance went and how long it took, and trace it."""
         elapsed = time.monotonic() - started
         print(f"    {outcome} in {elapsed:.0f}s")
-        solution = solution | {"trace": trace_node("solve", 0.0, elapsed, children)}
+        solution = solution | {
+            "problem_spec_description": spec["description"],
+            "trace": trace_node("solve", 0.0, elapsed, children),
+        }
         return solution, pattern
 
     if returncode == DUPLICATE_SERVICE_PATTERN_EXIT_CODE:
@@ -386,6 +391,7 @@ def load_specs(cursor: psycopg.Cursor, gtfs_source_id: str) -> list[dict[str, An
     cursor.execute(
         """
         SELECT spec.problem_spec_id,
+               spec.description,
                spec.data,
                stops.data AS target_stops_data
         FROM problem_spec AS spec

@@ -2,6 +2,14 @@ problem_spec_id = "munich-ubahn-only-202608-w1"
 gtfs_source_id = "munich"
 target_stops_id = "munich-ubahn-202608"
 title = "walk 1m/s, only U-Bahn"
+description = """\
+Visit every Munich U-Bahn stop on one service date, riding U-Bahn trips \
+only: the MVV feed's tram, bus and S-Bahn trips are filtered out, so \
+everything but the eight U-Bahn lines has to be walked. Walking transfers \
+are allowed between stops up to 500m apart and are timed at 1 m/s. Service \
+dates start at 2026-09-21, past the U3/U6 Sendlinger Tor - Implerstrasse \
+closure, so the network is intact.\
+"""
 
 max_walking_distance = 500
 walking_speed = 1

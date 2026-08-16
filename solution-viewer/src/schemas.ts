@@ -72,14 +72,19 @@ export type SolutionPath = z.infer<typeof SolutionPathSchema>;
 // What pipeline/run.py stores in problem_instance.data. `status` is "solved",
 // "timeout", or one of the failure statuses; the other fields depend on it.
 // `trace` is absent for rows written before it was recorded, and so are
-// `stops`/`solution_path`/`routes`. Only a solve has a path; `routes` covers
-// exactly the routes that path uses. A "duplicate_service_pattern" row has no
-// path either, but does carry the `optimal_duration_seconds` of the date it
-// duplicates.
+// `stops`/`solution_path`/`routes` and `problem_spec_description`. Only a solve
+// has a path; `routes` covers exactly the routes that path uses. A
+// "duplicate_service_pattern" row has no path either, but does carry the
+// `optimal_duration_seconds` of the date it duplicates.
+//
+// `problem_spec_description` is the spec's description as it stood when this
+// was solved, copied in rather than joined so that editing the config does not
+// rewrite the problem that solutions already stored were solutions to.
 export const SolutionDataSchema = z
   .object({
     status: z.string(),
     optimal_duration_seconds: z.number().optional(),
+    problem_spec_description: z.string().optional(),
     timeout_seconds: z.number().optional(),
     returncode: z.number().nullable().optional(),
     trace: TraceNodeSchema.optional(),

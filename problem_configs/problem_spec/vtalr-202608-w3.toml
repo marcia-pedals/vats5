@@ -2,6 +2,13 @@ problem_spec_id = "vtalr-202608-w3"
 gtfs_source_id = "bayarea"
 target_stops_id = "vtalr-202608"
 title = "walk 3m/s"
+description = """\
+Visit every VTA light rail station -- the Green, Orange and Blue lines -- on \
+one service date, riding the Bay Area regional feed. The same problem as the \
+1 m/s spec, but walking transfers are timed at 3 m/s -- faster than anyone \
+walks -- which shows how much of the tour is spent covering the 500m between \
+stops rather than waiting for trains.\
+"""
 
 max_walking_distance = 500
 walking_speed = 3

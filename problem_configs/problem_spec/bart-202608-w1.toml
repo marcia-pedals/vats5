@@ -2,6 +2,11 @@ problem_spec_id = "bart-202608-w1"
 gtfs_source_id = "bayarea"
 target_stops_id = "bart-202608"
 title = "walk 1m/s"
+description = """\
+Visit every BART station on one service date, riding the Bay Area regional \
+feed. Walking transfers are allowed between stops up to 500m apart and are \
+timed at 1 m/s, about an ordinary walking pace.\
+"""
 
 max_walking_distance = 500
 walking_speed = 1
