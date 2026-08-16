@@ -81,7 +81,7 @@ The current implementation's branch constraint is: Pick an edge `a -> b` in the 
 
 Intuition for why this branch improves the bounds:
 * In the branch where the solution **does** use `a -> b`, we combine the `a` and `b` vertices into a single vertex representing `a -> b`, and the edges out of this vertex give slightly more precise bounds on the `a -> b -> x` portion of the trip, because they take into account the actual waiting times at `b`.
-* In the branch where the solution **does not** use `a -> b`, we forbid the edge, which increases the lower bound because that edge was used in the relaxation's optimal solution, so forbidding it strictly worsens the relaxation.
+* In the branch where the solution **does not** use `a -> b`, we forbid the edge, which increases the lower bound because that edge was used in the relaxation's optimal solution, so forbidding it worsens the relaxation.
 
 TODO: Add some data about how the bound grows.
 
