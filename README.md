@@ -2,8 +2,6 @@
 
 Computes the **exact fastest route** to visit all the stations in a transit system, taking actual schedules into account.
 
-![Screenshot of a Munich U-Bahn solution.](./docs/route_screenshot.png)
-
 | System | # Stations | # Lines | Other transit?[^other-transit] | Solve time[^solve-time] | |
 | --- | --- | --- | --- | --- | --- |
 | BART | 50 | 5 | Yes | 30 seconds | [View solutions](https://vats5.vercel.app/solutions/bart-202608)
