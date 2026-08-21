@@ -395,11 +395,14 @@ int main(int argc, char* argv[]) {
   app.add_option("input_path", input_path, "Path to problem state JSON")
       ->required();
 
-  std::string required_subset_dir;
+  std::string intermediate_output_dir;
   app.add_option(
-      "--required_subset_dir",
-      required_subset_dir,
-      "Directory to write required_iteration_{n}.toml files"
+      "--intermediate_output_dir",
+      intermediate_output_dir,
+      "Directory to write each iteration's required_iteration_{n}.toml and "
+      "problem_state_iteration_{n}.json: the stops it was asked to visit and "
+      "the problem it solved, the latter in the format benchmark_bnb reads, "
+      "so that one iteration can be re-run on its own"
   );
 
   std::string solution_json_path;
@@ -621,9 +624,8 @@ int main(int argc, char* argv[]) {
     return vp;
   };
 
-  // Create required_subset_dir if specified.
-  if (!required_subset_dir.empty()) {
-    std::filesystem::create_directories(required_subset_dir);
+  if (!intermediate_output_dir.empty()) {
+    std::filesystem::create_directories(intermediate_output_dir);
   }
 
   // Kept across iterations: the tours they extend share most of their stop
@@ -652,17 +654,38 @@ int main(int argc, char* argv[]) {
       iteration_span.SetMetadata("stops", required_subset.size());
       iteration_span.SetMetadata("solver", brute_force ? "brute" : "bnb");
       WriteRequiredSubsetToml(
-          state, required_subset_dir, iteration, required_subset
+          state, intermediate_output_dir, iteration, required_subset
       );
       std::cout << "=== Iteration " << iteration << ": "
                 << (brute_force ? "brute force" : "branch and bound") << " on "
                 << required_subset.size() << " leaves in "
                 << subset_representatives.size() << " groups ===\n";
+      std::optional<ProblemState> partial_problem;
+      if (!brute_force) {
+        partial_problem = MakePartialProblemState(required_subset, state);
+      }
+      if (!intermediate_output_dir.empty()) {
+        TraceSpan record_span(trace, "record problem state");
+        if (!partial_problem.has_value()) {
+          partial_problem = MakePartialProblemState(required_subset, state);
+        }
+        std::string path = intermediate_output_dir +
+                           "/problem_state_iteration_" +
+                           std::to_string(iteration) + ".json";
+        std::ofstream out(path);
+        if (!out.is_open()) {
+          std::cerr << "Error: could not write " << path << "\n";
+          return 1;
+        }
+        out << nlohmann::json(*partial_problem).dump() << "\n";
+        std::cout << "Wrote iteration problem state to: " << path << "\n";
+      }
+
       PartialSolution solution =
           brute_force
               ? PartialSolveBruteForce(required_subset, state, check_deadline)
               : PartialSolveBranchAndBound(
-                    required_subset, state, &std::cout, on_search_event
+                    *partial_problem, state, &std::cout, on_search_event
                 );
 
       // Choose the path that visits the most required stops.

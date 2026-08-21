@@ -17,6 +17,10 @@ Each run gets its own directory under ~/vats5-pipeline:
                 problem_state-active-services.json  the services this date uses
                 initialize_problem_state.log
                 iterative_expansion.log
+                iterations/                    what each expansion iteration
+                                               was asked to visit and what it
+                                               solved, for benchmark_bnb to
+                                               re-run
                 solution.json                  what gets stored in the db
 
 A service date whose active services are identical to an already-solved one
@@ -346,6 +350,8 @@ def solve_one(
             str(problem_state),
             "--solution_json",
             str(solution_json),
+            "--intermediate_output_dir",
+            str(spec_dir / "iterations"),
             "--timeout",
             str(solve_timeout_seconds),
         ],

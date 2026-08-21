@@ -37,11 +37,9 @@ PartialSolution::BestPathByRequiredStops(const RequiredStops& required) const {
   );
 }
 
-PartialSolution PartialSolveBranchAndBound(
+ProblemState MakePartialProblemState(
     std::unordered_set<StopId> required_subset,
-    const ProblemState& original_problem,
-    std::ostream* search_log,
-    const SearchEventCallback& on_event
+    const ProblemState& original_problem
 ) {
   required_subset.insert(original_problem.boundary.start);
   required_subset.insert(original_problem.boundary.end);
@@ -60,7 +58,7 @@ PartialSolution PartialSolveBranchAndBound(
     });
   }
 
-  ProblemState partial_problem = MakeProblemState(
+  return MakeProblemState(
       MakeAdjacencyList(
           ReduceToMinimalSystemPaths(
               original_problem.minimal,
@@ -75,7 +73,28 @@ PartialSolution PartialSolveBranchAndBound(
       original_problem.step_partition_names,
       original_problem.original_edges
   );
+}
 
+PartialSolution PartialSolveBranchAndBound(
+    std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event
+) {
+  return PartialSolveBranchAndBound(
+      MakePartialProblemState(std::move(required_subset), original_problem),
+      original_problem,
+      search_log,
+      on_event
+  );
+}
+
+PartialSolution PartialSolveBranchAndBound(
+    const ProblemState& partial_problem,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event
+) {
   auto bb_result = BranchAndBoundSolve(
       partial_problem, search_log, std::nullopt, -1, on_event
   );

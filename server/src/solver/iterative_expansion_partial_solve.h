@@ -39,6 +39,11 @@ struct PartialSolution {
   ) const;
 };
 
+ProblemState MakePartialProblemState(
+    std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem
+);
+
 // Solves the partial problem of `original_problem` in which the paths must
 // visit `required_subset`, by branch and bound over the problem reduced to
 // that subset.
@@ -46,6 +51,13 @@ struct PartialSolution {
 // `search_log` may be null; `on_event` is called on each search event.
 PartialSolution PartialSolveBranchAndBound(
     std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event = nullptr
+);
+
+PartialSolution PartialSolveBranchAndBound(
+    const ProblemState& partial_problem,
     const ProblemState& original_problem,
     std::ostream* search_log,
     const SearchEventCallback& on_event = nullptr
