@@ -27,7 +27,7 @@ Fun algorithms. I like transit. See https://www.transitruns.org, https://www.bar
 
 **Prune.** There exists an optimal solution using only steps that are on shortest paths between target stations, so we can prune all other steps.
 
-**Guess a "covering set" of stations.** Choose a subset of the target stations and solve the problem for the subset. If the solution visits all the target stations, then we are done. Otherwise, add some missing stations to the subset and try again.
+**Lazy constraints.** Choose a subset of the target stations and solve the problem for the subset. If the solution visits all the target stations, then we are done. Otherwise, add some missing stations to the subset and try again.
 
 **Brute force.** If there are 10 or fewer stations, brute force check all permutations of the stations.
 
@@ -47,13 +47,20 @@ The main idea for finding these sets of shortest paths is to run a Dijkstra's-li
 
 Searching from every second-resolution time is too much work, so there is one important optimization: Instead of stepping forwards by one second after each query, step forwards to the next reachable departure time, which gives the same results with fewer searches. (TODO: Explain about walking, both why this is valid in light of walking and the trick about walking-reachable departures).
 
-### Covering sets
+### Lazy constraints
 
-This "covering set" idea reduces the number of vertices we need to consider.
+We don't need to constrain the path to visit all the stations, because the best path visiting a subset might happen to visit all of them! The intuition for why this works is that many systems are "tree-like" in the sense that the best path visiting all the terminal stations also visits many of the intermediate stations.
 
-The idea is that many transit systems are "tree-like" in the sense that a route hitting all the terminal stations hits many of the intermediate stations. In fact, some transit systems (e.g. BART without allowing connections on other transit systems), are indeed trees, so routes hitting all of their terminals also hit all their intermediate stations. So we solve the problem of visiting all the terminal stations and check if the solution visits all the stations. If it does, then we are done. If it does not, then we add more station(s) and repeat. The current implementation adds one station at a time -- the station farthest from the optimal route from the previous iteration.
+Steps:
+* Find a minimum spanning tree of the weighted graph of stations where the edges are the min travel times between the stations. Set the initial constraint set to be the leaves of the tree.
+* Solve the problem (using brute force or the branch and bound described below).
+* Greedily insert any intermediate stations into the solution that we can reach without extending the duration of the solution. (This is very important because the solution has no incentive to hit any intermediate stations and it often skips a bunch of intermediate stations and then spends a bunch of time waiting at a station when it could have visited all those stations and still get to the next station before it has to leave).
+* If the solution now visits all the stations, then we are done.
+* Otherwise, find the station that is farthest from the solution, insert it into the constraint set, and loop back to solve.
 
-| System | # Stations | # Stations in final covering set (range[^covering-set-range])
+This is a huge speedup: the branch and bound solver can't even solve the smallest problem instance (BART, 50 stations) in a reasonable amount of time if we use the full station set. With lazy constraints, BART ends up needing few enough constraints that we can solve it easily using brute force.
+
+| System | # Stations | Size of final constraint set (range[^covering-set-range])
 | -- | -- | -- |
 | BART | 50 | 6 - 9
 | VTA Light Rail | 62 | 9 - 12
@@ -61,17 +68,25 @@ The idea is that many transit systems are "tree-like" in the sense that a route 
 
 [^covering-set-range]: Ranges observed over a few instances of the problem with varying dates and varying walking speed parameters.
 
-This reduction is important, because the next component of the solver takes ~10 minutes to solve a problem with ~20 stations, and gets exponentially slower from there. Even BART's 50 stations would be completely infeasible without this reduction.
-
 ### Relaxation to vanilla TSP
 
-We can relax "Transit-TSP" to vanilla TSP[^loose-tsp] by building a graph where the vertices are the stations and the edge weight `a -> b` is the shortest possible duration between arriving at `a` and arriving at `b`, over all possible times when we can arrive at `a`. The solution to this relaxation (which we get with a modern TSP solver like [Concorde]) gives us a lower bound on Transit-TSP. We get an upper bound by computing the fastest possible route along the same sequence of stations.
+We can relax "Transit-TSP" to vanilla TSP[^loose-tsp] by building a graph where the vertices are the stations and the edge weight `a -> b` is the shortest possible duration between arriving at `a` and arriving at `b`, over all possible times when we can arrive at `a`. The solution to this relaxation (which we get with a modern TSP solver like [Concorde]) gives us a lower bound on Transit-TSP. We get an upper bound by computing the fastest schedule-following route along the same sequence of stations.
 
-TODO: Add some data about the tightness of the bound, and about some attempted improvements.
+TODO: There are some implemented improvements that make it a bit tighter. Explain.
+
+TODO: Add some data about the tightness of the bound, and about some other attempted improvements.
 
 [Concorde]: https://www.math.uwaterloo.ca/tsp/concorde.html
 
 [^loose-tsp]: I'm being a bit loose with the term "vanilla TSP". Technically, the pure vanilla TSP that Concorde solves is an *undirected* graph where each vertex must be visited *exactly once*, but the relaxed TSP that I'm describing is *directed* and we visit vertices *any positive number of times*. There is a straightforward known reduction from this to pure vanilla TSP, and the code implements this.
+
+#### Reduction to vanilla TSP??
+
+There is also a reduction to vanilla TSP[^loose-tsp-2]: a graph where the vertices are (station, trip departure time) and the edges are actual scheduled trips and edges representing waiting at stations.
+
+TODO: Build this reduction so I know how big it is and whether exact solvers can solve it or approximate solvers give good solutions.
+
+[^loose-tsp-2]: Again, this is not exactly vanilla TSP. You want to visit each set of vertices representing a station once instead of visiting each vertex once. There is a cool reduction to actual vanilla TSP: the Noon-Bean transformation.
 
 ### Branch and bound
 
@@ -87,4 +102,4 @@ TODO: Add some data about how the bound grows.
 
 ## Next steps
 
-The tightness of the relaxation bound is not great and the branch doesn't improve it much. It feels like there might be more structure to exploit to improve them.
+The tightness of the relaxation bound is not great and the branch doesn't improve it much. It feels like we might be able to do a lot better.
