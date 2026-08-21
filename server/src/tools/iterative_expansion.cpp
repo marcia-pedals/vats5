@@ -660,15 +660,9 @@ int main(int argc, char* argv[]) {
                 << (brute_force ? "brute force" : "branch and bound") << " on "
                 << required_subset.size() << " leaves in "
                 << subset_representatives.size() << " groups ===\n";
-      std::optional<ProblemState> partial_problem;
-      if (!brute_force) {
-        partial_problem = MakePartialProblemState(required_subset, state);
-      }
+      ProblemState partial_problem =
+          MakePartialProblemState(required_subset, state);
       if (!intermediate_output_dir.empty()) {
-        TraceSpan record_span(trace, "record problem state");
-        if (!partial_problem.has_value()) {
-          partial_problem = MakePartialProblemState(required_subset, state);
-        }
         std::string path = intermediate_output_dir +
                            "/problem_state_iteration_" +
                            std::to_string(iteration) + ".json";
@@ -677,7 +671,7 @@ int main(int argc, char* argv[]) {
           std::cerr << "Error: could not write " << path << "\n";
           return 1;
         }
-        out << nlohmann::json(*partial_problem).dump() << "\n";
+        out << nlohmann::json(partial_problem).dump() << "\n";
         std::cout << "Wrote iteration problem state to: " << path << "\n";
       }
 
@@ -685,7 +679,7 @@ int main(int argc, char* argv[]) {
           brute_force
               ? PartialSolveBruteForce(required_subset, state, check_deadline)
               : PartialSolveBranchAndBound(
-                    *partial_problem, state, &std::cout, on_search_event
+                    partial_problem, state, &std::cout, on_search_event
                 );
 
       // Choose the path that visits the most required stops.
