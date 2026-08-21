@@ -228,7 +228,9 @@ RC_GTEST_PROP(
   RC_LOG() << "subset size " << subset.size() << "\n";
 
   PartialSolution brute = PartialSolveBruteForce(subset, state);
-  PartialSolution bnb = PartialSolveBranchAndBound(subset, state, nullptr);
+  PartialSolution bnb = PartialSolveBranchAndBound(
+      MakePartialProblemState(subset, state), state, nullptr
+  );
 
   RC_LOG() << "brute " << OptimalDuration(brute) << " over "
            << brute.paths.size() << " paths\n";
@@ -246,7 +248,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
 
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
-        PartialSolveBranchAndBound(subset, state, nullptr)}) {
+        PartialSolveBranchAndBound(
+            MakePartialProblemState(subset, state), state, nullptr
+        )}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
       RC_ASSERT(path.path.merged_step.origin.stop == state.boundary.start);
@@ -271,7 +275,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
 
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
-        PartialSolveBranchAndBound(subset, state, nullptr)}) {
+        PartialSolveBranchAndBound(
+            MakePartialProblemState(subset, state), state, nullptr
+        )}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
       path.path.VisitAllStops([&](StopId stop) {

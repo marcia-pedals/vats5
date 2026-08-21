@@ -76,20 +76,6 @@ ProblemState MakePartialProblemState(
 }
 
 PartialSolution PartialSolveBranchAndBound(
-    std::unordered_set<StopId> required_subset,
-    const ProblemState& original_problem,
-    std::ostream* search_log,
-    const SearchEventCallback& on_event
-) {
-  return PartialSolveBranchAndBound(
-      MakePartialProblemState(std::move(required_subset), original_problem),
-      original_problem,
-      search_log,
-      on_event
-  );
-}
-
-PartialSolution PartialSolveBranchAndBound(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
     std::ostream* search_log,
