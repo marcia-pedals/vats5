@@ -640,8 +640,7 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
                      steps[step_idx].origin.time < arrival_time) {
                 step_idx += 1;
               }
-              if (suffix_charged[step_idx] !=
-                  std::numeric_limits<int>::max()) {
+              if (suffix_charged[step_idx] != std::numeric_limits<int>::max()) {
                 weight = std::min(
                     weight,
                     suffix_charged[step_idx] - arrival_time.seconds + adjustment
@@ -722,8 +721,8 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
             if (!any_arrival) {
               continue;  // This origin cannot catch this step.
             }
-            int min_wait = steps[i].origin.time.seconds -
-                           arrivals[arrival_idx].seconds;
+            int min_wait =
+                steps[i].origin.time.seconds - arrivals[arrival_idx].seconds;
             int floor = target - min_wait;
             fwd[i] = std::min(fwd[i], steps[i].DurationSeconds() - floor);
           }
@@ -754,9 +753,8 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
           if (steps[i].is_flex) {
             continue;
           }
-          auto it = std::ranges::lower_bound(
-              arrivals, steps[i].destination.time
-          );
+          auto it =
+              std::ranges::lower_bound(arrivals, steps[i].destination.time);
           assert(it != arrivals.end() && *it == steps[i].destination.time);
           size_t k = it - arrivals.begin();
           adj[k] = std::min(adj[k], fwd[i]);
