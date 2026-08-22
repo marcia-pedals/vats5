@@ -297,6 +297,7 @@ namespace vats5 {
 
 // Arrival times to a TarelState.
 struct ArrivalTimes {
+  // After construction, sorted ascending and unique.
   std::vector<TimeSinceServiceStart> times;
   bool has_flex = false;
 };
@@ -310,8 +311,11 @@ struct TarelEdgeIntermediateData {
       steps_from;
 
   // arrival_times_to[(x, p)] is all partition-p arrival times to stop x.
-  // After construction, times in each value are sorted ascending and unique.
   std::unordered_map<TarelState, ArrivalTimes> arrival_times_to;
+
+  // min_duration_from_to[(x, s)] is the duration of the fastest step (flex or
+  // scheduled) from stop x to state s.
+  std::unordered_map<std::pair<StopId, TarelState>, int> min_duration_from_to;
 };
 
 // An edge from `origin.stop` to `destination.stop` in the "tarel graph".
@@ -319,10 +323,19 @@ struct TarelEdgeIntermediateData {
 // "What's a tarel graph?", you might ask. It stands for Transfer-Aware
 // RELaxation. It works like this:
 //
-// Each step is assigned a `StepPartitionId`. Then, the weight of a tarel edge
-// is the min possible time between _arriving_ at `origin.stop` using a
-// `origin.partition` step and _arriving_ at `destination.stop` using a
+// Each step is assigned a `StepPartitionId`. Then, the baseline weight of a
+// tarel edge is the min possible time between _arriving_ at `origin.stop`
+// using a `origin.partition` step and _arriving_ at `destination.stop` using a
 // `destination.partition` step.
+//
+// On top of that, weights are strengthened by "slack forwarding" (see
+// BuildTarelEdgesFromIntermediateData): part of a slow step's duration can be
+// charged to the NEXT edge of the tour instead of its own. A forwarded weight
+// can exceed its edge's min possible arrive-to-arrive time; what remains true
+// is that (a) every weight is at least its baseline value, and (b) along any
+// actual tour, the sum of the weights of the tour's state sequence never
+// exceeds the tour's duration, because every second of the tour is still
+// charged to exactly one edge.
 //
 // The idea is that if you partition steps by something like what transit line
 // they come from, then the transfer time betweent two lines is reasonably

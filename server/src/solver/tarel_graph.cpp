@@ -1,6 +1,7 @@
 #include "solver/tarel_graph.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <fstream>
 #include <ios>
@@ -10,6 +11,8 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "solver/concorde.h"
 #include "solver/data.h"
@@ -508,6 +511,19 @@ TarelEdgeIntermediateData ComputeTarelIntermediateData(
     TarelState destination_state{
         step.destination.stop, step.destination.partition
     };
+    // For flex steps, DurationSeconds() is the flex duration.
+    auto [it, inserted] = data.min_duration_from_to.try_emplace(
+        {step.origin.stop, destination_state}, step.DurationSeconds()
+    );
+    if (!inserted) {
+      it->second = std::min(step.DurationSeconds(), it->second);
+    }
+  }
+
+  for (const Step& step : steps) {
+    TarelState destination_state{
+        step.destination.stop, step.destination.partition
+    };
 
     // Preserves sorted-and-minimal property because: The paths within
     // `path_group` are sorted and minimal, they all have the same
@@ -546,60 +562,228 @@ TarelEdgeIntermediateData ComputeTarelIntermediateData(
 std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
     const TarelEdgeIntermediateData& data
 ) {
-  std::vector<TarelEdge> edges;
-  for (const auto& [origin, arrival_times_to_origin] : data.arrival_times_to) {
-    auto it = data.steps_from.find(origin.stop);
-    if (it == data.steps_from.end()) {
-      continue;
-    }
-    for (const auto& [dest, steps] : it->second) {
-      int weight = std::numeric_limits<int>::max();
-      if (arrival_times_to_origin.has_flex) {
-        // If the arrival is flex, we have to assume we can arrive any time, so
-        // the weight is simply the duration of the shortest step out.
-        for (const Step& step : steps) {
-          if (step.DurationSeconds() < weight) {
-            weight = step.DurationSeconds();
-          }
-        }
-      } else {
-        // The arrival is scheduled.
-        int step_idx = 0;
-        if (steps.size() > 0 && steps[0].is_flex) {
-          if (steps[0].FlexDurationSeconds() < weight) {
-            weight = steps[0].FlexDurationSeconds();
-          }
-          step_idx = 1;
-        }
-        for (const TimeSinceServiceStart arrival_time :
-             arrival_times_to_origin.times) {
-          while (step_idx < steps.size() &&
-                 steps[step_idx].origin.time < arrival_time) {
-            step_idx += 1;
-          }
-          if (step_idx >= steps.size()) {
-            break;
-          }
-          int duration =
-              steps[step_idx].destination.time.seconds - arrival_time.seconds;
-          if (duration < weight) {
-            weight = duration;
-          }
-        }
-      }
+  // Weights are computed with "slack forwarding": each step u is charged into
+  // its own edge's candidates at charge_out(u) <= DurationSeconds(u), and the
+  // remainder ("forwarded slack") is charged by the NEXT edge, as the
+  // adjustment on the arrival u produces. Any fixed per-step split is a sound
+  // decomposition of tour time (each second is paid exactly once), and the
+  // forwards below are chosen so that no edge weight drops below its
+  // unforwarded value, so the resulting lower bound is sound and at least as
+  // strong per problem as the unforwarded one. See TarelEdge.
 
-      if (weight < std::numeric_limits<int>::max()) {
-        edges.push_back(
-            TarelEdge{
-                .origin = origin,
-                .destination = dest,
-                .weight = weight,
-            }
-        );
-      }
-    }
+  // The origin states at each stop.
+  std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
+  for (const auto& [state, _] : data.arrival_times_to) {
+    states_by_stop[state.stop].push_back(state);
   }
 
+  // Weights keyed [origin][destination]; absent means no edge.
+  using Weights =
+      std::unordered_map<TarelState, std::unordered_map<TarelState, int>>;
+  // forwards[o][d] is parallel to steps_from[o][d]: the slack each step
+  // forwards to the arrival it produces.
+  using Forwards = std::
+      unordered_map<StopId, std::unordered_map<TarelState, std::vector<int>>>;
+  // adjustments[s] is parallel to arrival_times_to[s].arrivals: the smallest
+  // forwarded slack over the steps producing each arrival.
+  using Adjustments = std::unordered_map<TarelState, std::vector<int>>;
+
+  // Computes all edge weights for a given choice of forwards (null: none).
+  auto compute_weights = [&](const Forwards* forwards,
+                             const Adjustments* adjustments) -> Weights {
+    Weights weights;
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      auto states_it = states_by_stop.find(origin_stop);
+      if (states_it == states_by_stop.end()) {
+        continue;
+      }
+      for (const auto& [dest, steps] : groups) {
+        int min_duration = data.min_duration_from_to.at({origin_stop, dest});
+        bool has_flex_step = steps.size() > 0 && steps[0].is_flex;
+        size_t first_scheduled = has_flex_step ? 1 : 0;
+        const std::vector<int>* fwd =
+            forwards ? &forwards->at(origin_stop).at(dest) : nullptr;
+
+        // With per-step charges the first catchable step is no longer
+        // necessarily the cheapest, so precompute suffix minima of
+        // departure + charge over the scheduled steps.
+        std::vector<int> suffix_charged(
+            steps.size() + 1, std::numeric_limits<int>::max()
+        );
+        for (size_t i = steps.size(); i-- > first_scheduled;) {
+          int charge = steps[i].DurationSeconds() - (fwd ? (*fwd)[i] : 0);
+          suffix_charged[i] = std::min(
+              suffix_charged[i + 1], steps[i].origin.time.seconds + charge
+          );
+        }
+
+        for (const TarelState& origin : states_it->second) {
+          const ArrivalTimes& arrival_times = data.arrival_times_to.at(origin);
+          const std::vector<int>* adj =
+              (adjustments && !arrival_times.times.empty())
+                  ? &adjustments->at(origin)
+                  : nullptr;
+
+          int weight = std::numeric_limits<int>::max();
+          if (arrival_times.has_flex) {
+            // We have to assume we can arrive any time, so we can arrive just
+            // in time for a fastest step, carrying no adjustment. (This is
+            // exact under any forwards because charges never drop below the
+            // fastest duration of the group.)
+            weight = min_duration;
+          } else {
+            size_t step_idx = first_scheduled;
+            for (size_t k = 0; k < arrival_times.times.size(); ++k) {
+              const TimeSinceServiceStart arrival_time = arrival_times.times[k];
+              int adjustment = adj ? (*adj)[k] : 0;
+              while (step_idx < steps.size() &&
+                     steps[step_idx].origin.time < arrival_time) {
+                step_idx += 1;
+              }
+              if (suffix_charged[step_idx] !=
+                  std::numeric_limits<int>::max()) {
+                weight = std::min(
+                    weight,
+                    suffix_charged[step_idx] - arrival_time.seconds + adjustment
+                );
+              } else if (!has_flex_step) {
+                // No scheduled step catchable from this or any later arrival.
+                break;
+              }
+              if (has_flex_step) {
+                // The flex step can be taken on arrival.
+                weight = std::min(
+                    weight, steps[0].FlexDurationSeconds() + adjustment
+                );
+              }
+            }
+          }
+
+          if (weight < std::numeric_limits<int>::max()) {
+            weights[origin][dest] = weight;
+          }
+        }
+      }
+    }
+    return weights;
+  };
+
+  // Chooses maximal forwards such that (a) charges never drop below the
+  // fastest duration of the group, which keeps flex-arrival edges exact, and
+  // (b) no candidate of any edge drops below that edge's weight in `targets`:
+  // for every origin state p that can catch step u, we need
+  //   charge_out(u) >= targets(p -> d) - overhead_p(u)
+  // where overhead_p(u) is the smallest wait (plus, with kAdjOverhead, the
+  // arrival's previous adjustment) over the arrivals at p that catch u.
+  auto compute_forwards = [&](const Weights& targets) -> Forwards {
+    Forwards forwards;
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      auto states_it = states_by_stop.find(origin_stop);
+      for (const auto& [dest, steps] : groups) {
+        int min_duration = data.min_duration_from_to.at({origin_stop, dest});
+        std::vector<int>& fwd = forwards[origin_stop][dest];
+        fwd.assign(steps.size(), 0);
+        for (size_t i = 0; i < steps.size(); ++i) {
+          if (!steps[i].is_flex) {
+            fwd[i] = steps[i].DurationSeconds() - min_duration;
+          }
+        }
+        if (states_it == states_by_stop.end()) {
+          continue;
+        }
+        for (const TarelState& origin : states_it->second) {
+          const auto& arrivals = data.arrival_times_to.at(origin).times;
+          if (arrivals.empty()) {
+            continue;
+          }
+          auto weights_it = targets.find(origin);
+          if (weights_it == targets.end()) {
+            continue;
+          }
+          auto weight_it = weights_it->second.find(dest);
+          if (weight_it == weights_it->second.end()) {
+            continue;
+          }
+          int target = weight_it->second;
+
+          size_t arrival_idx = 0;
+          bool any_arrival = false;
+          for (size_t i = 0; i < steps.size(); ++i) {
+            if (steps[i].is_flex) {
+              continue;
+            }
+            while (arrival_idx + 1 < arrivals.size() &&
+                   arrivals[arrival_idx + 1] <= steps[i].origin.time) {
+              arrival_idx += 1;
+            }
+            if (!any_arrival && arrivals[arrival_idx] <= steps[i].origin.time) {
+              any_arrival = true;
+            }
+            if (!any_arrival) {
+              continue;  // This origin cannot catch this step.
+            }
+            int min_wait = steps[i].origin.time.seconds -
+                           arrivals[arrival_idx].seconds;
+            int floor = target - min_wait;
+            fwd[i] = std::min(fwd[i], steps[i].DurationSeconds() - floor);
+          }
+        }
+        for (int& f : fwd) {
+          f = std::max(f, 0);
+        }
+      }
+    }
+    return forwards;
+  };
+
+  // The adjustment carried by each arrival: the smallest forwarded slack over
+  // the steps producing it.
+  auto compute_adjustments = [&](const Forwards& forwards) -> Adjustments {
+    Adjustments adjustments;
+    for (const auto& [state, arrival_times] : data.arrival_times_to) {
+      adjustments[state].assign(
+          arrival_times.times.size(), std::numeric_limits<int>::max()
+      );
+    }
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      for (const auto& [dest, steps] : groups) {
+        const std::vector<int>& fwd = forwards.at(origin_stop).at(dest);
+        const auto& arrivals = data.arrival_times_to.at(dest).times;
+        std::vector<int>& adj = adjustments.at(dest);
+        for (size_t i = 0; i < steps.size(); ++i) {
+          if (steps[i].is_flex) {
+            continue;
+          }
+          auto it = std::ranges::lower_bound(
+              arrivals, steps[i].destination.time
+          );
+          assert(it != arrivals.end() && *it == steps[i].destination.time);
+          size_t k = it - arrivals.begin();
+          adj[k] = std::min(adj[k], fwd[i]);
+        }
+      }
+    }
+    return adjustments;
+  };
+
+  Weights unforwarded = compute_weights(nullptr, nullptr);
+  Forwards forwards = compute_forwards(unforwarded);
+  Adjustments adjustments = compute_adjustments(forwards);
+  Weights weights = compute_weights(&forwards, &adjustments);
+
+  std::vector<TarelEdge> edges;
+  for (const auto& [origin, dests] : weights) {
+    for (const auto& [dest, weight] : dests) {
+      assert(weight >= unforwarded.at(origin).at(dest));
+      edges.push_back(
+          TarelEdge{
+              .origin = origin,
+              .destination = dest,
+              .weight = weight,
+          }
+      );
+    }
+  }
   return edges;
 }
 
