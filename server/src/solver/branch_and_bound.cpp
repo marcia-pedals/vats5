@@ -16,6 +16,7 @@
 #include "solver/data.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
+#include "solver/steps_shortest_path.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
 
@@ -196,6 +197,116 @@ ProblemState ApplyConstraints(
   );
 }
 
+namespace {
+
+// Removes required stops that "split" the network: a required stop x is
+// implied if there is a pair of stops a, b that any feasible path certainly
+// visits (the boundary stops, or members of singleton required groups) such
+// that, with x removed from the graph, there is no time-feasible path a -> b
+// and no time-feasible path b -> a. Any feasible path visits a and b in some
+// order, so it must pass through x either way, and the requirement to visit x
+// is redundant.
+//
+// Reachability is time-feasible: an earliest-arrival search from time 0
+// (which considers every departure) rather than plain topological
+// reachability, so a stop pair connected only by schedules that cannot
+// actually be chained still counts as split.
+//
+// Removals are processed sequentially, with the justification stops always
+// drawn from the still-required set, so each removed stop remains certainly
+// visited even when several stops are removed.
+//
+// Returns the number of required stops removed (whole groups are erased).
+int RemoveSplitRequiredStops(ProblemState& state, std::ostream* search_log) {
+  const StepsAdjacencyList& adj = state.minimal;
+
+  // Earliest-arrival steps from `from` to `destinations`, never passing
+  // through `removed`. A destination d is time-feasibly reachable iff the
+  // result's entry for d is visited.
+  auto Reachable = [&adj](
+                       StopId from,
+                       StopId removed,
+                       const std::unordered_set<StopId>& destinations
+                   ) -> std::vector<Step> {
+    return FindShortestPathsAtTime(
+        adj,
+        TimeSinceServiceStart{0},
+        from,
+        destinations,
+        nullptr,
+        nullptr,
+        removed
+    );
+  };
+  auto Visited = [](const std::vector<Step>& result, StopId stop) -> bool {
+    return result[stop.v].destination.time.seconds !=
+           std::numeric_limits<int>::max();
+  };
+
+  std::vector<StopId> candidates(
+      state.required.AllFlat().begin(), state.required.AllFlat().end()
+  );
+  std::sort(candidates.begin(), candidates.end(), [](StopId a, StopId b) {
+    return a.v < b.v;
+  });
+
+  int removed_count = 0;
+  for (StopId x : candidates) {
+    if (!state.required.Contains(x)) {
+      continue;  // Group already erased via another member.
+    }
+    StopId x_rep = state.required.Representative(x);
+    // Never unrequire the boundary stops' groups; the boundary is handled
+    // specially by the tarel graph construction.
+    if (state.required.Representative(state.boundary.start) == x_rep ||
+        state.required.Representative(state.boundary.end) == x_rep) {
+      continue;
+    }
+
+    // Stops that any feasible path certainly visits: the boundary stops and
+    // every singleton required group outside x's group. (A multi-stop group
+    // only guarantees that some member is visited, so its members can't
+    // serve as justification.)
+    std::vector<StopId> forced{state.boundary.start, state.boundary.end};
+    for (const std::vector<StopId>& group : state.required.Groups()) {
+      if (group.size() == 1 && group[0] != state.boundary.start &&
+          group[0] != state.boundary.end &&
+          state.required.Representative(group[0]) != x_rep) {
+        forced.push_back(group[0]);
+      }
+    }
+
+    std::unordered_set<StopId> forced_set(forced.begin(), forced.end());
+    std::vector<std::vector<Step>> reach;
+    reach.reserve(forced.size());
+    for (StopId a : forced) {
+      reach.push_back(Reachable(a, x, forced_set));
+    }
+
+    bool split = false;
+    for (size_t i = 0; i < forced.size() && !split; ++i) {
+      for (size_t j = i + 1; j < forced.size() && !split; ++j) {
+        if (!Visited(reach[i], forced[j]) && !Visited(reach[j], forced[i])) {
+          split = true;
+          if (search_log != nullptr) {
+            *search_log << "  unrequire " << state.StopName(x) << " (splits "
+                        << state.StopName(forced[i]) << " | "
+                        << state.StopName(forced[j]) << ")\n";
+          }
+        }
+      }
+    }
+    if (split) {
+      size_t before = state.required.size();
+      state.required.EraseGroup(x);
+      removed_count += static_cast<int>(before - state.required.size());
+    }
+  }
+  return removed_count;
+}
+
+}  // namespace
+
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
@@ -233,6 +344,7 @@ BranchAndBoundResult BranchAndBoundSolve(
   int best_ub = std::numeric_limits<int>::max();
   std::vector<Path> best_paths;
   std::unordered_map<StopId, PlainEdge> best_original_edges;
+  std::vector<int> split_removed_counts;
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -273,8 +385,15 @@ BranchAndBoundResult BranchAndBoundSolve(
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
       }
-      return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+      return {
+          best_ub,
+          std::move(best_paths),
+          std::move(best_original_edges),
+          std::move(split_removed_counts)
+      };
     }
+
+    split_removed_counts.push_back(RemoveSplitRequiredStops(state, search_log));
 
     StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
@@ -460,7 +579,12 @@ BranchAndBoundResult BranchAndBoundSolve(
     );
   }
 
-  return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+  return {
+      best_ub,
+      std::move(best_paths),
+      std::move(best_original_edges),
+      std::move(split_removed_counts)
+  };
 }
 
 }  // namespace vats5

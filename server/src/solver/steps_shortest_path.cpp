@@ -167,7 +167,8 @@ std::vector<Step> FindShortestPathsAtTime(
     StopId origin_stop,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex,
-    HeuristicCache* heuristic_cache
+    HeuristicCache* heuristic_cache,
+    std::optional<StopId> excluded_stop
 ) {
   if (smallest_next_departure_gap_from_flex != nullptr) {
     *smallest_next_departure_gap_from_flex = std::numeric_limits<int>::max();
@@ -191,6 +192,13 @@ std::vector<Step> FindShortestPathsAtTime(
 
   std::unordered_set<StopId> remaining_destinations = destinations;
   std::vector<bool> finalized(adjacency_list.NumStops(), false);
+  if (excluded_stop.has_value()) {
+    assert(*excluded_stop != origin_stop);
+    assert(!destinations.contains(*excluded_stop));
+    // Finalizing the stop upfront blocks both arriving at it and expanding
+    // from it, removing it from the searched graph.
+    finalized[excluded_stop->v] = true;
+  }
 
   // Compact priority queue storing only destination_stop and arrival_time.
   FrontierEntryComparator frontier_cmp;

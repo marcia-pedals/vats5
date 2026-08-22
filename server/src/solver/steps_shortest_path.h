@@ -63,13 +63,18 @@ struct HeuristicCache {
 // visited flex paths.
 //
 // If `heuristic_cache` is specified, enables A* optimization.
+//
+// If `excluded_stop` is specified, the search does not pass through that stop:
+// paths through it are not considered, and its own entry in the result stays
+// unvisited. It must not be `origin` or a member of `destinations`.
 std::vector<Step> FindShortestPathsAtTime(
     const StepsAdjacencyList& adjacency_list,
     TimeSinceServiceStart time,
     StopId origin,
     const std::unordered_set<StopId>& destinations,
     int* smallest_next_departure_gap_from_flex = nullptr,
-    HeuristicCache* heuristic_cache = nullptr
+    HeuristicCache* heuristic_cache = nullptr,
+    std::optional<StopId> excluded_stop = std::nullopt
 );
 
 // Return a minimal set of paths from `origin` to destinations, with origin

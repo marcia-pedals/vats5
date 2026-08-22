@@ -89,6 +89,9 @@ struct BranchAndBoundResult {
   // original_edges from the state that produced best_paths, needed to expand
   // combined stops back to original stop IDs.
   std::unordered_map<StopId, PlainEdge> original_edges;
+  // Number of required stops removed by the split reduction at each processed
+  // search node, in processing order.
+  std::vector<int> split_removed_counts;
 };
 
 BranchAndBoundResult BranchAndBoundSolve(
