@@ -314,24 +314,44 @@ TEST(TarelGraphTest, LowerBoundUncatchableFastStep) {
 
   std::vector<Step> steps = {
       Step::PrimitiveScheduled(
-          s, p, TimeSinceServiceStart{900}, TimeSinceServiceStart{1000},
-          TripId{0}, q
-      ),
-      Step::PrimitiveScheduled(
-          s, a, TimeSinceServiceStart{0}, TimeSinceServiceStart{200}, TripId{1},
+          s,
+          p,
+          TimeSinceServiceStart{900},
+          TimeSinceServiceStart{1000},
+          TripId{0},
           q
       ),
       Step::PrimitiveScheduled(
-          p, a, TimeSinceServiceStart{100}, TimeSinceServiceStart{110},
-          TripId{2}, q
+          s,
+          a,
+          TimeSinceServiceStart{0},
+          TimeSinceServiceStart{200},
+          TripId{1},
+          q
       ),
       Step::PrimitiveScheduled(
-          p, a, TimeSinceServiceStart{1000}, TimeSinceServiceStart{1600},
-          TripId{3}, q
+          p,
+          a,
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{110},
+          TripId{2},
+          q
       ),
       Step::PrimitiveScheduled(
-          a, b, TimeSinceServiceStart{1600}, TimeSinceServiceStart{1700},
-          TripId{4}, q
+          p,
+          a,
+          TimeSinceServiceStart{1000},
+          TimeSinceServiceStart{1600},
+          TripId{3},
+          q
+      ),
+      Step::PrimitiveScheduled(
+          a,
+          b,
+          TimeSinceServiceStart{1600},
+          TimeSinceServiceStart{1700},
+          TripId{4},
+          q
       ),
   };
 
