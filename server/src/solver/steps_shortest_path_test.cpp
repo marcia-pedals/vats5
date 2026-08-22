@@ -293,6 +293,59 @@ TEST(ShortestPathTest, FlexTripWithRegularTripsAvailable) {
     << result.destination.time.seconds;
 }
 
+TEST(ShortestPathTest, ExcludedStopSeversPathsThroughIt) {
+  // 1 -> 2 -> 3 with a direct 1 -> 4; excluding stop 2 must make 3 unreachable
+  // while leaving 4 reachable.
+  std::vector<Step> steps = {
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{2},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),
+      Step::PrimitiveScheduled(
+          StopId{2},
+          StopId{3},
+          TimeSinceServiceStart{300},
+          TimeSinceServiceStart{400},
+          TripId{2}
+      ),
+      Step::PrimitiveScheduled(
+          StopId{1},
+          StopId{4},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{500},
+          TripId{3}
+      ),
+  };
+
+  StepsAdjacencyList adjacency_list = MakeAdjacencyList(steps);
+  StopId origin_stop{1};
+  std::unordered_set<StopId> destinations{StopId{3}, StopId{4}};
+
+  auto without_exclusion = FindShortestPathsAtTime(
+      adjacency_list, TimeSinceServiceStart{0}, origin_stop, destinations
+  );
+  EXPECT_EQ(without_exclusion[3].destination.time.seconds, 400);
+  EXPECT_EQ(without_exclusion[4].destination.time.seconds, 500);
+
+  auto with_exclusion = FindShortestPathsAtTime(
+      adjacency_list,
+      TimeSinceServiceStart{0},
+      origin_stop,
+      destinations,
+      nullptr,
+      nullptr,
+      StopId{2}
+  );
+  EXPECT_EQ(
+      with_exclusion[3].destination.time.seconds,
+      std::numeric_limits<int>::max()
+  );
+  EXPECT_EQ(with_exclusion[4].destination.time.seconds, 500);
+}
+
 MATCHER_P5(
     IsStep,
     origin_stop,

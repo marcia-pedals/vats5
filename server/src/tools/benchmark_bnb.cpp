@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
@@ -99,6 +100,24 @@ int main(int argc, char* argv[]) {
   std::cout << "Concorde time:    " << FormatDuration(total_concorde_ms)
             << "\n";
   std::cout << "Non-concorde time: " << FormatDuration(non_concorde_ms) << "\n";
+
+  int total_split_removed = 0;
+  int nodes_with_removed = 0;
+  std::map<int, int> nodes_by_removed_count;
+  for (int count : result.split_removed_counts) {
+    total_split_removed += count;
+    if (count > 0) {
+      nodes_with_removed += 1;
+      nodes_by_removed_count[count] += 1;
+    }
+  }
+  std::cout << "\nSplit-removed required stops: " << total_split_removed
+            << " across " << result.split_removed_counts.size()
+            << " processed nodes\n";
+  std::cout << "Nodes with any stops removed: " << nodes_with_removed << "\n";
+  for (const auto& [count, nodes] : nodes_by_removed_count) {
+    std::cout << "  " << nodes << " node(s) removed " << count << " stop(s)\n";
+  }
 
   return 0;
 }
