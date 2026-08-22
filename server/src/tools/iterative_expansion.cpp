@@ -22,6 +22,7 @@
 
 #include "algorithm/union_find.h"
 #include "solver/branch_and_bound.h"
+#include "solver/concorde.h"
 #include "solver/data.h"
 #include "solver/iterative_expansion_partial_solve.h"
 #include "solver/step_merge.h"
@@ -458,6 +459,24 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  // Branch and cut: solve in ONE search that starts from the MST-leaves
+  // required subset and grows it lazily whenever a would-be incumbent misses
+  // coverage, instead of re-solving from scratch per added stop.
+  const bool branch_and_cut = std::getenv("VATS5_BRANCH_AND_CUT") != nullptr;
+
+  // Restart with memory: keep the per-iteration restarts, but seed each
+  // iteration with the previous one's optimum as a proven lower-bound floor
+  // and a spliced tour as the initial upper bound, so iterations whose
+  // optimum does not move cost (nearly) nothing to re-prove.
+  const bool restart_memory = std::getenv("VATS5_RESTART_MEMORY") != nullptr;
+
+  // Root discovery: before any branch and bound, repeatedly solve just the
+  // root relaxation of the reduced problem, time its tour, greedily extend
+  // it, and require a missed stop -- until the tour covers every target.
+  // Discovers (almost all of) the required set in seconds, so the proof
+  // iterations start near their final size, seeded with the covering tour.
+  const bool root_discovery = std::getenv("VATS5_ROOT_DISCOVERY") != nullptr;
+
   std::cout << "Loading problem...\n";
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
@@ -630,12 +649,119 @@ int main(int argc, char* argv[]) {
   // pairs, so a pair computed in one iteration is usually asked for again.
   MinimalPathSetCache path_cache(state.minimal);
 
+  // Memory carried between iterations when restart_memory is on.
+  std::optional<int> prev_optimal;
+  std::optional<PartialSolutionPath> prev_solution_path;
+  std::optional<StopId> prev_added_stop;
+
+  // The covering tour found by root discovery, if any: seeds the first proof
+  // iteration's upper bound.
+  std::optional<PartialSolutionPath> discovery_path;
+
+  // Picks the unvisited stop to require next: the farthest, or with
+  // VATS5_BNC_PICK_BY_LB the one whose addition gives the next reduced
+  // problem the highest root lower bound (ties: farthest).
+  auto choose_stop_to_add =
+      [&state, &required_subset](const std::vector<StopDistance>& distances
+      ) -> StopId {
+    static const bool pick_stop_by_lb =
+        std::getenv("VATS5_BNC_PICK_BY_LB") != nullptr;
+    StopId chosen = distances.back().unvisited_stop;
+    if (pick_stop_by_lb && distances.size() > 1) {
+      int best_trial_lb = std::numeric_limits<int>::min();
+      for (const StopDistance& sd : distances) {
+        std::unordered_set<StopId> trial_subset = required_subset;
+        state.required.VisitGroupStops(
+            state.required.Representative(sd.unvisited_stop),
+            [&](StopId s) { trial_subset.insert(s); }
+        );
+        int lb;
+        try {
+          ProblemState reduced =
+              MakeReducedPartialProblem(state, std::move(trial_subset));
+          std::optional<TspTourResult> r = ComputeTarelLowerBound(reduced);
+          lb = r.has_value() ? r->optimal_value
+                             : std::numeric_limits<int>::max();
+        } catch (const InvalidTourStructure&) {
+          continue;
+        }
+        std::cout << "  lb trial: " << state.StopName(sd.unvisited_stop)
+                  << " -> " << TimeSinceServiceStart{lb} << "\n";
+        if (lb >= best_trial_lb) {
+          best_trial_lb = lb;
+          chosen = sd.unvisited_stop;
+        }
+      }
+    }
+    return chosen;
+  };
+
   // Outcome of the loop below, reported via --solution_json.
   std::string status = "solved";
   std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
   try {
+    if (root_discovery) {
+      std::cout << "=== Root discovery ===\n";
+      int round = 0;
+      while (true) {
+        check_deadline();
+        round += 1;
+        std::optional<TspTourResult> lb_result;
+        try {
+          ProblemState reduced =
+              MakeReducedPartialProblem(state, required_subset);
+          lb_result = ComputeTarelLowerBound(reduced);
+        } catch (const InvalidTourStructure&) {
+          lb_result = std::nullopt;
+        }
+        if (!lb_result.has_value()) {
+          std::cout << "Root discovery: no relaxation tour; falling back to "
+                       "iterating\n";
+          break;
+        }
+        std::vector<StopId> seq;
+        seq.push_back(lb_result->tour_edges[0].origin.stop);
+        for (const TarelEdge& e : lb_result->tour_edges) {
+          seq.push_back(e.destination.stop);
+        }
+        std::vector<Path> timed =
+            ComputeMinimalFeasiblePathsAlong(seq, state.minimal);
+        if (timed.empty()) {
+          std::cout << "Root discovery: relaxation tour infeasible; falling "
+                       "back to iterating\n";
+          break;
+        }
+        PartialSolutionPath candidate{
+            *std::ranges::min_element(
+                timed, {}, [](const Path& p) { return p.DurationSeconds(); }
+            ),
+            seq,
+        };
+        candidate = GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
+            state, candidate, path_cache
+        );
+        std::vector<StopDistance> distances =
+            RequiredStopDistances(candidate.path, state);
+        if (distances.empty()) {
+          discovery_path = candidate;
+          std::cout << "Root discovery: covering tour "
+                    << TimeSinceServiceStart{candidate.path.DurationSeconds()}
+                    << " after " << round << " rounds, "
+                    << required_subset.size() << " leaves\n";
+          break;
+        }
+        StopId chosen = choose_stop_to_add(distances);
+        std::cout << "Root discovery: requiring " << state.StopName(chosen)
+                  << " (" << distances.size() << " unvisited)\n";
+        state.required.VisitGroupStops(
+            state.required.Representative(chosen),
+            [&](StopId s) { required_subset.insert(s); }
+        );
+      }
+    }
+
     for (int iteration = 0;; iteration++) {
       check_deadline();
       // How many groups the subset is made of, which is what the cost of
@@ -645,8 +771,9 @@ int main(int argc, char* argv[]) {
         subset_representatives.insert(state.required.Representative(stop));
       }
       bool brute_force =
+          !branch_and_cut &&
           subset_representatives.size() <=
-          static_cast<size_t>(std::max(brute_force_max_groups, 0));
+              static_cast<size_t>(std::max(brute_force_max_groups, 0));
 
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
@@ -655,14 +782,153 @@ int main(int argc, char* argv[]) {
           state, required_subset_dir, iteration, required_subset
       );
       std::cout << "=== Iteration " << iteration << ": "
-                << (brute_force ? "brute force" : "branch and bound") << " on "
-                << required_subset.size() << " leaves in "
+                << (brute_force        ? "brute force"
+                    : branch_and_cut   ? "branch and cut"
+                                       : "branch and bound")
+                << " on " << required_subset.size() << " leaves in "
                 << subset_representatives.size() << " groups ===\n";
+
+      // Branch and cut: reject a would-be incumbent that cannot be extended
+      // to full coverage at its own duration, and require the farthest stop
+      // it misses.
+      // With VATS5_BNC_PICK_BY_LB, choose which missed stop to require by
+      // trialing each one's tarel lower bound at the violating node and
+      // taking the one that raises it most (ties: farthest).
+      static const bool pick_by_lb =
+          std::getenv("VATS5_BNC_PICK_BY_LB") != nullptr;
+
+      LazyRequiredStops lazy;
+      lazy.on_candidate =
+          [&state, &path_cache](
+              const std::vector<StopId>& tour,
+              int duration_seconds,
+              const ProblemState& node_state
+          ) -> std::vector<StopId> {
+        std::vector<Path> paths =
+            ComputeMinimalFeasiblePathsAlong(tour, state.minimal);
+        std::erase_if(paths, [&](const Path& p) {
+          return p.DurationSeconds() > duration_seconds;
+        });
+        assert(!paths.empty());
+        if (paths.empty()) {
+          return {};
+        }
+        // The candidate's real path: best coverage among the timings that
+        // match its duration, greedily extended at no extra duration.
+        PartialSolutionPath best{paths[0], tour};
+        int best_count = CountRequiredStops(best.path, state.required);
+        for (const Path& p : paths) {
+          int count = CountRequiredStops(p, state.required);
+          if (count > best_count) {
+            best = PartialSolutionPath{p, tour};
+            best_count = count;
+          }
+        }
+        best = GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
+            state, best, path_cache
+        );
+        std::vector<StopDistance> distances =
+            RequiredStopDistances(best.path, state);
+        if (distances.empty()) {
+          return {};
+        }
+        StopId chosen = distances.back().unvisited_stop;
+        if (pick_by_lb && distances.size() > 1) {
+          // Trial every missed stop; `distances` is sorted ascending, so
+          // iterating with >= keeps the farthest among ties.
+          int best_lb = std::numeric_limits<int>::min();
+          for (size_t i = 0; i < distances.size(); ++i) {
+            StopId candidate = distances[i].unvisited_stop;
+            StopId candidate_rep = state.required.Representative(candidate);
+            ProblemState trial = node_state;
+            state.required.VisitGroupStops(candidate_rep, [&](StopId s2) {
+              if (!trial.required.representative.contains(s2)) {
+                trial.required.representative[s2] = candidate_rep;
+              }
+            });
+            int lb;
+            try {
+              std::optional<TspTourResult> r = ComputeTarelLowerBound(trial);
+              // Infeasible with this stop required: the node would prune
+              // outright, the strongest possible outcome.
+              lb = r.has_value() ? r->optimal_value
+                                 : std::numeric_limits<int>::max();
+            } catch (const InvalidTourStructure&) {
+              continue;
+            }
+            std::cout << "  lb trial: " << state.StopName(candidate) << " -> "
+                      << TimeSinceServiceStart{lb} << "\n";
+            if (lb >= best_lb) {
+              best_lb = lb;
+              chosen = candidate;
+            }
+          }
+        }
+        std::cout << "Branch and cut: requiring " << state.StopName(chosen)
+                  << " (" << distances.size() << " unvisited)\n";
+        StopId rep = state.required.Representative(chosen);
+        std::vector<StopId> group{rep};
+        state.required.VisitGroupStops(rep, [&](StopId s) {
+          if (s != rep) {
+            group.push_back(s);
+          }
+        });
+        return group;
+      };
+
+      SearchSeeds seeds;
+      bool have_seeds = false;
+      if (restart_memory &&
+          (prev_optimal.has_value() || discovery_path.has_value())) {
+        seeds.lb_floor = prev_optimal.value_or(0);
+        have_seeds = true;
+        if (!prev_optimal.has_value() && discovery_path.has_value()) {
+          // First proof iteration: the discovery tour is the upper bound.
+          seeds.initial_ub = discovery_path->path.DurationSeconds();
+          seeds.initial_ub_paths = {discovery_path->path};
+        }
+        if (prev_solution_path.has_value() && prev_added_stop.has_value()) {
+          // Seed the upper bound by splicing the newly required stop into the
+          // previous optimal tour.
+          TourPathSets prev_tour_paths =
+              TourPathSets::Compute(prev_solution_path->subset_tour, path_cache);
+          PartialSolution extended = NaivelyExtendPartialSolution(
+              prev_solution_path->subset_tour,
+              prev_tour_paths,
+              *prev_added_stop,
+              path_cache
+          );
+          auto best_ext = std::ranges::min_element(
+              extended.paths, {}, [](const PartialSolutionPath& p) {
+                return p.path.DurationSeconds();
+              }
+          );
+          if (best_ext != extended.paths.end()) {
+            seeds.initial_ub = best_ext->path.DurationSeconds();
+            seeds.initial_ub_paths = {best_ext->path};
+          }
+        }
+        std::cout << "Restart memory: lb floor "
+                  << TimeSinceServiceStart{seeds.lb_floor} << ", seed ub "
+                  << (seeds.initial_ub < std::numeric_limits<int>::max()
+                          ? TimeSinceServiceStart{seeds.initial_ub}.ToString()
+                          : std::string("none"))
+                  << "\n";
+      }
+
       PartialSolution solution =
           brute_force
               ? PartialSolveBruteForce(required_subset, state, check_deadline)
+          : branch_and_cut
+              ? PartialSolveBranchAndCut(
+                    required_subset, state, &std::cout, on_search_event, lazy
+                )
               : PartialSolveBranchAndBound(
-                    required_subset, state, &std::cout, on_search_event
+                    required_subset,
+                    state,
+                    &std::cout,
+                    on_search_event,
+                    have_seeds ? &seeds : nullptr
                 );
 
       // Choose the path that visits the most required stops.
@@ -686,6 +952,8 @@ int main(int argc, char* argv[]) {
                 << best_solution_path.path.IntermediateStopCount() << "\n";
 
       const Path& best_path = best_solution_path.path;
+      prev_optimal = best_path.DurationSeconds();
+      prev_solution_path = best_solution_path;
       const std::vector<StopDistance> distances =
           RequiredStopDistances(best_path, state);
 
@@ -731,11 +999,11 @@ int main(int argc, char* argv[]) {
                   << ")\n";
       }
 
-      // Add the farthest unvisited stop to leaves for the next iteration.
-      StopId farthest = distances.back().unvisited_stop;
-      std::cout << "\nAdding farthest stop: " << state.StopName(farthest)
+      StopId chosen = choose_stop_to_add(distances);
+      std::cout << "\nAdding farthest stop: " << state.StopName(chosen)
                 << "\n\n";
-      state.required.VisitGroupStops(farthest, [&](StopId s) {
+      prev_added_stop = chosen;
+      state.required.VisitGroupStops(chosen, [&](StopId s) {
         required_subset.insert(s);
       });
     }

@@ -44,11 +44,33 @@ struct PartialSolution {
 // that subset.
 //
 // `search_log` may be null; `on_event` is called on each search event.
+// Builds the problem reduced to `required_subset` (plus boundary): merged
+// system paths between the subset stops, with required filtered to the subset.
+ProblemState MakeReducedPartialProblem(
+    const ProblemState& original_problem,
+    std::unordered_set<StopId> required_subset
+);
+
 PartialSolution PartialSolveBranchAndBound(
     std::unordered_set<StopId> required_subset,
     const ProblemState& original_problem,
     std::ostream* search_log,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    const SearchSeeds* seeds = nullptr
+);
+
+// Solves the FULL problem by branch and cut: branch and bound over the
+// unreduced problem, starting from `required_subset` as the required set and
+// lazily growing it via `lazy` (see LazyRequiredStops) until the incumbent
+// covers everything. Unlike PartialSolveBranchAndBound this does not reduce
+// the graph to the subset, because the required set must be able to grow
+// mid-search.
+PartialSolution PartialSolveBranchAndCut(
+    std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event,
+    const LazyRequiredStops& lazy
 );
 
 // Solves the same partial problem as PartialSolveBranchAndBound, by trying

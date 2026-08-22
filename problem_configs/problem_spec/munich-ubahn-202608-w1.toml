@@ -1,0 +1,9 @@
+problem_spec_id = "munich-ubahn-202608-w1"
+gtfs_source_id = "munich"
+target_stops_id = "munich-ubahn-202608"
+title = "walk 1m/s"
+
+max_walking_distance = 500
+walking_speed = 1
+
+start_service_date = "20260921"

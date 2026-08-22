@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -71,6 +72,11 @@ struct SearchNode {
   // around after we're done with it.
   std::unique_ptr<ProblemState> state;
 
+  // How many lazily added required stops (see LazyRequiredStops) this node's
+  // state already includes. Stops added after that are injected when the node
+  // is popped.
+  size_t lazy_version = 0;
+
   bool operator<(const SearchNode& other) const {
     if (parent_lb == other.parent_lb) {
       return edge_index > other.edge_index;
@@ -91,12 +97,47 @@ struct BranchAndBoundResult {
   std::unordered_map<StopId, PlainEdge> original_edges;
 };
 
+// Warm-start memory for a solve: a known-feasible incumbent seeding the upper
+// bound, and a proven lower bound on this problem's optimum (e.g. the previous
+// problem's optimum, when this problem only adds requirements to it). The
+// search returns as soon as best_ub <= lb_floor: the floor proves the
+// incumbent optimal.
+struct SearchSeeds {
+  int initial_ub = std::numeric_limits<int>::max();
+  std::vector<Path> initial_ub_paths;
+  int lb_floor = 0;
+};
+
+// Coverage-driven lazy growth of the required set ("branch and cut"): the
+// search starts from `initial_state.required` and adds stops mid-search
+// instead of the caller re-solving with a bigger required set.
+struct LazyRequiredStops {
+  // Called when the search is about to accept a new incumbent. `tour` is the
+  // candidate's stop sequence in original (unfused) stop ids, START..END,
+  // `duration_seconds` its duration, and `node_state` the violating node's
+  // problem (constraints applied), usable e.g. to trial candidate additions.
+  // Returns the stops to add to the required set -- one group, its
+  // representative first -- or empty to accept the candidate. Rejected
+  // candidates do not become incumbents; the added stops join every node's
+  // required set as the nodes are popped, which is sound because a lower
+  // bound computed with fewer required stops is still a lower bound with
+  // more.
+  std::function<std::vector<StopId>(
+      const std::vector<StopId>& tour,
+      int duration_seconds,
+      const ProblemState& node_state
+  )>
+      on_candidate;
+};
+
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
     int max_iter = -1,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    const LazyRequiredStops* lazy = nullptr,
+    const SearchSeeds* seeds = nullptr
 );
 
 }  // namespace vats5

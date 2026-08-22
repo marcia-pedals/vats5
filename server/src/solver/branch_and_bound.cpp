@@ -201,8 +201,16 @@ BranchAndBoundResult BranchAndBoundSolve(
     std::ostream* search_log,
     std::optional<std::string> run_dir,
     int max_iter,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    const LazyRequiredStops* lazy,
+    const SearchSeeds* seeds
 ) {
+  // Required stops added lazily during the search (see LazyRequiredStops),
+  // as (stop, its group representative). Applied to each node's state when
+  // the node is popped, tracked per node by SearchNode::lazy_version.
+  std::vector<std::pair<StopId, StopId>> lazy_added;
+  std::unordered_set<StopId> lazy_added_set;
+
   std::vector<SearchEdge> search_edges;
   std::vector<SearchNode> q;
   q.push_back(
@@ -213,7 +221,7 @@ BranchAndBoundResult BranchAndBoundSolve(
       }
   );
 
-  auto PushQ = [&search_edges, &q](
+  auto PushQ = [&search_edges, &q, &lazy_added](
                    const ProblemState& state, int new_lb, SearchEdge new_edge
                ) {
     int new_edge_index = search_edges.size();
@@ -224,7 +232,11 @@ BranchAndBoundResult BranchAndBoundSolve(
         ApplyConstraints(state, new_edge.constraints)
     );
     q.push_back(
-        std::move(SearchNode{new_lb, new_edge_index, std::move(new_state)})
+        std::move(
+            SearchNode{
+                new_lb, new_edge_index, std::move(new_state), lazy_added.size()
+            }
+        )
     );
     std::push_heap(q.begin(), q.end());
   };
@@ -233,6 +245,24 @@ BranchAndBoundResult BranchAndBoundSolve(
   int best_ub = std::numeric_limits<int>::max();
   std::vector<Path> best_paths;
   std::unordered_map<StopId, PlainEdge> best_original_edges;
+
+  const int lb_floor = seeds != nullptr ? seeds->lb_floor : 0;
+  if (seeds != nullptr && seeds->initial_ub < best_ub) {
+    best_ub = seeds->initial_ub;
+    best_paths = seeds->initial_ub_paths;
+    best_original_edges = initial_state.original_edges;
+    if (search_log != nullptr) {
+      *search_log << "Seeded ub " << TimeSinceServiceStart{best_ub}
+                  << " (lb floor " << TimeSinceServiceStart{lb_floor}
+                  << ")\n";
+    }
+  }
+  if (best_ub <= lb_floor && best_ub < std::numeric_limits<int>::max()) {
+    if (search_log != nullptr) {
+      *search_log << "Seed proven optimal by lb floor\n";
+    }
+    return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+  }
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -244,6 +274,17 @@ BranchAndBoundResult BranchAndBoundSolve(
     SearchNode cur_node = std::move(q.back());
     ProblemState& state = *cur_node.state;
     q.pop_back();
+
+    // Inject required stops that were lazily added after this node's state was
+    // built. Stops the state already had may since have been fused into
+    // combined stops, which is why only the suffix is applied.
+    for (size_t i = cur_node.lazy_version; i < lazy_added.size(); ++i) {
+      const auto& [stop, rep] = lazy_added[i];
+      if (!state.required.representative.contains(stop)) {
+        state.required.representative[stop] = rep;
+      }
+    }
+    cur_node.lazy_version = lazy_added.size();
 
     if (search_log != nullptr) {
       *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take "
@@ -352,7 +393,39 @@ BranchAndBoundResult BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
-      if (feasible_path.DurationSeconds() < best_ub) {
+      bool accept = feasible_path.DurationSeconds() < best_ub;
+      if (accept && lazy != nullptr) {
+        // The candidate must cover the full (lazily grown) requirement set to
+        // become the incumbent; otherwise require what it misses and go on.
+        std::vector<StopId> original_tour;
+        for (StopId stop : stop_sequence) {
+          ExpandStop(stop, state.original_edges, original_tour);
+        }
+        std::vector<StopId> to_add = lazy->on_candidate(
+            original_tour, feasible_path.DurationSeconds(), state
+        );
+        if (!to_add.empty()) {
+          accept = false;
+          StopId rep = to_add[0];
+          for (StopId stop : to_add) {
+            if (lazy_added_set.insert(stop).second) {
+              lazy_added.push_back({stop, rep});
+            }
+            // Also into this node's state, so its children require it too. A
+            // stop in `to_add` was unvisited by a feasible path of this node,
+            // so it cannot have been fused into one of its combined stops.
+            if (!state.required.representative.contains(stop)) {
+              state.required.representative[stop] = rep;
+            }
+          }
+          cur_node.lazy_version = lazy_added.size();
+          if (search_log != nullptr) {
+            *search_log << "  ub rejected for coverage; requiring "
+                        << state.StopName(rep) << "\n";
+          }
+        }
+      }
+      if (accept) {
         best_ub = feasible_path.DurationSeconds();
         best_paths.clear();
         for (const Path& p : feasible_paths) {
@@ -365,6 +438,13 @@ BranchAndBoundResult BranchAndBoundSolve(
           *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
                       << " " << feasible_path.merged_step.origin.time << " "
                       << feasible_path.merged_step.destination.time << "\n";
+        }
+        if (best_ub <= lb_floor) {
+          if (search_log != nullptr) {
+            *search_log << "  proven optimal by lb floor ("
+                        << TimeSinceServiceStart{lb_floor} << ")\n";
+          }
+          return {best_ub, std::move(best_paths), std::move(best_original_edges)};
         }
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();

@@ -455,7 +455,10 @@ def spec_service_dates(
 
 
 def main(
-    gtfs_source_id: str, service_date_count: int, solve_timeout_seconds: float
+    gtfs_source_id: str,
+    service_date_count: int,
+    solve_timeout_seconds: float,
+    only_spec_id: str | None = None,
 ) -> None:
     # Resolve the source and both tools up front so an unknown source or a
     # missing build fails before downloading.
@@ -476,6 +479,13 @@ def main(
 
     with db() as cursor:
         specs = load_specs(cursor, gtfs_source_id)
+        if only_spec_id is not None:
+            specs = [s for s in specs if s["problem_spec_id"] == only_spec_id]
+            if not specs:
+                raise RunError(
+                    f"no problem_spec row {only_spec_id!r} for "
+                    f"{gtfs_source_id!r} -- run pipeline/sync_configs.py first"
+                )
         cursor.execute(
             "INSERT INTO gtfs_instance (gtfs_instance_id, gtfs_source_id, "
             "fetched_at) VALUES (%s, %s, %s)",
@@ -559,6 +569,11 @@ if __name__ == "__main__":
         f"at (default {DEFAULT_SERVICE_DATE_COUNT})",
     )
     parser.add_argument(
+        "--spec",
+        help="only solve this problem_spec_id (default: all of the source's "
+        "specs)",
+    )
+    parser.add_argument(
         "--solve-timeout",
         type=float,
         default=DEFAULT_SOLVE_TIMEOUT_SECONDS,
@@ -572,7 +587,12 @@ if __name__ == "__main__":
         parser.error("--solve-timeout must not be negative")
 
     try:
-        main(args.gtfs_source_id, args.service_dates, args.solve_timeout)
+        main(
+            args.gtfs_source_id,
+            args.service_dates,
+            args.solve_timeout,
+            args.spec,
+        )
     except (RunError, UnknownGtfsSource, FeedDownloadError) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)

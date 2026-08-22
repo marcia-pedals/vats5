@@ -1,7 +1,9 @@
 #include "solver/tarel_graph.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <ios>
 #include <iostream>
@@ -10,6 +12,8 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "solver/concorde.h"
 #include "solver/data.h"
@@ -508,6 +512,19 @@ TarelEdgeIntermediateData ComputeTarelIntermediateData(
     TarelState destination_state{
         step.destination.stop, step.destination.partition
     };
+    // For flex steps, DurationSeconds() is the flex duration.
+    auto [it, inserted] = data.min_duration_from_to.try_emplace(
+        {step.origin.stop, destination_state}, step.DurationSeconds()
+    );
+    if (!inserted) {
+      it->second = std::min(step.DurationSeconds(), it->second);
+    }
+  }
+
+  for (const Step& step : steps) {
+    TarelState destination_state{
+        step.destination.stop, step.destination.partition
+    };
 
     // Preserves sorted-and-minimal property because: The paths within
     // `path_group` are sorted and minimal, they all have the same
@@ -544,62 +561,286 @@ TarelEdgeIntermediateData ComputeTarelIntermediateData(
 }
 
 std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
-    const TarelEdgeIntermediateData& data
+    const TarelEdgeIntermediateData& data,
+    const std::function<bool(const TarelState&, const TarelState&)>* preserve
 ) {
-  std::vector<TarelEdge> edges;
-  for (const auto& [origin, arrival_times_to_origin] : data.arrival_times_to) {
-    auto it = data.steps_from.find(origin.stop);
-    if (it == data.steps_from.end()) {
-      continue;
-    }
-    for (const auto& [dest, steps] : it->second) {
-      int weight = std::numeric_limits<int>::max();
-      if (arrival_times_to_origin.has_flex) {
-        // If the arrival is flex, we have to assume we can arrive any time, so
-        // the weight is simply the duration of the shortest step out.
-        for (const Step& step : steps) {
-          if (step.DurationSeconds() < weight) {
-            weight = step.DurationSeconds();
-          }
-        }
-      } else {
-        // The arrival is scheduled.
-        int step_idx = 0;
-        if (steps.size() > 0 && steps[0].is_flex) {
-          if (steps[0].FlexDurationSeconds() < weight) {
-            weight = steps[0].FlexDurationSeconds();
-          }
-          step_idx = 1;
-        }
-        for (const TimeSinceServiceStart arrival_time :
-             arrival_times_to_origin.times) {
-          while (step_idx < steps.size() &&
-                 steps[step_idx].origin.time < arrival_time) {
-            step_idx += 1;
-          }
-          if (step_idx >= steps.size()) {
-            break;
-          }
-          int duration =
-              steps[step_idx].destination.time.seconds - arrival_time.seconds;
-          if (duration < weight) {
-            weight = duration;
-          }
-        }
-      }
+  // Weights are computed with "slack forwarding": each step u is charged into
+  // its own edge's candidates at charge_out(u) <= DurationSeconds(u), and the
+  // remainder ("forwarded slack") is charged by the NEXT edge, as the
+  // adjustment on the arrival u produces. Any fixed per-step split is a sound
+  // decomposition of tour time (each second is paid exactly once), and the
+  // forwards below are chosen so that no edge weight drops below its
+  // unforwarded value, so the resulting lower bound is sound and at least as
+  // strong per problem as the unforwarded one. See TarelEdge.
+  //
+  // Experiment knobs (defaults: 1 pass, waits-only overhead):
+  //   VATS5_TAREL_FWD_PASSES: forwarding passes; 0 disables forwarding.
+  //   VATS5_TAREL_FWD_ADJ_OVERHEAD: if set, floors account for the previous
+  //     pass's adjustments (forwards grow monotonically across passes; final
+  //     weights are only guaranteed >= the unforwarded ones, not monotone
+  //     across passes).
+  static const int kPasses = [] {
+    const char* v = std::getenv("VATS5_TAREL_FWD_PASSES");
+    return v ? std::atoi(v) : 1;
+  }();
+  static const bool kAdjOverhead =
+      std::getenv("VATS5_TAREL_FWD_ADJ_OVERHEAD") != nullptr;
 
-      if (weight < std::numeric_limits<int>::max()) {
-        edges.push_back(
-            TarelEdge{
-                .origin = origin,
-                .destination = dest,
-                .weight = weight,
-            }
-        );
-      }
-    }
+  // The origin states at each stop.
+  std::unordered_map<StopId, std::vector<TarelState>> states_by_stop;
+  for (const auto& [state, _] : data.arrival_times_to) {
+    states_by_stop[state.stop].push_back(state);
   }
 
+  // Weights keyed [origin][destination]; absent means no edge.
+  using Weights =
+      std::unordered_map<TarelState, std::unordered_map<TarelState, int>>;
+  // forwards[o][d] is parallel to steps_from[o][d]: the slack each step
+  // forwards to the arrival it produces.
+  using Forwards = std::
+      unordered_map<StopId, std::unordered_map<TarelState, std::vector<int>>>;
+  // adjustments[s] is parallel to arrival_times_to[s].arrivals: the smallest
+  // forwarded slack over the steps producing each arrival.
+  using Adjustments = std::unordered_map<TarelState, std::vector<int>>;
+
+  // Computes all edge weights for a given choice of forwards (null: none).
+  auto compute_weights = [&](const Forwards* forwards,
+                             const Adjustments* adjustments) -> Weights {
+    Weights weights;
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      auto states_it = states_by_stop.find(origin_stop);
+      if (states_it == states_by_stop.end()) {
+        continue;
+      }
+      for (const auto& [dest, steps] : groups) {
+        int min_duration = data.min_duration_from_to.at({origin_stop, dest});
+        bool has_flex_step = steps.size() > 0 && steps[0].is_flex;
+        size_t first_scheduled = has_flex_step ? 1 : 0;
+        const std::vector<int>* fwd =
+            forwards ? &forwards->at(origin_stop).at(dest) : nullptr;
+
+        // With per-step charges the first catchable step is no longer
+        // necessarily the cheapest, so precompute suffix minima of
+        // departure + charge over the scheduled steps.
+        std::vector<int> suffix_charged(
+            steps.size() + 1, std::numeric_limits<int>::max()
+        );
+        for (size_t i = steps.size(); i-- > first_scheduled;) {
+          int charge = steps[i].DurationSeconds() - (fwd ? (*fwd)[i] : 0);
+          suffix_charged[i] = std::min(
+              suffix_charged[i + 1], steps[i].origin.time.seconds + charge
+          );
+        }
+
+        for (const TarelState& origin : states_it->second) {
+          const ArrivalTimes& arrival_times = data.arrival_times_to.at(origin);
+          const std::vector<int>* adj =
+              (adjustments && !arrival_times.times.empty())
+                  ? &adjustments->at(origin)
+                  : nullptr;
+
+          int weight = std::numeric_limits<int>::max();
+          if (arrival_times.has_flex) {
+            // We have to assume we can arrive any time, so we can arrive just
+            // in time for a fastest step, carrying no adjustment. (This is
+            // exact under any forwards because charges never drop below the
+            // fastest duration of the group.)
+            weight = min_duration;
+          } else {
+            size_t step_idx = first_scheduled;
+            for (size_t k = 0; k < arrival_times.times.size(); ++k) {
+              const TimeSinceServiceStart arrival_time = arrival_times.times[k];
+              int adjustment = adj ? (*adj)[k] : 0;
+              while (step_idx < steps.size() &&
+                     steps[step_idx].origin.time < arrival_time) {
+                step_idx += 1;
+              }
+              if (suffix_charged[step_idx] !=
+                  std::numeric_limits<int>::max()) {
+                weight = std::min(
+                    weight,
+                    suffix_charged[step_idx] - arrival_time.seconds + adjustment
+                );
+              } else if (!has_flex_step) {
+                // No scheduled step catchable from this or any later arrival.
+                break;
+              }
+              if (has_flex_step) {
+                // The flex step can be taken on arrival.
+                weight = std::min(
+                    weight, steps[0].FlexDurationSeconds() + adjustment
+                );
+              }
+            }
+          }
+
+          if (weight < std::numeric_limits<int>::max()) {
+            weights[origin][dest] = weight;
+          }
+        }
+      }
+    }
+    return weights;
+  };
+
+  // Chooses maximal forwards such that (a) charges never drop below the
+  // fastest duration of the group, which keeps flex-arrival edges exact, and
+  // (b) no candidate of any edge drops below that edge's weight in `targets`:
+  // for every origin state p that can catch step u, we need
+  //   charge_out(u) >= targets(p -> d) - overhead_p(u)
+  // where overhead_p(u) is the smallest wait (plus, with kAdjOverhead, the
+  // arrival's previous adjustment) over the arrivals at p that catch u.
+  auto compute_forwards = [&](const Weights& targets,
+                              const Adjustments* prev_adj) -> Forwards {
+    Forwards forwards;
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      auto states_it = states_by_stop.find(origin_stop);
+      for (const auto& [dest, steps] : groups) {
+        int min_duration = data.min_duration_from_to.at({origin_stop, dest});
+        std::vector<int>& fwd = forwards[origin_stop][dest];
+        fwd.assign(steps.size(), 0);
+        for (size_t i = 0; i < steps.size(); ++i) {
+          if (!steps[i].is_flex) {
+            fwd[i] = steps[i].DurationSeconds() - min_duration;
+          }
+        }
+        if (states_it == states_by_stop.end()) {
+          continue;
+        }
+        for (const TarelState& origin : states_it->second) {
+          if (preserve != nullptr && !(*preserve)(origin, dest)) {
+            // This edge's baseline weight need not be preserved, so it
+            // imposes no floors.
+            continue;
+          }
+          const auto& arrivals = data.arrival_times_to.at(origin).times;
+          if (arrivals.empty()) {
+            continue;
+          }
+          auto weights_it = targets.find(origin);
+          if (weights_it == targets.end()) {
+            continue;
+          }
+          auto weight_it = weights_it->second.find(dest);
+          if (weight_it == weights_it->second.end()) {
+            continue;
+          }
+          int target = weight_it->second;
+          const std::vector<int>* adj =
+              prev_adj ? &prev_adj->at(origin) : nullptr;
+
+          // prefix_best[k] = min over arrivals j <= k of
+          // (adjustment_j - time_j), so that the overhead for a step departing
+          // at time d that the first k+1 arrivals can catch is
+          // d + prefix_best[k].
+          std::vector<int> prefix_best(arrivals.size());
+          for (size_t k = 0; k < arrivals.size(); ++k) {
+            int best = (adj ? (*adj)[k] : 0) - arrivals[k].seconds;
+            prefix_best[k] = k == 0 ? best : std::min(prefix_best[k - 1], best);
+          }
+
+          size_t arrival_idx = 0;
+          bool any_arrival = false;
+          for (size_t i = 0; i < steps.size(); ++i) {
+            if (steps[i].is_flex) {
+              continue;
+            }
+            while (arrival_idx + 1 < arrivals.size() &&
+                   arrivals[arrival_idx + 1] <= steps[i].origin.time) {
+              arrival_idx += 1;
+            }
+            if (!any_arrival && arrivals[arrival_idx] <= steps[i].origin.time) {
+              any_arrival = true;
+            }
+            if (!any_arrival) {
+              continue;  // This origin cannot catch this step.
+            }
+            int overhead =
+                steps[i].origin.time.seconds + prefix_best[arrival_idx];
+            int floor = target - overhead;
+            fwd[i] = std::min(fwd[i], steps[i].DurationSeconds() - floor);
+          }
+        }
+        for (int& f : fwd) {
+          f = std::max(f, 0);
+        }
+      }
+    }
+    return forwards;
+  };
+
+  // The adjustment carried by each arrival: the smallest forwarded slack over
+  // the steps producing it.
+  auto compute_adjustments = [&](const Forwards& forwards) -> Adjustments {
+    Adjustments adjustments;
+    for (const auto& [state, arrival_times] : data.arrival_times_to) {
+      adjustments[state].assign(
+          arrival_times.times.size(), std::numeric_limits<int>::max()
+      );
+    }
+    for (const auto& [origin_stop, groups] : data.steps_from) {
+      for (const auto& [dest, steps] : groups) {
+        const std::vector<int>& fwd = forwards.at(origin_stop).at(dest);
+        const auto& arrivals = data.arrival_times_to.at(dest).times;
+        std::vector<int>& adj = adjustments.at(dest);
+        for (size_t i = 0; i < steps.size(); ++i) {
+          if (steps[i].is_flex) {
+            continue;
+          }
+          auto it = std::ranges::lower_bound(
+              arrivals, steps[i].destination.time
+          );
+          assert(it != arrivals.end() && *it == steps[i].destination.time);
+          size_t k = it - arrivals.begin();
+          adj[k] = std::min(adj[k], fwd[i]);
+        }
+      }
+    }
+    return adjustments;
+  };
+
+  Weights unforwarded = compute_weights(nullptr, nullptr);
+
+  Weights weights = unforwarded;
+  Forwards forwards;
+  Adjustments adjustments;
+  for (int pass = 0; pass < kPasses; ++pass) {
+    Forwards new_forwards = compute_forwards(
+        weights, (kAdjOverhead && pass > 0) ? &adjustments : nullptr
+    );
+    if (kAdjOverhead && pass > 0) {
+      // Forwards grow monotonically; each step's binding floor is from some
+      // pass, whose target the weights below still meet.
+      for (auto& [o, groups] : new_forwards) {
+        for (auto& [d, fwd] : groups) {
+          const std::vector<int>& prev = forwards.at(o).at(d);
+          for (size_t i = 0; i < fwd.size(); ++i) {
+            fwd[i] = std::max(fwd[i], prev[i]);
+          }
+        }
+      }
+    }
+    forwards = std::move(new_forwards);
+    adjustments = compute_adjustments(forwards);
+    weights = compute_weights(&forwards, &adjustments);
+  }
+
+  std::vector<TarelEdge> edges;
+  for (const auto& [origin, dests] : weights) {
+    for (const auto& [dest, weight] : dests) {
+      assert(
+          (preserve != nullptr && !(*preserve)(origin, dest)) ||
+          weight >= unforwarded.at(origin).at(dest)
+      );
+      edges.push_back(
+          TarelEdge{
+              .origin = origin,
+              .destination = dest,
+              .weight = weight,
+          }
+      );
+    }
+  }
   return edges;
 }
 
@@ -709,6 +950,8 @@ TarelStateRemapResult RemapTarelStates(
     // this is ok to do.
     result.mapped_to_original[new_origin] = edge.origin;
     result.mapped_to_original[new_dest] = edge.destination;
+    result.original_to_mapped[edge.origin] = new_origin;
+    result.original_to_mapped[edge.destination] = new_dest;
 
     auto [it, inserted] = merged_edges.try_emplace(
         {new_origin, new_dest}, MergedEdgeData{.weight = edge.weight}
@@ -940,44 +1183,124 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     std::ostream* tsp_log,
     const SearchEventCallback& on_event
 ) {
+  // Experiment knob: number of "refloor" rounds. Each round rebuilds the tarel
+  // edges with baseline-preservation floors restricted to the edges used by
+  // the best tour so far (letting every other edge's slack flow to them),
+  // re-solves the TSP, and keeps the best lower bound. Each round's weight set
+  // is a valid lower bound on its own, so taking the max is sound.
+  static const int kRefloorRounds = [] {
+    const char* v = std::getenv("VATS5_TAREL_REFLOOR");
+    return v ? std::atoi(v) : 0;
+  }();
+
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
+  TarelEdgeIntermediateData data =
+      ComputeTarelIntermediateData(completed.AllMergedSteps());
 
-  std::vector<TarelEdge> edges = MakeTarelEdges(completed);
-  TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
-  TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
+  // Solves the TSP over one set of tarel edges. The result's states are still
+  // remapped; nullopt if the graph is missing required stops or infeasible.
+  auto solve = [&](const std::vector<TarelEdge>& edges)
+      -> std::optional<std::pair<TspTourResult, TarelStateRemapResult>> {
+    TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
+    TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
-  // Check that at least one representative from each group of required stops
-  // appears in `graph`.
-  //
-  // This is necessary for correctness because the above construction can omit
-  // stops from `graph`, and if it does, then the TSP on `graph` will give a
-  // solution that does not reach all the stops. (Specifically, stops that don't
-  // appear as both origins and destinations are omitted).
-  std::unordered_set<StopId> representatives_in_graph;
-  for (const TarelState& tarel_state : graph.state_by_id) {
-    representatives_in_graph.insert(
-        state.required.Representative(tarel_state.stop)
+    // Check that at least one representative from each group of required
+    // stops appears in `graph`.
+    //
+    // This is necessary for correctness because the above construction can
+    // omit stops from `graph`, and if it does, then the TSP on `graph` will
+    // give a solution that does not reach all the stops. (Specifically, stops
+    // that don't appear as both origins and destinations are omitted).
+    std::unordered_set<StopId> representatives_in_graph;
+    for (const TarelState& tarel_state : graph.state_by_id) {
+      representatives_in_graph.insert(
+          state.required.Representative(tarel_state.stop)
+      );
+    }
+    for (StopId rep : state.required.GroupRepresentatives()) {
+      if (!representatives_in_graph.contains(rep)) {
+        return std::nullopt;
+      }
+    }
+
+    std::optional<TspTourResult> result = SolveTspAndExtractTour(
+        remap.edges, graph, state.boundary, ub, tsp_log, on_event
     );
-  }
-  for (StopId rep : state.required.GroupRepresentatives()) {
-    if (!representatives_in_graph.contains(rep)) {
+    if (!result.has_value()) {
       return std::nullopt;
     }
-  }
+    return std::make_pair(std::move(result).value(), std::move(remap));
+  };
 
-  std::optional<TspTourResult> result = SolveTspAndExtractTour(
-      remap.edges, graph, state.boundary, ub, tsp_log, on_event
-  );
-  if (!result.has_value()) {
+  std::vector<TarelEdge> edges = BuildTarelEdgesFromIntermediateData(data);
+  auto best = solve(edges);
+  if (!best.has_value()) {
     return std::nullopt;
   }
 
-  // Map `result` states back to original states.
-  for (TarelEdge& edge : result->tour_edges) {
-    edge.origin = remap.mapped_to_original.at(edge.origin);
-    edge.destination = remap.mapped_to_original.at(edge.destination);
+  bool prunable = ub.has_value() && best->first.optimal_value >= *ub;
+  if (kRefloorRounds > 0 && !prunable) {
+    // The original (origin, destination) state pairs whose baseline weights
+    // must be preserved: all pairs merging into an edge of some tour so far.
+    std::unordered_map<TarelState, std::unordered_set<TarelState>> important;
+    auto add_tour_pairs = [&important](
+                              const TspTourResult& result,
+                              const TarelStateRemapResult& remap
+                          ) -> int {
+      std::unordered_map<TarelState, std::vector<TarelState>> originals;
+      for (const auto& [orig, mapped] : remap.original_to_mapped) {
+        originals[mapped].push_back(orig);
+      }
+      int added = 0;
+      for (const TarelEdge& e : result.tour_edges) {
+        for (const TarelState& p : originals[e.origin]) {
+          for (const TarelState& d : originals[e.destination]) {
+            added += important[p].insert(d).second ? 1 : 0;
+          }
+        }
+      }
+      return added;
+    };
+    add_tour_pairs(best->first, best->second);
+    std::function<bool(const TarelState&, const TarelState&)> preserve =
+        [&important](const TarelState& p, const TarelState& d) {
+          auto it = important.find(p);
+          return it != important.end() && it->second.contains(d);
+        };
+
+    for (int round = 0; round < kRefloorRounds; ++round) {
+      std::vector<TarelEdge> relaxed =
+          BuildTarelEdgesFromIntermediateData(data, &preserve);
+      std::optional<std::pair<TspTourResult, TarelStateRemapResult>> attempt;
+      try {
+        attempt = solve(relaxed);
+      } catch (const InvalidTourStructure&) {
+        break;
+      }
+      if (!attempt.has_value()) {
+        break;
+      }
+      int added = add_tour_pairs(attempt->first, attempt->second);
+      if (attempt->first.optimal_value > best->first.optimal_value) {
+        best = std::move(attempt);
+        if (ub.has_value() && best->first.optimal_value >= *ub) {
+          break;
+        }
+      }
+      // If the relaxed tour introduced no new edges, another round would
+      // solve the same problem again.
+      if (added == 0) {
+        break;
+      }
+    }
   }
 
+  // Map the result's states back to original states.
+  TspTourResult result = std::move(best->first);
+  for (TarelEdge& edge : result.tour_edges) {
+    edge.origin = best->second.mapped_to_original.at(edge.origin);
+    edge.destination = best->second.mapped_to_original.at(edge.destination);
+  }
   return result;
 }
 

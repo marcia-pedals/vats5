@@ -37,17 +37,14 @@ PartialSolution::BestPathByRequiredStops(const RequiredStops& required) const {
   );
 }
 
-PartialSolution PartialSolveBranchAndBound(
-    std::unordered_set<StopId> required_subset,
-    const ProblemState& original_problem,
-    std::ostream* search_log,
-    const SearchEventCallback& on_event
-) {
-  required_subset.insert(original_problem.boundary.start);
-  required_subset.insert(original_problem.boundary.end);
+namespace {
 
-  // Filter required to just this subset. Each group must be entirely present
-  // or entirely absent, since we add stops by group via VisitGroupStops.
+// Filters `original_problem.required` down to `required_subset` (which must
+// contain whole groups).
+RequiredStops FilterRequired(
+    const ProblemState& original_problem,
+    const std::unordered_set<StopId>& required_subset
+) {
   RequiredStops partial_required = original_problem.required;
   std::erase_if(partial_required.representative, [&](const auto& pair) {
     return !required_subset.contains(pair.first);
@@ -59,30 +56,15 @@ PartialSolution PartialSolveBranchAndBound(
       assert(required_subset.contains(group_stop) == present_in_subset);
     });
   }
+  return partial_required;
+}
 
-  ProblemState partial_problem = MakeProblemState(
-      MakeAdjacencyList(
-          ReduceToMinimalSystemPaths(
-              original_problem.minimal,
-              required_subset,
-              HorizonCoveringAllDepartures(original_problem.minimal)
-          )
-              .AllMergedSteps()
-      ),
-      original_problem.boundary,
-      std::move(partial_required),
-      original_problem.stop_infos,
-      original_problem.step_partition_names,
-      original_problem.original_edges
-  );
+}  // namespace
 
-  auto bb_result = BranchAndBoundSolve(
-      partial_problem, search_log, std::nullopt, -1, on_event
-  );
-  if (bb_result.best_paths.empty()) {
-    return PartialSolution{};
-  }
-
+// Maps branch-and-bound result paths back to original-problem paths.
+PartialSolution PartialSolutionFromBnbResult(
+    const BranchAndBoundResult& bb_result, const ProblemState& original_problem
+) {
   // Find the original problem paths corresponding to the partial problem paths.
   std::vector<PartialSolutionPath> paths;
   std::set<std::vector<StopId>> seen_tours;
@@ -138,6 +120,82 @@ PartialSolution PartialSolveBranchAndBound(
   // paths or other non-minimality.
 
   return PartialSolution{.paths = std::move(paths)};
+}
+
+
+ProblemState MakeReducedPartialProblem(
+    const ProblemState& original_problem,
+    std::unordered_set<StopId> required_subset
+) {
+  required_subset.insert(original_problem.boundary.start);
+  required_subset.insert(original_problem.boundary.end);
+
+  RequiredStops partial_required =
+      FilterRequired(original_problem, required_subset);
+
+  return MakeProblemState(
+      MakeAdjacencyList(
+          ReduceToMinimalSystemPaths(
+              original_problem.minimal,
+              required_subset,
+              HorizonCoveringAllDepartures(original_problem.minimal)
+          )
+              .AllMergedSteps()
+      ),
+      original_problem.boundary,
+      std::move(partial_required),
+      original_problem.stop_infos,
+      original_problem.step_partition_names,
+      original_problem.original_edges
+  );
+}
+
+PartialSolution PartialSolveBranchAndBound(
+    std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event,
+    const SearchSeeds* seeds
+) {
+  ProblemState partial_problem =
+      MakeReducedPartialProblem(original_problem, std::move(required_subset));
+
+  auto bb_result = BranchAndBoundSolve(
+      partial_problem, search_log, std::nullopt, -1, on_event, nullptr, seeds
+  );
+  if (bb_result.best_paths.empty()) {
+    return PartialSolution{};
+  }
+
+  return PartialSolutionFromBnbResult(bb_result, original_problem);
+}
+
+PartialSolution PartialSolveBranchAndCut(
+    std::unordered_set<StopId> required_subset,
+    const ProblemState& original_problem,
+    std::ostream* search_log,
+    const SearchEventCallback& on_event,
+    const LazyRequiredStops& lazy
+) {
+  required_subset.insert(original_problem.boundary.start);
+  required_subset.insert(original_problem.boundary.end);
+
+  RequiredStops partial_required =
+      FilterRequired(original_problem, required_subset);
+
+  // The full, unreduced problem with only the subset required: the required
+  // set grows during the search, so the graph must already contain every stop
+  // it can grow to.
+  ProblemState full_problem = original_problem.WithRequired(partial_required);
+
+  auto bb_result = BranchAndBoundSolve(
+      full_problem, search_log, std::nullopt, -1, on_event, &lazy
+  );
+  if (bb_result.best_paths.empty()) {
+    return PartialSolution{};
+  }
+
+  return PartialSolutionFromBnbResult(bb_result, original_problem);
 }
 
 PartialSolution PartialSolveBruteForce(
