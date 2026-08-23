@@ -1,0 +1,17 @@
+{
+  "languages": {
+    "C++": {
+      "language_servers": ["clangd", "!sourcekit-lsp", "..."]
+    },
+    "C": {
+      "language_servers": ["clangd", "!sourcekit-lsp", "..."]
+    }
+  },
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "arguments": ["--query-driver=/nix/store/*/bin/clang++"]
+      }
+    }
+  }
+}
