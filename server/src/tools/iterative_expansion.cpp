@@ -418,6 +418,14 @@ int main(int argc, char* argv[]) {
       "has at most this many required groups"
   );
 
+  std::string seed_stops_path;
+  app.add_option(
+      "--seed_stops",
+      seed_stops_path,
+      "File with one required stop name per line; each stop's group is added "
+      "to the initial subset, which is used instead of the MST leaves"
+  );
+
   double timeout_seconds = 0.0;
   app.add_option(
       "--timeout",
@@ -465,11 +473,37 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  std::cout << "Computing MST...\n";
-  std::unordered_set<StopId> required_subset = MstLeaves(state);
-  std::cout << "MST leaves:\n";
-  for (StopId stop : required_subset) {
-    std::cout << "  " << state.StopName(stop) << "\n";
+  std::unordered_set<StopId> required_subset;
+  if (!seed_stops_path.empty()) {
+    std::ifstream seed_in(seed_stops_path);
+    if (!seed_in.is_open()) {
+      std::cerr << "Error: could not open " << seed_stops_path << "\n";
+      return 1;
+    }
+    std::string line;
+    while (std::getline(seed_in, line)) {
+      if (line.empty()) {
+        continue;
+      }
+      StopId stop = state.StopIdFromName(line);
+      if (!state.required.Contains(stop)) {
+        std::cerr << "Error: seed stop is not a required stop: " << line
+                  << "\n";
+        return 1;
+      }
+      state.required.VisitGroupStops(
+          state.required.Representative(stop),
+          [&](StopId s) { required_subset.insert(s); }
+      );
+      std::cout << "Seeded stop: " << line << "\n";
+    }
+  } else {
+    std::cout << "Computing MST...\n";
+    required_subset = MstLeaves(state);
+    std::cout << "MST leaves:\n";
+    for (StopId stop : required_subset) {
+      std::cout << "  " << state.StopName(stop) << "\n";
+    }
   }
 
   // Generate run timestamp.
