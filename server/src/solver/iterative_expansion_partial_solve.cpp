@@ -156,13 +156,10 @@ PartialSolution PartialSolveHeldKarp(
   // The DP solves the boundary-to-boundary problem, so its visit order is
   // already a full tour from START to END.
   HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, known_lb, search_log);
-  if (hk.best_path.empty()) {
+  if (hk.best_tour.empty()) {
     return PartialSolution{};
   }
-  std::vector<StopId> tour;
-  for (const HeldKarpDPPathPoint& point : hk.best_path) {
-    tour.push_back(point.stop);
-  }
+  const std::vector<StopId>& tour = hk.best_tour;
   assert(tour.front() == original_problem.boundary.start);
   assert(tour.back() == original_problem.boundary.end);
 
