@@ -62,10 +62,6 @@ struct SearchNode {
   // `search_edges`. -1 for the root node.
   int edge_index;
 
-  // The node's ProblemState is NOT stored: with thousands of active nodes the
-  // states dominate memory. It is recomputed from the initial problem by
-  // replaying the constraint chain (via `edge_index`) when the node is popped.
-
   bool operator<(const SearchNode& other) const {
     if (parent_lb == other.parent_lb) {
       return edge_index > other.edge_index;
