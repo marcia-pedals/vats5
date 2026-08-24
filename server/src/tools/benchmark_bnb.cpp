@@ -60,8 +60,9 @@ int main(int argc, char* argv[]) {
   };
 
   auto start = std::chrono::steady_clock::now();
-  auto result =
-      BranchAndBoundSolve(state, &std::cerr, std::nullopt, max_iter, on_event);
+  auto result = BranchAndBoundSolve(
+      state, 0, &std::cerr, std::nullopt, max_iter, on_event
+  );
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =

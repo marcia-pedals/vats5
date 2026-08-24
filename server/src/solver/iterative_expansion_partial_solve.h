@@ -51,6 +51,7 @@ ProblemState MakePartialProblemState(
 PartialSolution PartialSolveBranchAndBound(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     std::ostream* search_log,
     const SearchEventCallback& on_event = nullptr
 );

@@ -198,6 +198,7 @@ ProblemState ApplyConstraints(
 
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
+    int known_lb,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
     int max_iter,
@@ -334,7 +335,7 @@ BranchAndBoundResult BranchAndBoundSolve(
     std::vector<Path> feasible_paths =
         ComputeMinimalFeasiblePathsAlong(stop_sequence, completed);
     if (feasible_paths.size() > 0) {
-      const Path& feasible_path = *std::min_element(
+      const Path& ub_path = *std::min_element(
           feasible_paths.begin(),
           feasible_paths.end(),
           [](const Path& a, const Path& b) {
@@ -343,7 +344,7 @@ BranchAndBoundResult BranchAndBoundSolve(
       );
       if (search_log != nullptr) {
         *search_log << "  ub path ("
-                    << TimeSinceServiceStart{feasible_path.DurationSeconds()}
+                    << TimeSinceServiceStart{ub_path.DurationSeconds()}
                     << "): ";
         for (int i = 0; i < lb_result.tour_edges.size() - 1; ++i) {
           if (i > 0) {
@@ -354,8 +355,8 @@ BranchAndBoundResult BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
-      if (feasible_path.DurationSeconds() < best_ub) {
-        best_ub = feasible_path.DurationSeconds();
+      if (ub_path.DurationSeconds() < best_ub) {
+        best_ub = ub_path.DurationSeconds();
         best_paths.clear();
         for (const Path& p : feasible_paths) {
           if (p.DurationSeconds() == best_ub) {
@@ -365,8 +366,17 @@ BranchAndBoundResult BranchAndBoundSolve(
         best_original_edges = state.original_edges;
         if (search_log != nullptr) {
           *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
-                      << " " << feasible_path.merged_step.origin.time << " "
-                      << feasible_path.merged_step.destination.time << "\n";
+                      << " " << ub_path.merged_step.origin.time << " "
+                      << ub_path.merged_step.destination.time << "\n";
+        }
+        if (best_ub <= known_lb) {
+          if (search_log != nullptr) {
+            *search_log << "Search terminated: UB reached known_lb ("
+                        << TimeSinceServiceStart{known_lb} << ")\n";
+          }
+          return {
+              best_ub, std::move(best_paths), std::move(best_original_edges)
+          };
         }
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();

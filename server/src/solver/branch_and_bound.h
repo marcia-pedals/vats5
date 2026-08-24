@@ -84,6 +84,7 @@ struct BranchAndBoundResult {
 
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
+    int known_lb,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
     int max_iter = -1,

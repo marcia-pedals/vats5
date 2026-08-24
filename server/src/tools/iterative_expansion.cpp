@@ -637,6 +637,8 @@ int main(int argc, char* argv[]) {
   std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
+  int prev_iteration_optimal = 0;
+
   try {
     for (int iteration = 0;; iteration++) {
       check_deadline();
@@ -679,7 +681,11 @@ int main(int argc, char* argv[]) {
           brute_force
               ? PartialSolveBruteForce(required_subset, state, check_deadline)
               : PartialSolveBranchAndBound(
-                    partial_problem, state, &std::cout, on_search_event
+                    partial_problem,
+                    state,
+                    prev_iteration_optimal,
+                    &std::cout,
+                    on_search_event
                 );
 
       // Choose the path that visits the most required stops.
@@ -703,6 +709,7 @@ int main(int argc, char* argv[]) {
                 << best_solution_path.path.IntermediateStopCount() << "\n";
 
       const Path& best_path = best_solution_path.path;
+      prev_iteration_optimal = best_path.DurationSeconds();
       const std::vector<StopDistance> distances =
           RequiredStopDistances(best_path, state);
 
