@@ -248,8 +248,8 @@ RC_GTEST_PROP(PartialSolveTest, BranchAndBoundAndHeldKarpAgreeOnDuration, ()) {
   RC_LOG() << "subset size " << subset.size() << "\n";
 
   // Discard cases where the tarel TSP tour splits a stop's states into
-  // separate visits, which branch and bound cannot solve yet (see
-  // FarApartAlternateStopGroupThrowsInvalidTourStructure below).
+  // separate visits, which branch and bound cannot solve above the Held-Karp
+  // node size (see FarApartAlternateStopGroupSolvedByHeldKarpNodes below).
   PartialSolution bnb;
   try {
     bnb = PartialSolveBranchAndBound(
@@ -335,7 +335,11 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
 // and extracting the tour throws out of the solve. This pins the known
 // limitation (https://github.com/marcia-pedals/vats5/issues/116) that the
 // property tests above discard when a generated case hits it.
-TEST(PartialSolveTest, FarApartAlternateStopGroupThrowsInvalidTourStructure) {
+// This instance's tarel TSP tour splits a stop's states into separate visits,
+// which the tarel lower bound rejects with InvalidTourStructure. Small nodes
+// are now solved exactly by the Held-Karp DP before any tarel bound is
+// computed, so branch and bound solves it instead of throwing.
+TEST(PartialSolveTest, FarApartAlternateStopGroupSolvedByHeldKarpNodes) {
   ProblemState state = MakeState(
       4,
       {
@@ -350,12 +354,12 @@ TEST(PartialSolveTest, FarApartAlternateStopGroupThrowsInvalidTourStructure) {
 
   std::unordered_set<StopId> subset =
       WholeGroups(state, {StopId{0}, StopId{1}, StopId{3}});
-  EXPECT_THROW(
-      PartialSolveBranchAndBound(
-          MakePartialProblemState(subset, state), state, 0, nullptr
-      ),
-      InvalidTourStructure
+  PartialSolution bnb = PartialSolveBranchAndBound(
+      MakePartialProblemState(subset, state), state, 0, nullptr
   );
+  PartialSolution brute = PartialSolveBruteForce(subset, state);
+  ASSERT_FALSE(bnb.paths.empty());
+  EXPECT_EQ(OptimalDuration(bnb), OptimalDuration(brute));
 }
 
 // The tour of `stops`, with the boundary around it.
