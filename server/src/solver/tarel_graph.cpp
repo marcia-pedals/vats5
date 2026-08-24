@@ -738,12 +738,9 @@ TarelStateRemapResult RemapTarelStates(
 }
 
 TspGraphData MakeTspGraphEdges(
-    const std::vector<TarelEdge>& edges,
-    const ProblemBoundary& boundary,
-    int cycle_edge_weight
+    const std::vector<TarelEdge>& edges, const ProblemBoundary& boundary
 ) {
   TspGraphData result;
-  result.cycle_edge_weight = cycle_edge_weight;
 
   // Assign contiguous ids to all TarelStates.
   auto insert_state_if_new = [&](const TarelState& state) {
@@ -777,7 +774,7 @@ TspGraphData MakeTspGraphEdges(
               .origin = result.id_by_state.at(TarelState{stop, partition}),
               .destination =
                   result.id_by_state.at(TarelState{stop, next_partition}),
-              .weight_seconds = cycle_edge_weight,
+              .weight_seconds = kCycleEdgeWeight,
           }
       );
     }
@@ -820,7 +817,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
   std::optional<int> atsp_ub;
   if (ub.has_value()) {
-    atsp_ub = *ub + graph.expected_num_cycle_edges * graph.cycle_edge_weight;
+    atsp_ub = *ub + graph.expected_num_cycle_edges * kCycleEdgeWeight;
   }
 
   auto concorde_start = std::chrono::steady_clock::now();
@@ -847,8 +844,7 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   }
 
   // Adjust optimal value and rotate tour.
-  solution->optimal_value -=
-      graph.expected_num_cycle_edges * graph.cycle_edge_weight;
+  solution->optimal_value -= graph.expected_num_cycle_edges * kCycleEdgeWeight;
   auto tour_start_it = std::find(
       solution->tour.begin(),
       solution->tour.end(),
@@ -969,40 +965,9 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
-  // The most negative cycle edge weight that keeps every weight in Concorde's
-  // doubled graph (real weight + negative-weight offset + kInterVertexOffset)
-  // below kForbiddenEdgeWeight.
-  int max_edge_weight = 0;
-  for (const TarelEdge& edge : remap.edges) {
-    max_edge_weight = std::max(max_edge_weight, edge.weight);
-  }
-  int min_cycle_edge_weight =
-      -(kForbiddenEdgeWeight - kInterVertexOffset - max_edge_weight - 1);
-
-  std::optional<TspTourResult> result;
-  while (true) {
-    try {
-      result = SolveTspAndExtractTour(
-          remap.edges, graph, state.boundary, ub, tsp_log, on_event
-      );
-      break;
-    } catch (const InvalidTourStructure&) {
-      // The solved tour split some stop's states into separate visits, which
-      // means the cycle edge reward was smaller than what the tour saved by
-      // splitting (this happens e.g. when an alternate-stop group's members
-      // are further apart than the reward). Retry with a bigger reward, which
-      // penalizes splitting more, until the floor Concorde's weight budget
-      // allows is reached.
-      if (graph.cycle_edge_weight <= min_cycle_edge_weight) {
-        throw;
-      }
-      graph = MakeTspGraphEdges(
-          remap.edges,
-          state.boundary,
-          std::max(graph.cycle_edge_weight * 8, min_cycle_edge_weight)
-      );
-    }
-  }
+  std::optional<TspTourResult> result = SolveTspAndExtractTour(
+      remap.edges, graph, state.boundary, ub, tsp_log, on_event
+  );
   if (!result.has_value()) {
     return std::nullopt;
   }

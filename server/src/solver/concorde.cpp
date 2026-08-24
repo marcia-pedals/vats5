@@ -88,6 +88,9 @@ std::optional<ConcordeSolution> SolveTspBruteForce(
   return best;
 }
 
+constexpr int kForbiddenEdgeWeight = 1000000;
+constexpr int kInterVertexOffset = 11000;
+
 // Helper class for computing edge weights in the doubled graph.
 // Uses vertex doubling to convert asymmetric TSP to symmetric TSP.
 // Vertices: 2i = in(i), 2i+1 = out(i)
