@@ -37,6 +37,22 @@ int main(int argc, char* argv[]) {
   )
       ->default_val(-1);
 
+  std::string branching = "edge";
+  app.add_option(
+         "--branching",
+         branching,
+         "Branching strategy: edge (minimal-graph steps) or succession "
+         "(required-stop successions)"
+  )
+      ->check(CLI::IsMember({"edge", "succession"}));
+
+  bool collect = false;
+  app.add_flag(
+      "--collect",
+      collect,
+      "Collect all optimal paths (explores lb == ub ties; slower)"
+  );
+
   CLI11_PARSE(app, argc, argv);
 
   std::ifstream in(input_path);
@@ -60,8 +76,15 @@ int main(int argc, char* argv[]) {
   };
 
   auto start = std::chrono::steady_clock::now();
-  auto result =
-      BranchAndBoundSolve(state, &std::cerr, std::nullopt, max_iter, on_event);
+  auto result = BranchAndBoundSolve(
+      state,
+      &std::cerr,
+      std::nullopt,
+      max_iter,
+      on_event,
+      collect,
+      /*succession_branching=*/branching == "succession"
+  );
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =
@@ -75,6 +98,9 @@ int main(int argc, char* argv[]) {
 
   std::cout << "\nBest duration: " << TimeSinceServiceStart{result.best_ub}
             << "\n";
+  std::cout << "Optimal paths found: " << result.optimal_path_count
+            << " total (counting dups), " << result.unique_optimal_path_count
+            << " unique\n";
   if (!result.best_paths.empty()) {
     const auto& path = result.best_paths[0];
     std::vector<StopId> tour;

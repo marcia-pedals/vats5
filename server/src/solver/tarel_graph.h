@@ -425,11 +425,21 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
     const SearchEventCallback& on_event = nullptr
 );
 
+// Tour-level constraints on which required stop directly follows which. A
+// `forbidden` pair (a, b) removes the direct tour leg a->b; a `required` pair
+// (a, b) forces the leg leaving a to go to b (implemented by removing every
+// other leg leaving a). These act on the tarel graph, not the minimal graph.
+struct SuccessionConstraints {
+  std::vector<PlainEdge> forbidden;
+  std::vector<PlainEdge> required;
+};
+
 std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    const SuccessionConstraints* successions = nullptr
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

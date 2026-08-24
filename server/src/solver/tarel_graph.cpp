@@ -938,11 +938,27 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     const ProblemState& state,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    const SuccessionConstraints* successions
 ) {
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
   std::vector<TarelEdge> edges = MakeTarelEdges(completed);
+  if (successions != nullptr) {
+    std::erase_if(edges, [&](const TarelEdge& e) {
+      for (const PlainEdge& f : successions->forbidden) {
+        if (e.origin.stop == f.a && e.destination.stop == f.b) {
+          return true;
+        }
+      }
+      for (const PlainEdge& r : successions->required) {
+        if (e.origin.stop == r.a && e.destination.stop != r.b) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 

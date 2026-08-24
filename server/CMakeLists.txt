@@ -191,6 +191,27 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
 target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 
+# Create subset_dp library target
+add_library(subset_dp STATIC src/solver/subset_dp.cpp)
+target_link_libraries(subset_dp PUBLIC tarel_graph)
+target_include_directories(subset_dp PUBLIC src)
+
+# Add benchmark_dp tool
+add_executable(benchmark_dp src/tools/benchmark_dp.cpp)
+target_link_libraries(benchmark_dp PUBLIC subset_dp CLI11::CLI11)
+
+# Add relax_and_cut experiment tool
+add_executable(relax_and_cut src/tools/relax_and_cut.cpp)
+target_link_libraries(relax_and_cut PUBLIC tarel_graph tour_paths CLI11::CLI11)
+
+# Add history_refine experiment tool
+add_executable(history_refine src/tools/history_refine.cpp)
+target_link_libraries(history_refine PUBLIC tarel_graph tour_paths CLI11::CLI11)
+
+# Add history_refine2 experiment tool (step-partition rewriting variant)
+add_executable(history_refine2 src/tools/history_refine2.cpp)
+target_link_libraries(history_refine2 PUBLIC tarel_graph tour_paths CLI11::CLI11)
+
 # Create iterative_expansion_partial_solve library target
 add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)
 target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound steps_shortest_path)

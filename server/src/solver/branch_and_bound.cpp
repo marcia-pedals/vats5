@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,6 +28,17 @@ std::string ConstraintRequireEdge::Debug(const ProblemState& state) const {
 
 std::string ConstraintForbidEdge::Debug(const ProblemState& state) const {
   return "[forbid " + state.StopName(a) + " -> " + state.StopName(b) + "]";
+}
+
+std::string ConstraintRequireSuccession::Debug(
+    const ProblemState& state
+) const {
+  return "[require-succ " + state.StopName(a) + " -> " + state.StopName(b) +
+         "]";
+}
+
+std::string ConstraintForbidSuccession::Debug(const ProblemState& state) const {
+  return "[forbid-succ " + state.StopName(a) + " -> " + state.StopName(b) + "]";
 }
 
 std::string BranchEdge::Debug(const ProblemState& state) const {
@@ -181,7 +193,11 @@ ProblemState ApplyConstraints(
         }
       });
     } else {
-      assert(false);
+      // Succession constraints are not minimal-graph constraints; they must be
+      // routed to SearchNode::successions, never through ApplyConstraints.
+      throw std::logic_error(
+          "ApplyConstraints: got a non-graph constraint (succession?)"
+      );
     }
   }
 
@@ -201,7 +217,9 @@ BranchAndBoundResult BranchAndBoundSolve(
     std::ostream* search_log,
     std::optional<std::string> run_dir,
     int max_iter,
-    const SearchEventCallback& on_event
+    const SearchEventCallback& on_event,
+    bool collect_optimal_paths,
+    bool succession_branching
 ) {
   std::vector<SearchEdge> search_edges;
   std::vector<SearchNode> q;
@@ -214,17 +232,38 @@ BranchAndBoundResult BranchAndBoundSolve(
   );
 
   auto PushQ = [&search_edges, &q](
-                   const ProblemState& state, int new_lb, SearchEdge new_edge
+                   const ProblemState& state,
+                   int new_lb,
+                   SearchEdge new_edge,
+                   SuccessionConstraints successions
                ) {
     int new_edge_index = search_edges.size();
+    // Succession constraints are enforced at the tarel level via
+    // SearchNode::successions; only graph constraints go through
+    // ApplyConstraints.
+    std::vector<ProblemConstraint> graph_constraints;
+    for (const ProblemConstraint& c : new_edge.constraints) {
+      if (const auto* rs = std::get_if<ConstraintRequireSuccession>(&c)) {
+        successions.required.push_back(PlainEdge{rs->a, rs->b});
+      } else if (const auto* fs = std::get_if<ConstraintForbidSuccession>(&c)) {
+        successions.forbidden.push_back(PlainEdge{fs->a, fs->b});
+      } else {
+        graph_constraints.push_back(c);
+      }
+    }
     search_edges.push_back(new_edge);
     // TODO: Figure out if passing ApplyConstraints to std::make_unique does the
     // smart thing or not.
     std::unique_ptr<ProblemState> new_state = std::make_unique<ProblemState>(
-        ApplyConstraints(state, new_edge.constraints)
+        ApplyConstraints(state, graph_constraints)
     );
     q.push_back(
-        std::move(SearchNode{new_lb, new_edge_index, std::move(new_state)})
+        SearchNode{
+            .parent_lb = new_lb,
+            .edge_index = new_edge_index,
+            .state = std::move(new_state),
+            .successions = std::move(successions),
+        }
     );
     std::push_heap(q.begin(), q.end());
   };
@@ -233,6 +272,26 @@ BranchAndBoundResult BranchAndBoundSolve(
   int best_ub = std::numeric_limits<int>::max();
   std::vector<Path> best_paths;
   std::unordered_map<StopId, PlainEdge> best_original_edges;
+
+  // Optimal-path collection (only used when collect_optimal_paths). Paths from
+  // different search nodes live in different StopId spaces (Require
+  // constraints mint synthetic combined stops), so uniqueness is judged on the
+  // stop sequence expanded back to original stop IDs.
+  int64_t optimal_path_count = 0;
+  std::set<std::vector<int>> unique_optimal_stop_seqs;
+  auto ExpandedStopSequence =
+      [](const Path& path,
+         const std::unordered_map<StopId, PlainEdge>& original_edges) {
+        std::vector<int> seq;
+        path.VisitAllStops([&](StopId stop) {
+          std::vector<StopId> expanded;
+          ExpandStop(stop, original_edges, expanded);
+          for (StopId s : expanded) {
+            seq.push_back(s.v);
+          }
+        });
+        return seq;
+      };
 
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
@@ -269,11 +328,21 @@ BranchAndBoundResult BranchAndBoundSolve(
     //   *search_log << "\n";
     // }
 
-    if (cur_node.parent_lb >= best_ub) {
+    // In collect_optimal_paths mode, keep exploring nodes whose LB equals the
+    // UB — they can still contain optimal-value paths worth collecting.
+    if (collect_optimal_paths ? cur_node.parent_lb > best_ub
+                              : cur_node.parent_lb >= best_ub) {
       if (search_log != nullptr) {
-        *search_log << "Search terminated: LB >= UB\n";
+        *search_log << "Search terminated: LB "
+                    << (collect_optimal_paths ? ">" : ">=") << " UB\n";
       }
-      return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+      return {
+          best_ub,
+          std::move(best_paths),
+          std::move(best_original_edges),
+          optimal_path_count,
+          static_cast<int64_t>(unique_optimal_stop_seqs.size())
+      };
     }
 
     StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
@@ -286,13 +355,19 @@ BranchAndBoundResult BranchAndBoundSolve(
       mkdir(iter_dir.c_str(), 0755);
       tsp_log_file.emplace(iter_dir + "/tsp_log");
     }
+    // The TSP solver's cutoff treats a tour whose value equals the bound as
+    // not found, so in collect_optimal_paths mode pass best_ub + 1: nodes with
+    // LB == UB must still produce their tour so we can harvest paths from it.
+    std::optional<int> tarel_ub;
+    if (best_ub < std::numeric_limits<int>::max()) {
+      tarel_ub = collect_optimal_paths ? best_ub + 1 : best_ub;
+    }
     std::optional<TspTourResult> lb_result_opt = ComputeTarelLowerBound(
         state,
-        // std::nullopt,
-        best_ub < std::numeric_limits<int>::max() ? std::make_optional(best_ub)
-                                                  : std::nullopt,
+        tarel_ub,
         tsp_log_file.has_value() ? &tsp_log_file.value() : nullptr,
-        on_event
+        on_event,
+        &cur_node.successions
     );
     if (!lb_result_opt.has_value()) {
       // Infeasible node!
@@ -303,12 +378,14 @@ BranchAndBoundResult BranchAndBoundSolve(
     }
     TspTourResult& lb_result = lb_result_opt.value();
 
-    if (lb_result.optimal_value >= best_ub) {
+    if (collect_optimal_paths ? lb_result.optimal_value > best_ub
+                              : lb_result.optimal_value >= best_ub) {
       // Pruned node!
       if (search_log != nullptr) {
         *search_log << "  pruned: LB ("
-                    << TimeSinceServiceStart{lb_result.optimal_value}
-                    << ") >= UB (" << TimeSinceServiceStart{best_ub} << ")\n";
+                    << TimeSinceServiceStart{lb_result.optimal_value} << ") "
+                    << (collect_optimal_paths ? ">" : ">=") << " UB ("
+                    << TimeSinceServiceStart{best_ub} << ")\n";
       }
       continue;
     }
@@ -352,6 +429,26 @@ BranchAndBoundResult BranchAndBoundSolve(
         }
         *search_log << "\n";
       }
+      if (collect_optimal_paths && feasible_path.DurationSeconds() <= best_ub) {
+        if (feasible_path.DurationSeconds() < best_ub) {
+          // New optimum: everything collected so far was suboptimal.
+          optimal_path_count = 0;
+          unique_optimal_stop_seqs.clear();
+        }
+        for (const Path& p : feasible_paths) {
+          if (p.DurationSeconds() == feasible_path.DurationSeconds()) {
+            optimal_path_count += 1;
+            unique_optimal_stop_seqs.insert(
+                ExpandedStopSequence(p, state.original_edges)
+            );
+          }
+        }
+        if (search_log != nullptr) {
+          *search_log << "  optimal paths so far: " << optimal_path_count
+                      << " total, " << unique_optimal_stop_seqs.size()
+                      << " unique\n";
+        }
+      }
       if (feasible_path.DurationSeconds() < best_ub) {
         best_ub = feasible_path.DurationSeconds();
         best_paths.clear();
@@ -366,11 +463,16 @@ BranchAndBoundResult BranchAndBoundSolve(
                       << " " << feasible_path.merged_step.origin.time << " "
                       << feasible_path.merged_step.destination.time << "\n";
         }
-        // Prune nodes that can no longer beat the new UB.
+        // Prune nodes that can no longer beat the new UB (in
+        // collect_optimal_paths mode, nodes at LB == UB stay: they can still
+        // yield optimal-value paths).
         size_t old_size = q.size();
-        std::erase_if(q, [best_ub](const SearchNode& node) {
-          return node.parent_lb >= best_ub;
-        });
+        std::erase_if(
+            q, [best_ub, collect_optimal_paths](const SearchNode& node) {
+              return collect_optimal_paths ? node.parent_lb > best_ub
+                                           : node.parent_lb >= best_ub;
+            }
+        );
         size_t pruned_count = old_size - q.size();
         if (pruned_count > 0) {
           std::make_heap(q.begin(), q.end());
@@ -379,6 +481,52 @@ BranchAndBoundResult BranchAndBoundSolve(
           }
         }
       }
+    }
+
+    if (succession_branching) {
+      // Branch on the first LB-tour succession that isn't already required.
+      const TarelEdge* branch_tour_edge = nullptr;
+      for (const TarelEdge& e : lb_result.tour_edges) {
+        bool already_required = false;
+        for (const PlainEdge& r : cur_node.successions.required) {
+          if (r.a == e.origin.stop && r.b == e.destination.stop) {
+            already_required = true;
+            break;
+          }
+        }
+        if (!already_required) {
+          branch_tour_edge = &e;
+          break;
+        }
+      }
+      if (branch_tour_edge == nullptr) {
+        // Every succession of this tour is already required: the tour is fully
+        // determined and there is nothing left to branch on.
+        if (search_log != nullptr) {
+          *search_log << "  leaf: all successions required\n";
+        }
+        continue;
+      }
+      StopId succ_a = branch_tour_edge->origin.stop;
+      StopId succ_b = branch_tour_edge->destination.stop;
+      int child_lb = std::max(cur_node.parent_lb, lb_result.optimal_value);
+      PushQ(
+          state,
+          child_lb,
+          SearchEdge{
+              {ConstraintRequireSuccession{succ_a, succ_b}}, cur_node.edge_index
+          },
+          cur_node.successions
+      );
+      PushQ(
+          state,
+          child_lb,
+          SearchEdge{
+              {ConstraintForbidSuccession{succ_a, succ_b}}, cur_node.edge_index
+          },
+          cur_node.successions
+      );
+      continue;
     }
 
     std::vector<Step> primitive_steps;
@@ -451,16 +599,24 @@ BranchAndBoundResult BranchAndBoundSolve(
     PushQ(
         state,
         std::max(cur_node.parent_lb, lb_result.optimal_value),
-        SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index}
+        SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index},
+        cur_node.successions
     );
     PushQ(
         state,
         std::max(cur_node.parent_lb, lb_result.optimal_value),
-        SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index}
+        SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index},
+        cur_node.successions
     );
   }
 
-  return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+  return {
+      best_ub,
+      std::move(best_paths),
+      std::move(best_original_edges),
+      optimal_path_count,
+      static_cast<int64_t>(unique_optimal_stop_seqs.size())
+  };
 }
 
 }  // namespace vats5

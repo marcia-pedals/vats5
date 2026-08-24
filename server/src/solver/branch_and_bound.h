@@ -25,8 +25,29 @@ struct ConstraintForbidEdge {
   std::string Debug(const ProblemState& state) const;
 };
 
-using ProblemConstraint =
-    std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
+// Tour-level succession constraints (see SuccessionConstraints in
+// tarel_graph.h). Unlike the edge constraints above, these are not applied to
+// the minimal graph by ApplyConstraints; they are carried on the search node
+// and enforced when computing the tarel lower bound.
+struct ConstraintRequireSuccession {
+  StopId a;
+  StopId b;
+
+  std::string Debug(const ProblemState& state) const;
+};
+
+struct ConstraintForbidSuccession {
+  StopId a;
+  StopId b;
+
+  std::string Debug(const ProblemState& state) const;
+};
+
+using ProblemConstraint = std::variant<
+    ConstraintRequireEdge,
+    ConstraintForbidEdge,
+    ConstraintRequireSuccession,
+    ConstraintForbidSuccession>;
 
 std::string Debug(const ProblemConstraint& c, const ProblemState& state);
 
@@ -71,6 +92,11 @@ struct SearchNode {
   // around after we're done with it.
   std::unique_ptr<ProblemState> state;
 
+  // Accumulated tour-level succession constraints (from
+  // ConstraintRequireSuccession/ConstraintForbidSuccession edges on the path
+  // to this node). Enforced in the tarel lower bound, not in `state`.
+  SuccessionConstraints successions;
+
   bool operator<(const SearchNode& other) const {
     if (parent_lb == other.parent_lb) {
       return edge_index > other.edge_index;
@@ -89,14 +115,31 @@ struct BranchAndBoundResult {
   // original_edges from the state that produced best_paths, needed to expand
   // combined stops back to original stop IDs.
   std::unordered_map<StopId, PlainEdge> original_edges;
+
+  // Only populated when collect_optimal_paths is set: how many optimal-value
+  // paths the search encountered (counting duplicates), and how many distinct
+  // expanded stop sequences were among them.
+  int64_t optimal_path_count = 0;
+  int64_t unique_optimal_path_count = 0;
 };
 
+// When collect_optimal_paths is set, the search does not prune nodes whose
+// lower bound equals the best upper bound; instead it keeps exploring them
+// (only stopping once LB strictly exceeds UB) and collects every feasible path
+// it finds whose duration equals the optimal value, reporting total and unique
+// counts. Useful for diagnosing symmetric / near-isomorphic search nodes.
+// When succession_branching is set, the search branches on required-stop
+// successions of the LB tour (require: the tour leg leaving `a` goes to `b`;
+// forbid: it doesn't) instead of on individual minimal-graph steps. This makes
+// each branch a true partition of the tour space.
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
     int max_iter = -1,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    bool collect_optimal_paths = false,
+    bool succession_branching = false
 );
 
 }  // namespace vats5
