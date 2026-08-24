@@ -74,23 +74,6 @@ RC_GTEST_PROP(HeldKarpDpTest, SolveFindsOptimalValueOnConstrainedState, ()) {
       state.required.Representative(state.boundary.end)) {
     RC_DISCARD("constraints merged START and END into one group");
   }
-  // The brute-force oracle (via ComputeCompletedGraph) indexes out of bounds
-  // when a required stop appears in no step of `minimal`, which chained forbid
-  // constraints can cause. Such states can't be checked against it.
-  std::unordered_set<StopId> stops_with_steps;
-  for (const Step& step : state.minimal.AllSteps()) {
-    stops_with_steps.insert(step.origin.stop);
-    stops_with_steps.insert(step.destination.stop);
-  }
-  for (StopId stop : state.required.AllFlat()) {
-    if (!stops_with_steps.contains(stop)) {
-      RC_DISCARD("constraints left a required stop with no steps");
-    }
-  }
-  if (!stops_with_steps.contains(state.boundary.start) ||
-      !stops_with_steps.contains(state.boundary.end)) {
-    RC_DISCARD("constraints left a boundary stop with no steps");
-  }
 
   CheckSolvesOptimally(state);
 }
