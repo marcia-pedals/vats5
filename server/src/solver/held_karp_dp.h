@@ -2,6 +2,7 @@
 
 #include <ostream>
 #include <vector>
+
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 

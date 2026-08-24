@@ -1,9 +1,11 @@
 #include "solver/held_karp_dp.h"
+
 #include <algorithm>
 #include <format>
 #include <limits>
 #include <optional>
 #include <stdexcept>
+
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -64,14 +66,17 @@ std::optional<HKDPGraph> MakeHKDPGraph(
   }
 
   // Complete the graph for two reasons:
-  // - The DP repeatedly queries for shortest paths, so this does all the work upfront instead of repeating it.
-  // - Stop ids are part of the index into dp state, so we want to compact them, and to compact them we need to
-  // get rid of any non-required stops.
-  std::vector<Step> completed_steps = CompleteShortestPathsGraph(
-    state.minimal,
-    required_with_steps->AllFlat(),
-    HorizonCoveringAllDepartures(state.minimal)
-  ).AllMergedSteps();
+  // - The DP repeatedly queries for shortest paths, so this does all the work
+  // upfront instead of repeating it.
+  // - Stop ids are part of the index into dp state, so we want to compact them,
+  // and to compact them we need to get rid of any non-required stops.
+  std::vector<Step> completed_steps =
+      CompleteShortestPathsGraph(
+          state.minimal,
+          required_with_steps->AllFlat(),
+          HorizonCoveringAllDepartures(state.minimal)
+      )
+          .AllMergedSteps();
 
   // A required stop can also drop out here: one whose steps all lead to or
   // from non-required stops reaches no other required stop, so the completion
@@ -87,13 +92,14 @@ std::optional<HKDPGraph> MakeHKDPGraph(
 
   RequiredStops required_compacted;
   for (const auto& [stop, rep] : required_completed->representative) {
-    required_compacted.representative[StopId{compact.mapping.original_to_new[stop.v]}] =
-      StopId{compact.mapping.original_to_new[rep.v]};
+    required_compacted
+        .representative[StopId{compact.mapping.original_to_new[stop.v]}] =
+        StopId{compact.mapping.original_to_new[rep.v]};
   }
 
   return HKDPGraph{
-    .required = required_compacted,
-    .compact = compact,
+      .required = required_compacted,
+      .compact = compact,
   };
 }
 
@@ -167,7 +173,9 @@ struct NextDepartureTable {
   }
 };
 
-const StepGroup* FindGroupTo(const StepsAdjacencyList& adj_list, StopId a, StopId b) {
+const StepGroup* FindGroupTo(
+    const StepsAdjacencyList& adj_list, StopId a, StopId b
+) {
   for (const StepGroup& group : adj_list.GetGroups(a)) {
     if (group.destination_stop == b) {
       return &group;
@@ -185,10 +193,14 @@ std::optional<TimeSinceServiceStart> EarliestArrival(
 ) {
   std::optional<TimeSinceServiceStart> best;
   if (group.flex_step.has_value()) {
-    best = TimeSinceServiceStart{ready_time.seconds + group.flex_step->FlexDurationSeconds()};
+    best = TimeSinceServiceStart{
+        ready_time.seconds + group.flex_step->FlexDurationSeconds()
+    };
   }
   std::span<const AdjacencyListStep> steps = adj_list.GetSteps(group);
-  size_t step_idx = FindDepartureAtOrAfter(steps, adj_list.GetDepartureTimes(group), ready_time);
+  size_t step_idx = FindDepartureAtOrAfter(
+      steps, adj_list.GetDepartureTimes(group), ready_time
+  );
   if (step_idx < steps.size() &&
       (!best.has_value() || steps[step_idx].destination_time < *best)) {
     best = steps[step_idx].destination_time;
@@ -243,8 +255,8 @@ HeldKarpDPResult HeldKarpDPSolve(
     const ProblemState& state, std::ostream* search_log
 ) {
   HeldKarpDPResult infeasible{
-    .best_val = kUnreachable.seconds,
-    .best_path = {},
+      .best_val = kUnreachable.seconds,
+      .best_path = {},
   };
 
   StopId start = state.boundary.start;
@@ -285,15 +297,20 @@ HeldKarpDPResult HeldKarpDPSolve(
   std::vector<int> stop_id_to_mask_index(graph.required.size(), -1);
   std::vector<StopId> mask_index_to_representative_stop_id;
   for (const StopId& rep_stop_id : graph.required.GroupRepresentatives()) {
-    stop_id_to_mask_index[rep_stop_id.v] = mask_index_to_representative_stop_id.size();
+    stop_id_to_mask_index[rep_stop_id.v] =
+        mask_index_to_representative_stop_id.size();
     mask_index_to_representative_stop_id.push_back(rep_stop_id);
   }
-  for (StopId stop_id{0}; stop_id.v < stop_id_to_mask_index.size(); ++stop_id.v) {
+  for (StopId stop_id{0}; stop_id.v < stop_id_to_mask_index.size();
+       ++stop_id.v) {
     StopId rep_stop_id = graph.required.Representative(stop_id);
     assert(stop_id_to_mask_index[rep_stop_id.v] != -1);
     stop_id_to_mask_index[stop_id.v] = stop_id_to_mask_index[rep_stop_id.v];
   }
-  assert(mask_index_to_representative_stop_id.size() == graph.required.GroupRepresentatives().size());
+  assert(
+      mask_index_to_representative_stop_id.size() ==
+      graph.required.GroupRepresentatives().size()
+  );
 
   size_t n_groups = graph.required.GroupRepresentatives().size();
   size_t n_stops = graph.required.size();
@@ -301,8 +318,8 @@ HeldKarpDPResult HeldKarpDPSolve(
   int start_mask_index = stop_id_to_mask_index[compact_start.v];
 
   HeldKarpDPResult result{
-    .best_val = kUnreachable.seconds,
-    .best_path = {},
+      .best_val = kUnreachable.seconds,
+      .best_path = {},
   };
 
   TimeSinceServiceStart t_latest_dep{0};
@@ -312,7 +329,8 @@ HeldKarpDPResult HeldKarpDPSolve(
     }
   }
 
-  // `dp[mask * n_stops + j]` is the earliest time we can get to stop `j`, having visited all groups in `mask`.
+  // `dp[mask * n_stops + j]` is the earliest time we can get to stop `j`,
+  // having visited all groups in `mask`.
   size_t dp_state_size = (size_t{1} << n_groups) * n_stops;
   std::vector<TimeSinceServiceStart> dp(dp_state_size);
 
@@ -354,18 +372,21 @@ HeldKarpDPResult HeldKarpDPSolve(
 
           // Handle flex step.
           if (ab_group.flex_step.has_value()) {
-            TimeSinceServiceStart dest_time{a_time.seconds + ab_group.flex_step->FlexDurationSeconds()};
+            TimeSinceServiceStart dest_time{
+                a_time.seconds + ab_group.flex_step->FlexDurationSeconds()
+            };
             if (dest_time < dp_dest) {
               dp_dest = dest_time;
             }
           }
 
           // Handle scheduled step.
-          std::span<const AdjacencyListStep> group_steps = adj_list.GetSteps(ab_group);
+          std::span<const AdjacencyListStep> group_steps =
+              adj_list.GetSteps(ab_group);
           size_t next_step_idx = next_departure_table.Find(
-            group_steps,
-            static_cast<size_t>(&ab_group - adj_list.groups.data()),
-            a_time
+              group_steps,
+              static_cast<size_t>(&ab_group - adj_list.groups.data()),
+              a_time
           );
           if (next_step_idx < group_steps.size()) {
             const AdjacencyListStep& step = group_steps[next_step_idx];
@@ -407,7 +428,8 @@ HeldKarpDPResult HeldKarpDPSolve(
         // The leg into `cur_stop` must arrive by the departure already chosen
         // at `cur_stop` (for the final stop, by the optimal arrival itself).
         TimeSinceServiceStart required_arrival = best_path[i].departure;
-        size_t prev_mask = cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
+        size_t prev_mask =
+            cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
         bool found = false;
         for (StopId a{0}; a.v < n_stops; ++a.v) {
           if (((prev_mask >> stop_id_to_mask_index[a.v]) & 1) == 0) {
@@ -418,14 +440,18 @@ HeldKarpDPResult HeldKarpDPSolve(
             continue;
           }
           const StepGroup* group = FindGroupTo(adj_list, a, cur_stop);
-          if (group == nullptr || EarliestArrival(adj_list, *group, a_time) != dp_cur) {
+          if (group == nullptr ||
+              EarliestArrival(adj_list, *group, a_time) != dp_cur) {
             continue;
           }
-          std::optional<Leg> leg = LatestLeg(adj_list, *group, a_time, required_arrival);
+          std::optional<Leg> leg =
+              LatestLeg(adj_list, *group, a_time, required_arrival);
           if (!leg.has_value()) {
             // The dp transition itself departs at or after `a_time` and arrives
             // at dp_cur <= required_arrival, so a leg always exists.
-            throw std::logic_error("HeldKarpDPSolve backtracking: no leg arrives in time");
+            throw std::logic_error(
+                "HeldKarpDPSolve backtracking: no leg arrives in time"
+            );
           }
           best_path[i].arrival = leg->arrival;
           best_path[i - 1] = HeldKarpDPPathPoint{
@@ -439,7 +465,9 @@ HeldKarpDPResult HeldKarpDPSolve(
           break;
         }
         if (!found) {
-          throw std::logic_error("HeldKarpDPSolve backtracking: no predecessor reproduces dp value");
+          throw std::logic_error(
+              "HeldKarpDPSolve backtracking: no predecessor reproduces dp value"
+          );
         }
       }
       assert(cur_mask == size_t{1} << start_mask_index);
@@ -447,7 +475,8 @@ HeldKarpDPResult HeldKarpDPSolve(
       best_path[0].arrival = best_path[0].departure;
     }
 
-    int dur = best_path.back().arrival.seconds - best_path.front().departure.seconds;
+    int dur =
+        best_path.back().arrival.seconds - best_path.front().departure.seconds;
     t_start.seconds = best_path.front().departure.seconds + 1;
     if (dur < result.best_val) {
       result.best_val = dur;
@@ -456,10 +485,12 @@ HeldKarpDPResult HeldKarpDPSolve(
     if (result.best_val == 0) {
       // A zero-duration tour can't be beaten, so skip the rest of the sweep.
       // TODO: This is a workaround to handle a common property-test case.
-      // There is a more general problem: If there is a flex-only optimal tour, then we'll step forwards
-      // one second at a time until we find an optimal tour that is not flex-only. To fix this in general,
-      // we need to find a way to correctly jump to the next departure time, accounting for the
-      // possibility of flex prefixes. I think this won't happen much or ever in practice.
+      // There is a more general problem: If there is a flex-only optimal tour,
+      // then we'll step forwards one second at a time until we find an optimal
+      // tour that is not flex-only. To fix this in general, we need to find a
+      // way to correctly jump to the next departure time, accounting for the
+      // possibility of flex prefixes. I think this won't happen much or ever in
+      // practice.
       break;
     }
   }

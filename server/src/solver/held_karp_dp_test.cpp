@@ -5,7 +5,6 @@
 #include <rapidcheck/gtest.h>
 
 #include "rapidcheck/Log.h"
-
 #include "solver/test_util/naive_solve.h"
 #include "solver/test_util/problem_state_gen.h"
 
