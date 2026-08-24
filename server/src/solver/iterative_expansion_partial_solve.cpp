@@ -80,10 +80,10 @@ PartialSolution PartialSolveBranchAndBound(
     const ProblemState& original_problem,
     std::ostream* search_log,
     const SearchEventCallback& on_event,
-    std::optional<int> stop_at_ub
+    std::optional<int> known_lb
 ) {
   auto bb_result = BranchAndBoundSolve(
-      partial_problem, search_log, std::nullopt, -1, on_event, stop_at_ub
+      partial_problem, known_lb, search_log, std::nullopt, -1, on_event
   );
   if (bb_result.best_paths.empty()) {
     return PartialSolution{};

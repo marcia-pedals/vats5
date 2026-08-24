@@ -48,14 +48,14 @@ ProblemState MakePartialProblemState(
 // MakePartialProblemState built, by branch and bound over it.
 //
 // `search_log` may be null; `on_event` is called on each search event.
-// `stop_at_ub` is forwarded to BranchAndBoundSolve: the search stops as soon
+// `known_lb` is forwarded to BranchAndBoundSolve: the search stops as soon
 // as its incumbent UB is <= this value.
 PartialSolution PartialSolveBranchAndBound(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
     std::ostream* search_log,
     const SearchEventCallback& on_event = nullptr,
-    std::optional<int> stop_at_ub = std::nullopt
+    std::optional<int> known_lb = std::nullopt
 );
 
 // Solves the same partial problem as PartialSolveBranchAndBound, by trying

@@ -637,10 +637,6 @@ int main(int argc, char* argv[]) {
   std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
-  // The previous iteration's optimal duration. Each iteration's required
-  // subset contains the previous one's, so the optimum is non-decreasing
-  // across iterations, and a search whose incumbent UB reaches the previous
-  // optimum can stop immediately: that UB is optimal.
   std::optional<int> prev_iteration_optimal;
 
   try {
