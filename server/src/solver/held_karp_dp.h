@@ -8,18 +8,14 @@
 
 namespace vats5 {
 
-struct HeldKarpDPPathPoint {
-  StopId stop;
-  TimeSinceServiceStart arrival;
-  TimeSinceServiceStart departure;
-};
-
 struct HeldKarpDPResult {
   // Duration of the best tour, or INT_MAX if the problem is infeasible (in
-  // which case best_path is empty).
+  // which case best_tour is empty).
   int best_val;
 
-  std::vector<HeldKarpDPPathPoint> best_path;
+  // The visited stops in visit order, from the boundary START to the boundary
+  // END.
+  std::vector<StopId> best_tour;
 };
 
 HeldKarpDPResult HeldKarpDPSolve(

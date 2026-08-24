@@ -55,11 +55,10 @@ int main(int argc, char* argv[]) {
 
   std::cout << "\nBest duration: " << TimeSinceServiceStart{result.best_val}
             << "\n";
-  if (!result.best_path.empty()) {
-    std::cout << "Tour (" << result.best_path.size() << " stops):\n";
-    for (const auto& point : result.best_path) {
-      std::cout << "  " << state.StopName(point.stop) << " (arrive "
-                << point.arrival << ", depart " << point.departure << ")\n";
+  if (!result.best_tour.empty()) {
+    std::cout << "Tour (" << result.best_tour.size() << " stops):\n";
+    for (StopId stop : result.best_tour) {
+      std::cout << "  " << state.StopName(stop) << "\n";
     }
   }
 

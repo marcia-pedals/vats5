@@ -135,7 +135,7 @@ target_include_directories(tarel_graph PUBLIC src)
 
 # Create held_karp_dp library target
 add_library(held_karp_dp STATIC src/solver/held_karp_dp.cpp)
-target_link_libraries(held_karp_dp PUBLIC tarel_graph steps_shortest_path)
+target_link_libraries(held_karp_dp PUBLIC tarel_graph tour_paths steps_shortest_path)
 target_include_directories(held_karp_dp PUBLIC src)
 
 # Create sqlite_wrapper library target

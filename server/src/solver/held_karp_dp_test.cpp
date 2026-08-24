@@ -20,15 +20,11 @@ void CheckSolvesOptimally(const ProblemState& state) {
   HeldKarpDPResult result = HeldKarpDPSolve(state, &RC_LOG());
   RC_ASSERT(BruteForceSolveOptimalDuration(state) == result.best_val);
 
-  if (result.best_path.empty()) {
+  if (result.best_tour.empty()) {
     return;
   }
-  std::vector<StopId> tour;
-  for (const HeldKarpDPPathPoint& point : result.best_path) {
-    tour.push_back(point.stop);
-  }
   std::vector<Path> paths =
-      ComputeMinimalFeasiblePathsAlong(tour, state.minimal);
+      ComputeMinimalFeasiblePathsAlong(result.best_tour, state.minimal);
   RC_ASSERT(!paths.empty());
   int best_duration = std::numeric_limits<int>::max();
   for (const Path& path : paths) {
