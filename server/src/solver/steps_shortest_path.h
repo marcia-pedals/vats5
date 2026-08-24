@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "solver/data.h"
 #include "solver/relaxed_adjacency_list.h"
 #include "solver/steps_adjacency_list.h"
@@ -21,6 +23,15 @@ struct StopIdVectorHash {
     return seed;
   }
 };
+
+// Return index of the first fixed-schedule step departing >= `t`, or
+// steps.size() if none found.
+// Precondition: `steps` contains only fixed-schedule steps (no flex).
+size_t FindDepartureAtOrAfter(
+    std::span<const AdjacencyListStep> steps,
+    std::span<const int16_t> departure_times_packed,
+    TimeSinceServiceStart t
+);
 
 // A cache of A*-like heuristics for FindShortestPathsAtTime.
 struct HeuristicCache {
