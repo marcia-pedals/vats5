@@ -318,17 +318,14 @@ BranchAndBoundResult BranchAndBoundSolve(
     // on `minimal` itself, so combined stops and their rides are priced in.
     if (state.required.GroupRepresentatives().size() <= kMaxHeldKarpGroups) {
       HeldKarpDPResult hk = HeldKarpDPSolve(state, known_lb, search_log);
-      if (hk.best_path.empty()) {
+      if (hk.best_tour.empty()) {
         if (search_log != nullptr) {
           *search_log << "  infeasible from held-karp\n";
         }
         continue;
       }
 
-      std::vector<StopId> tour;
-      for (const HeldKarpDPPathPoint& point : hk.best_path) {
-        tour.push_back(point.stop);
-      }
+      const std::vector<StopId>& tour = hk.best_tour;
       std::vector<Path> exact_paths =
           ComputeMinimalFeasiblePathsAlong(tour, state.minimal);
       // A tour the DP found is realizable in `minimal`, and no path along it
