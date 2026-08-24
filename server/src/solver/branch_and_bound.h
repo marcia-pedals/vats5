@@ -91,12 +91,17 @@ struct BranchAndBoundResult {
   std::unordered_map<StopId, PlainEdge> original_edges;
 };
 
+// `stop_at_ub`: if given, the search returns as soon as the incumbent UB is
+// <= this value. Use when an external argument proves no path can be shorter
+// (e.g. the optimum of a sub-problem of this problem), making such a UB
+// optimal without needing the LB to catch up.
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
     std::ostream* search_log,
     std::optional<std::string> run_dir = std::nullopt,
     int max_iter = -1,
-    const SearchEventCallback& on_event = nullptr
+    const SearchEventCallback& on_event = nullptr,
+    std::optional<int> stop_at_ub = std::nullopt
 );
 
 }  // namespace vats5
