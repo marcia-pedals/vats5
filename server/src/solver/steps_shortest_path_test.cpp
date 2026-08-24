@@ -1261,6 +1261,26 @@ TEST(ShortestPathTest, SuboptimalDepartureTimeExposure) {
   EXPECT_EQ(path_steps.back().destination.time.seconds, 210);
 }
 
+TEST(ShortestPathTest, CompleteShortestPathsGraphWithStepLessSystemStop) {
+  // A system stop that appears in no step at all falls outside the relaxed
+  // adjacency list the completion builds for its A* heuristic, which used to
+  // make it index out of bounds. It must instead complete the rest of the
+  // graph and produce no paths for the step-less stop.
+  std::vector<Step> steps = {
+      Step::PrimitiveFlex(StopId{0}, StopId{1}, 10, TripId{1}),
+      Step::PrimitiveFlex(StopId{1}, StopId{2}, 10, TripId{2}),
+  };
+  StepsAdjacencyList list = MakeAdjacencyList(steps);
+
+  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(
+      list, {StopId{0}, StopId{2}, StopId{5}}, 24 * 3600
+  );
+
+  EXPECT_FALSE(completed.PathsBetween(StopId{0}, StopId{2}).empty());
+  EXPECT_TRUE(completed.PathsBetween(StopId{0}, StopId{5}).empty());
+  EXPECT_TRUE(completed.PathsBetween(StopId{5}, StopId{2}).empty());
+}
+
 TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   const auto test_data = GetCachedFilteredTestData(
       {"../data/raw_RG_202506", "20250718", {"BA:"}, false}
