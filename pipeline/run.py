@@ -34,17 +34,31 @@ the same source are pruned, which does not affect the rows already written for
 them.
 
 Problem specs are read from the database, so run pipeline/sync_configs.py first.
-Each one is solved for --service-dates days running from the date it starts at:
-the day after the fetch, or the `start_service_date` the spec pins itself to.
+Only specs with sync = true are in the database, so those are the ones a source
+run solves. Each one is solved for --service-dates days running from the date
+it starts at: the day after the fetch, or the `start_service_date` the spec
+pins itself to.
+
+Alternatively, --problem-spec takes the path of one problem spec TOML and runs
+just that spec, reading it and its target stops from problem_configs/ instead
+of the database and storing nothing in the database. This is how specs with
+sync = false are run.
+
+With --no-solve, the run stops after initializing the first service date of the
+first spec: everything up to the solver runs as usual, and then the
+iterative_expansion command that would have been run is printed instead of run,
+with nothing stored in the database.
 
 Usage:
     python3 pipeline/run.py GTFS_SOURCE_ID [--service-dates N] [--solve-timeout S]
+    python3 pipeline/run.py --problem-spec PATH [--service-dates N] [...]
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -64,7 +78,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gtfs_feed import FeedDownloadError  # noqa: E402
 from gtfs_sources import GTFS_SOURCES, UnknownGtfsSource, get_source  # noqa: E402
-from sync_configs import database_url  # noqa: E402
+from sync_configs import (  # noqa: E402
+    CONFIGS_DIR,
+    PROBLEM_SPEC_COLUMNS,
+    PROBLEM_SPEC_FLAGS,
+    TARGET_STOPS_COLUMNS,
+    SyncError,
+    database_url,
+    load_config,
+)
 
 PIPELINE_ROOT = Path.home() / "vats5-pipeline"
 BUILD_DIR = REPO_ROOT / "server" / "build-debug"
@@ -215,6 +237,63 @@ def shift_trace(node: dict[str, Any], offset: float) -> dict[str, Any]:
     return shifted
 
 
+def write_solver_inputs(
+    spec: dict[str, Any], spec_dir: Path, feed_dir: Path, service_date: str
+) -> tuple[Path, Path]:
+    """Write one instance's world.toml and target_stops.toml; returns the paths."""
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    world_toml = spec_dir / "world.toml"
+    target_stops_toml = spec_dir / "target_stops.toml"
+    write_world_toml(
+        world_toml, feed_dir, service_date, spec["data"].get("trip_id_prefixes", [])
+    )
+    write_target_stops_toml(target_stops_toml, spec["target_stops_data"])
+    return world_toml, target_stops_toml
+
+
+def initialize_command(
+    spec_data: dict[str, Any],
+    world_toml: Path,
+    target_stops_toml: Path,
+    problem_state: Path,
+    solved_patterns_json: Path,
+) -> list[str]:
+    command = [
+        str(tool_path("initialize_problem_state")),
+        str(world_toml),
+        str(target_stops_toml),
+        str(problem_state),
+        "--solved-service-patterns",
+        str(solved_patterns_json),
+    ]
+    if "max_walking_distance" in spec_data:
+        command += [
+            "--max-walking-distance",
+            str(spec_data["max_walking_distance"]),
+        ]
+    if "walking_speed" in spec_data:
+        command += ["--walking-speed", str(spec_data["walking_speed"])]
+    return command
+
+
+def expansion_command(
+    problem_state: Path,
+    solution_json: Path,
+    spec_dir: Path,
+    solve_timeout_seconds: float,
+) -> list[str]:
+    return [
+        str(tool_path("iterative_expansion")),
+        str(problem_state),
+        "--solution_json",
+        str(solution_json),
+        "--intermediate_output_dir",
+        str(spec_dir / "iterations"),
+        "--timeout",
+        str(solve_timeout_seconds),
+    ]
+
+
 def active_services_path(problem_state: Path) -> Path:
     """Where initialize_problem_state writes its service pattern.
 
@@ -246,38 +325,23 @@ def solve_one(
     The solution info carries a `trace` of how long each part took: the two
     tools as timed here, with whatever spans they reported nested underneath.
     """
-    spec_dir.mkdir(parents=True, exist_ok=True)
-
-    world_toml = spec_dir / "world.toml"
-    target_stops_toml = spec_dir / "target_stops.toml"
+    world_toml, target_stops_toml = write_solver_inputs(
+        spec, spec_dir, feed_dir, service_date
+    )
     problem_state = spec_dir / "problem_state.json"
     solution_json = spec_dir / "solution.json"
 
-    spec_data = spec["data"]
-    write_world_toml(
-        world_toml, feed_dir, service_date, spec_data.get("trip_id_prefixes", [])
-    )
-    write_target_stops_toml(target_stops_toml, spec["target_stops_data"])
-
-    initialize_command = [
-        str(tool_path("initialize_problem_state")),
-        str(world_toml),
-        str(target_stops_toml),
-        str(problem_state),
-        "--solved-service-patterns",
-        str(solved_patterns_json),
-    ]
-    if "max_walking_distance" in spec_data:
-        initialize_command += [
-            "--max-walking-distance",
-            str(spec_data["max_walking_distance"]),
-        ]
-    if "walking_speed" in spec_data:
-        initialize_command += ["--walking-speed", str(spec_data["walking_speed"])]
-
     started = time.monotonic()
     returncode = run_tool(
-        initialize_command, spec_dir / "initialize_problem_state.log", timeout=None
+        initialize_command(
+            spec["data"],
+            world_toml,
+            target_stops_toml,
+            problem_state,
+            solved_patterns_json,
+        ),
+        spec_dir / "initialize_problem_state.log",
+        timeout=None,
     )
     initialize_node = trace_node(
         "initialize_problem_state", 0.0, time.monotonic() - started
@@ -345,16 +409,9 @@ def solve_one(
         else None
     )
     returncode = run_tool(
-        [
-            str(tool_path("iterative_expansion")),
-            str(problem_state),
-            "--solution_json",
-            str(solution_json),
-            "--intermediate_output_dir",
-            str(spec_dir / "iterations"),
-            "--timeout",
-            str(solve_timeout_seconds),
-        ],
+        expansion_command(
+            problem_state, solution_json, spec_dir, solve_timeout_seconds
+        ),
         spec_dir / "iterative_expansion.log",
         timeout=kill_timeout,
     )
@@ -431,6 +488,79 @@ def load_specs(cursor: psycopg.Cursor, gtfs_source_id: str) -> list[dict[str, An
     return specs
 
 
+def load_spec_from_file(spec_path: Path) -> dict[str, Any]:
+    """Load one problem spec TOML plus the target stops config it names.
+
+    Returns the shape load_specs produces, with the gtfs_source_id the run
+    needs to pick the feed. The target stops are found by id among the configs
+    under problem_configs/target_stops, whatever their file names.
+    """
+    spec = load_config(spec_path, PROBLEM_SPEC_COLUMNS, PROBLEM_SPEC_FLAGS)
+    for flag in PROBLEM_SPEC_FLAGS:
+        del spec[flag]  # directives for sync_configs, meaningless here
+
+    stops_dir = CONFIGS_DIR / "target_stops"
+    for stops_path in sorted(stops_dir.glob("*.toml")):
+        stops = load_config(stops_path, TARGET_STOPS_COLUMNS)
+        if stops["target_stops_id"] != spec["target_stops_id"]:
+            continue
+        if stops["gtfs_source_id"] != spec["gtfs_source_id"]:
+            raise RunError(
+                f"{spec_path} has gtfs_source_id {spec['gtfs_source_id']!r} "
+                f"but its target stops {stops_path} belong to "
+                f"{stops['gtfs_source_id']!r}"
+            )
+        spec["target_stops_data"] = stops["data"]
+        return spec
+    raise RunError(
+        f"no config under {stops_dir} has target_stops_id "
+        f"{spec['target_stops_id']!r} (referenced by {spec_path})"
+    )
+
+
+def initialize_and_print_solve_command(
+    spec: dict[str, Any],
+    spec_dir: Path,
+    feed_dir: Path,
+    service_date: str,
+    solved_patterns_json: Path,
+    solve_timeout_seconds: float,
+) -> None:
+    """The --no-solve endpoint: initialize one instance, print its solve command."""
+    world_toml, target_stops_toml = write_solver_inputs(
+        spec, spec_dir, feed_dir, service_date
+    )
+    problem_state = spec_dir / "problem_state.json"
+    log_path = spec_dir / "initialize_problem_state.log"
+    returncode = run_tool(
+        initialize_command(
+            spec["data"],
+            world_toml,
+            target_stops_toml,
+            problem_state,
+            solved_patterns_json,
+        ),
+        log_path,
+        timeout=None,
+    )
+    if returncode != 0:
+        raise RunError(
+            f"initialize_problem_state failed (exit {returncode}) -- see {log_path}"
+        )
+    print("initialized but not solved; to solve, run:")
+    print(
+        "  "
+        + shlex.join(
+            expansion_command(
+                problem_state,
+                spec_dir / "solution.json",
+                spec_dir,
+                solve_timeout_seconds,
+            )
+        )
+    )
+
+
 def spec_service_dates(
     spec: dict[str, Any], service_date_count: int
 ) -> list[str]:
@@ -461,10 +591,18 @@ def spec_service_dates(
 
 
 def main(
-    gtfs_source_id: str, service_date_count: int, solve_timeout_seconds: float
+    gtfs_source_id: str | None,
+    problem_spec_path: Path | None,
+    service_date_count: int,
+    solve_timeout_seconds: float,
+    no_solve: bool,
 ) -> None:
-    # Resolve the source and both tools up front so an unknown source or a
-    # missing build fails before downloading.
+    # Resolve the spec or source and both tools up front, so a broken config,
+    # an unknown source or a missing build fails before downloading.
+    specs: list[dict[str, Any]] | None = None
+    if problem_spec_path is not None:
+        specs = [load_spec_from_file(problem_spec_path)]
+        gtfs_source_id = specs[0]["gtfs_source_id"]
     source = get_source(gtfs_source_id)
     tool_path("initialize_problem_state")
     tool_path("iterative_expansion")
@@ -480,13 +618,38 @@ def main(
     file_count = source.download(feed_dir)
     print(f"downloaded {file_count} GTFS files for {source.title} to {feed_dir}")
 
-    with db() as cursor:
-        specs = load_specs(cursor, gtfs_source_id)
-        cursor.execute(
-            "INSERT INTO gtfs_instance (gtfs_instance_id, gtfs_source_id, "
-            "fetched_at) VALUES (%s, %s, %s)",
-            (run_id, gtfs_source_id, fetched_at),
+    # A --problem-spec run reads its config from the file and stores nothing in
+    # the database (its spec may not even be synced there); everything it
+    # produces stays in the run directory. A --no-solve run stores nothing
+    # either, since it produces no solutions.
+    store = problem_spec_path is None and not no_solve
+    if specs is None or store:
+        with db() as cursor:
+            if specs is None:
+                specs = load_specs(cursor, gtfs_source_id)
+            if store:
+                cursor.execute(
+                    "INSERT INTO gtfs_instance (gtfs_instance_id, "
+                    "gtfs_source_id, fetched_at) VALUES (%s, %s, %s)",
+                    (run_id, gtfs_source_id, fetched_at),
+                )
+
+    if no_solve:
+        spec = specs[0]
+        spec_id = spec["problem_spec_id"]
+        service_date = spec_service_dates(spec, service_date_count)[0]
+        print(f"{spec_id}: {service_date} only (--no-solve)")
+        patterns_json = run_dir / f"service_patterns_{spec_id}.json"
+        patterns_json.write_text(json.dumps([]))
+        initialize_and_print_solve_command(
+            spec,
+            run_dir / f"service_{service_date}" / spec_id,
+            feed_dir,
+            service_date,
+            patterns_json,
+            solve_timeout_seconds,
         )
+        return
 
     # Kept per spec: which services matter depends on the spec's target stops
     # and walking options, so patterns are not comparable across specs.
@@ -529,24 +692,26 @@ def main(
             # One connection per instance, opened once the solve it stores is
             # over: a connection older than the solve would be dead by now. Each
             # one commits on its own, so a later failure keeps this work.
-            with db() as cursor:
-                cursor.execute(
-                    "INSERT INTO problem_instance (problem_instance_id, "
-                    "gtfs_source_id, gtfs_instance_id, problem_spec_id, "
-                    "service_date, data) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (
-                        f"{run_id}-{spec_id}-{service_date}",
-                        gtfs_source_id,
-                        run_id,
-                        spec_id,
-                        service_date,
-                        Jsonb(solution),
-                    ),
-                )
+            if store:
+                with db() as cursor:
+                    cursor.execute(
+                        "INSERT INTO problem_instance (problem_instance_id, "
+                        "gtfs_source_id, gtfs_instance_id, problem_spec_id, "
+                        "service_date, data) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (
+                            f"{run_id}-{spec_id}-{service_date}",
+                            gtfs_source_id,
+                            run_id,
+                            spec_id,
+                            service_date,
+                            Jsonb(solution),
+                        ),
+                    )
 
     print(
         f"done: {total} problem instances, {skipped} of them skipped as "
         "duplicates of an earlier service date"
+        + ("" if store else " (nothing stored in the database)")
     )
 
 
@@ -554,8 +719,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "gtfs_source_id",
+        nargs="?",
         choices=sorted(GTFS_SOURCES),
         help="which GTFS source to fetch and solve, as named in gtfs_sources.py",
+    )
+    parser.add_argument(
+        "--problem-spec",
+        type=Path,
+        metavar="PATH",
+        help="path to one problem_spec TOML: run only that spec, reading it "
+        "from the file instead of the database and storing nothing in the "
+        "database (this is how sync = false specs are run)",
+    )
+    parser.add_argument(
+        "--no-solve",
+        action="store_true",
+        help="stop after initializing the first spec's first service date and "
+        "print the iterative_expansion command instead of running it",
     )
     parser.add_argument(
         "--service-dates",
@@ -572,13 +752,21 @@ if __name__ == "__main__":
         f"completion (default {DEFAULT_SOLVE_TIMEOUT_SECONDS})",
     )
     args = parser.parse_args()
+    if (args.gtfs_source_id is None) == (args.problem_spec is None):
+        parser.error("pass exactly one of GTFS_SOURCE_ID or --problem-spec")
     if args.service_dates < 1:
         parser.error("--service-dates must be at least 1")
     if args.solve_timeout < 0:
         parser.error("--solve-timeout must not be negative")
 
     try:
-        main(args.gtfs_source_id, args.service_dates, args.solve_timeout)
-    except (RunError, UnknownGtfsSource, FeedDownloadError) as error:
+        main(
+            args.gtfs_source_id,
+            args.problem_spec,
+            args.service_dates,
+            args.solve_timeout,
+            args.no_solve,
+        )
+    except (RunError, SyncError, UnknownGtfsSource, FeedDownloadError) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)
