@@ -1,10 +1,12 @@
 #include "solver/held_karp_dp.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <format>
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -332,6 +334,20 @@ HeldKarpDPResult HeldKarpDPSolve(
   size_t dp_state_size = (size_t{1} << n_mid_groups) * n_stops;
   std::vector<TimeSinceServiceStart> dp(dp_state_size);
 
+  // `back[s]` is the stop the transition that set `dp[s]` came from (START for
+  // the base case). Kept separate from `dp` so the hot loop only touches `dp`.
+  // One byte per state, which bounds the stop ids it can hold.
+  if (n_stops > 256) {
+    throw std::invalid_argument(
+        "HeldKarpDPSolve: back-pointers require at most 256 stops in the "
+        "compacted graph, got " +
+        std::to_string(n_stops)
+    );
+  }
+  // Never re-filled between sweep iterations: `back[s]` is only read where
+  // `dp[s]` is reachable, and every `dp` write pairs with a `back` write.
+  std::vector<uint8_t> back(dp_state_size);
+
   NextDepartureTable next_departure_table =
       NextDepartureTable::Build(graph.compact.list);
 
@@ -351,10 +367,10 @@ HeldKarpDPResult HeldKarpDPSolve(
       }
       std::optional<TimeSinceServiceStart> arrival =
           EarliestArrival(adj_list, group, t_start);
-      TimeSinceServiceStart& dp_dest =
-          dp[(size_t{1} << b_mask_index) * n_stops + b.v];
-      if (arrival.has_value() && *arrival < dp_dest) {
-        dp_dest = *arrival;
+      size_t dest_index = (size_t{1} << b_mask_index) * n_stops + b.v;
+      if (arrival.has_value() && *arrival < dp[dest_index]) {
+        dp[dest_index] = *arrival;
+        back[dest_index] = static_cast<uint8_t>(compact_start.v);
       }
     }
 
@@ -382,15 +398,16 @@ HeldKarpDPResult HeldKarpDPSolve(
             // `b` is already in `mask`, so don't revisit.
             continue;
           }
-          TimeSinceServiceStart& dp_dest = dp[mask_with_b * n_stops + b.v];
+          size_t dest_index = mask_with_b * n_stops + b.v;
 
           // Handle flex step.
           if (ab_group.flex_step.has_value()) {
             TimeSinceServiceStart dest_time{
                 a_time.seconds + ab_group.flex_step->FlexDurationSeconds()
             };
-            if (dest_time < dp_dest) {
-              dp_dest = dest_time;
+            if (dest_time < dp[dest_index]) {
+              dp[dest_index] = dest_time;
+              back[dest_index] = static_cast<uint8_t>(a.v);
             }
           }
 
@@ -404,8 +421,9 @@ HeldKarpDPResult HeldKarpDPSolve(
           );
           if (next_step_idx < group_steps.size()) {
             const AdjacencyListStep& step = group_steps[next_step_idx];
-            if (step.destination_time < dp_dest) {
-              dp_dest = step.destination_time;
+            if (step.destination_time < dp[dest_index]) {
+              dp[dest_index] = step.destination_time;
+              back[dest_index] = static_cast<uint8_t>(a.v);
             }
           }
         }
@@ -416,6 +434,7 @@ HeldKarpDPResult HeldKarpDPSolve(
     // every middle group visited (or directly from START when there are none).
     size_t full_mask = (size_t{1} << n_mid_groups) - 1;
     TimeSinceServiceStart best_arrival = kUnreachable;
+    StopId best_final_stop = compact_start;
     if (n_mid_groups == 0) {
       const StepGroup* group =
           FindGroupTo(adj_list, compact_start, compact_end);
@@ -440,6 +459,7 @@ HeldKarpDPResult HeldKarpDPSolve(
             EarliestArrival(adj_list, *group, j_time);
         if (arrival.has_value() && *arrival < best_arrival) {
           best_arrival = *arrival;
+          best_final_stop = j;
         }
       }
     }
@@ -450,12 +470,10 @@ HeldKarpDPResult HeldKarpDPSolve(
       break;
     }
 
-    // Backtrack to START using only the dp values: at each state, find a
-    // predecessor stop whose dp value reproduces this state's arrival time via
-    // some step (START itself, ready at `t_start`, once every middle bit is
-    // spent). The reported times are then re-derived against the departure
-    // already fixed at this state, so a departure later than the one the dp
-    // actually propagated is preferred when one still arrives in time.
+    // Backtrack to START by following the back-pointers. The reported times
+    // are re-derived against the departure already fixed at each point, so a
+    // departure later than the one the dp actually propagated is preferred
+    // when one still arrives in time.
     size_t n_points = n_mid_groups + 2;
     std::vector<HeldKarpDPPathPoint> best_path(n_points);
     {
@@ -467,71 +485,50 @@ HeldKarpDPResult HeldKarpDPSolve(
           best_arrival,
       };
       for (size_t i = n_points - 1; i > 0; --i) {
-        // At END the dp value is the collected optimal arrival; END has no
-        // mask bit, so the predecessor still has the full mask.
-        bool at_end = i == n_points - 1;
-        TimeSinceServiceStart dp_cur =
-            at_end ? best_arrival : dp[cur_mask * n_stops + cur_stop.v];
+        // The stop the leg into `cur_stop` leaves from: END has no dp state,
+        // so its predecessor is the final stop the collection above chose;
+        // a middle stop's predecessor is its back-pointer (START for seeds).
+        // END also has no mask bit, so its predecessor keeps the full mask.
+        StopId prev_stop;
+        size_t prev_mask;
+        if (cur_stop == compact_end) {
+          prev_stop = best_final_stop;
+          prev_mask = cur_mask;
+        } else {
+          prev_stop = StopId{back[cur_mask * n_stops + cur_stop.v]};
+          prev_mask =
+              cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
+        }
+        TimeSinceServiceStart prev_time =
+            prev_stop == compact_start ? t_start
+                                       : dp[prev_mask * n_stops + prev_stop.v];
+
         // The leg into `cur_stop` must arrive by the departure already chosen
         // at `cur_stop` (for the final stop, by the optimal arrival itself).
         TimeSinceServiceStart required_arrival = best_path[i].departure;
-        size_t prev_mask =
-            at_end
-                ? cur_mask
-                : cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
-
-        auto TryPredecessor = [&](StopId a,
-                                  TimeSinceServiceStart a_time) -> bool {
-          const StepGroup* group = FindGroupTo(adj_list, a, cur_stop);
-          if (group == nullptr ||
-              EarliestArrival(adj_list, *group, a_time) != dp_cur) {
-            return false;
-          }
-          std::optional<Leg> leg =
-              LatestLeg(adj_list, *group, a_time, required_arrival);
-          if (!leg.has_value()) {
-            // The dp transition itself departs at or after `a_time` and arrives
-            // at dp_cur <= required_arrival, so a leg always exists.
-            throw std::logic_error(
-                "HeldKarpDPSolve backtracking: no leg arrives in time"
-            );
-          }
-          best_path[i].arrival = leg->arrival;
-          best_path[i - 1] = HeldKarpDPPathPoint{
-              graph.compact.mapping.new_to_original[a.v],
-              a_time,  // Placeholder; overwritten by the next iteration.
-              leg->departure,
-          };
-          cur_mask = prev_mask;
-          cur_stop = a;
-          return true;
-        };
-
-        bool found = false;
-        if (prev_mask == 0) {
-          // All middle bits are spent, so the predecessor is START itself.
-          found = TryPredecessor(compact_start, t_start);
-        } else {
-          for (StopId a{0}; a.v < n_stops; ++a.v) {
-            int a_mask_index = stop_id_to_mask_index[a.v];
-            if (a_mask_index == -1 || ((prev_mask >> a_mask_index) & 1) == 0) {
-              continue;
-            }
-            TimeSinceServiceStart a_time = dp[prev_mask * n_stops + a.v];
-            if (a_time == kUnreachable) {
-              continue;
-            }
-            if (TryPredecessor(a, a_time)) {
-              found = true;
-              break;
-            }
-          }
-        }
-        if (!found) {
+        const StepGroup* group = FindGroupTo(adj_list, prev_stop, cur_stop);
+        if (group == nullptr) {
           throw std::logic_error(
-              "HeldKarpDPSolve backtracking: no predecessor reproduces dp value"
+              "HeldKarpDPSolve backtracking: no step group along back-pointer"
           );
         }
+        std::optional<Leg> leg =
+            LatestLeg(adj_list, *group, prev_time, required_arrival);
+        if (!leg.has_value()) {
+          // The dp transition itself departs at or after `prev_time` and
+          // arrives by `required_arrival`, so a leg always exists.
+          throw std::logic_error(
+              "HeldKarpDPSolve backtracking: no leg arrives in time"
+          );
+        }
+        best_path[i].arrival = leg->arrival;
+        best_path[i - 1] = HeldKarpDPPathPoint{
+            graph.compact.mapping.new_to_original[prev_stop.v],
+            prev_time,  // Placeholder; overwritten by the next iteration.
+            leg->departure,
+        };
+        cur_mask = prev_mask;
+        cur_stop = prev_stop;
       }
       assert(cur_mask == 0);
       assert(cur_stop == compact_start);
