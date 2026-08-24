@@ -11,6 +11,10 @@ config is gone are deleted along with everything that depends on them -- a
 deleted problem_spec takes its problem_instances (the stored solutions) with it,
 and a deleted gtfs_source takes its gtfs_instances too.
 
+Every problem spec declares `sync = true` or `sync = false`. Only the true ones
+are synced; a spec with sync = false is treated as if its config were gone, and
+is run by hand with pipeline/run.py --problem-spec instead.
+
 Usage:
     python3 pipeline/sync_configs.py
 
@@ -40,6 +44,12 @@ ENV_FILE = REPO_ROOT / "solution-viewer" / ".env.local"
 # is carried through as the row's JSONB `data`.
 TARGET_STOPS_COLUMNS = ("target_stops_id", "gtfs_source_id", "title")
 PROBLEM_SPEC_COLUMNS = ("problem_spec_id", "gtfs_source_id", "target_stops_id", "title")
+
+# Boolean keys that steer the pipeline rather than describe the problem; they
+# are read out of the config and never written to the database. `sync` says
+# whether the spec belongs in the database at all -- a spec with sync = false
+# is run by hand with pipeline/run.py --problem-spec instead.
+PROBLEM_SPEC_FLAGS = ("sync",)
 
 # Rows whose config is gone, as (table, primary key, condition on the ids the
 # configs still define). Each condition matches the rows that are stale
@@ -96,14 +106,26 @@ def database_url() -> str:
     raise SyncError(f"DATABASE_URL is not set and {ENV_FILE} does not define it")
 
 
-def load_config(path: Path, columns: tuple[str, ...]) -> dict[str, Any]:
-    """Read a config TOML into a row: named columns plus everything else as data."""
+def load_config(
+    path: Path, columns: tuple[str, ...], flags: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """Read a config TOML into a row: named columns plus everything else as data.
+
+    `flags` are required boolean keys that end up top-level in the row like the
+    columns do, but are pipeline directives rather than row content, so they
+    stay out of `data` and it is the caller's job to pop them before the row
+    reaches the database.
+    """
     with path.open("rb") as handle:
         config = tomllib.load(handle)
 
-    missing = [column for column in columns if column not in config]
+    missing = [key for key in columns + flags if key not in config]
     if missing:
         raise SyncError(f"{path}: missing required key(s): {', '.join(missing)}")
+
+    for flag in flags:
+        if not isinstance(config[flag], bool):
+            raise SyncError(f"{path}: {flag} must be a boolean, got {config[flag]!r}")
 
     if config["gtfs_source_id"] not in GTFS_SOURCES:
         raise SyncError(
@@ -112,19 +134,25 @@ def load_config(path: Path, columns: tuple[str, ...]) -> dict[str, Any]:
             f"({', '.join(sorted(GTFS_SOURCES))})"
         )
 
-    row = {column: config[column] for column in columns}
-    row["data"] = {key: value for key, value in config.items() if key not in columns}
+    row = {key: config[key] for key in columns + flags}
+    row["data"] = {
+        key: value
+        for key, value in config.items()
+        if key not in columns and key not in flags
+    }
     return row
 
 
-def load_dir(subdir: str, columns: tuple[str, ...]) -> list[dict[str, Any]]:
+def load_dir(
+    subdir: str, columns: tuple[str, ...], flags: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
     directory = CONFIGS_DIR / subdir
     if not directory.is_dir():
         raise SyncError(f"{directory} does not exist")
     paths = sorted(directory.glob("*.toml"))
     if not paths:
         raise SyncError(f"{directory} contains no .toml files")
-    return [load_config(path, columns) for path in paths]
+    return [load_config(path, columns, flags) for path in paths]
 
 
 def abbreviate(value: Any) -> str:
@@ -246,7 +274,17 @@ def main() -> None:
         for source in GTFS_SOURCES.values()
     ]
     target_stops = load_dir("target_stops", TARGET_STOPS_COLUMNS)
-    problem_specs = load_dir("problem_spec", PROBLEM_SPEC_COLUMNS)
+
+    # Specs with sync = false are left out entirely: they are never inserted,
+    # and one already in the database is deleted like any other spec whose
+    # config is gone.
+    all_specs = load_dir("problem_spec", PROBLEM_SPEC_COLUMNS, PROBLEM_SPEC_FLAGS)
+    unsynced = sorted(
+        spec["problem_spec_id"] for spec in all_specs if not spec["sync"]
+    )
+    problem_specs = [spec for spec in all_specs if spec.pop("sync")]
+    if unsynced:
+        print(f"problem_spec: leaving out {', '.join(unsynced)} (sync = false)")
 
     live = {
         "sources": [row["gtfs_source_id"] for row in gtfs_sources],
