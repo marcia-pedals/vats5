@@ -62,15 +62,6 @@ struct SearchNode {
   // `search_edges`. -1 for the root node.
   int edge_index;
 
-  // State computed from the initial problem and the edges.
-  //
-  // Stored for active nodes so that we don't have to recompute everything from
-  // the initial problem every time.
-  //
-  // Not stored for finished nodes because it's big and we don't want to keep it
-  // around after we're done with it.
-  std::unique_ptr<ProblemState> state;
-
   bool operator<(const SearchNode& other) const {
     if (parent_lb == other.parent_lb) {
       return edge_index > other.edge_index;
