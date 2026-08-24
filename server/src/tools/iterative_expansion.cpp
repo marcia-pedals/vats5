@@ -423,8 +423,7 @@ int main(int argc, char* argv[]) {
       "--seed_stops",
       seed_stops_path,
       "File with one required stop name per line; each stop's group is added "
-      "to the initial subset on top of the MST leaves, replaying prior "
-      "expansion iterations"
+      "to the initial subset, which is used instead of the MST leaves"
   );
 
   double timeout_seconds = 0.0;
@@ -474,13 +473,7 @@ int main(int argc, char* argv[]) {
   nlohmann::json j = nlohmann::json::parse(in);
   ProblemState state = j.get<ProblemState>();
 
-  std::cout << "Computing MST...\n";
-  std::unordered_set<StopId> required_subset = MstLeaves(state);
-  std::cout << "MST leaves:\n";
-  for (StopId stop : required_subset) {
-    std::cout << "  " << state.StopName(stop) << "\n";
-  }
-
+  std::unordered_set<StopId> required_subset;
   if (!seed_stops_path.empty()) {
     std::ifstream seed_in(seed_stops_path);
     if (!seed_in.is_open()) {
@@ -503,6 +496,13 @@ int main(int argc, char* argv[]) {
           [&](StopId s) { required_subset.insert(s); }
       );
       std::cout << "Seeded stop: " << line << "\n";
+    }
+  } else {
+    std::cout << "Computing MST...\n";
+    required_subset = MstLeaves(state);
+    std::cout << "MST leaves:\n";
+    for (StopId stop : required_subset) {
+      std::cout << "  " << state.StopName(stop) << "\n";
     }
   }
 
