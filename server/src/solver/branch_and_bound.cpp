@@ -198,7 +198,7 @@ ProblemState ApplyConstraints(
 
 BranchAndBoundResult BranchAndBoundSolve(
     const ProblemState& initial_state,
-    std::optional<int> known_lb,
+    int known_lb,
     std::ostream* search_log,
     std::optional<std::string> run_dir,
     int max_iter,
@@ -367,10 +367,10 @@ BranchAndBoundResult BranchAndBoundSolve(
                       << " " << ub_path.merged_step.origin.time << " "
                       << ub_path.merged_step.destination.time << "\n";
         }
-        if (known_lb.has_value() && best_ub <= *known_lb) {
+        if (best_ub <= known_lb) {
           if (search_log != nullptr) {
             *search_log << "Search terminated: UB reached known_lb ("
-                        << TimeSinceServiceStart{*known_lb} << ")\n";
+                        << TimeSinceServiceStart{known_lb} << ")\n";
           }
           return {
               best_ub, std::move(best_paths), std::move(best_original_edges)

@@ -637,7 +637,7 @@ int main(int argc, char* argv[]) {
   std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
-  std::optional<int> prev_iteration_optimal;
+  int prev_iteration_optimal = 0;
 
   try {
     for (int iteration = 0;; iteration++) {
@@ -683,9 +683,9 @@ int main(int argc, char* argv[]) {
               : PartialSolveBranchAndBound(
                     partial_problem,
                     state,
+                    prev_iteration_optimal,
                     &std::cout,
-                    on_search_event,
-                    prev_iteration_optimal
+                    on_search_event
                 );
 
       // Choose the path that visits the most required stops.

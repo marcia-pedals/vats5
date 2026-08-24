@@ -149,8 +149,7 @@ RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
     // steps.
     RC_ASSERT(
         BruteForceSolveOptimalDuration(state) ==
-        BranchAndBoundSolve(state, std::nullopt, &RC_LOG(), std::nullopt, 4096)
-            .best_ub
+        BranchAndBoundSolve(state, 0, &RC_LOG(), std::nullopt, 4096).best_ub
     );
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");

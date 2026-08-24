@@ -78,9 +78,9 @@ ProblemState MakePartialProblemState(
 PartialSolution PartialSolveBranchAndBound(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     std::ostream* search_log,
-    const SearchEventCallback& on_event,
-    std::optional<int> known_lb
+    const SearchEventCallback& on_event
 ) {
   auto bb_result = BranchAndBoundSolve(
       partial_problem, known_lb, search_log, std::nullopt, -1, on_event

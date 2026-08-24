@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
 
   auto start = std::chrono::steady_clock::now();
   auto result = BranchAndBoundSolve(
-      state, std::nullopt, &std::cerr, std::nullopt, max_iter, on_event
+      state, 0, &std::cerr, std::nullopt, max_iter, on_event
   );
   auto end = std::chrono::steady_clock::now();
 

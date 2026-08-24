@@ -229,7 +229,7 @@ RC_GTEST_PROP(
 
   PartialSolution brute = PartialSolveBruteForce(subset, state);
   PartialSolution bnb = PartialSolveBranchAndBound(
-      MakePartialProblemState(subset, state), state, nullptr
+      MakePartialProblemState(subset, state), state, 0, nullptr
   );
 
   RC_LOG() << "brute " << OptimalDuration(brute) << " over "
@@ -249,7 +249,7 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
         PartialSolveBranchAndBound(
-            MakePartialProblemState(subset, state), state, nullptr
+            MakePartialProblemState(subset, state), state, 0, nullptr
         )}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
@@ -276,7 +276,7 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
         PartialSolveBranchAndBound(
-            MakePartialProblemState(subset, state), state, nullptr
+            MakePartialProblemState(subset, state), state, 0, nullptr
         )}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
