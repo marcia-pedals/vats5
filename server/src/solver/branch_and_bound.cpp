@@ -317,7 +317,7 @@ BranchAndBoundResult BranchAndBoundSolve(
     // branching needed. The DP solves the node's boundary-to-boundary problem
     // on `minimal` itself, so combined stops and their rides are priced in.
     if (state.required.GroupRepresentatives().size() <= kMaxHeldKarpGroups) {
-      HeldKarpDPResult hk = HeldKarpDPSolve(state, search_log);
+      HeldKarpDPResult hk = HeldKarpDPSolve(state, known_lb, search_log);
       if (hk.best_path.empty()) {
         if (search_log != nullptr) {
           *search_log << "  infeasible from held-karp\n";
@@ -364,6 +364,15 @@ BranchAndBoundResult BranchAndBoundSolve(
         if (search_log != nullptr) {
           *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
                       << "\n";
+        }
+        if (best_ub <= known_lb) {
+          if (search_log != nullptr) {
+            *search_log << "Search terminated: UB reached known_lb ("
+                        << TimeSinceServiceStart{known_lb} << ")\n";
+          }
+          return {
+              best_ub, std::move(best_paths), std::move(best_original_edges)
+          };
         }
         PruneQueue(best_ub);
       }
