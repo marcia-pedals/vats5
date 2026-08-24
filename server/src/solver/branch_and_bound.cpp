@@ -209,23 +209,13 @@ BranchAndBoundResult BranchAndBoundSolve(
       SearchNode{
           .parent_lb = 0,
           .edge_index = -1,
-          .state = std::make_unique<ProblemState>(initial_state),
       }
   );
 
-  auto PushQ = [&search_edges, &q](
-                   const ProblemState& state, int new_lb, SearchEdge new_edge
-               ) {
+  auto PushQ = [&search_edges, &q](int new_lb, SearchEdge new_edge) {
     int new_edge_index = search_edges.size();
     search_edges.push_back(new_edge);
-    // TODO: Figure out if passing ApplyConstraints to std::make_unique does the
-    // smart thing or not.
-    std::unique_ptr<ProblemState> new_state = std::make_unique<ProblemState>(
-        ApplyConstraints(state, new_edge.constraints)
-    );
-    q.push_back(
-        std::move(SearchNode{new_lb, new_edge_index, std::move(new_state)})
-    );
+    q.push_back(SearchNode{new_lb, new_edge_index});
     std::push_heap(q.begin(), q.end());
   };
 
@@ -241,9 +231,21 @@ BranchAndBoundResult BranchAndBoundSolve(
     iter_num += 1;
 
     std::pop_heap(q.begin(), q.end());
-    SearchNode cur_node = std::move(q.back());
-    ProblemState& state = *cur_node.state;
+    SearchNode cur_node = q.back();
     q.pop_back();
+
+    // Recompute the node's state from the initial problem by replaying its
+    // constraint chain in root-to-node order. States are not stored on the
+    // queue because with thousands of active nodes they dominate memory.
+    std::vector<ProblemConstraint> chain;
+    for (int e = cur_node.edge_index; e != -1;
+         e = search_edges[e].parent_edge_index) {
+      const std::vector<ProblemConstraint>& cs = search_edges[e].constraints;
+      chain.insert(chain.end(), cs.rbegin(), cs.rend());
+    }
+    std::reverse(chain.begin(), chain.end());
+    ProblemState state =
+        chain.empty() ? initial_state : ApplyConstraints(initial_state, chain);
 
     if (search_log != nullptr) {
       *search_log << iter_num << " (" << q.size() + 1 << " active nodes) Take "
@@ -449,12 +451,10 @@ BranchAndBoundResult BranchAndBoundSolve(
     // cur_node.edge_index});
 
     PushQ(
-        state,
         std::max(cur_node.parent_lb, lb_result.optimal_value),
         SearchEdge{{branch_edge_fw.Require()}, cur_node.edge_index}
     );
     PushQ(
-        state,
         std::max(cur_node.parent_lb, lb_result.optimal_value),
         SearchEdge{{branch_edge_fw.Forbid()}, cur_node.edge_index}
     );
