@@ -353,6 +353,13 @@ std::vector<TarelEdge> BuildTarelEdgesFromIntermediateData(
     const TarelEdgeIntermediateData& data
 );
 
+// Weight of the within-stop cycle edges in the TSP graph. Being negative, it
+// rewards a tour for traversing all of a stop's states consecutively, which
+// is what makes the extracted tour visit each stop (or alternate-stop group)
+// exactly once. The reward only works while its magnitude exceeds what a tour
+// could save by splitting a stop's states into separate visits, so this is
+// just the starting value: ComputeTarelLowerBound retries with more negative
+// weights when the solved tour splits a stop.
 constexpr int kCycleEdgeWeight = -1000;
 
 // Return type for MakeTspGraphEdges.
@@ -362,6 +369,9 @@ struct TspGraphData {
   std::unordered_map<StopId, int> num_states_by_stop;
   std::vector<WeightedEdge> tsp_edges;
   int expected_num_cycle_edges;
+
+  // The within-stop cycle edge weight the graph was built with.
+  int cycle_edge_weight;
 };
 
 // Return type for SolveTspAndExtractTour.
@@ -413,7 +423,9 @@ TarelStateRemapResult RemapTarelStates(
 );
 
 TspGraphData MakeTspGraphEdges(
-    const std::vector<TarelEdge>& edges, const ProblemBoundary& boundary
+    const std::vector<TarelEdge>& edges,
+    const ProblemBoundary& boundary,
+    int cycle_edge_weight = kCycleEdgeWeight
 );
 
 std::optional<TspTourResult> SolveTspAndExtractTour(

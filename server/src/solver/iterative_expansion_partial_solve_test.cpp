@@ -74,6 +74,20 @@ Step Flex(int origin, int destination, int duration, int trip) {
   );
 }
 
+// A scheduled step from `origin_time` to `destination_time`, on its own trip.
+Step Scheduled(
+    int origin, int destination, int origin_time, int destination_time, int trip
+) {
+  return Step::PrimitiveScheduled(
+      StopId{origin},
+      StopId{destination},
+      TimeSinceServiceStart{origin_time},
+      TimeSinceServiceStart{destination_time},
+      TripId{trip},
+      StepPartitionId::NONE
+  );
+}
+
 // The stops of `subset`, as their names, sorted.
 std::vector<std::string> TourNames(
     const ProblemState& state, const std::vector<StopId>& tour
@@ -288,6 +302,38 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
       }
     }
   }
+}
+
+// Regression test for https://github.com/marcia-pedals/vats5/issues/116: an
+// alternate-stop group whose members are further apart than kCycleEdgeWeight's
+// reward for traversing the group's states consecutively in the tarel TSP
+// graph. The optimal TSP tour used to split the group into separate visits,
+// entering as one member but leaving with the other member's edges, and
+// extracting the tour threw InvalidTourStructure out of the solve.
+TEST(PartialSolveTest, BranchAndBoundHandlesFarApartAlternateStopGroup) {
+  ProblemState state = MakeState(
+      4,
+      {
+          Scheduled(0, 1, 0, 0, 0),
+          Scheduled(1, 0, 0, 0, 1),
+          Scheduled(1, 2, 20 * 60, 40 * 60, 2),
+          Scheduled(2, 3, 40 * 60, 60 * 60, 3),
+          Scheduled(3, 0, 60 * 60, 80 * 60, 4),
+      }
+  );
+  state.required.representative[StopId{2}] = StopId{1};
+
+  std::unordered_set<StopId> subset =
+      WholeGroups(state, {StopId{0}, StopId{1}, StopId{3}});
+  PartialSolution brute = PartialSolveBruteForce(subset, state);
+  PartialSolution bnb = PartialSolveBranchAndBound(
+      MakePartialProblemState(subset, state), state, nullptr
+  );
+
+  // The best tour visits c (not b): START -> c -> d -> a -> END, riding the
+  // scheduled chain from 00:40 to 01:20 for 40 minutes.
+  EXPECT_EQ(OptimalDuration(brute), 40 * 60);
+  EXPECT_EQ(OptimalDuration(bnb), OptimalDuration(brute));
 }
 
 // The tour of `stops`, with the boundary around it.

@@ -11,6 +11,15 @@
 
 namespace vats5 {
 
+// Weight marking an absent edge in the doubled (symmetric) graph handed to
+// Concorde. Every real weight, after the negative-weight offset and
+// kInterVertexOffset are added, must stay below this.
+constexpr int kForbiddenEdgeWeight = 1000000;
+
+// Offset added to every inter-vertex edge in the doubled graph so that the
+// in(i)-out(i) pairing edges (weight 0) are preferred.
+constexpr int kInterVertexOffset = 11000;
+
 // Thrown when a tour does not follow the structure required of tours according
 // to a reduction.
 class InvalidTourStructure : public std::exception {
