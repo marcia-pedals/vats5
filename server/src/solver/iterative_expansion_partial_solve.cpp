@@ -150,11 +150,12 @@ PartialSolution PartialSolveBranchAndBound(
 PartialSolution PartialSolveHeldKarp(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     std::ostream* search_log
 ) {
   // The DP solves the boundary-to-boundary problem, so its visit order is
   // already a full tour from START to END.
-  HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, search_log);
+  HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, known_lb, search_log);
   if (hk.best_path.empty()) {
     return PartialSolution{};
   }

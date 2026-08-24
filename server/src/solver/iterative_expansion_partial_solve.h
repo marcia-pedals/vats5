@@ -63,6 +63,7 @@ PartialSolution PartialSolveBranchAndBound(
 PartialSolution PartialSolveHeldKarp(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     std::ostream* search_log = nullptr
 );
 

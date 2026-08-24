@@ -681,9 +681,8 @@ int main(int argc, char* argv[]) {
       for (StopId stop : required_subset) {
         subset_representatives.insert(state.required.Representative(stop));
       }
-      bool held_karp =
-          subset_representatives.size() <=
-          static_cast<size_t>(std::max(held_karp_max_groups, 0));
+      bool held_karp = subset_representatives.size() <=
+                       static_cast<size_t>(std::max(held_karp_max_groups, 0));
 
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
@@ -712,7 +711,9 @@ int main(int argc, char* argv[]) {
 
       PartialSolution solution =
           held_karp
-              ? PartialSolveHeldKarp(partial_problem, state, &std::cout)
+              ? PartialSolveHeldKarp(
+                    partial_problem, state, prev_iteration_optimal, &std::cout
+                )
               : PartialSolveBranchAndBound(
                     partial_problem,
                     state,

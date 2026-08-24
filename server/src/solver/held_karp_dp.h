@@ -19,7 +19,7 @@ struct HeldKarpDPResult {
 };
 
 HeldKarpDPResult HeldKarpDPSolve(
-    const ProblemState& state, std::ostream* search_log = nullptr
+    const ProblemState& state, int known_lb, std::ostream* search_log = nullptr
 );
 
 }  // namespace vats5

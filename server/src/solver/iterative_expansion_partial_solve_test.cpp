@@ -255,7 +255,7 @@ RC_GTEST_PROP(
     RC_DISCARD("InvalidTourStructure");
   }
   PartialSolution held_karp =
-      PartialSolveHeldKarp(MakePartialProblemState(subset, state), state);
+      PartialSolveHeldKarp(MakePartialProblemState(subset, state), state, 0);
 
   RC_LOG() << "brute " << OptimalDuration(brute) << " over "
            << brute.paths.size() << " paths\n";
@@ -286,7 +286,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
         bnb,
-        PartialSolveHeldKarp(MakePartialProblemState(subset, state), state)}) {
+        PartialSolveHeldKarp(
+            MakePartialProblemState(subset, state), state, 0
+        )}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
       RC_ASSERT(path.path.merged_step.origin.stop == state.boundary.start);
@@ -321,7 +323,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
   for (const PartialSolution& solution :
        {PartialSolveBruteForce(subset, state),
         bnb,
-        PartialSolveHeldKarp(MakePartialProblemState(subset, state), state)}) {
+        PartialSolveHeldKarp(
+            MakePartialProblemState(subset, state), state, 0
+        )}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
       path.path.VisitAllStops([&](StopId stop) {

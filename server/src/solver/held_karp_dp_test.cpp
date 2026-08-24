@@ -17,7 +17,7 @@ namespace {
 // Checks that `result.best_val` is the brute-force optimum of `state` and that
 // the returned path actually achieves it.
 void CheckSolvesOptimally(const ProblemState& state) {
-  HeldKarpDPResult result = HeldKarpDPSolve(state, &RC_LOG());
+  HeldKarpDPResult result = HeldKarpDPSolve(state, 0, &RC_LOG());
   RC_ASSERT(BruteForceSolveOptimalDuration(state) == result.best_val);
 
   if (result.best_tour.empty()) {
