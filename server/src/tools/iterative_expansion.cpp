@@ -383,10 +383,9 @@ void WriteRequiredSubsetToml(
   }
 }
 
-// Up to this many required groups, PartialSolveBruteForce beats
-// PartialSolveBranchAndBound. Measured on the bart and vtalr instances, where
-// brute force is 2-5x faster at 10 groups and 2x slower at 11.
-constexpr int kDefaultBruteForceMaxGroups = 10;
+// Up to this many required groups, an iteration is solved by
+// PartialSolveHeldKarp instead of PartialSolveBranchAndBound.
+constexpr int kDefaultHeldKarpMaxGroups = 25;
 
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
@@ -410,12 +409,12 @@ int main(int argc, char* argv[]) {
       "--solution_json", solution_json_path, "Path to write solution info JSON"
   );
 
-  int brute_force_max_groups = kDefaultBruteForceMaxGroups;
+  int held_karp_max_groups = kDefaultHeldKarpMaxGroups;
   app.add_option(
-      "--brute_force_max_groups",
-      brute_force_max_groups,
-      "Solve an iteration by brute force rather than branch and bound when it "
-      "has at most this many required groups"
+      "--held_karp_max_groups",
+      held_karp_max_groups,
+      "Solve an iteration by Held-Karp DP rather than branch and bound when "
+      "it has at most this many required groups"
   );
 
   std::string seed_stops_path;
@@ -682,18 +681,18 @@ int main(int argc, char* argv[]) {
       for (StopId stop : required_subset) {
         subset_representatives.insert(state.required.Representative(stop));
       }
-      bool brute_force =
+      bool held_karp =
           subset_representatives.size() <=
-          static_cast<size_t>(std::max(brute_force_max_groups, 0));
+          static_cast<size_t>(std::max(held_karp_max_groups, 0));
 
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
-      iteration_span.SetMetadata("solver", brute_force ? "brute" : "bnb");
+      iteration_span.SetMetadata("solver", held_karp ? "hk" : "bnb");
       WriteRequiredSubsetToml(
           state, intermediate_output_dir, iteration, required_subset
       );
       std::cout << "=== Iteration " << iteration << ": "
-                << (brute_force ? "brute force" : "branch and bound") << " on "
+                << (held_karp ? "held-karp" : "branch and bound") << " on "
                 << required_subset.size() << " leaves in "
                 << subset_representatives.size() << " groups ===\n";
       ProblemState partial_problem =
@@ -712,8 +711,8 @@ int main(int argc, char* argv[]) {
       }
 
       PartialSolution solution =
-          brute_force
-              ? PartialSolveBruteForce(required_subset, state, check_deadline)
+          held_karp
+              ? PartialSolveHeldKarp(partial_problem, state, &std::cout)
               : PartialSolveBranchAndBound(
                     partial_problem,
                     state,

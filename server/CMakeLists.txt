@@ -202,7 +202,7 @@ target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
 
 # Create iterative_expansion_partial_solve library target
 add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)
-target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound steps_shortest_path)
+target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound held_karp_dp steps_shortest_path)
 target_include_directories(iterative_expansion_partial_solve PUBLIC src)
 
 # Add iterative_expansion tool

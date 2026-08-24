@@ -56,6 +56,16 @@ PartialSolution PartialSolveBranchAndBound(
     const SearchEventCallback& on_event = nullptr
 );
 
+// Solves the same partial problem as PartialSolveBranchAndBound, by Held-Karp
+// dynamic programming over the required groups.
+//
+// `search_log` may be null.
+PartialSolution PartialSolveHeldKarp(
+    const ProblemState& partial_problem,
+    const ProblemState& original_problem,
+    std::ostream* search_log = nullptr
+);
+
 // Solves the same partial problem as PartialSolveBranchAndBound, by trying
 // every order in which `required_subset` can be visited.
 //

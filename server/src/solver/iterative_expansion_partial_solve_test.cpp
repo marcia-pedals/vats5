@@ -232,7 +232,7 @@ std::unordered_set<StopId> GenRequiredSubset(const ProblemState& state) {
   return WholeGroups(state, keep);
 }
 
-// The two solvers solve the same partial problem, so whatever else differs
+// The solvers solve the same partial problem, so whatever else differs
 // between them, the duration they achieve must not.
 RC_GTEST_PROP(
     PartialSolveTest, BruteForceAndBranchAndBoundAgreeOnDuration, ()
@@ -254,13 +254,18 @@ RC_GTEST_PROP(
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }
+  PartialSolution held_karp =
+      PartialSolveHeldKarp(MakePartialProblemState(subset, state), state);
 
   RC_LOG() << "brute " << OptimalDuration(brute) << " over "
            << brute.paths.size() << " paths\n";
   RC_LOG() << "bnb " << OptimalDuration(bnb) << " over " << bnb.paths.size()
            << " paths\n";
+  RC_LOG() << "held-karp " << OptimalDuration(held_karp) << " over "
+           << held_karp.paths.size() << " paths\n";
 
   RC_ASSERT(OptimalDuration(brute) == OptimalDuration(bnb));
+  RC_ASSERT(OptimalDuration(brute) == OptimalDuration(held_karp));
 }
 
 // Whichever solver produced it, a returned path must actually run from START
@@ -279,7 +284,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
   }
 
   for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state), bnb}) {
+       {PartialSolveBruteForce(subset, state),
+        bnb,
+        PartialSolveHeldKarp(MakePartialProblemState(subset, state), state)}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
       RC_ASSERT(path.path.merged_step.origin.stop == state.boundary.start);
@@ -312,7 +319,9 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
   }
 
   for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state), bnb}) {
+       {PartialSolveBruteForce(subset, state),
+        bnb,
+        PartialSolveHeldKarp(MakePartialProblemState(subset, state), state)}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
       path.path.VisitAllStops([&](StopId stop) {

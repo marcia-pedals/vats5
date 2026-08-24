@@ -11,6 +11,7 @@
 #include <span>
 #include <unordered_map>
 
+#include "solver/held_karp_dp.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -142,6 +143,58 @@ PartialSolution PartialSolveBranchAndBound(
 
   // TODO: Think about wither `paths` could contain duplicate
   // paths or other non-minimality.
+
+  return PartialSolution{.paths = std::move(paths)};
+}
+
+PartialSolution PartialSolveHeldKarp(
+    const ProblemState& partial_problem,
+    const ProblemState& original_problem,
+    std::ostream* search_log
+) {
+  // The DP solves the boundary-to-boundary problem, so its visit order is
+  // already a full tour from START to END.
+  HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, search_log);
+  if (hk.best_path.empty()) {
+    return PartialSolution{};
+  }
+  std::vector<StopId> tour;
+  for (const HeldKarpDPPathPoint& point : hk.best_path) {
+    tour.push_back(point.stop);
+  }
+  assert(tour.front() == original_problem.boundary.start);
+  assert(tour.back() == original_problem.boundary.end);
+
+  // Reconstruct the paths through all original problem stops.
+  std::vector<Path> original_paths =
+      ComputeMinimalFeasiblePathsAlong(tour, original_problem.minimal);
+  // There must be paths along a tour the DP found, because all paths in the
+  // partial problem are also paths in the full problem.
+  assert(!original_paths.empty());
+
+  int best_duration = std::numeric_limits<int>::max();
+  for (const Path& path : original_paths) {
+    best_duration = std::min(best_duration, path.DurationSeconds());
+  }
+  // The best path along the tour must achieve exactly the DP's optimum,
+  // because otherwise hk.best_val isn't the best duration in the partial
+  // problem.
+  assert(best_duration == hk.best_val);
+
+  std::vector<PartialSolutionPath> paths;
+  for (Path& path : original_paths) {
+    if (path.DurationSeconds() != best_duration) {
+      continue;
+    }
+    assert(path.merged_step.origin.stop == original_problem.boundary.start);
+    assert(path.merged_step.destination.stop == original_problem.boundary.end);
+    paths.push_back(
+        PartialSolutionPath{
+            .path = std::move(path),
+            .subset_tour = tour,
+        }
+    );
+  }
 
   return PartialSolution{.paths = std::move(paths)};
 }
