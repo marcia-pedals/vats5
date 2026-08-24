@@ -189,8 +189,17 @@ std::vector<Step> FindShortestPathsAtTime(
     return (h == std::numeric_limits<int>::max()) ? 0 : h;
   };
 
+  // The adjacency list only spans ids up to the largest step endpoint, so the
+  // origin or a destination can sit beyond it when it appears in no step at
+  // all (GetGroups already answers "no groups" for it). Size the search state
+  // to keep such stops representable; they simply stay unreached.
+  int num_stops = std::max(adjacency_list.NumStops(), origin_stop.v + 1);
+  for (const StopId dest : destinations) {
+    num_stops = std::max(num_stops, dest.v + 1);
+  }
+
   std::unordered_set<StopId> remaining_destinations = destinations;
-  std::vector<bool> finalized(adjacency_list.NumStops(), false);
+  std::vector<bool> finalized(num_stops, false);
 
   // Compact priority queue storing only destination_stop and arrival_time.
   FrontierEntryComparator frontier_cmp;
@@ -198,11 +207,11 @@ std::vector<Step> FindShortestPathsAtTime(
 
   // Maps stop index to the best Step we've found for reaching it.
   // Unvisited stops have kUnvisitedStep.
-  std::vector<Step> best_arrival(adjacency_list.NumStops(), kUnvisitedStep);
+  std::vector<Step> best_arrival(num_stops, kUnvisitedStep);
 
   // Maps stop index to the number of destinations visited on the best path to
   // it. -1 means unvisited.
-  std::vector<int16_t> best_destinations_visited(adjacency_list.NumStops(), -1);
+  std::vector<int16_t> best_destinations_visited(num_stops, -1);
 
   // The state at the origin stop.
   const Step initial_step = Step::PrimitiveScheduled(

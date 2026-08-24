@@ -9,7 +9,11 @@ namespace vats5 {
 std::vector<int> FindShortestRelaxedPaths(
     const RelaxedAdjacencyList& adjacency_list, StopId origin
 ) {
-  const int num_stops = adjacency_list.NumStops();
+  // The adjacency list only spans ids up to the largest edge endpoint, so the
+  // origin can sit beyond it when it appears in no edge at all (GetEdges
+  // already answers "no edges" for it). Size the result to keep the origin's
+  // zero self-distance representable.
+  const int num_stops = std::max(adjacency_list.NumStops(), origin.v + 1);
   std::vector<int> distances(num_stops, std::numeric_limits<int>::max());
   std::vector<bool> finalized(num_stops, false);
 
