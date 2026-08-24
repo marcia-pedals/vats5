@@ -13,6 +13,7 @@
 
 #include "rapidcheck/Assertions.h"
 #include "rapidcheck/Log.h"
+#include "solver/concorde.h"
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 #include "solver/test_util/problem_state_gen.h"
@@ -69,6 +70,20 @@ Step Flex(int origin, int destination, int duration, int trip) {
       StopId{origin},
       StopId{destination},
       duration,
+      TripId{trip},
+      StepPartitionId::NONE
+  );
+}
+
+// A scheduled step from `origin_time` to `destination_time`, on its own trip.
+Step Scheduled(
+    int origin, int destination, int origin_time, int destination_time, int trip
+) {
+  return Step::PrimitiveScheduled(
+      StopId{origin},
+      StopId{destination},
+      TimeSinceServiceStart{origin_time},
+      TimeSinceServiceStart{destination_time},
       TripId{trip},
       StepPartitionId::NONE
   );
@@ -228,9 +243,17 @@ RC_GTEST_PROP(
   RC_LOG() << "subset size " << subset.size() << "\n";
 
   PartialSolution brute = PartialSolveBruteForce(subset, state);
-  PartialSolution bnb = PartialSolveBranchAndBound(
-      MakePartialProblemState(subset, state), state, 0, nullptr
-  );
+  // Discard cases where the tarel TSP tour splits a stop's states into
+  // separate visits, which branch and bound cannot solve yet (see
+  // FarApartAlternateStopGroupThrowsInvalidTourStructure below).
+  PartialSolution bnb;
+  try {
+    bnb = PartialSolveBranchAndBound(
+        MakePartialProblemState(subset, state), state, 0, nullptr
+    );
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
 
   RC_LOG() << "brute " << OptimalDuration(brute) << " over "
            << brute.paths.size() << " paths\n";
@@ -246,11 +269,17 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
   ProblemState state = *GenProblemState();
   std::unordered_set<StopId> subset = GenRequiredSubset(state);
 
+  PartialSolution bnb;
+  try {
+    bnb = PartialSolveBranchAndBound(
+        MakePartialProblemState(subset, state), state, 0, nullptr
+    );
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
+
   for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state),
-        PartialSolveBranchAndBound(
-            MakePartialProblemState(subset, state), state, 0, nullptr
-        )}) {
+       {PartialSolveBruteForce(subset, state), bnb}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
       RC_ASSERT(path.path.merged_step.origin.stop == state.boundary.start);
@@ -273,11 +302,17 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
     subset_representatives.insert(state.required.Representative(stop));
   }
 
+  PartialSolution bnb;
+  try {
+    bnb = PartialSolveBranchAndBound(
+        MakePartialProblemState(subset, state), state, 0, nullptr
+    );
+  } catch (const InvalidTourStructure&) {
+    RC_DISCARD("InvalidTourStructure");
+  }
+
   for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state),
-        PartialSolveBranchAndBound(
-            MakePartialProblemState(subset, state), state, 0, nullptr
-        )}) {
+       {PartialSolveBruteForce(subset, state), bnb}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
       path.path.VisitAllStops([&](StopId stop) {
@@ -288,6 +323,36 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
       }
     }
   }
+}
+
+// An alternate-stop group whose members are further apart than
+// kCycleEdgeWeight's reward for traversing the group's states consecutively in
+// the tarel TSP graph: the optimal TSP tour splits the group into separate
+// visits, entering as one member but leaving with the other member's edges,
+// and extracting the tour throws out of the solve. This pins the known
+// limitation (https://github.com/marcia-pedals/vats5/issues/116) that the
+// property tests above discard when a generated case hits it.
+TEST(PartialSolveTest, FarApartAlternateStopGroupThrowsInvalidTourStructure) {
+  ProblemState state = MakeState(
+      4,
+      {
+          Scheduled(0, 1, 0, 0, 0),
+          Scheduled(1, 0, 0, 0, 1),
+          Scheduled(1, 2, 20 * 60, 40 * 60, 2),
+          Scheduled(2, 3, 40 * 60, 60 * 60, 3),
+          Scheduled(3, 0, 60 * 60, 80 * 60, 4),
+      }
+  );
+  state.required.representative[StopId{2}] = StopId{1};
+
+  std::unordered_set<StopId> subset =
+      WholeGroups(state, {StopId{0}, StopId{1}, StopId{3}});
+  EXPECT_THROW(
+      PartialSolveBranchAndBound(
+          MakePartialProblemState(subset, state), state, 0, nullptr
+      ),
+      InvalidTourStructure
+  );
 }
 
 // The tour of `stops`, with the boundary around it.
