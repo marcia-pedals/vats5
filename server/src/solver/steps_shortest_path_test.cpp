@@ -1281,6 +1281,33 @@ TEST(ShortestPathTest, CompleteShortestPathsGraphWithStepLessSystemStop) {
   EXPECT_TRUE(completed.PathsBetween(StopId{5}, StopId{2}).empty());
 }
 
+TEST(ShortestPathTest, CompletionKeepsFlexPastLastDeparture) {
+  // After the last scheduled departure, the flex step is the only way to
+  // travel, so the completion must keep it even though the scheduled step
+  // beats it at every scheduled departure time.
+  std::vector<Step> steps = {
+      Step::PrimitiveScheduled(
+          StopId{0},
+          StopId{1},
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{200},
+          TripId{1}
+      ),
+      Step::PrimitiveFlex(StopId{0}, StopId{1}, 300, TripId{2}),
+  };
+  StepsAdjacencyList list = MakeAdjacencyList(steps);
+
+  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(
+      list, {StopId{0}, StopId{1}}, HorizonCoveringAllDepartures(list)
+  );
+
+  bool has_flex = false;
+  for (const Path& path : completed.PathsBetween(StopId{0}, StopId{1})) {
+    has_flex |= path.merged_step.is_flex;
+  }
+  EXPECT_TRUE(has_flex);
+}
+
 TEST(ShortestPathTest, ReduceToMinimalSystemSteps_BART_AlreadyMinimal) {
   const auto test_data = GetCachedFilteredTestData(
       {"../data/raw_RG_202506", "20250718", {"BA:"}, false}

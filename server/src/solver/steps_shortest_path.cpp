@@ -734,8 +734,11 @@ int HorizonCoveringAllDepartures(const StepsAdjacencyList& adjacency_list) {
   for (const AdjacencyListStep& step : adjacency_list.steps) {
     latest = std::max(latest, step.origin_time.seconds);
   }
-  // The horizon is exclusive, so reach just past the latest departure.
-  return latest + 1;
+  // The horizon is exclusive; reach past the latest departure by 2 so that
+  // one query runs strictly after it, capturing the flex-only regime that is
+  // the only way to travel once the schedule has ended. Every later query
+  // would return the same flex results, only time-shifted.
+  return latest + 2;
 }
 
 StepPathsAdjacencyList CompleteShortestPathsGraph(
