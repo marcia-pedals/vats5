@@ -14,12 +14,22 @@
 #include <variant>
 
 #include "solver/data.h"
+#include "solver/held_karp_dp.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
 
 namespace vats5 {
+
+namespace {
+
+// Nodes with at most this many required groups (including the boundary START
+// and END) are solved exactly by the Held-Karp DP instead of being bounded and
+// branched on.
+constexpr size_t kMaxHeldKarpGroups = 15;
+
+}  // namespace
 
 std::string ConstraintRequireEdge::Debug(const ProblemState& state) const {
   return "[require " + state.StopName(a) + " -> " + state.StopName(b) + "]";
@@ -234,6 +244,21 @@ BranchAndBoundResult BranchAndBoundSolve(
   std::vector<Path> best_paths;
   std::unordered_map<StopId, PlainEdge> best_original_edges;
 
+  // Drop queued nodes that can no longer beat `best_ub`.
+  auto PruneQueue = [&q, search_log](int best_ub) {
+    size_t old_size = q.size();
+    std::erase_if(q, [best_ub](const SearchNode& node) {
+      return node.parent_lb >= best_ub;
+    });
+    size_t pruned_count = old_size - q.size();
+    if (pruned_count > 0) {
+      std::make_heap(q.begin(), q.end());
+      if (search_log != nullptr) {
+        *search_log << "  pruned " << pruned_count << " nodes from queue\n";
+      }
+    }
+  };
+
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
       throw std::runtime_error("Exceeded max_iter");
@@ -286,6 +311,64 @@ BranchAndBoundResult BranchAndBoundSolve(
         *search_log << "Search terminated: LB >= UB\n";
       }
       return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+    }
+
+    // Solve small nodes exactly with the Held-Karp DP: no bounding or
+    // branching needed. The DP solves the node's boundary-to-boundary problem
+    // on `minimal` itself, so combined stops and their rides are priced in.
+    if (state.required.GroupRepresentatives().size() <= kMaxHeldKarpGroups) {
+      HeldKarpDPResult hk = HeldKarpDPSolve(state, search_log);
+      if (hk.best_path.empty()) {
+        if (search_log != nullptr) {
+          *search_log << "  infeasible from held-karp\n";
+        }
+        continue;
+      }
+
+      std::vector<StopId> tour;
+      for (const HeldKarpDPPathPoint& point : hk.best_path) {
+        tour.push_back(point.stop);
+      }
+      std::vector<Path> exact_paths =
+          ComputeMinimalFeasiblePathsAlong(tour, state.minimal);
+      // A tour the DP found is realizable in `minimal`, and no path along it
+      // can beat the DP's optimum.
+      assert(!exact_paths.empty());
+      int exact_val = std::numeric_limits<int>::max();
+      for (const Path& p : exact_paths) {
+        exact_val = std::min(exact_val, p.DurationSeconds());
+      }
+      assert(exact_val == hk.best_val);
+
+      if (search_log != nullptr) {
+        *search_log << "  held-karp exact (" << TimeSinceServiceStart{exact_val}
+                    << "): ";
+        for (size_t i = 0; i < tour.size(); ++i) {
+          if (i > 0) {
+            *search_log << " -> ";
+          }
+          *search_log << state.StopName(tour[i]);
+        }
+        *search_log << "\n";
+      }
+
+      if (exact_val < best_ub) {
+        best_ub = exact_val;
+        best_paths.clear();
+        for (Path& p : exact_paths) {
+          if (p.DurationSeconds() == best_ub) {
+            best_paths.push_back(std::move(p));
+          }
+        }
+        best_original_edges = state.original_edges;
+        if (search_log != nullptr) {
+          *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
+                      << "\n";
+        }
+        PruneQueue(best_ub);
+      }
+      // The node is solved exactly, so there is nothing to branch on.
+      continue;
     }
 
     StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
@@ -387,18 +470,7 @@ BranchAndBoundResult BranchAndBoundSolve(
               best_ub, std::move(best_paths), std::move(best_original_edges)
           };
         }
-        // Prune nodes that can no longer beat the new UB.
-        size_t old_size = q.size();
-        std::erase_if(q, [best_ub](const SearchNode& node) {
-          return node.parent_lb >= best_ub;
-        });
-        size_t pruned_count = old_size - q.size();
-        if (pruned_count > 0) {
-          std::make_heap(q.begin(), q.end());
-          if (search_log != nullptr) {
-            *search_log << "  pruned " << pruned_count << " nodes from queue\n";
-          }
-        }
+        PruneQueue(best_ub);
       }
     }
 
