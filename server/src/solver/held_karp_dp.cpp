@@ -261,19 +261,19 @@ HeldKarpDPResult HeldKarpDPSolve(
 
   StopId start = state.boundary.start;
   StopId end = state.boundary.end;
-  if (!state.required.Contains(start) || !state.required.Contains(end)) {
-    throw std::invalid_argument(
-        "HeldKarpDPSolve: boundary stops must be required"
-    );
+
+  // The boundary stops need not be required (constraints can erase their
+  // groups), but they must be in the graph, so add each as its own group when
+  // it is not required.
+  RequiredStops graph_required = state.required;
+  if (!graph_required.Contains(start)) {
+    graph_required.representative[start] = start;
   }
-  if (state.required.Representative(start) ==
-      state.required.Representative(end)) {
-    throw std::invalid_argument(
-        "HeldKarpDPSolve: boundary stops must be in distinct groups"
-    );
+  if (!graph_required.Contains(end)) {
+    graph_required.representative[end] = end;
   }
 
-  std::optional<HKDPGraph> maybe_graph = MakeHKDPGraph(state, state.required);
+  std::optional<HKDPGraph> maybe_graph = MakeHKDPGraph(state, graph_required);
   if (!maybe_graph.has_value()) {
     return infeasible;
   }
@@ -292,30 +292,28 @@ HeldKarpDPResult HeldKarpDPSolve(
   StopId compact_start = original_to_new[start.v];
   StopId compact_end = original_to_new[end.v];
 
-  // The groups (rather than the stops) index the mask. Compute bidirectional
-  // mapping between stops and mask indexes.
+  // The groups (rather than the stops) index the mask, and only the "middle"
+  // groups get a mask bit: a group containing START or END is satisfied by the
+  // endpoints themselves, so the tour's structure (start at START, end at END)
+  // already guarantees it is visited.
+  StopId start_rep = graph.required.Representative(compact_start);
+  StopId end_rep = graph.required.Representative(compact_end);
   std::vector<int> stop_id_to_mask_index(graph.required.size(), -1);
-  std::vector<StopId> mask_index_to_representative_stop_id;
+  size_t n_mid_groups = 0;
   for (const StopId& rep_stop_id : graph.required.GroupRepresentatives()) {
-    stop_id_to_mask_index[rep_stop_id.v] =
-        mask_index_to_representative_stop_id.size();
-    mask_index_to_representative_stop_id.push_back(rep_stop_id);
+    if (rep_stop_id == start_rep || rep_stop_id == end_rep) {
+      continue;
+    }
+    stop_id_to_mask_index[rep_stop_id.v] = n_mid_groups;
+    ++n_mid_groups;
   }
   for (StopId stop_id{0}; stop_id.v < stop_id_to_mask_index.size();
        ++stop_id.v) {
     StopId rep_stop_id = graph.required.Representative(stop_id);
-    assert(stop_id_to_mask_index[rep_stop_id.v] != -1);
     stop_id_to_mask_index[stop_id.v] = stop_id_to_mask_index[rep_stop_id.v];
   }
-  assert(
-      mask_index_to_representative_stop_id.size() ==
-      graph.required.GroupRepresentatives().size()
-  );
 
-  size_t n_groups = graph.required.GroupRepresentatives().size();
   size_t n_stops = graph.required.size();
-  assert(n_groups == mask_index_to_representative_stop_id.size());
-  int start_mask_index = stop_id_to_mask_index[compact_start.v];
 
   HeldKarpDPResult result{
       .best_val = kUnreachable.seconds,
@@ -329,9 +327,9 @@ HeldKarpDPResult HeldKarpDPSolve(
     }
   }
 
-  // `dp[mask * n_stops + j]` is the earliest time we can get to stop `j`,
-  // having visited all groups in `mask`.
-  size_t dp_state_size = (size_t{1} << n_groups) * n_stops;
+  // `dp[mask * n_stops + j]` is the earliest time we can get to stop `j` from
+  // START, having visited all middle groups in `mask`.
+  size_t dp_state_size = (size_t{1} << n_mid_groups) * n_stops;
   std::vector<TimeSinceServiceStart> dp(dp_state_size);
 
   NextDepartureTable next_departure_table =
@@ -341,19 +339,30 @@ HeldKarpDPResult HeldKarpDPSolve(
   while (t_start <= t_latest_dep) {
     std::ranges::fill(dp, kUnreachable);
 
-    // The tour must start at START, so that is the only starting point.
-    dp[(size_t{1} << start_mask_index) * n_stops + compact_start.v] = t_start;
+    const StepsAdjacencyList& adj_list = graph.compact.list;
+
+    // Base case: the tour leaves START at `t_start` or later, so seed each
+    // middle stop reachable directly from START.
+    for (const StepGroup& group : adj_list.GetGroups(compact_start)) {
+      StopId b = group.destination_stop;
+      int b_mask_index = stop_id_to_mask_index[b.v];
+      if (b_mask_index == -1) {
+        continue;
+      }
+      std::optional<TimeSinceServiceStart> arrival =
+          EarliestArrival(adj_list, group, t_start);
+      TimeSinceServiceStart& dp_dest =
+          dp[(size_t{1} << b_mask_index) * n_stops + b.v];
+      if (arrival.has_value() && *arrival < dp_dest) {
+        dp_dest = *arrival;
+      }
+    }
 
     // Run DP.
-    const StepsAdjacencyList& adj_list = graph.compact.list;
     // Iterating masks in increasing numeric order guarantees a mask is fully
     // settled before any of its supersets (which are numerically larger) reads
     // from it, because this loop only propagates (mask, *) forwards.
-    for (size_t mask = 1; mask < (size_t{1} << n_groups); ++mask) {
-      if (((mask >> start_mask_index) & 1) == 0) {
-        // Every reachable state contains the starting group.
-        continue;
-      }
+    for (size_t mask = 1; mask < (size_t{1} << n_mid_groups); ++mask) {
       // Propagate (mask, *) forwards to all possible next stops.
       for (StopId a{0}; a.v < n_stops; ++a.v) {
         TimeSinceServiceStart a_time = dp[mask * n_stops + a.v];
@@ -363,7 +372,12 @@ HeldKarpDPResult HeldKarpDPSolve(
         }
         for (const StepGroup& ab_group : adj_list.GetGroups(a)) {
           StopId b = ab_group.destination_stop;
-          size_t mask_with_b = mask | (size_t{1} << stop_id_to_mask_index[b.v]);
+          int b_mask_index = stop_id_to_mask_index[b.v];
+          if (b_mask_index == -1) {
+            // `b` is in START's or END's group: never a middle visit.
+            continue;
+          }
+          size_t mask_with_b = mask | (size_t{1} << b_mask_index);
           if (mask_with_b == mask) {
             // `b` is already in `mask`, so don't revisit.
             continue;
@@ -398,10 +412,37 @@ HeldKarpDPResult HeldKarpDPSolve(
       }
     }
 
-    // Read the final time at END with everything visited.
-    size_t all_visited_mask = (size_t{1} << n_groups) - 1;
-    TimeSinceServiceStart best_arrival =
-        dp[all_visited_mask * n_stops + compact_end.v];
+    // Collect the earliest arrival at END over all final middle stops with
+    // every middle group visited (or directly from START when there are none).
+    size_t full_mask = (size_t{1} << n_mid_groups) - 1;
+    TimeSinceServiceStart best_arrival = kUnreachable;
+    if (n_mid_groups == 0) {
+      const StepGroup* group =
+          FindGroupTo(adj_list, compact_start, compact_end);
+      if (group != nullptr) {
+        std::optional<TimeSinceServiceStart> arrival =
+            EarliestArrival(adj_list, *group, t_start);
+        if (arrival.has_value()) {
+          best_arrival = *arrival;
+        }
+      }
+    } else {
+      for (StopId j{0}; j.v < n_stops; ++j.v) {
+        TimeSinceServiceStart j_time = dp[full_mask * n_stops + j.v];
+        if (j_time == kUnreachable) {
+          continue;
+        }
+        const StepGroup* group = FindGroupTo(adj_list, j, compact_end);
+        if (group == nullptr) {
+          continue;
+        }
+        std::optional<TimeSinceServiceStart> arrival =
+            EarliestArrival(adj_list, *group, j_time);
+        if (arrival.has_value() && *arrival < best_arrival) {
+          best_arrival = *arrival;
+        }
+      }
+    }
     if (best_arrival == kUnreachable) {
       // Waiting at a stop is always allowed, so any tour feasible from a later
       // start is also feasible from an earlier one. If no tour completes from
@@ -409,40 +450,42 @@ HeldKarpDPResult HeldKarpDPSolve(
       break;
     }
 
-    // Backtrack to an initial state using only the dp values: at each state,
-    // find a predecessor stop whose dp value reproduces this state's arrival
-    // time via some step. The reported times are then re-derived against the
-    // departure already fixed at this state, so a departure later than the one
-    // the dp actually propagated is preferred when one still arrives in time.
-    std::vector<HeldKarpDPPathPoint> best_path(n_groups);
+    // Backtrack to START using only the dp values: at each state, find a
+    // predecessor stop whose dp value reproduces this state's arrival time via
+    // some step (START itself, ready at `t_start`, once every middle bit is
+    // spent). The reported times are then re-derived against the departure
+    // already fixed at this state, so a departure later than the one the dp
+    // actually propagated is preferred when one still arrives in time.
+    size_t n_points = n_mid_groups + 2;
+    std::vector<HeldKarpDPPathPoint> best_path(n_points);
     {
-      size_t cur_mask = all_visited_mask;
+      size_t cur_mask = full_mask;
       StopId cur_stop = compact_end;
-      best_path[n_groups - 1] = HeldKarpDPPathPoint{
+      best_path[n_points - 1] = HeldKarpDPPathPoint{
           graph.compact.mapping.new_to_original[cur_stop.v],
           best_arrival,
           best_arrival,
       };
-      for (size_t i = n_groups - 1; i > 0; --i) {
-        TimeSinceServiceStart dp_cur = dp[cur_mask * n_stops + cur_stop.v];
+      for (size_t i = n_points - 1; i > 0; --i) {
+        // At END the dp value is the collected optimal arrival; END has no
+        // mask bit, so the predecessor still has the full mask.
+        bool at_end = i == n_points - 1;
+        TimeSinceServiceStart dp_cur =
+            at_end ? best_arrival : dp[cur_mask * n_stops + cur_stop.v];
         // The leg into `cur_stop` must arrive by the departure already chosen
         // at `cur_stop` (for the final stop, by the optimal arrival itself).
         TimeSinceServiceStart required_arrival = best_path[i].departure;
         size_t prev_mask =
-            cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
-        bool found = false;
-        for (StopId a{0}; a.v < n_stops; ++a.v) {
-          if (((prev_mask >> stop_id_to_mask_index[a.v]) & 1) == 0) {
-            continue;
-          }
-          TimeSinceServiceStart a_time = dp[prev_mask * n_stops + a.v];
-          if (a_time == kUnreachable) {
-            continue;
-          }
+            at_end
+                ? cur_mask
+                : cur_mask & ~(size_t{1} << stop_id_to_mask_index[cur_stop.v]);
+
+        auto TryPredecessor = [&](StopId a,
+                                  TimeSinceServiceStart a_time) -> bool {
           const StepGroup* group = FindGroupTo(adj_list, a, cur_stop);
           if (group == nullptr ||
               EarliestArrival(adj_list, *group, a_time) != dp_cur) {
-            continue;
+            return false;
           }
           std::optional<Leg> leg =
               LatestLeg(adj_list, *group, a_time, required_arrival);
@@ -461,8 +504,28 @@ HeldKarpDPResult HeldKarpDPSolve(
           };
           cur_mask = prev_mask;
           cur_stop = a;
-          found = true;
-          break;
+          return true;
+        };
+
+        bool found = false;
+        if (prev_mask == 0) {
+          // All middle bits are spent, so the predecessor is START itself.
+          found = TryPredecessor(compact_start, t_start);
+        } else {
+          for (StopId a{0}; a.v < n_stops; ++a.v) {
+            int a_mask_index = stop_id_to_mask_index[a.v];
+            if (a_mask_index == -1 || ((prev_mask >> a_mask_index) & 1) == 0) {
+              continue;
+            }
+            TimeSinceServiceStart a_time = dp[prev_mask * n_stops + a.v];
+            if (a_time == kUnreachable) {
+              continue;
+            }
+            if (TryPredecessor(a, a_time)) {
+              found = true;
+              break;
+            }
+          }
         }
         if (!found) {
           throw std::logic_error(
@@ -470,7 +533,7 @@ HeldKarpDPResult HeldKarpDPSolve(
           );
         }
       }
-      assert(cur_mask == size_t{1} << start_mask_index);
+      assert(cur_mask == 0);
       assert(cur_stop == compact_start);
       best_path[0].arrival = best_path[0].departure;
     }
@@ -496,18 +559,6 @@ HeldKarpDPResult HeldKarpDPSolve(
   }
 
   return result;
-
-  // if (search_log != nullptr) {
-  //   *search_log << "n_stops: " << n_stops << "\n";
-  //   *search_log << "n_groups: " << n_groups << "\n";
-
-  //   for (size_t mask = 0; mask < (size_t{1} << n_groups); ++mask) {
-  //     for (StopId j{0}; j.v < n_stops; ++j.v) {
-  //       *search_log << std::format("{:0{}b}", mask, n_groups) << " " << j
-  //                   << " " << dp[mask * n_stops + j.v] << "\n";
-  //     }
-  //   }
-  // }
 }
 
 }  // namespace vats5

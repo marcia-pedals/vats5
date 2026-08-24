@@ -312,7 +312,7 @@ set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
 
 # Add held_karp_dp test executable
 add_executable(held_karp_dp_test src/solver/held_karp_dp_test.cpp)
-target_link_libraries(held_karp_dp_test PUBLIC gunit held_karp_dp problem_state_gen naive_solve rapidcheck_gtest)
+target_link_libraries(held_karp_dp_test PUBLIC gunit held_karp_dp branch_and_bound tour_paths problem_state_gen naive_solve rapidcheck_gtest)
 add_test(NAME held_karp_dp_test COMMAND held_karp_dp_test)
 
 # Add tour_paths test executable
