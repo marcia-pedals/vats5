@@ -107,71 +107,133 @@ std::optional<HKDPGraph> MakeHKDPGraph(
 
 constexpr TimeSinceServiceStart kUnreachable{std::numeric_limits<int>::max()};
 
-// O(1) replacement for the binary search in FindDepartureAtOrAfter, built once
-// per solve for the compacted graph. For each group and each packed-time
-// bucket in the group's departure span, stores the first step index whose
-// packed departure is at or after that bucket. Queries share
-// FindDepartureAtOrAfter's contract: the bucket lookup may undershoot (packing
-// is lossy), and the forward scan on exact times fixes it up.
-struct NextDepartureTable {
-  struct GroupTable {
-    int offset;  // Start of this group's entries in `entries`.
-    int16_t first_bucket;
-    int16_t last_bucket;  // Inclusive; less than first_bucket iff no steps.
-  };
-  std::vector<GroupTable> group_tables;  // Parallel to adj_list.groups.
-  std::vector<int32_t> entries;          // Step indexes relative to the group.
+// Everything the DP's hot loop needs from the compacted complete graph, packed
+// into flat arrays indexed by directed stop pair `a * n_stops + b` so the loop
+// never touches the StepsAdjacencyList. Densifying over pairs is affordable
+// because the completed graph is dense anyways. Queries keep the
+// FindDepartureAtOrAfter contract: the bucket lookup may undershoot (buckets
+// are coarser than seconds), and the forward scan on exact times fixes it up.
+struct DensePairTable {
+  static constexpr int32_t kNoStep = std::numeric_limits<int32_t>::max();
 
-  static NextDepartureTable Build(const StepsAdjacencyList& list) {
-    NextDepartureTable table;
-    table.group_tables.resize(list.groups.size());
-    for (size_t gi = 0; gi < list.groups.size(); ++gi) {
-      std::span<const int16_t> packed = list.GetDepartureTimes(list.groups[gi]);
-      GroupTable& gt = table.group_tables[gi];
-      if (packed.empty()) {
-        gt = GroupTable{0, 0, -1};
-        continue;
-      }
-      gt.offset = static_cast<int>(table.entries.size());
-      gt.first_bucket = packed.front();
-      gt.last_bucket = packed.back();
-      size_t step_idx = 0;
-      for (int bucket = gt.first_bucket; bucket <= gt.last_bucket; ++bucket) {
-        while (packed[step_idx] < bucket) {
-          ++step_idx;
+  // Timed steps slimmed to the two times the DP needs, grouped by pair and
+  // sorted by departure, with a {kNoStep, kNoStep} sentinel terminating each
+  // pair's run so queries need no end-of-pair bound: a query that runs off the
+  // real steps reads the sentinel's kNoStep arrival, which never improves
+  // anything.
+  struct SlimStep {
+    int32_t dep;
+    int32_t arr;
+  };
+  std::vector<SlimStep> steps;
+
+  // Index into `steps` of the first step of pair P departing at or after each
+  // bucket's start (the pair's sentinel if none), indexed
+  // P * n_buckets + bucket. Buckets are uniform over the whole graph's
+  // departure span, so a query is a single multiply-add.
+  std::vector<int32_t> bucket_to_step;
+  int n_buckets;
+  int bucket_size_seconds;
+  int bucket0_seconds;  // Departure time at the start of bucket 0.
+
+  // Flex duration of each pair, kNoStep if the pair has no flex step.
+  std::vector<int32_t> flex_seconds;
+
+  int n_stops;
+
+  static DensePairTable Build(const StepsAdjacencyList& list, int n_stops) {
+    DensePairTable table;
+    table.n_stops = n_stops;
+    size_t n_pairs = static_cast<size_t>(n_stops) * n_stops;
+    table.flex_seconds.assign(n_pairs, kNoStep);
+
+    // MakeAdjacencyList merges all steps of a directed pair into one group, so
+    // each pair's steps are a single sorted run.
+    std::vector<std::span<const AdjacencyListStep>> pair_steps(n_pairs);
+    int min_dep = std::numeric_limits<int>::max();
+    int max_dep = std::numeric_limits<int>::min();
+    size_t n_timed = 0;
+    for (StopId a{0}; a.v < n_stops; ++a.v) {
+      for (const StepGroup& group : list.GetGroups(a)) {
+        size_t pair =
+            static_cast<size_t>(a.v) * n_stops + group.destination_stop.v;
+        if (group.flex_step.has_value()) {
+          table.flex_seconds[pair] = group.flex_step->FlexDurationSeconds();
         }
-        table.entries.push_back(static_cast<int32_t>(step_idx));
+        std::span<const AdjacencyListStep> steps = list.GetSteps(group);
+        pair_steps[pair] = steps;
+        n_timed += steps.size();
+        if (!steps.empty()) {
+          min_dep = std::min(min_dep, steps.front().origin_time.seconds);
+          max_dep = std::max(max_dep, steps.back().origin_time.seconds);
+        }
+      }
+    }
+
+    // Start at the packing resolution the adjacency list uses and coarsen
+    // until the bucket table is reasonably small; coarser buckets only
+    // lengthen the fix-up scan.
+    constexpr size_t kMaxBucketEntries = size_t{1} << 22;  // 16 MB of int32.
+    table.bucket_size_seconds = kDepartureTimeResolutionSeconds;
+    table.bucket0_seconds = n_timed == 0 ? 0 : min_dep;
+    if (n_timed == 0) {
+      table.n_buckets = 1;
+    } else {
+      while (true) {
+        size_t n_buckets =
+            static_cast<size_t>(max_dep - min_dep) / table.bucket_size_seconds +
+            1;
+        if (n_pairs * n_buckets <= kMaxBucketEntries) {
+          table.n_buckets = static_cast<int>(n_buckets);
+          break;
+        }
+        table.bucket_size_seconds *= 2;
+      }
+    }
+
+    table.steps.reserve(n_timed + n_pairs);
+    table.bucket_to_step.resize(n_pairs * table.n_buckets);
+    for (size_t pair = 0; pair < n_pairs; ++pair) {
+      size_t idx = table.steps.size();
+      for (const AdjacencyListStep& step : pair_steps[pair]) {
+        table.steps.push_back(SlimStep{
+            step.origin_time.seconds, step.destination_time.seconds
+        });
+      }
+      table.steps.push_back(SlimStep{kNoStep, kNoStep});
+      for (int bucket = 0; bucket < table.n_buckets; ++bucket) {
+        int bucket_start =
+            table.bucket0_seconds + bucket * table.bucket_size_seconds;
+        while (table.steps[idx].dep < bucket_start) {
+          ++idx;
+        }
+        table.bucket_to_step[pair * table.n_buckets + bucket] =
+            static_cast<int32_t>(idx);
       }
     }
     return table;
   }
 
-  // Mirrors FindDepartureAtOrAfter: index of the first step in the group
-  // departing at or after `t`, or steps.size() if none.
-  size_t Find(
-      std::span<const AdjacencyListStep> steps,
-      size_t group_index,
-      TimeSinceServiceStart t
-  ) const {
-    if (steps.empty()) {
-      return steps.size();
+  // Earliest arrival at `b` leaving `a` at `ready_seconds` or later, over the
+  // pair's flex step and timed steps; kNoStep if unreachable. Correct because
+  // each pair's steps are a minimal cover: the first departure at or after
+  // `ready_seconds` also has the earliest arrival. `ready_seconds` must be a
+  // real time, not the kUnreachable sentinel.
+  int32_t EarliestArrival(size_t pair, int32_t ready_seconds) const {
+    int32_t best = flex_seconds[pair];
+    if (best != kNoStep) {
+      best += ready_seconds;
     }
-    const GroupTable& gt = group_tables[group_index];
-    int packed_target = PackDepartureTimeForSearch(t);
-    size_t idx;
-    if (packed_target <= gt.first_bucket) {
-      idx = 0;
-    } else if (packed_target > gt.last_bucket) {
-      return steps.size();
-    } else {
-      idx = static_cast<size_t>(
-          entries[gt.offset + (packed_target - gt.first_bucket)]
-      );
-    }
-    while (idx < steps.size() && steps[idx].origin_time.seconds < t.seconds) {
+    int64_t offset = static_cast<int64_t>(ready_seconds) - bucket0_seconds;
+    int bucket = offset <= 0 ? 0
+                             : static_cast<int>(std::min<int64_t>(
+                                   offset / bucket_size_seconds, n_buckets - 1
+                               ));
+    size_t idx = bucket_to_step[pair * n_buckets + bucket];
+    while (steps[idx].dep < ready_seconds) {
       ++idx;
     }
-    return idx;
+    return std::min(best, steps[idx].arr);
   }
 };
 
@@ -276,39 +338,21 @@ HeldKarpDPResult HeldKarpDPSolve(
 
   const StepsAdjacencyList& adj_list = graph.compact.list;
 
-  NextDepartureTable next_departure_table = NextDepartureTable::Build(adj_list);
+  DensePairTable table =
+      DensePairTable::Build(adj_list, static_cast<int>(n_stops));
 
-  // Earliest arrival at the destination of `adj_list.groups[group_index]` when
-  // leaving its origin at `ready_time` or later.
-  auto EarliestArrivalVia = [&](
-                                size_t group_index,
-                                TimeSinceServiceStart ready_time
-                            ) -> std::optional<TimeSinceServiceStart> {
-    const StepGroup& group = adj_list.groups[group_index];
-    std::optional<TimeSinceServiceStart> best;
-    if (group.flex_step.has_value()) {
-      best = TimeSinceServiceStart{
-          ready_time.seconds + group.flex_step->FlexDurationSeconds()
-      };
-    }
-    std::span<const AdjacencyListStep> steps = adj_list.GetSteps(group);
-    size_t step_idx = next_departure_table.Find(steps, group_index, ready_time);
-    if (step_idx < steps.size() &&
-        (!best.has_value() || steps[step_idx].destination_time < *best)) {
-      best = steps[step_idx].destination_time;
-    }
-    return best;
+  // The middle stops (the ones with a mask bit), with their bit precomputed:
+  // the DP only ever transitions into these, and the completed graph is dense,
+  // so iterating them directly replaces walking each stop's adjacency groups.
+  struct MidStop {
+    int32_t stop;
+    size_t bit;
   };
-
-  // Group index (into `adj_list.groups`) of each stop's group of steps to END,
-  // or -1 if it has none.
-  std::vector<int> to_end_group_index(n_stops, -1);
-  for (StopId a{0}; a.v < n_stops; ++a.v) {
-    for (const StepGroup& group : adj_list.GetGroups(a)) {
-      if (group.destination_stop == compact_end) {
-        to_end_group_index[a.v] =
-            static_cast<int>(&group - adj_list.groups.data());
-      }
+  std::vector<MidStop> mid_stops;
+  for (StopId b{0}; b.v < n_stops; ++b.v) {
+    int mask_index = stop_id_to_mask_index[b.v];
+    if (mask_index != -1) {
+      mid_stops.push_back(MidStop{b.v, size_t{1} << mask_index});
     }
   }
 
@@ -320,18 +364,14 @@ HeldKarpDPResult HeldKarpDPSolve(
 
     // Base case: the tour leaves START at `t_start` or later, so seed each
     // middle stop reachable directly from START.
-    for (const StepGroup& group : adj_list.GetGroups(compact_start)) {
-      StopId b = group.destination_stop;
-      int b_mask_index = stop_id_to_mask_index[b.v];
-      if (b_mask_index == -1) {
-        continue;
-      }
-      std::optional<TimeSinceServiceStart> arrival = EarliestArrivalVia(
-          static_cast<size_t>(&group - adj_list.groups.data()), t_start
+    for (const MidStop& mid : mid_stops) {
+      int32_t arrival = table.EarliestArrival(
+          static_cast<size_t>(compact_start.v) * n_stops + mid.stop,
+          t_start.seconds
       );
-      size_t dest_index = (size_t{1} << b_mask_index) * n_stops + b.v;
-      if (arrival.has_value() && *arrival < dp[dest_index]) {
-        dp[dest_index] = *arrival;
+      size_t dest_index = mid.bit * n_stops + mid.stop;
+      if (arrival < dp[dest_index].seconds) {
+        dp[dest_index] = TimeSinceServiceStart{arrival};
         back[dest_index] = static_cast<uint8_t>(compact_start.v);
       }
     }
@@ -348,24 +388,22 @@ HeldKarpDPResult HeldKarpDPSolve(
           // Can't have `mask` ending up at `a`.
           continue;
         }
-        for (const StepGroup& ab_group : adj_list.GetGroups(a)) {
-          StopId b = ab_group.destination_stop;
-          int b_mask_index = stop_id_to_mask_index[b.v];
-          if (b_mask_index == -1) {
-            // `b` is in START's or END's group: never a middle visit.
+        size_t pair_base = static_cast<size_t>(a.v) * n_stops;
+        for (const MidStop& mid : mid_stops) {
+          if ((mask & mid.bit) != 0) {
+            // `mid`'s group is already in `mask`, so don't revisit.
             continue;
           }
-          size_t mask_with_b = mask | (size_t{1} << b_mask_index);
-          if (mask_with_b == mask) {
-            // `b` is already in `mask`, so don't revisit.
+          size_t dest_index = (mask | mid.bit) * n_stops + mid.stop;
+          if (dp[dest_index] <= a_time) {
+            // No step goes backwards in time, so an arrival from `a_time`
+            // can't improve on this.
             continue;
           }
-          size_t dest_index = mask_with_b * n_stops + b.v;
-          std::optional<TimeSinceServiceStart> arrival = EarliestArrivalVia(
-              static_cast<size_t>(&ab_group - adj_list.groups.data()), a_time
-          );
-          if (arrival.has_value() && *arrival < dp[dest_index]) {
-            dp[dest_index] = *arrival;
+          int32_t arrival =
+              table.EarliestArrival(pair_base + mid.stop, a_time.seconds);
+          if (arrival < dp[dest_index].seconds) {
+            dp[dest_index] = TimeSinceServiceStart{arrival};
             back[dest_index] = static_cast<uint8_t>(a.v);
           }
         }
@@ -378,23 +416,21 @@ HeldKarpDPResult HeldKarpDPSolve(
     TimeSinceServiceStart best_arrival = kUnreachable;
     StopId best_final_stop = compact_start;
     if (n_mid_groups == 0) {
-      if (to_end_group_index[compact_start.v] != -1) {
-        std::optional<TimeSinceServiceStart> arrival =
-            EarliestArrivalVia(to_end_group_index[compact_start.v], t_start);
-        if (arrival.has_value()) {
-          best_arrival = *arrival;
-        }
-      }
+      best_arrival = TimeSinceServiceStart{table.EarliestArrival(
+          static_cast<size_t>(compact_start.v) * n_stops + compact_end.v,
+          t_start.seconds
+      )};
     } else {
       for (StopId j{0}; j.v < n_stops; ++j.v) {
         TimeSinceServiceStart j_time = dp[full_mask * n_stops + j.v];
-        if (j_time == kUnreachable || to_end_group_index[j.v] == -1) {
+        if (j_time == kUnreachable) {
           continue;
         }
-        std::optional<TimeSinceServiceStart> arrival =
-            EarliestArrivalVia(to_end_group_index[j.v], j_time);
-        if (arrival.has_value() && *arrival < best_arrival) {
-          best_arrival = *arrival;
+        TimeSinceServiceStart arrival{table.EarliestArrival(
+            static_cast<size_t>(j.v) * n_stops + compact_end.v, j_time.seconds
+        )};
+        if (arrival < best_arrival) {
+          best_arrival = arrival;
           best_final_stop = j;
         }
       }
