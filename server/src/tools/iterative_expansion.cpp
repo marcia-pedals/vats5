@@ -385,7 +385,7 @@ void WriteRequiredSubsetToml(
 
 // Up to this many required groups, an iteration is solved by
 // PartialSolveHeldKarp instead of PartialSolveBranchAndBound.
-constexpr int kDefaultHeldKarpMaxGroups = 25;
+constexpr int kDefaultHeldKarpMaxGroups = 30;
 
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
