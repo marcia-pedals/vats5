@@ -196,9 +196,9 @@ struct DensePairTable {
     for (size_t pair = 0; pair < n_pairs; ++pair) {
       size_t idx = table.steps.size();
       for (const AdjacencyListStep& step : pair_steps[pair]) {
-        table.steps.push_back(SlimStep{
-            step.origin_time.seconds, step.destination_time.seconds
-        });
+        table.steps.push_back(
+            SlimStep{step.origin_time.seconds, step.destination_time.seconds}
+        );
       }
       table.steps.push_back(SlimStep{kNoStep, kNoStep});
       for (int bucket = 0; bucket < table.n_buckets; ++bucket) {
@@ -502,7 +502,6 @@ HeldKarpDPResult HeldKarpDPSolve(
     assert(arrival == best_arrival);
 
     int dur = arrival.seconds - departure.seconds;
-    t_start.seconds = departure.seconds + 1;
     if (dur < result.best_val) {
       result.best_val = dur;
       result.best_tour.clear();
@@ -512,6 +511,12 @@ HeldKarpDPResult HeldKarpDPSolve(
         );
       }
     }
+    if (search_log != nullptr) {
+      *search_log << "t_start " << t_start << ": final t " << arrival
+                  << ", current opt " << TimeSinceServiceStart{result.best_val}
+                  << "\n";
+    }
+    t_start.seconds = departure.seconds + 1;
     if (result.best_val == 0) {
       // A zero-duration tour can't be beaten, so skip the rest of the sweep.
       // TODO: This is a workaround to handle a common property-test case.
