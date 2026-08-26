@@ -18,55 +18,13 @@ namespace {
 using namespace vats5;
 
 struct HKDPGraph {
+  ProblemBoundary boundary;
   RequiredStops required;
   CompactStopIdsResult compact;
 };
 
-// The subset of `required` whose stops appear in some step of `steps`, with
-// each group's representative re-elected among the stops kept. Returns nullopt
-// if a whole group disappears: with two or more groups every visit needs a leg
-// in or out, so a group none of whose stops touches any step can never be
-// visited and the problem is infeasible.
-std::optional<RequiredStops> RequiredWithSteps(
-    const std::vector<Step>& steps, const RequiredStops& required
-) {
-  std::unordered_set<StopId> present;
-  for (const Step& step : steps) {
-    present.insert(step.origin.stop);
-    present.insert(step.destination.stop);
-  }
-  RequiredStops result;
-  for (const std::vector<StopId>& group : required.Groups()) {
-    std::vector<StopId> kept;
-    for (StopId stop : group) {
-      if (present.contains(stop)) {
-        kept.push_back(stop);
-      }
-    }
-    if (kept.empty()) {
-      return std::nullopt;
-    }
-    for (StopId stop : kept) {
-      result.representative[stop] = kept[0];
-    }
-  }
-  return result;
-}
-
-// Returns nullopt if the problem is infeasible: some required group is
-// disconnected from the other required stops. `required` must hold at least
-// two groups.
-std::optional<HKDPGraph> MakeHKDPGraph(
-    const ProblemState& state, const RequiredStops& required
-) {
-  // A required stop in no step at all would fall outside the graphs the
-  // completion below builds, so settle its fate first.
-  std::optional<RequiredStops> required_with_steps =
-      RequiredWithSteps(state.minimal.AllSteps(), required);
-  if (!required_with_steps.has_value()) {
-    return std::nullopt;
-  }
-
+// May return nullopt if the problem is infeasible.
+std::optional<HKDPGraph> MakeHKDPGraph(const ProblemState& state) {
   // Complete the graph for two reasons:
   // - The DP repeatedly queries for shortest paths, so this does all the work
   // upfront instead of repeating it.
@@ -75,32 +33,29 @@ std::optional<HKDPGraph> MakeHKDPGraph(
   std::vector<Step> completed_steps =
       CompleteShortestPathsGraph(
           state.minimal,
-          required_with_steps->AllFlat(),
+          state.required.AllFlat(),
           HorizonCoveringAllDepartures(state.minimal)
       )
           .AllMergedSteps();
 
-  // A required stop can also drop out here: one whose steps all lead to or
-  // from non-required stops reaches no other required stop, so the completion
-  // has no steps for it either.
-  std::optional<RequiredStops> required_completed =
-      RequiredWithSteps(completed_steps, *required_with_steps);
-  if (!required_completed.has_value()) {
+  StepsAdjacencyList completed = MakeAdjacencyList(std::move(completed_steps));
+  CompactStopIdsResult compact = CompactStopIds(completed);
+  std::optional<RequiredStops> required_mapped =
+      RemapRequiredStops(compact.mapping, state.required);
+  if (!required_mapped.has_value()) {
     return std::nullopt;
   }
 
-  StepsAdjacencyList completed = MakeAdjacencyList(std::move(completed_steps));
-  CompactStopIdsResult compact = CompactStopIds(completed);
-
-  RequiredStops required_compacted;
-  for (const auto& [stop, rep] : required_completed->representative) {
-    required_compacted
-        .representative[StopId{compact.mapping.original_to_new[stop.v]}] =
-        StopId{compact.mapping.original_to_new[rep.v]};
-  }
+  std::optional<StopId> start_mapped =
+      compact.mapping.MapToNew(state.boundary.start);
+  std::optional<StopId> end_mapped =
+      compact.mapping.MapToNew(state.boundary.end);
+  assert(start_mapped.has_value());
+  assert(end_mapped.has_value());
 
   return HKDPGraph{
-      .required = required_compacted,
+      .boundary = ProblemBoundary{.start = *start_mapped, .end = *end_mapped},
+      .required = *required_mapped,
       .compact = compact,
   };
 }
@@ -244,50 +199,23 @@ namespace vats5 {
 HeldKarpDPResult HeldKarpDPSolve(
     const ProblemState& state, std::ostream* search_log
 ) {
-  HeldKarpDPResult infeasible{
+  HeldKarpDPResult result{
       .best_val = kUnreachable.seconds,
       .best_tour = {},
   };
 
-  StopId start = state.boundary.start;
-  StopId end = state.boundary.end;
-
-  // The boundary stops need not be required (constraints can erase their
-  // groups), but they must be in the graph, so add each as its own group when
-  // it is not required.
-  RequiredStops graph_required = state.required;
-  if (!graph_required.Contains(start)) {
-    graph_required.representative[start] = start;
-  }
-  if (!graph_required.Contains(end)) {
-    graph_required.representative[end] = end;
-  }
-
-  std::optional<HKDPGraph> maybe_graph = MakeHKDPGraph(state, graph_required);
+  std::optional<HKDPGraph> maybe_graph = MakeHKDPGraph(state);
   if (!maybe_graph.has_value()) {
-    return infeasible;
+    return result;
   }
-  HKDPGraph& graph = *maybe_graph;
-
-  // A tour must start at START and end at END; if either dropped out of the
-  // graph (it reaches no other required stop), the problem is infeasible.
-  const std::vector<StopId>& original_to_new =
-      graph.compact.mapping.original_to_new;
-  if (start.v >= static_cast<int>(original_to_new.size()) ||
-      original_to_new[start.v] == StopId{-1} ||
-      end.v >= static_cast<int>(original_to_new.size()) ||
-      original_to_new[end.v] == StopId{-1}) {
-    return infeasible;
-  }
-  StopId compact_start = original_to_new[start.v];
-  StopId compact_end = original_to_new[end.v];
+  const HKDPGraph& graph = *maybe_graph;
 
   // The groups (rather than the stops) index the mask, and only the "middle"
   // groups get a mask bit: a group containing START or END is satisfied by the
   // endpoints themselves, so the tour's structure (start at START, end at END)
   // already guarantees it is visited.
-  StopId start_rep = graph.required.Representative(compact_start);
-  StopId end_rep = graph.required.Representative(compact_end);
+  StopId start_rep = graph.required.Representative(graph.boundary.start);
+  StopId end_rep = graph.required.Representative(graph.boundary.end);
   std::vector<int> stop_id_to_mask_index(graph.required.size(), -1);
   size_t n_mid_groups = 0;
   for (const StopId& rep_stop_id : graph.required.GroupRepresentatives()) {
@@ -304,11 +232,6 @@ HeldKarpDPResult HeldKarpDPSolve(
   }
 
   size_t n_stops = graph.required.size();
-
-  HeldKarpDPResult result{
-      .best_val = kUnreachable.seconds,
-      .best_tour = {},
-  };
 
   TimeSinceServiceStart t_latest_dep{0};
   for (const Step& step : graph.compact.list.AllSteps()) {
@@ -366,13 +289,13 @@ HeldKarpDPResult HeldKarpDPSolve(
     // middle stop reachable directly from START.
     for (const MidStop& mid : mid_stops) {
       int32_t arrival = table.EarliestArrival(
-          static_cast<size_t>(compact_start.v) * n_stops + mid.stop,
+          static_cast<size_t>(graph.boundary.start.v) * n_stops + mid.stop,
           t_start.seconds
       );
       size_t dest_index = mid.bit * n_stops + mid.stop;
       if (arrival < dp[dest_index].seconds) {
         dp[dest_index] = TimeSinceServiceStart{arrival};
-        back[dest_index] = static_cast<uint8_t>(compact_start.v);
+        back[dest_index] = static_cast<uint8_t>(graph.boundary.start.v);
       }
     }
 
@@ -414,10 +337,11 @@ HeldKarpDPResult HeldKarpDPSolve(
     // every middle group visited (or directly from START when there are none).
     size_t full_mask = (size_t{1} << n_mid_groups) - 1;
     TimeSinceServiceStart best_arrival = kUnreachable;
-    StopId best_final_stop = compact_start;
+    StopId best_final_stop = graph.boundary.start;
     if (n_mid_groups == 0) {
       best_arrival = TimeSinceServiceStart{table.EarliestArrival(
-          static_cast<size_t>(compact_start.v) * n_stops + compact_end.v,
+          static_cast<size_t>(graph.boundary.start.v) * n_stops +
+              graph.boundary.end.v,
           t_start.seconds
       )};
     } else {
@@ -427,7 +351,8 @@ HeldKarpDPResult HeldKarpDPSolve(
           continue;
         }
         TimeSinceServiceStart arrival{table.EarliestArrival(
-            static_cast<size_t>(j.v) * n_stops + compact_end.v, j_time.seconds
+            static_cast<size_t>(j.v) * n_stops + graph.boundary.end.v,
+            j_time.seconds
         )};
         if (arrival < best_arrival) {
           best_arrival = arrival;
@@ -448,10 +373,11 @@ HeldKarpDPResult HeldKarpDPSolve(
     // predecessor is its back-pointer (START for seeds).
     size_t n_points = n_mid_groups + 2;
     std::vector<StopId> compact_tour(n_points);
-    compact_tour[n_points - 1] = compact_end;
+    compact_tour[n_points - 1] = graph.boundary.end;
     {
       size_t cur_mask = full_mask;
-      StopId cur_stop = n_mid_groups == 0 ? compact_start : best_final_stop;
+      StopId cur_stop =
+          n_mid_groups == 0 ? graph.boundary.start : best_final_stop;
       for (size_t i = n_points - 2;; --i) {
         compact_tour[i] = cur_stop;
         if (i == 0) {
@@ -462,7 +388,7 @@ HeldKarpDPResult HeldKarpDPSolve(
         cur_stop = prev_stop;
       }
       assert(cur_mask == 0);
-      assert(cur_stop == compact_start);
+      assert(cur_stop == graph.boundary.start);
     }
 
     // Step forwards along the tour for its departure and duration: from the
