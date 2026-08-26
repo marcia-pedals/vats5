@@ -84,8 +84,10 @@ struct DensePairTable {
 
   // Index into `steps` of the first step of pair P departing at or after each
   // bucket's start (the pair's sentinel if none), indexed
-  // P * n_buckets + bucket. Buckets are uniform over the whole graph's
-  // departure span, so a query is a single multiply-add.
+  // bucket * n_pairs + P. Bucket-major because the DP's inner loop queries one
+  // ready time (one bucket) against a contiguous run of pairs, so its lookups
+  // all land in one row. Buckets are uniform over the whole graph's departure
+  // span, so a query is a single multiply-add.
   std::vector<int32_t> bucket_to_step;
   int n_buckets;
   int bucket_size_seconds;
@@ -162,33 +164,46 @@ struct DensePairTable {
         while (table.steps[idx].dep < bucket_start) {
           ++idx;
         }
-        table.bucket_to_step[pair * table.n_buckets + bucket] =
+        table.bucket_to_step[static_cast<size_t>(bucket) * n_pairs + pair] =
             static_cast<int32_t>(idx);
       }
     }
     return table;
   }
 
-  // Earliest arrival at `b` leaving `a` at `ready_seconds` or later, over the
-  // pair's flex step and timed steps; kNoStep if unreachable. Correct because
-  // each pair's steps are a minimal cover: the first departure at or after
-  // `ready_seconds` also has the earliest arrival. `ready_seconds` must be a
-  // real time, not the kUnreachable sentinel.
-  int32_t EarliestArrival(size_t pair, int32_t ready_seconds) const {
-    int32_t best = flex_seconds[pair];
-    if (best != kNoStep) {
-      best += ready_seconds;
-    }
+  // Start of `ready_seconds`'s row in `bucket_to_step`. Hoistable out of any
+  // loop that queries many pairs at one ready time.
+  size_t BucketRowBase(int32_t ready_seconds) const {
     int64_t offset = static_cast<int64_t>(ready_seconds) - bucket0_seconds;
     int bucket = offset <= 0 ? 0
                              : static_cast<int>(std::min<int64_t>(
                                    offset / bucket_size_seconds, n_buckets - 1
                                ));
-    size_t idx = bucket_to_step[pair * n_buckets + bucket];
+    return static_cast<size_t>(bucket) * n_stops * n_stops;
+  }
+
+  // Earliest arrival at `b` leaving `a` at `ready_seconds` or later, over the
+  // pair's flex step and timed steps; kNoStep if unreachable. Correct because
+  // each pair's steps are a minimal cover: the first departure at or after
+  // `ready_seconds` also has the earliest arrival. `ready_seconds` must be a
+  // real time, not the kUnreachable sentinel, and `row_base` must be
+  // `BucketRowBase(ready_seconds)`.
+  int32_t EarliestArrival(
+      size_t pair, int32_t ready_seconds, size_t row_base
+  ) const {
+    int32_t best = flex_seconds[pair];
+    if (best != kNoStep) {
+      best += ready_seconds;
+    }
+    size_t idx = bucket_to_step[row_base + pair];
     while (steps[idx].dep < ready_seconds) {
       ++idx;
     }
     return std::min(best, steps[idx].arr);
+  }
+
+  int32_t EarliestArrival(size_t pair, int32_t ready_seconds) const {
+    return EarliestArrival(pair, ready_seconds, BucketRowBase(ready_seconds));
   }
 };
 
@@ -275,6 +290,14 @@ HeldKarpDPResult HeldKarpDPSolve(
 
   MinimalPathSetCache path_cache(adj_list);
 
+  // Per-mask candidate stops: the middle stops whose group is not yet in the
+  // mask, with their dp destination indices. Both depend only on the mask, so
+  // they are computed once per mask (lazily, on its first reachable source
+  // stop) and iterated as small contiguous arrays in the hot loop instead of
+  // re-deriving them from `stop_bit` for every (source, destination) pair.
+  std::vector<uint8_t> cand_b(n_stops);
+  std::vector<size_t> cand_dest(n_stops);
+
   TimeSinceServiceStart t_start{0};
   while (t_start <= t_latest_dep) {
     std::ranges::fill(dp, kUnreachable);
@@ -302,6 +325,7 @@ HeldKarpDPResult HeldKarpDPSolve(
     // settled before any of its supersets (which are numerically larger) reads
     // from it, because this loop only propagates (mask, *) forwards.
     for (size_t mask = 1; mask < (size_t{1} << n_mid_groups); ++mask) {
+      int n_cand = -1;
       // Propagate (mask, *) forwards to all possible next stops.
       for (StopId a{0}; a.v < n_stops; ++a.v) {
         TimeSinceServiceStart a_time = dp[mask * n_stops + a.v];
@@ -309,24 +333,32 @@ HeldKarpDPResult HeldKarpDPSolve(
           // Can't have `mask` ending up at `a`.
           continue;
         }
+        if (n_cand < 0) {
+          n_cand = 0;
+          for (StopId b{0}; b.v < n_stops; ++b.v) {
+            size_t bit = stop_bit[b.v];
+            if (bit == 0 || (mask & bit) != 0) {
+              // `b` is a boundary-group stop, or its group is already in
+              // `mask`, so don't (re)visit.
+              continue;
+            }
+            cand_b[n_cand] = static_cast<uint8_t>(b.v);
+            cand_dest[n_cand] = (mask | bit) * n_stops + b.v;
+            ++n_cand;
+          }
+        }
         size_t pair_base = static_cast<size_t>(a.v) * n_stops;
-        for (StopId b{0}; b.v < n_stops; ++b.v) {
-          size_t bit = stop_bit[b.v];
-          if (bit == 0) {
-            continue;
-          }
-          if ((mask & bit) != 0) {
-            // `b`'s group is already in `mask`, so don't revisit.
-            continue;
-          }
-          size_t dest_index = (mask | bit) * n_stops + b.v;
+        size_t row_base = table.BucketRowBase(a_time.seconds);
+        for (int k = 0; k < n_cand; ++k) {
+          size_t dest_index = cand_dest[k];
           if (dp[dest_index] <= a_time) {
             // No step goes backwards in time, so an arrival from `a_time`
             // can't improve on this.
             continue;
           }
-          int32_t arrival =
-              table.EarliestArrival(pair_base + b.v, a_time.seconds);
+          int32_t arrival = table.EarliestArrival(
+              pair_base + cand_b[k], a_time.seconds, row_base
+          );
           if (arrival < dp[dest_index].seconds) {
             dp[dest_index] = TimeSinceServiceStart{arrival};
             back[dest_index] = static_cast<uint8_t>(a.v);
