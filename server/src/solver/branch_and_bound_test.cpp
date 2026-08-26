@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "rapidcheck/Assertions.h"
@@ -124,6 +125,71 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
   // the waiting time and producing a looser (lower) bound.
   // RC_ASSERT(!result_require.has_value() || result_require->optimal_value >=
   // result_orig->optimal_value);
+}
+
+// Regression test for a stop id collision in ApplyConstraints. Requiring an
+// edge that was previously forbidden creates a merged stop with no steps,
+// which the adjacency list's NumStops() doesn't count. A follow-up
+// ApplyConstraints call on that state used to allocate its next merged stop id
+// from NumStops(), reusing the step-less stop's id: the second Require below
+// then created its merged stop with the same id as its own endpoint, and
+// EraseGroup on that endpoint erased the new stop's required group, leaving a
+// boundary stop that is not required.
+TEST(BranchAndBoundTest, RequireOfStepLessMergedStopKeepsBoundaryRequired) {
+  StopId a{0}, b{1}, c{2}, d{3}, start{4}, end{5};
+  TripId trip{0};
+  std::vector<Step> steps;
+  steps.push_back(Step::PrimitiveFlex(a, b, 1200, trip, StepPartitionId{0}));
+  steps.push_back(Step::PrimitiveFlex(b, c, 1200, trip, StepPartitionId{0}));
+  steps.push_back(Step::PrimitiveFlex(c, d, 1200, trip, StepPartitionId{0}));
+  steps.push_back(Step::PrimitiveFlex(d, a, 1200, trip, StepPartitionId{0}));
+  for (StopId mid : {a, b, c, d}) {
+    steps.push_back(Step::PrimitiveFlex(start, mid, 0, trip));
+    steps.push_back(Step::PrimitiveFlex(mid, end, 0, trip));
+  }
+
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  stop_infos[a] = ProblemStateStopInfo{GtfsStopId{"a"}, "a"};
+  stop_infos[b] = ProblemStateStopInfo{GtfsStopId{"b"}, "b"};
+  stop_infos[c] = ProblemStateStopInfo{GtfsStopId{"c"}, "c"};
+  stop_infos[d] = ProblemStateStopInfo{GtfsStopId{"d"}, "d"};
+  stop_infos[start] = ProblemStateStopInfo{GtfsStopId{""}, "START"};
+  stop_infos[end] = ProblemStateStopInfo{GtfsStopId{""}, "END"};
+
+  RequiredStops required;
+  for (StopId stop : {a, b, c, d, start, end}) {
+    required.representative[stop] = stop;
+  }
+
+  ProblemState state = MakeProblemState(
+      MakeAdjacencyList(steps),
+      ProblemBoundary{.start = start, .end = end},
+      required,
+      stop_infos,
+      {},
+      {}
+  );
+
+  // Applied one at a time: each ApplyConstraints call re-derives its next stop
+  // id from the previous call's result, which is what used to collide.
+  state = ApplyConstraints(
+      state, {ProblemConstraint{ConstraintForbidEdge{start, d}}}
+  );
+  state = ApplyConstraints(
+      state, {ProblemConstraint{ConstraintRequireEdge{start, d}}}
+  );
+  // The merged stop "(START->d)" is the new boundary start. It has no steps:
+  // START->d was just forbidden and nothing enters START.
+  StopId merged = state.boundary.start;
+  EXPECT_TRUE(state.required.Contains(merged));
+
+  state = ApplyConstraints(
+      state, {ProblemConstraint{ConstraintRequireEdge{merged, c}}}
+  );
+  // The new merged stop "((START->d)->c)" must get a fresh id and stay
+  // required.
+  EXPECT_NE(state.boundary.start, merged);
+  EXPECT_TRUE(state.required.Contains(state.boundary.start));
 }
 
 RC_GTEST_PROP(BranchAndBoundTest, SearchFindsOptimalValue, ()) {
