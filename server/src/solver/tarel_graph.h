@@ -103,6 +103,13 @@ struct RequiredStops {
   bool operator==(const RequiredStops&) const = default;
 };
 
+// Map `required` from the "original" stop ids in `mapping` to the "new" stop
+// ids. Returns nullopt if any groups in `required` have no stops that map to
+// "new" stop ids.
+std::optional<RequiredStops> RemapRequiredStops(
+    const StopIdMapping& mapping, const RequiredStops& required
+);
+
 struct ProblemState {
   // The graph of minimal steps, i.e. the steps from which all possible tours
   // can be made, with the property that deleting one step will make at least

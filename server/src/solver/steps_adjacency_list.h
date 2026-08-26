@@ -377,6 +377,14 @@ inline void from_json(const nlohmann::json& j, StepPathsAdjacencyList& adj) {
 struct StopIdMapping {
   std::vector<StopId> new_to_original;
   std::vector<StopId> original_to_new;
+
+  std::optional<StopId> MapToNew(StopId original) const {
+    if (original.v < original_to_new.size() &&
+        original_to_new[original.v] != StopId{-1}) {
+      return original_to_new[original.v];
+    }
+    return std::nullopt;
+  }
 };
 
 struct CompactStopIdsResult {

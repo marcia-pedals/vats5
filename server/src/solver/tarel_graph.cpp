@@ -469,6 +469,28 @@ InitializeProblemStateResult InitializeProblemState(
   };
 }
 
+std::optional<RequiredStops> RemapRequiredStops(
+    const StopIdMapping& mapping, const RequiredStops& required
+) {
+  RequiredStops mapped;
+  for (const std::vector<StopId>& group : required.Groups()) {
+    std::optional<StopId> new_rep_id;
+    for (const StopId original_stop_id : group) {
+      std::optional<StopId> new_stop_id = mapping.MapToNew(original_stop_id);
+      if (new_stop_id.has_value()) {
+        if (!new_rep_id.has_value()) {
+          new_rep_id = new_stop_id;
+        }
+        mapped.representative[*new_stop_id] = *new_rep_id;
+      }
+    }
+    if (!new_rep_id.has_value()) {
+      return std::nullopt;
+    }
+  }
+  return mapped;
+}
+
 std::string TarelState::Debug(const ProblemState& state) const {
   return state.StopName(stop) + " " + state.PartitionName(partition);
 }

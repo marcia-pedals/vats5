@@ -133,6 +133,11 @@ add_library(tarel_graph STATIC src/solver/tarel_graph.cpp)
 target_link_libraries(tarel_graph PUBLIC steps_shortest_path concorde)
 target_include_directories(tarel_graph PUBLIC src)
 
+# Create held_karp_dp library target
+add_library(held_karp_dp STATIC src/solver/held_karp_dp.cpp)
+target_link_libraries(held_karp_dp PUBLIC tarel_graph tour_paths steps_shortest_path)
+target_include_directories(held_karp_dp PUBLIC src)
+
 # Create sqlite_wrapper library target
 add_library(sqlite_wrapper STATIC src/visualization/sqlite_wrapper.cpp)
 target_link_libraries(sqlite_wrapper PUBLIC SQLite::SQLite3)
@@ -190,6 +195,10 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 # Add benchmark_bnb tool
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
 target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
+
+# Add benchmark_hk tool
+add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
+target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
 
 # Create iterative_expansion_partial_solve library target
 add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)
@@ -300,6 +309,11 @@ add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+
+# Add held_karp_dp test executable
+add_executable(held_karp_dp_test src/solver/held_karp_dp_test.cpp)
+target_link_libraries(held_karp_dp_test PUBLIC gunit held_karp_dp branch_and_bound tour_paths problem_state_gen naive_solve rapidcheck_gtest)
+add_test(NAME held_karp_dp_test COMMAND held_karp_dp_test)
 
 # Add tour_paths test executable
 add_executable(tour_paths_test src/solver/tour_paths_test.cpp)
