@@ -429,22 +429,41 @@ HeldKarpDPResult HeldKarpDPSolve(
     }
     assert(arrival == best_arrival);
 
-    int dur = arrival.seconds - departure.seconds;
-    if (dur < result.best_val) {
-      result.best_val = dur;
-      result.best_tour.clear();
-      for (StopId stop : compact_tour) {
-        result.best_tour.push_back(
-            graph.compact.mapping.new_to_original[stop.v]
-        );
+    // Separately (!), set the best val to the shortest duration path. This
+    // might be a different one from the one departing earliest after t_start,
+    // but that's fine, if we find a better path, might as well use that one to
+    // speed up the sweep.
+    for (const Path& path : tour_paths) {
+      if (path.DurationSeconds() < result.best_val) {
+        result.best_val = path.DurationSeconds();
+        result.best_tour.clear();
+        for (StopId stop : compact_tour) {
+          result.best_tour.push_back(
+              graph.compact.mapping.new_to_original[stop.v]
+          );
+        }
       }
     }
+
     if (search_log != nullptr) {
-      *search_log << "t_start " << t_start << ": final t " << arrival
-                  << ", current opt " << TimeSinceServiceStart{result.best_val}
-                  << "\n";
+      *search_log << "t_start " << t_start << ", current opt "
+                  << TimeSinceServiceStart{result.best_val} << "\n";
     }
-    t_start.seconds = departure.seconds + dur - result.best_val + 1;
+
+    // We can jump forwards this much without missing any better paths, because
+    // if there is a path better than `result.best_val` departing before
+    // `arrival.seconds - result.best_val`, then:
+    //
+    // (1) it arrives before `arrival.seconds`,
+    //
+    // (2) it departs at or after `arrival.seconds - result.best_val >=
+    // arrival.seconds - (arrival.seconds - departure.seconds) =
+    // departure.seconds >= t_start`.
+    //
+    // So it would have been a better path for the current iteration. and we
+    // would have found it in the current iteration.
+    t_start.seconds = arrival.seconds - result.best_val + 1;
+
     if (result.best_val == 0) {
       // A zero-duration tour can't be beaten, so skip the rest of the sweep.
       // TODO: This is a workaround to handle a common property-test case.
