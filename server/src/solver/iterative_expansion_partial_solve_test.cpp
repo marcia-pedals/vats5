@@ -357,9 +357,9 @@ TEST(PartialSolveTest, FarApartAlternateStopGroupSolvedByHeldKarpNodes) {
   PartialSolution bnb = PartialSolveBranchAndBound(
       MakePartialProblemState(subset, state), state, 0, nullptr
   );
-  PartialSolution brute = PartialSolveBruteForce(subset, state);
+  PartialSolution held_karp = SolveHeldKarp(subset, state);
   ASSERT_FALSE(bnb.paths.empty());
-  EXPECT_EQ(OptimalDuration(bnb), OptimalDuration(brute));
+  EXPECT_EQ(OptimalDuration(bnb), OptimalDuration(held_karp));
 }
 
 // The tour of `stops`, with the boundary around it.
