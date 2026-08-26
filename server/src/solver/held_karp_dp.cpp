@@ -264,19 +264,13 @@ HeldKarpDPResult HeldKarpDPSolve(
   DensePairTable table =
       DensePairTable::Build(adj_list, static_cast<int>(n_stops));
 
-  // The middle stops (the ones with a mask bit), with their bit precomputed:
-  // the DP only ever transitions into these, and the completed graph is dense,
-  // so iterating them directly replaces walking each stop's adjacency groups.
-  struct MidStop {
-    int32_t stop;
-    size_t bit;
-  };
-  std::vector<MidStop> mid_stops;
+  // Each stop's mask bit, 0 for boundary-group stops (which have no mask
+  // index and are never transitioned into). Precomputed so the DP hot loop
+  // skips and applies a stop's bit with a single lookup.
+  std::vector<size_t> stop_bit(n_stops);
   for (StopId b{0}; b.v < n_stops; ++b.v) {
     int mask_index = stop_id_to_mask_index[b.v];
-    if (mask_index != -1) {
-      mid_stops.push_back(MidStop{b.v, size_t{1} << mask_index});
-    }
+    stop_bit[b.v] = mask_index == -1 ? 0 : size_t{1} << mask_index;
   }
 
   MinimalPathSetCache path_cache(adj_list);
@@ -287,12 +281,16 @@ HeldKarpDPResult HeldKarpDPSolve(
 
     // Base case: the tour leaves START at `t_start` or later, so seed each
     // middle stop reachable directly from START.
-    for (const MidStop& mid : mid_stops) {
+    for (StopId b{0}; b.v < n_stops; ++b.v) {
+      size_t bit = stop_bit[b.v];
+      if (bit == 0) {
+        continue;
+      }
       int32_t arrival = table.EarliestArrival(
-          static_cast<size_t>(graph.boundary.start.v) * n_stops + mid.stop,
+          static_cast<size_t>(graph.boundary.start.v) * n_stops + b.v,
           t_start.seconds
       );
-      size_t dest_index = mid.bit * n_stops + mid.stop;
+      size_t dest_index = bit * n_stops + b.v;
       if (arrival < dp[dest_index].seconds) {
         dp[dest_index] = TimeSinceServiceStart{arrival};
         back[dest_index] = static_cast<uint8_t>(graph.boundary.start.v);
@@ -312,19 +310,23 @@ HeldKarpDPResult HeldKarpDPSolve(
           continue;
         }
         size_t pair_base = static_cast<size_t>(a.v) * n_stops;
-        for (const MidStop& mid : mid_stops) {
-          if ((mask & mid.bit) != 0) {
-            // `mid`'s group is already in `mask`, so don't revisit.
+        for (StopId b{0}; b.v < n_stops; ++b.v) {
+          size_t bit = stop_bit[b.v];
+          if (bit == 0) {
             continue;
           }
-          size_t dest_index = (mask | mid.bit) * n_stops + mid.stop;
+          if ((mask & bit) != 0) {
+            // `b`'s group is already in `mask`, so don't revisit.
+            continue;
+          }
+          size_t dest_index = (mask | bit) * n_stops + b.v;
           if (dp[dest_index] <= a_time) {
             // No step goes backwards in time, so an arrival from `a_time`
             // can't improve on this.
             continue;
           }
           int32_t arrival =
-              table.EarliestArrival(pair_base + mid.stop, a_time.seconds);
+              table.EarliestArrival(pair_base + b.v, a_time.seconds);
           if (arrival < dp[dest_index].seconds) {
             dp[dest_index] = TimeSinceServiceStart{arrival};
             back[dest_index] = static_cast<uint8_t>(a.v);
