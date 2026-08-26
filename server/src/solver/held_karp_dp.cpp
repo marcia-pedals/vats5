@@ -516,7 +516,7 @@ HeldKarpDPResult HeldKarpDPSolve(
                   << ", current opt " << TimeSinceServiceStart{result.best_val}
                   << "\n";
     }
-    t_start.seconds = departure.seconds + 1;
+    t_start.seconds = departure.seconds + dur - result.best_val + 1;
     if (result.best_val == 0) {
       // A zero-duration tour can't be beaten, so skip the rest of the sweep.
       // TODO: This is a workaround to handle a common property-test case.
