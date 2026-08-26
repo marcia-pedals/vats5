@@ -47,7 +47,16 @@ ProblemState ApplyConstraints(
   std::unordered_map<StopId, ProblemStateStopInfo> stop_infos =
       state.stop_infos;
   std::unordered_map<StopId, PlainEdge> original_edges = state.original_edges;
+
+  // A merged stop from an earlier Require can have no steps (e.g. its edge was
+  // forbidden first), making it invisible to the adjacency list's NumStops(),
+  // so allocate past every stop the state knows about, not just the stepped
+  // ones. Otherwise a later Require reuses the merged stop's id and corrupts
+  // the state.
   StopId next_stop_id{state.minimal.NumStops()};
+  for (const auto& [stop, info] : stop_infos) {
+    next_stop_id.v = std::max(next_stop_id.v, stop.v + 1);
+  }
 
   // Apply constraints in order, by mutating the copies that we just made above.
   for (const ProblemConstraint& constraint : constraints) {
