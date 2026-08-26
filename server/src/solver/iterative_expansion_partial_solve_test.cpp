@@ -129,9 +129,16 @@ ProblemState LineState() {
   );
 }
 
-TEST(PartialSolveBruteForceTest, VisitsTheSubsetInTheCheapestOrder) {
+// PartialSolveHeldKarp on the partial problem for `subset`.
+PartialSolution SolveHeldKarp(
+    const std::unordered_set<StopId>& subset, const ProblemState& state
+) {
+  return PartialSolveHeldKarp(MakePartialProblemState(subset, state), state, 0);
+}
+
+TEST(PartialSolveHeldKarpTest, VisitsTheSubsetInTheCheapestOrder) {
   ProblemState state = LineState();
-  PartialSolution solution = PartialSolveBruteForce(
+  PartialSolution solution = SolveHeldKarp(
       WholeGroups(state, {StopId{0}, StopId{1}, StopId{2}}), state
   );
 
@@ -147,10 +154,10 @@ TEST(PartialSolveBruteForceTest, VisitsTheSubsetInTheCheapestOrder) {
 
 // The subset says which stops the tour has to visit, not which ones the paths
 // between them may pass through.
-TEST(PartialSolveBruteForceTest, RoutesThroughStopsOutsideTheSubset) {
+TEST(PartialSolveHeldKarpTest, RoutesThroughStopsOutsideTheSubset) {
   ProblemState state = LineState();
   PartialSolution solution =
-      PartialSolveBruteForce(WholeGroups(state, {StopId{0}, StopId{2}}), state);
+      SolveHeldKarp(WholeGroups(state, {StopId{0}, StopId{2}}), state);
 
   ASSERT_FALSE(solution.paths.empty());
   // a -> c goes via b for 200 rather than taking the direct 1000 edge.
@@ -163,15 +170,15 @@ TEST(PartialSolveBruteForceTest, RoutesThroughStopsOutsideTheSubset) {
   }
 }
 
-TEST(PartialSolveBruteForceTest, EmptySubsetGoesStraightToEnd) {
+TEST(PartialSolveHeldKarpTest, EmptySubsetGoesStraightToEnd) {
   ProblemState state = LineState();
-  PartialSolution solution = PartialSolveBruteForce({}, state);
+  PartialSolution solution = SolveHeldKarp({}, state);
 
   ASSERT_FALSE(solution.paths.empty());
   EXPECT_EQ(OptimalDuration(solution), 0);
 }
 
-TEST(PartialSolveBruteForceTest, VisitsOneStopPerGroup) {
+TEST(PartialSolveHeldKarpTest, VisitsOneStopPerGroup) {
   // b and c are the same group, so a tour visits whichever is cheaper -- c,
   // which is a tenth of the distance from a.
   ProblemState state = MakeState(
@@ -186,7 +193,7 @@ TEST(PartialSolveBruteForceTest, VisitsOneStopPerGroup) {
   state.required.representative[StopId{2}] = StopId{1};
 
   PartialSolution solution =
-      PartialSolveBruteForce(WholeGroups(state, {StopId{0}, StopId{1}}), state);
+      SolveHeldKarp(WholeGroups(state, {StopId{0}, StopId{1}}), state);
 
   ASSERT_FALSE(solution.paths.empty());
   EXPECT_EQ(OptimalDuration(solution), 10);
@@ -197,12 +204,12 @@ TEST(PartialSolveBruteForceTest, VisitsOneStopPerGroup) {
   }
 }
 
-TEST(PartialSolveBruteForceTest, InfeasibleSubsetHasNoPaths) {
+TEST(PartialSolveHeldKarpTest, InfeasibleSubsetHasNoPaths) {
   // Nothing reaches c, so no tour visits it. A dead end would not do:
   // AddBoundary adds a *->END step from every stop.
   ProblemState state = MakeState(3, {Flex(0, 1, 100, 0), Flex(1, 0, 100, 1)});
 
-  PartialSolution solution = PartialSolveBruteForce(
+  PartialSolution solution = SolveHeldKarp(
       WholeGroups(state, {StopId{0}, StopId{1}, StopId{2}}), state
   );
 
@@ -234,15 +241,12 @@ std::unordered_set<StopId> GenRequiredSubset(const ProblemState& state) {
 
 // The solvers solve the same partial problem, so whatever else differs
 // between them, the duration they achieve must not.
-RC_GTEST_PROP(
-    PartialSolveTest, BruteForceAndBranchAndBoundAgreeOnDuration, ()
-) {
+RC_GTEST_PROP(PartialSolveTest, BranchAndBoundAndHeldKarpAgreeOnDuration, ()) {
   ProblemState state = *GenProblemState();
   std::unordered_set<StopId> subset = GenRequiredSubset(state);
 
   RC_LOG() << "subset size " << subset.size() << "\n";
 
-  PartialSolution brute = PartialSolveBruteForce(subset, state);
   // Discard cases where the tarel TSP tour splits a stop's states into
   // separate visits, which branch and bound cannot solve yet (see
   // FarApartAlternateStopGroupThrowsInvalidTourStructure below).
@@ -254,18 +258,14 @@ RC_GTEST_PROP(
   } catch (const InvalidTourStructure&) {
     RC_DISCARD("InvalidTourStructure");
   }
-  PartialSolution held_karp =
-      PartialSolveHeldKarp(MakePartialProblemState(subset, state), state, 0);
+  PartialSolution held_karp = SolveHeldKarp(subset, state);
 
-  RC_LOG() << "brute " << OptimalDuration(brute) << " over "
-           << brute.paths.size() << " paths\n";
   RC_LOG() << "bnb " << OptimalDuration(bnb) << " over " << bnb.paths.size()
            << " paths\n";
   RC_LOG() << "held-karp " << OptimalDuration(held_karp) << " over "
            << held_karp.paths.size() << " paths\n";
 
-  RC_ASSERT(OptimalDuration(brute) == OptimalDuration(bnb));
-  RC_ASSERT(OptimalDuration(brute) == OptimalDuration(held_karp));
+  RC_ASSERT(OptimalDuration(bnb) == OptimalDuration(held_karp));
 }
 
 // Whichever solver produced it, a returned path must actually run from START
@@ -283,12 +283,7 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedPathsAreOptimalStartToEnd, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
 
-  for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state),
-        bnb,
-        PartialSolveHeldKarp(
-            MakePartialProblemState(subset, state), state, 0
-        )}) {
+  for (const PartialSolution& solution : {bnb, SolveHeldKarp(subset, state)}) {
     int optimal = OptimalDuration(solution);
     for (const PartialSolutionPath& path : solution.paths) {
       RC_ASSERT(path.path.merged_step.origin.stop == state.boundary.start);
@@ -320,12 +315,7 @@ RC_GTEST_PROP(PartialSolveTest, ReturnedToursVisitEverySubsetGroup, ()) {
     RC_DISCARD("InvalidTourStructure");
   }
 
-  for (const PartialSolution& solution :
-       {PartialSolveBruteForce(subset, state),
-        bnb,
-        PartialSolveHeldKarp(
-            MakePartialProblemState(subset, state), state, 0
-        )}) {
+  for (const PartialSolution& solution : {bnb, SolveHeldKarp(subset, state)}) {
     for (const PartialSolutionPath& path : solution.paths) {
       std::unordered_set<StopId> visited;
       path.path.VisitAllStops([&](StopId stop) {

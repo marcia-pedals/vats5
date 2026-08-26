@@ -1,6 +1,5 @@
 #pragma once
 
-#include <functional>
 #include <iosfwd>
 #include <unordered_set>
 #include <vector>
@@ -65,17 +64,6 @@ PartialSolution PartialSolveHeldKarp(
     const ProblemState& original_problem,
     int known_lb,
     std::ostream* search_log = nullptr
-);
-
-// Solves the same partial problem as PartialSolveBranchAndBound, by trying
-// every order in which `required_subset` can be visited.
-//
-// `check_deadline` is called as the search proceeds and may throw to abandon
-// it.
-PartialSolution PartialSolveBruteForce(
-    const std::unordered_set<StopId>& required_subset,
-    const ProblemState& original_problem,
-    const std::function<void()>& check_deadline = [] {}
 );
 
 // The path sets along the parts of a tour, so that evaluating a stop inserted
