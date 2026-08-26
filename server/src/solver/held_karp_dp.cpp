@@ -1,12 +1,15 @@
 #include "solver/held_karp_dp.h"
 
 #include <algorithm>
+#include <atomic>
+#include <barrier>
 #include <bit>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "solver/data.h"
 #include "solver/steps_adjacency_list.h"
@@ -223,6 +226,26 @@ std::vector<std::vector<size_t>> MakeBinomialTable(int n_max) {
   return binom;
 }
 
+// Inverse of the mask ranking: the mask of popcount `p` whose rank among
+// same-popcount masks in increasing numeric order is `rank`. Greedy from the
+// top: the largest of the remaining `j` bits goes at the largest position
+// `pos` with binom[pos][j] <= rank.
+size_t UnrankMask(
+    size_t rank, int p, const std::vector<std::vector<size_t>>& binom
+) {
+  size_t mask = 0;
+  int pos = static_cast<int>(binom.size()) - 2;
+  for (int j = p; j >= 1; --j) {
+    while (binom[pos][j] > rank) {
+      --pos;
+    }
+    mask |= size_t{1} << pos;
+    rank -= binom[pos][j];
+    --pos;
+  }
+  return mask;
+}
+
 }  // end namespace
 
 namespace vats5 {
@@ -322,27 +345,23 @@ HeldKarpDPResult HeldKarpDPSolve(
 
   MinimalPathSetCache path_cache(adj_list);
 
-  // Per-mask candidate stops: the middle stops whose group is not yet in the
-  // mask, with their destination indices into the next dp layer and into
-  // `back`. All depend only on the mask, so they are computed once per mask
-  // (lazily, on its first reachable source stop) and iterated as small
-  // contiguous arrays in the hot loop instead of re-deriving them from
-  // `stop_bit` for every (source, destination) pair.
-  std::vector<uint8_t> cand_b(n_stops);
-  std::vector<size_t> cand_dest(n_stops);
-  std::vector<size_t> cand_back(n_stops);
-
-  // `next_rank[q]` is the rank of `mask | (1 << q)` in the next layer, for
-  // each group bit `q` not in the current `mask`; scratch for the per-mask
-  // candidate computation. `binom_flat` is `binom` flattened to a single
-  // array (binom[q][k] at q * binom_stride + k) so that computation reads it
-  // without a second indirection.
-  std::vector<size_t> next_rank(n_mid_groups);
+  // `binom_flat` is `binom` flattened to a single array (binom[q][k] at
+  // q * binom_stride + k) so the per-mask rank computation reads it without a
+  // second indirection.
   size_t binom_stride = binom.size();
   std::vector<size_t> binom_flat;
   binom_flat.reserve(binom_stride * binom_stride);
   for (const std::vector<size_t>& row : binom) {
     binom_flat.insert(binom_flat.end(), row.begin(), row.end());
+  }
+
+  // Parallelize the layer sweep only when there is enough dp work to amortize
+  // spawning threads each sweep; tiny instances (like most property-test
+  // cases) run serially.
+  int n_threads = 1;
+  if ((size_t{1} << n_mid_groups) * n_stops >= (size_t{1} << 18)) {
+    n_threads =
+        static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
   }
 
   TimeSinceServiceStart t_start{0};
@@ -375,85 +394,143 @@ HeldKarpDPResult HeldKarpDPSolve(
     // Run DP layer by layer: propagate every mask of popcount `p` into the
     // masks of popcount `p + 1`, so a layer is fully settled before anything
     // reads from it and only two layers are live at once.
-    for (int p = 1; p < n_mid_groups; ++p) {
-      const std::vector<TimeSinceServiceStart>& dp_cur = dp_layers[p % 2];
-      std::vector<TimeSinceServiceStart>& dp_next = dp_layers[(p + 1) % 2];
-      std::fill_n(
-          dp_next.begin(), binom[n_mid_groups][p + 1] * n_stops, kUnreachable
-      );
-      // Gosper's hack enumerates the layer's masks in increasing numeric
-      // order, which is exactly their order in the combinatorial number
-      // system, so the running loop index is each mask's rank in the layer.
-      size_t mask = (size_t{1} << p) - 1;
-      size_t layer_masks = binom[n_mid_groups][p];
-      for (size_t rank = 0; rank < layer_masks; ++rank) {
-        int n_cand = -1;
-        size_t cur_base = rank * n_stops;
-        // Propagate (mask, *) forwards to all possible next stops.
-        for (StopId a{0}; a.v < n_stops; ++a.v) {
-          TimeSinceServiceStart a_time = dp_cur[cur_base + a.v];
-          if (a_time == kUnreachable) {
-            // Can't have `mask` ending up at `a`.
-            continue;
+    //
+    // Each layer is split across threads by source rank range. That is safe
+    // without any synchronization on the entries themselves because each
+    // destination state (mask | bit, b) has exactly one source mask (clearing
+    // b's group bit), so threads owning disjoint source ranks never touch the
+    // same dp or back entry and the result is bit-identical to a serial run.
+    // Threads take dynamically sized chunks of each layer from a shared
+    // counter and barrier-sync twice per layer: after clearing the next
+    // layer's entries, and after propagating into them.
+    if (n_mid_groups >= 2) {
+      std::atomic<size_t> chunk_counter{0};
+      std::barrier phase_barrier(n_threads, [&chunk_counter]() noexcept {
+        chunk_counter.store(0, std::memory_order_relaxed);
+      });
+      auto worker = [&]() {
+        std::vector<uint8_t> cand_b(n_stops);
+        std::vector<size_t> cand_dest(n_stops);
+        std::vector<size_t> cand_back(n_stops);
+        std::vector<size_t> next_rank(n_mid_groups);
+        constexpr size_t kFillChunkElems = size_t{1} << 16;
+        for (int p = 1; p < n_mid_groups; ++p) {
+          const std::vector<TimeSinceServiceStart>& dp_cur = dp_layers[p % 2];
+          std::vector<TimeSinceServiceStart>& dp_next = dp_layers[(p + 1) % 2];
+          size_t next_elems = binom[n_mid_groups][p + 1] * n_stops;
+          while (true) {
+            size_t begin =
+                chunk_counter.fetch_add(1, std::memory_order_relaxed) *
+                kFillChunkElems;
+            if (begin >= next_elems) {
+              break;
+            }
+            std::fill_n(
+                dp_next.begin() + begin,
+                std::min(kFillChunkElems, next_elems - begin),
+                kUnreachable
+            );
           }
-          if (n_cand < 0) {
-            n_cand = 0;
-            // Rank every one-more-bit superset of `mask` as a delta off the
-            // mask's own rank (the Gosper loop counter): inserting a bit at
-            // clear position `q` leaves set bits below `q` (1-based index
-            // `j`) contributing binom[q'][j] as before, adds binom[q][j + 1]
-            // for the new bit, and shifts each set bit above `q` up one index
-            // so it contributes binom[q'][j + 1] instead of binom[q'][j].
-            // One descending pass accumulates those shift deltas; `suffix` is
-            // modular (deltas may be negative) but every final rank is exact.
-            {
-              size_t suffix = 0;
-              int above = 0;
-              for (int q = n_mid_groups - 1; q >= 0; --q) {
-                const size_t* binom_q = &binom_flat[q * binom_stride];
-                if ((mask >> q) & 1) {
-                  int j = p - above;
-                  suffix += binom_q[j + 1] - binom_q[j];
-                  ++above;
-                } else {
-                  next_rank[q] = rank + suffix + binom_q[p - above + 1];
+          phase_barrier.arrive_and_wait();
+          size_t layer_masks = binom[n_mid_groups][p];
+          size_t chunk_masks = std::max<size_t>(
+              64, layer_masks / (static_cast<size_t>(n_threads) * 16)
+          );
+          while (true) {
+            size_t chunk_begin =
+                chunk_counter.fetch_add(1, std::memory_order_relaxed) *
+                chunk_masks;
+            if (chunk_begin >= layer_masks) {
+              break;
+            }
+            size_t chunk_end = std::min(chunk_begin + chunk_masks, layer_masks);
+            // Gosper's hack enumerates the layer's masks in increasing
+            // numeric order, which is exactly their order in the
+            // combinatorial number system, so the running loop index is each
+            // mask's rank in the layer.
+            size_t mask = UnrankMask(chunk_begin, p, binom);
+            for (size_t rank = chunk_begin; rank < chunk_end; ++rank) {
+              int n_cand = -1;
+              size_t cur_base = rank * n_stops;
+              // Propagate (mask, *) forwards to all possible next stops.
+              for (StopId a{0}; a.v < n_stops; ++a.v) {
+                TimeSinceServiceStart a_time = dp_cur[cur_base + a.v];
+                if (a_time == kUnreachable) {
+                  // Can't have `mask` ending up at `a`.
+                  continue;
+                }
+                if (n_cand < 0) {
+                  n_cand = 0;
+                  // Rank every one-more-bit superset of `mask` as a delta off
+                  // the mask's own rank (the Gosper loop counter): inserting a
+                  // bit at clear position `q` leaves set bits below `q`
+                  // (1-based index `j`) contributing binom[q'][j] as before,
+                  // adds binom[q][j + 1] for the new bit, and shifts each set
+                  // bit above `q` up one index so it contributes binom[q'][j +
+                  // 1] instead of binom[q'][j]. One descending pass accumulates
+                  // those shift deltas; `suffix` is modular (deltas may be
+                  // negative) but every final rank is exact.
+                  {
+                    size_t suffix = 0;
+                    int above = 0;
+                    for (int q = n_mid_groups - 1; q >= 0; --q) {
+                      const size_t* binom_q = &binom_flat[q * binom_stride];
+                      if ((mask >> q) & 1) {
+                        int j = p - above;
+                        suffix += binom_q[j + 1] - binom_q[j];
+                        ++above;
+                      } else {
+                        next_rank[q] = rank + suffix + binom_q[p - above + 1];
+                      }
+                    }
+                  }
+                  for (StopId b{0}; b.v < n_stops; ++b.v) {
+                    size_t bit = stop_bit[b.v];
+                    if (bit == 0 || (mask & bit) != 0) {
+                      // `b` is a boundary-group stop, or its group is already
+                      // in `mask`, so don't (re)visit.
+                      continue;
+                    }
+                    cand_b[n_cand] = static_cast<uint8_t>(b.v);
+                    cand_dest[n_cand] =
+                        next_rank[stop_id_to_mask_index[b.v]] * n_stops + b.v;
+                    cand_back[n_cand] = (mask | bit) * n_stops + b.v;
+                    ++n_cand;
+                  }
+                }
+                size_t pair_base = static_cast<size_t>(a.v) * n_stops;
+                size_t row_base = table.BucketRowBase(a_time.seconds);
+                for (int k = 0; k < n_cand; ++k) {
+                  size_t dest_index = cand_dest[k];
+                  if (dp_next[dest_index] <= a_time) {
+                    // No step goes backwards in time, so an arrival from
+                    // `a_time` can't improve on this.
+                    continue;
+                  }
+                  int32_t arrival = table.EarliestArrival(
+                      pair_base + cand_b[k], a_time.seconds, row_base
+                  );
+                  if (arrival < dp_next[dest_index].seconds) {
+                    dp_next[dest_index] = TimeSinceServiceStart{arrival};
+                    back[cand_back[k]] = static_cast<uint8_t>(a.v);
+                  }
                 }
               }
-            }
-            for (StopId b{0}; b.v < n_stops; ++b.v) {
-              size_t bit = stop_bit[b.v];
-              if (bit == 0 || (mask & bit) != 0) {
-                // `b` is a boundary-group stop, or its group is already in
-                // `mask`, so don't (re)visit.
-                continue;
-              }
-              cand_b[n_cand] = static_cast<uint8_t>(b.v);
-              cand_dest[n_cand] =
-                  next_rank[stop_id_to_mask_index[b.v]] * n_stops + b.v;
-              cand_back[n_cand] = (mask | bit) * n_stops + b.v;
-              ++n_cand;
+              size_t carry = mask + (mask & (~mask + 1));
+              mask = (((mask ^ carry) >> (std::countr_zero(mask) + 2))) | carry;
             }
           }
-          size_t pair_base = static_cast<size_t>(a.v) * n_stops;
-          size_t row_base = table.BucketRowBase(a_time.seconds);
-          for (int k = 0; k < n_cand; ++k) {
-            size_t dest_index = cand_dest[k];
-            if (dp_next[dest_index] <= a_time) {
-              // No step goes backwards in time, so an arrival from `a_time`
-              // can't improve on this.
-              continue;
-            }
-            int32_t arrival = table.EarliestArrival(
-                pair_base + cand_b[k], a_time.seconds, row_base
-            );
-            if (arrival < dp_next[dest_index].seconds) {
-              dp_next[dest_index] = TimeSinceServiceStart{arrival};
-              back[cand_back[k]] = static_cast<uint8_t>(a.v);
-            }
-          }
+          phase_barrier.arrive_and_wait();
         }
-        size_t carry = mask + (mask & (~mask + 1));
-        mask = (((mask ^ carry) >> (std::countr_zero(mask) + 2))) | carry;
+      };
+      std::vector<std::thread> threads;
+      threads.reserve(n_threads - 1);
+      for (int t = 1; t < n_threads; ++t) {
+        threads.emplace_back(worker);
+      }
+      worker();
+      for (std::thread& thread : threads) {
+        thread.join();
       }
     }
 
