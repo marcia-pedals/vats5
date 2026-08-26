@@ -4,13 +4,13 @@
 #include <cassert>
 #include <iostream>
 #include <limits>
-#include <map>
 #include <optional>
 #include <ranges>
 #include <set>
 #include <span>
 #include <unordered_map>
 
+#include "solver/held_karp_dp.h"
 #include "solver/step_merge.h"
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
@@ -146,124 +146,54 @@ PartialSolution PartialSolveBranchAndBound(
   return PartialSolution{.paths = std::move(paths)};
 }
 
-PartialSolution PartialSolveBruteForce(
-    const std::unordered_set<StopId>& required_subset,
+PartialSolution PartialSolveHeldKarp(
+    const ProblemState& partial_problem,
     const ProblemState& original_problem,
-    const std::function<void()>& check_deadline
+    int known_lb,
+    std::ostream* search_log
 ) {
-  StopId start = original_problem.boundary.start;
-  StopId end = original_problem.boundary.end;
-
-  // Visiting any one stop of a group satisfies the whole group, so an order is
-  // a permutation of the groups together with a choice of stop within each.
-  std::map<StopId, std::vector<StopId>> stops_by_representative;
-  for (StopId stop : required_subset) {
-    if (stop == start || stop == end) {
-      continue;
-    }
-    stops_by_representative[original_problem.required.Representative(stop)]
-        .push_back(stop);
+  // The DP solves the boundary-to-boundary problem, so its visit order is
+  // already a full tour from START to END.
+  HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, known_lb, search_log);
+  if (hk.best_tour.empty()) {
+    return PartialSolution{};
   }
-  std::vector<std::vector<StopId>> groups;
-  for (auto& [representative, stops] : stops_by_representative) {
-    std::ranges::sort(stops);
-    groups.push_back(std::move(stops));
-  }
+  const std::vector<StopId>& tour = hk.best_tour;
+  assert(tour.front() == original_problem.boundary.start);
+  assert(tour.back() == original_problem.boundary.end);
 
-  // All the paths between the stops a tour can visit, so that evaluating one
-  // more stop of an order is just a merge.
-  std::unordered_set<StopId> tour_stops = required_subset;
-  tour_stops.insert(start);
-  tour_stops.insert(end);
-  StepPathsAdjacencyList completed = CompleteShortestPathsGraph(
-      original_problem.minimal,
-      tour_stops,
-      HorizonCoveringAllDepartures(original_problem.minimal)
-  );
-
-  auto min_duration = [](const std::vector<Path>& paths) {
-    int result = std::numeric_limits<int>::max();
-    for (const Path& path : paths) {
-      result = std::min(result, path.DurationSeconds());
-    }
-    return result;
-  };
+  // Reconstruct the paths through all original problem stops.
+  std::vector<Path> original_paths =
+      ComputeMinimalFeasiblePathsAlong(tour, original_problem.minimal);
+  // There must be paths along a tour the DP found, because all paths in the
+  // partial problem are also paths in the full problem.
+  assert(!original_paths.empty());
 
   int best_duration = std::numeric_limits<int>::max();
-  std::vector<PartialSolutionPath> best_paths;
+  for (const Path& path : original_paths) {
+    best_duration = std::min(best_duration, path.DurationSeconds());
+  }
+  // The best path along the tour must achieve exactly the DP's optimum,
+  // because otherwise hk.best_val isn't the best duration in the partial
+  // problem.
+  assert(best_duration == hk.best_val);
 
-  // The order being searched, and the groups it has visited so far.
-  std::vector<StopId> tour{start};
-  std::vector<bool> visited(groups.size(), false);
-  size_t num_visited = 0;
-
-  // The paths from START along `tour`, extended to `next`.
-  auto extend = [&](const std::vector<Path>& paths, StopId next) {
-    std::span<const Path> edge_paths =
-        completed.PathsBetween(tour.back(), next);
-    if (tour.size() == 1) {
-      return std::vector<Path>(edge_paths.begin(), edge_paths.end());
+  std::vector<PartialSolutionPath> paths;
+  for (Path& path : original_paths) {
+    if (path.DurationSeconds() != best_duration) {
+      continue;
     }
-    return ExtendMinimalFeasiblePaths(paths, edge_paths);
-  };
-
-  // Visits every completion of `tour`, whose paths from START are `paths`.
-  auto search = [&](this auto&& self, const std::vector<Path>& paths) -> void {
-    check_deadline();
-
-    if (num_visited == groups.size()) {
-      std::vector<Path> complete = extend(paths, end);
-      // Same as ComputeMinimalFeasiblePathsAlong: paths that depart before
-      // 00:00:00 don't count.
-      std::erase_if(complete, [](const Path& path) {
-        return path.merged_step.origin.time < TimeSinceServiceStart{0};
-      });
-      int duration = min_duration(complete);
-      if (duration > best_duration) {
-        return;
-      }
-      if (duration < best_duration) {
-        best_duration = duration;
-        best_paths.clear();
-      }
-      tour.push_back(end);
-      for (Path& path : complete) {
-        if (path.DurationSeconds() != best_duration) {
-          continue;
+    assert(path.merged_step.origin.stop == original_problem.boundary.start);
+    assert(path.merged_step.destination.stop == original_problem.boundary.end);
+    paths.push_back(
+        PartialSolutionPath{
+            .path = std::move(path),
+            .subset_tour = tour,
         }
-        NormalizeConsecutiveSteps(path.steps);
-        assert(ConsecutiveMergedSteps(path.steps) == path.merged_step);
-        best_paths.push_back(
-            PartialSolutionPath{.path = std::move(path), .subset_tour = tour}
-        );
-      }
-      tour.pop_back();
-      return;
-    }
+    );
+  }
 
-    for (size_t group = 0; group < groups.size(); ++group) {
-      if (visited[group]) {
-        continue;
-      }
-      visited[group] = true;
-      num_visited++;
-      for (StopId stop : groups[group]) {
-        std::vector<Path> extended = extend(paths, stop);
-        // Extending these paths any further only makes them longer.
-        if (extended.empty() || min_duration(extended) > best_duration) {
-          continue;
-        }
-        tour.push_back(stop);
-        self(extended);
-        tour.pop_back();
-      }
-      visited[group] = false;
-      num_visited--;
-    }
-  };
-  search({});
-
-  return PartialSolution{.paths = std::move(best_paths)};
+  return PartialSolution{.paths = std::move(paths)};
 }
 
 TourPathSets TourPathSets::Compute(

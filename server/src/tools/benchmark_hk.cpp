@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
   std::cout << "\n";
 
   auto start = std::chrono::steady_clock::now();
-  auto result = HeldKarpDPSolve(state, &std::cerr);
+  auto result = HeldKarpDPSolve(state, 0, &std::cerr);
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =

@@ -197,7 +197,7 @@ struct DensePairTable {
 namespace vats5 {
 
 HeldKarpDPResult HeldKarpDPSolve(
-    const ProblemState& state, std::ostream* search_log
+    const ProblemState& state, int known_lb, std::ostream* search_log
 ) {
   HeldKarpDPResult result{
       .best_val = kUnreachable.seconds,
@@ -464,6 +464,15 @@ HeldKarpDPResult HeldKarpDPSolve(
     // would have found it in the current iteration.
     t_start.seconds = arrival.seconds - result.best_val + 1;
 
+    if (result.best_val <= known_lb) {
+      // The best tour achieves a duration the caller knows can't be beaten,
+      // so skip the rest of the sweep.
+      if (search_log != nullptr) {
+        *search_log << "Sweep terminated: reached known_lb ("
+                    << TimeSinceServiceStart{known_lb} << ")\n";
+      }
+      break;
+    }
     if (result.best_val == 0) {
       // A zero-duration tour can't be beaten, so skip the rest of the sweep.
       // TODO: This is a workaround to handle a common property-test case.
