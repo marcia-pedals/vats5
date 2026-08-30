@@ -3,7 +3,8 @@
 // the Lagrangian multipliers are folded directly into a single LP
 // (candidate-split formulation + consistency rows + lazily separated subtour
 // cuts) solved with HiGHS, then certified with one Concorde solve at the
-// extracted multipliers.
+// extracted multipliers. A few cheap subgradient iterations warm-start the
+// LP's column seed and cut pool.
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
@@ -36,17 +37,33 @@ using namespace vats5;
 namespace {
 
 // A (stop, scheduled arrival time) pair that a Lagrangian multiplier attaches
-// to.
+// to. Keys are interned to dense indices so candidates can carry plain ints
+// and lambda vectors can be dense arrays.
 using LambdaKey = std::pair<StopId, TimeSinceServiceStart>;
+
+struct KeyInterner {
+  std::unordered_map<LambdaKey, int> index;
+  std::vector<LambdaKey> keys;
+
+  int Intern(const LambdaKey& k) {
+    auto [it, inserted] = index.try_emplace(k, static_cast<int>(keys.size()));
+    if (inserted) {
+      keys.push_back(k);
+    }
+    return it->second;
+  }
+
+  int size() const { return static_cast<int>(keys.size()); }
+};
 
 // One candidate of a tarel edge: an (arrival time, outgoing step) evaluation
 // whose min over the edge's candidates is the edge weight. `dep`/`arr` are
-// the keys whose lambdas modify this candidate's value (nullopt = the flex
-// validity rules forbid modification on that side).
+// interned key indices whose lambdas modify this candidate's value (-1 = the
+// flex validity rules forbid modification on that side).
 struct Candidate {
   int value;
-  std::optional<LambdaKey> dep;
-  std::optional<LambdaKey> arr;
+  int dep = -1;
+  int arr = -1;
 };
 
 struct CandidateEdge {
@@ -56,28 +73,23 @@ struct CandidateEdge {
   int min_value = std::numeric_limits<int>::max();
 };
 
-struct EncodedKeyPairHash {
-  size_t operator()(const std::pair<int64_t, int64_t>& p) const {
-    size_t seed = std::hash<int64_t>{}(p.first);
-    seed ^=
-        std::hash<int64_t>{}(p.second) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-    return seed;
+// Lambda-modified candidate value in the natural convention:
+// value + lambda(arrival side) - lambda(departure side).
+// An empty lambda vector means lambda = 0.
+double ModifiedValue(const Candidate& c, const std::vector<double>& lambda) {
+  double m = c.value;
+  if (!lambda.empty()) {
+    if (c.arr >= 0) m += lambda[c.arr];
+    if (c.dep >= 0) m -= lambda[c.dep];
   }
-};
-
-int64_t EncodeKey(const std::optional<LambdaKey>& k) {
-  if (!k.has_value()) {
-    return std::numeric_limits<int64_t>::min();
-  }
-  return (static_cast<int64_t>(k->first.v) << 32) ^
-         static_cast<uint32_t>(k->second.seconds);
+  return m;
 }
 
 // Enumerates the deduped candidates of every tarel edge, mirroring
 // BuildTarelEdgesFromIntermediateData's weight computation but keeping every
 // candidate (with costs the first step per arrival time is not always best).
 std::vector<CandidateEdge> EnumerateCandidateEdges(
-    const TarelEdgeIntermediateData& data
+    const TarelEdgeIntermediateData& data, KeyInterner& keys
 ) {
   std::vector<CandidateEdge> result;
   for (const auto& [origin, arrivals] : data.arrival_times_to) {
@@ -89,15 +101,11 @@ std::vector<CandidateEdge> EnumerateCandidateEdges(
       bool dest_has_flex = data.arrival_times_to.at(dest).has_flex;
 
       CandidateEdge edge{.origin = origin, .destination = dest};
-      std::
-          unordered_map<std::pair<int64_t, int64_t>, size_t, EncodedKeyPairHash>
-              dedup;
-      auto add = [&](std::optional<LambdaKey> dep,
-                     std::optional<LambdaKey> arr,
-                     int value) {
-        auto [dit, inserted] = dedup.try_emplace(
-            {EncodeKey(dep), EncodeKey(arr)}, edge.candidates.size()
-        );
+      std::unordered_map<int64_t, size_t> dedup;
+      auto add = [&](int dep, int arr, int value) {
+        int64_t key = (static_cast<int64_t>(dep + 1) << 32) |
+                      static_cast<uint32_t>(arr + 1);
+        auto [dit, inserted] = dedup.try_emplace(key, edge.candidates.size());
         if (inserted) {
           edge.candidates.push_back(Candidate{value, dep, arr});
         } else if (value < edge.candidates[dit->second].value) {
@@ -112,11 +120,13 @@ std::vector<CandidateEdge> EnumerateCandidateEdges(
         // Arrival time at the origin is unknown: no departure-side lambda,
         // value is the bare step duration.
         for (const Step& step : steps) {
-          std::optional<LambdaKey> arr;
+          int arr = -1;
           if (!dest_has_flex && !step.is_flex) {
-            arr = LambdaKey{step.destination.stop, step.destination.time};
+            arr = keys.Intern(
+                LambdaKey{step.destination.stop, step.destination.time}
+            );
           }
-          add(std::nullopt, arr, step.DurationSeconds());
+          add(-1, arr, step.DurationSeconds());
         }
       } else {
         size_t first_scheduled = 0;
@@ -127,28 +137,29 @@ std::vector<CandidateEdge> EnumerateCandidateEdges(
         }
         size_t step_idx = first_scheduled;
         for (const TimeSinceServiceStart t : arrivals.times) {
-          LambdaKey dep{origin.stop, t};
+          int dep = keys.Intern(LambdaKey{origin.stop, t});
           if (flex_duration.has_value()) {
-            add(dep, std::nullopt, *flex_duration);
+            add(dep, -1, *flex_duration);
           }
           while (step_idx < steps.size() && steps[step_idx].origin.time < t) {
             step_idx += 1;
           }
           if (dest_has_flex) {
-            // All these candidates share (dep, nullopt); only the min value
+            // All these candidates share (dep, none); only the min value
             // matters, and by minimality the first departure after t arrives
             // earliest.
             if (step_idx < steps.size()) {
               add(dep,
-                  std::nullopt,
+                  -1,
                   steps[step_idx].destination.time.seconds - t.seconds);
             }
           } else {
             for (size_t si = step_idx; si < steps.size(); ++si) {
               const Step& step = steps[si];
-              add(dep,
-                  LambdaKey{step.destination.stop, step.destination.time},
-                  step.destination.time.seconds - t.seconds);
+              int arr = keys.Intern(
+                  LambdaKey{step.destination.stop, step.destination.time}
+              );
+              add(dep, arr, step.destination.time.seconds - t.seconds);
             }
           }
         }
@@ -260,6 +271,234 @@ class MaxFlow {
   std::vector<std::vector<Arc>> adj_;
 };
 
+// Subtour-cut separation on an aggregate flow: at several support thresholds,
+// take the connected components and collect the out-cut of every component
+// whose actual out-flow is below 1; if that finds nothing, run exact min-cut
+// separation (a subtour cut is violated iff some vertex pair has max-flow < 1,
+// checked root->t and t->root for every t). Returns membership vectors of
+// violated cuts not already in `existing`.
+std::vector<std::vector<char>> FindViolatedSubtourCuts(
+    int num_vertices,
+    const std::vector<std::pair<int, int>>& col_arc,
+    const std::vector<double>& col_value,
+    const std::set<std::vector<char>>& existing
+) {
+  std::vector<double> flow(
+      static_cast<size_t>(num_vertices) * num_vertices, 0.0
+  );
+  for (size_t c = 0; c < col_arc.size(); ++c) {
+    flow
+        [static_cast<size_t>(col_arc[c].first) * num_vertices +
+         col_arc[c].second] += col_value[c];
+  }
+
+  std::vector<std::vector<char>> found;
+  std::set<std::vector<char>> seen;
+  auto take = [&](std::vector<char> in_S) {
+    if (!existing.contains(in_S) && !seen.contains(in_S)) {
+      seen.insert(in_S);
+      found.push_back(std::move(in_S));
+    }
+  };
+
+  for (double threshold : {0.999, 0.9, 0.75, 0.5, 0.25, 0.1, kFlowEps}) {
+    UnionFind uf(num_vertices);
+    for (int u = 0; u < num_vertices; ++u) {
+      for (int v = 0; v < num_vertices; ++v) {
+        if (flow[static_cast<size_t>(u) * num_vertices + v] > threshold) {
+          uf.Unite(u, v);
+        }
+      }
+    }
+    std::unordered_map<int, std::vector<int>> components;
+    for (int v = 0; v < num_vertices; ++v) {
+      components[uf.Find(v)].push_back(v);
+    }
+    if (components.size() <= 1) {
+      continue;
+    }
+    for (const auto& [root, vertices] : components) {
+      std::vector<char> in_S(num_vertices, 0);
+      for (int v : vertices) {
+        in_S[v] = 1;
+      }
+      double out_flow = 0.0;
+      for (int u = 0; u < num_vertices; ++u) {
+        if (!in_S[u]) continue;
+        for (int v = 0; v < num_vertices; ++v) {
+          if (!in_S[v]) {
+            out_flow += flow[static_cast<size_t>(u) * num_vertices + v];
+          }
+        }
+      }
+      if (out_flow < 1.0 - 1e-6) {
+        take(std::move(in_S));
+      }
+    }
+  }
+  if (!found.empty()) {
+    return found;
+  }
+
+  std::vector<std::tuple<int, int, double>> arcs;
+  for (int u = 0; u < num_vertices; ++u) {
+    for (int v = 0; v < num_vertices; ++v) {
+      double f = flow[static_cast<size_t>(u) * num_vertices + v];
+      if (f > 1e-9) {
+        arcs.push_back({u, v, f});
+      }
+    }
+  }
+  constexpr int kRoot = 0;
+  for (int t = 0; t < num_vertices; ++t) {
+    if (t == kRoot) continue;
+    for (const auto& [s, d] : {std::pair{kRoot, t}, std::pair{t, kRoot}}) {
+      MaxFlow mf(num_vertices);
+      for (const auto& [u, v, f] : arcs) {
+        mf.AddArc(u, v, f);
+      }
+      std::vector<char> in_S;
+      double f = mf.Solve(s, d, 1.0 - 1e-6, &in_S);
+      if (f < 1.0 - 1e-6) {
+        take(std::move(in_S));
+      }
+    }
+  }
+  return found;
+}
+
+void CheckHighsOptimal(Highs& highs, const std::string& what) {
+  if (highs.run() == HighsStatus::kError) {
+    throw std::runtime_error("HiGHS run failed (" + what + ")");
+  }
+  if (highs.getModelStatus() != HighsModelStatus::kOptimal) {
+    throw std::runtime_error(
+        what +
+        " LP not optimal: " + highs.modelStatusToString(highs.getModelStatus())
+    );
+  }
+}
+
+// The plain degree+cuts LP with one z column per edge whose costs can be
+// swapped cheaply (warm-started re-solves). Used for the subgradient
+// warm-start phase and for the dual-sign check on the extracted lambdas.
+class FixedWeightLp {
+ public:
+  FixedWeightLp(
+      int num_vertices,
+      const std::vector<std::pair<int, int>>& cycle_arcs,
+      const std::vector<std::pair<int, int>>& edge_arc
+  )
+      : num_vertices_(num_vertices),
+        num_cycle_(static_cast<int>(cycle_arcs.size())),
+        num_edges_(static_cast<int>(edge_arc.size())) {
+    highs_.setOptionValue("output_flag", false);
+
+    HighsLp lp;
+    lp.num_row_ = 2 * num_vertices_;
+    lp.row_lower_.assign(lp.num_row_, 1.0);
+    lp.row_upper_.assign(lp.num_row_, 1.0);
+    lp.a_matrix_.format_ = MatrixFormat::kColwise;
+    // HighsLp default-constructs start_ as {0} already; make that explicit
+    // instead of appending a second leading 0.
+    lp.a_matrix_.start_.assign(1, 0);
+
+    auto push_col = [&](double cost, int u, int v) {
+      lp.col_cost_.push_back(cost);
+      lp.col_lower_.push_back(0.0);
+      lp.col_upper_.push_back(1.0);
+      lp.a_matrix_.index_.push_back(u);
+      lp.a_matrix_.value_.push_back(1.0);
+      lp.a_matrix_.index_.push_back(num_vertices_ + v);
+      lp.a_matrix_.value_.push_back(1.0);
+      lp.a_matrix_.start_.push_back(
+          static_cast<HighsInt>(lp.a_matrix_.index_.size())
+      );
+      col_arc_.push_back({u, v});
+    };
+    for (const auto& [u, v] : cycle_arcs) {
+      push_col(kCycleEdgeWeight, u, v);
+    }
+    for (const auto& [u, v] : edge_arc) {
+      push_col(0.0, u, v);
+    }
+    lp.num_col_ = static_cast<HighsInt>(col_arc_.size());
+    lp.sense_ = ObjSense::kMinimize;
+    if (highs_.passModel(lp) == HighsStatus::kError) {
+      throw std::runtime_error("HiGHS passModel failed (fixed-weight LP)");
+    }
+  }
+
+  void SetEdgeWeights(const std::vector<double>& weights) {
+    if (static_cast<int>(weights.size()) != num_edges_) {
+      throw std::runtime_error("SetEdgeWeights size mismatch");
+    }
+    if (highs_.changeColsCost(
+            num_cycle_, num_cycle_ + num_edges_ - 1, weights.data()
+        ) == HighsStatus::kError) {
+      throw std::runtime_error("HiGHS changeColsCost failed");
+    }
+  }
+
+  double Solve() {
+    CheckHighsOptimal(highs_, "fixed-weight");
+    highs_.setOptionValue("presolve", "off");
+    return highs_.getObjectiveValue();
+  }
+
+  int SeparateCuts() {
+    std::vector<std::vector<char>> cuts = FindViolatedSubtourCuts(
+        num_vertices_, col_arc_, highs_.getSolution().col_value, cut_set_
+    );
+    for (std::vector<char>& in_S : cuts) {
+      AddCutRow(std::move(in_S));
+    }
+    return static_cast<int>(cuts.size());
+  }
+
+  void AddCutRow(std::vector<char> in_S) {
+    std::vector<HighsInt> idx;
+    std::vector<double> val;
+    for (size_t c = 0; c < col_arc_.size(); ++c) {
+      const auto& [u, v] = col_arc_[c];
+      if (in_S[u] && !in_S[v]) {
+        idx.push_back(static_cast<HighsInt>(c));
+        val.push_back(1.0);
+      }
+    }
+    if (highs_.addRow(
+            1.0,
+            kHighsInf,
+            static_cast<HighsInt>(idx.size()),
+            idx.data(),
+            val.data()
+        ) == HighsStatus::kError) {
+      throw std::runtime_error("HiGHS addRow failed (fixed-weight LP)");
+    }
+    cut_set_.insert(in_S);
+    cut_membership_.push_back(std::move(in_S));
+  }
+
+  // Aggregate flow per edge (z column values).
+  std::vector<double> EdgeFlows() const {
+    const std::vector<double>& v = highs_.getSolution().col_value;
+    return std::vector<double>(
+        v.begin() + num_cycle_, v.begin() + num_cycle_ + num_edges_
+    );
+  }
+
+  const std::vector<std::vector<char>>& Cuts() const { return cut_membership_; }
+
+ private:
+  int num_vertices_;
+  int num_cycle_;
+  int num_edges_;
+  Highs highs_;
+  std::vector<std::pair<int, int>> col_arc_;
+  std::vector<std::vector<char>> cut_membership_;
+  std::set<std::vector<char>> cut_set_;
+};
+
 // The one-shot Lagrangian LP: y columns for within-stop cycle edges, z columns
 // for (edge, candidate) pairs, degree rows, consistency rows (whose duals are
 // the Lagrangian multipliers), and lazily added subtour cuts.
@@ -270,32 +509,24 @@ class LagrangianLp {
       const std::vector<std::pair<int, int>>& edge_arc,
       const std::vector<std::pair<int, int>>& cycle_arcs,
       int num_vertices,
+      int num_keys,
       bool use_consistency,
       double seed_eps,
-      bool seed_all
+      bool seed_all,
+      const std::vector<double>& seed_lambda
   )
-      : edges_(edges), edge_arc_(edge_arc), num_vertices_(num_vertices) {
+      : edges_(edges),
+        edge_arc_(edge_arc),
+        num_vertices_(num_vertices),
+        num_keys_(num_keys),
+        use_consistency_(use_consistency) {
     highs_.setOptionValue("output_flag", false);
     // Interior point (with crossover for a basis) is much faster than simplex
     // on the big initial solve; Solve() switches to warm-started simplex
     // afterwards.
     highs_.setOptionValue("solver", "ipm");
 
-    if (use_consistency) {
-      std::set<LambdaKey> keys;
-      for (const CandidateEdge& e : edges_) {
-        for (const Candidate& c : e.candidates) {
-          if (c.dep.has_value()) keys.insert(*c.dep);
-          if (c.arr.has_value()) keys.insert(*c.arr);
-        }
-      }
-      int row = 2 * num_vertices_;
-      for (const LambdaKey& k : keys) {
-        consistency_row_[k] = row++;
-      }
-    }
-    first_cut_row_ =
-        2 * num_vertices_ + static_cast<int>(consistency_row_.size());
+    first_cut_row_ = 2 * num_vertices_ + (use_consistency_ ? num_keys_ : 0);
 
     HighsLp lp;
     lp.num_row_ = first_cut_row_;
@@ -331,17 +562,26 @@ class LagrangianLp {
     for (size_t i = 0; i < edges_.size(); ++i) {
       const CandidateEdge& e = edges_[i];
       z_col_[i].assign(e.candidates.size(), -1);
-      // Seed one min-value candidate per edge, plus everything strictly
-      // within seed_eps of the min; pricing brings in the rest as needed.
-      bool min_seeded = false;
+      // Seed one min lambda-modified candidate per edge, plus everything
+      // strictly within seed_eps of that min (both measured at the seed
+      // lambda); pricing brings in the rest as needed. The seed lambda only
+      // shapes the starting column set, never validity.
+      double min_mod = std::numeric_limits<double>::infinity();
+      size_t argmin = 0;
+      if (!seed_all) {
+        for (size_t j = 0; j < e.candidates.size(); ++j) {
+          double mod = ModifiedValue(e.candidates[j], seed_lambda);
+          if (mod < min_mod) {
+            min_mod = mod;
+            argmin = j;
+          }
+        }
+      }
       for (size_t j = 0; j < e.candidates.size(); ++j) {
         const Candidate& c = e.candidates[j];
-        bool seed = seed_all || c.value < e.min_value + seed_eps;
-        if (!seed && !min_seeded && c.value == e.min_value) {
-          seed = true;
-        }
+        bool seed = seed_all || j == argmin ||
+                    ModifiedValue(c, seed_lambda) < min_mod + seed_eps;
         if (seed) {
-          min_seeded = true;
           z_col_[i][j] = static_cast<int>(col_arc_.size());
           push_col(c.value, edge_arc_[i].first, edge_arc_[i].second, &c);
         }
@@ -383,15 +623,7 @@ class LagrangianLp {
   }
 
   double Solve() {
-    if (highs_.run() == HighsStatus::kError) {
-      throw std::runtime_error("HiGHS run failed");
-    }
-    if (highs_.getModelStatus() != HighsModelStatus::kOptimal) {
-      throw std::runtime_error(
-          "LP not optimal: " +
-          highs_.modelStatusToString(highs_.getModelStatus())
-      );
-    }
+    CheckHighsOptimal(highs_, "main");
     // After the first solve a basis exists; re-solves warm-start with
     // simplex and skip presolve instead of solving from scratch.
     highs_.setOptionValue("solver", "simplex");
@@ -399,111 +631,29 @@ class LagrangianLp {
     return highs_.getObjectiveValue();
   }
 
-  // Component-based subtour separation on the aggregate flow: at several
-  // support thresholds, take the connected components and add the out-cut of
-  // every component whose actual out-flow is below 1 (deduped against cuts
-  // already in the pool). Returns the number of cuts added.
+  // Adds violated subtour cuts found on the aggregate flow. Returns the
+  // number added.
   int SeparateComponentCuts() {
-    const HighsSolution& sol = highs_.getSolution();
-    std::vector<double> flow(
-        static_cast<size_t>(num_vertices_) * num_vertices_, 0.0
+    std::vector<std::vector<char>> cuts = FindViolatedSubtourCuts(
+        num_vertices_, col_arc_, highs_.getSolution().col_value, cut_set_
     );
-    for (size_t c = 0; c < col_arc_.size(); ++c) {
-      flow
-          [static_cast<size_t>(col_arc_[c].first) * num_vertices_ +
-           col_arc_[c].second] += sol.col_value[c];
+    for (std::vector<char>& in_S : cuts) {
+      AddCut(std::move(in_S));
     }
-    int added = 0;
-    for (double threshold : {0.999, 0.9, 0.75, 0.5, 0.25, 0.1, kFlowEps}) {
-      UnionFind uf(num_vertices_);
-      for (int u = 0; u < num_vertices_; ++u) {
-        for (int v = 0; v < num_vertices_; ++v) {
-          if (flow[static_cast<size_t>(u) * num_vertices_ + v] > threshold) {
-            uf.Unite(u, v);
-          }
-        }
-      }
-      std::unordered_map<int, std::vector<int>> components;
-      for (int v = 0; v < num_vertices_; ++v) {
-        components[uf.Find(v)].push_back(v);
-      }
-      if (components.size() <= 1) {
-        continue;
-      }
-      for (const auto& [root, vertices] : components) {
-        std::vector<char> in_S(num_vertices_, 0);
-        for (int v : vertices) {
-          in_S[v] = 1;
-        }
-        double out_flow = 0.0;
-        for (int u = 0; u < num_vertices_; ++u) {
-          if (!in_S[u]) continue;
-          for (int v = 0; v < num_vertices_; ++v) {
-            if (!in_S[v]) {
-              out_flow += flow[static_cast<size_t>(u) * num_vertices_ + v];
-            }
-          }
-        }
-        if (out_flow < 1.0 - 1e-6 && !cut_set_.contains(in_S)) {
-          AddCut(std::move(in_S));
-          added += 1;
-        }
-      }
-    }
-    if (added > 0) {
-      return added;
-    }
-
-    // Exact separation: a subtour cut is violated iff some vertex pair has
-    // max-flow < 1 in the aggregate flow graph; check root->t and t->root for
-    // every t, extracting the min cut on violation.
-    std::vector<std::tuple<int, int, double>> arcs;
-    for (int u = 0; u < num_vertices_; ++u) {
-      for (int v = 0; v < num_vertices_; ++v) {
-        double f = flow[static_cast<size_t>(u) * num_vertices_ + v];
-        if (f > 1e-9) {
-          arcs.push_back({u, v, f});
-        }
-      }
-    }
-    constexpr int kRoot = 0;
-    for (int t = 0; t < num_vertices_; ++t) {
-      if (t == kRoot) continue;
-      for (const auto& [s, d] : {std::pair{kRoot, t}, std::pair{t, kRoot}}) {
-        MaxFlow mf(num_vertices_);
-        for (const auto& [u, v, f] : arcs) {
-          mf.AddArc(u, v, f);
-        }
-        std::vector<char> in_S;
-        double f = mf.Solve(s, d, 1.0 - 1e-6, &in_S);
-        if (f < 1.0 - 1e-6 && !cut_set_.contains(in_S)) {
-          AddCut(std::move(in_S));
-          added += 1;
-        }
-      }
-    }
-    return added;
+    return static_cast<int>(cuts.size());
   }
 
-  // Column generation pricing: for each edge, any excluded candidate whose
-  // reduced cost is negative is added. All z columns of an edge share every
-  // dual except the consistency rows, so the shared part pi_e is recovered
-  // from an included candidate's reduced cost.
+  // Column generation pricing: for each edge, excluded candidates with
+  // negative reduced cost are added (capped per round). All z columns of an
+  // edge share every dual except the consistency rows, so the shared part
+  // pi_e is recovered from an included candidate's reduced cost:
+  //   rc = (value_c + lambda(arr_c) - lambda(dep_c)) - pi_e
+  // with lambda = -row_dual (the z column has +1 in its arr consistency row
+  // and -1 in its dep row).
   int PriceCandidates() {
-    // Copy duals: adding columns invalidates the solution.
-    std::vector<double> row_dual = highs_.getSolution().row_dual;
+    // Copy what we need: adding columns invalidates the solution.
+    std::vector<double> lambda = ExtractLambda(-1.0);
     std::vector<double> col_dual = highs_.getSolution().col_dual;
-    auto dual = [&](const std::optional<LambdaKey>& k) -> double {
-      if (!k.has_value()) return 0.0;
-      auto it = consistency_row_.find(*k);
-      return it == consistency_row_.end() ? 0.0 : row_dual[it->second];
-    };
-    // Reduced cost of candidate c of edge e:
-    //   rc = (value_c - dual(arr_c) + dual(dep_c)) - pi_e
-    // (the z column has +1 in its arr consistency row and -1 in its dep row).
-    auto modified = [&](const Candidate& c) -> double {
-      return c.value - dual(c.arr) + dual(c.dep);
-    };
     struct Entry {
       double rc;
       int edge;
@@ -522,12 +672,12 @@ class LagrangianLp {
       if (j0 < 0) {
         throw std::runtime_error("Edge with no seeded candidate");
       }
-      double pi = modified(cands[j0]) - col_dual[z_col_[i][j0]];
+      double pi = ModifiedValue(cands[j0], lambda) - col_dual[z_col_[i][j0]];
       for (size_t j = 0; j < cands.size(); ++j) {
         if (z_col_[i][j] >= 0) {
           continue;
         }
-        double rc = modified(cands[j]) - pi;
+        double rc = ModifiedValue(cands[j], lambda) - pi;
         if (rc < -kPriceEps) {
           violated.push_back({rc, static_cast<int>(i), static_cast<int>(j)});
         }
@@ -552,12 +702,15 @@ class LagrangianLp {
   }
 
   // The duals of the consistency rows are the optimal lambdas (up to a sign
-  // convention resolved empirically by the caller).
-  std::unordered_map<LambdaKey, double> ExtractLambda(double sign) const {
+  // convention resolved empirically by the caller). Indexed by interned key.
+  std::vector<double> ExtractLambda(double sign) const {
+    std::vector<double> lambda(num_keys_, 0.0);
+    if (!use_consistency_) {
+      return lambda;
+    }
     const std::vector<double>& row_dual = highs_.getSolution().row_dual;
-    std::unordered_map<LambdaKey, double> lambda;
-    for (const auto& [key, row] : consistency_row_) {
-      lambda[key] = sign * row_dual[row];
+    for (int k = 0; k < num_keys_; ++k) {
+      lambda[k] = sign * row_dual[2 * num_vertices_ + k];
     }
     return lambda;
   }
@@ -572,14 +725,12 @@ class LagrangianLp {
     std::map<int, double> entries;
     entries[u] += 1.0;
     entries[num_vertices_ + v] += 1.0;
-    if (cand != nullptr) {
-      if (cand->arr.has_value()) {
-        auto it = consistency_row_.find(*cand->arr);
-        if (it != consistency_row_.end()) entries[it->second] += 1.0;
+    if (cand != nullptr && use_consistency_) {
+      if (cand->arr >= 0) {
+        entries[2 * num_vertices_ + cand->arr] += 1.0;
       }
-      if (cand->dep.has_value()) {
-        auto it = consistency_row_.find(*cand->dep);
-        if (it != consistency_row_.end()) entries[it->second] -= 1.0;
+      if (cand->dep >= 0) {
+        entries[2 * num_vertices_ + cand->dep] -= 1.0;
       }
     }
     for (size_t k = 0; k < cut_membership_.size(); ++k) {
@@ -618,9 +769,10 @@ class LagrangianLp {
   const std::vector<CandidateEdge>& edges_;
   const std::vector<std::pair<int, int>>& edge_arc_;
   int num_vertices_;
+  int num_keys_;
+  bool use_consistency_;
   Highs highs_;
   std::vector<std::pair<int, int>> col_arc_;
-  std::unordered_map<LambdaKey, int> consistency_row_;
   std::vector<std::vector<char>> cut_membership_;
   std::set<std::vector<char>> cut_set_;
   int first_cut_row_;
@@ -628,101 +780,17 @@ class LagrangianLp {
   std::vector<std::vector<int>> z_col_;
 };
 
-// Solves the plain degree+cuts LP over fixed per-edge weights (one z column
-// per edge). Used for the dual-sign check on the extracted lambdas.
-double SolveDegreeCutLp(
-    int num_vertices,
-    const std::vector<std::pair<int, int>>& cycle_arcs,
-    const std::vector<std::pair<int, int>>& edge_arc,
-    const std::vector<int>& edge_weights,
-    const std::vector<std::vector<char>>& cuts
-) {
-  Highs highs;
-  highs.setOptionValue("output_flag", false);
-
-  HighsLp lp;
-  lp.num_row_ = 2 * num_vertices;
-  lp.row_lower_.assign(lp.num_row_, 1.0);
-  lp.row_upper_.assign(lp.num_row_, 1.0);
-  lp.a_matrix_.format_ = MatrixFormat::kColwise;
-  lp.a_matrix_.start_.assign(1, 0);
-
-  std::vector<std::pair<int, int>> col_arc;
-  auto push_col = [&](double cost, int u, int v) {
-    lp.col_cost_.push_back(cost);
-    lp.col_lower_.push_back(0.0);
-    lp.col_upper_.push_back(1.0);
-    lp.a_matrix_.index_.push_back(u);
-    lp.a_matrix_.value_.push_back(1.0);
-    lp.a_matrix_.index_.push_back(num_vertices + v);
-    lp.a_matrix_.value_.push_back(1.0);
-    lp.a_matrix_.start_.push_back(
-        static_cast<HighsInt>(lp.a_matrix_.index_.size())
-    );
-    col_arc.push_back({u, v});
-  };
-  for (const auto& [u, v] : cycle_arcs) {
-    push_col(kCycleEdgeWeight, u, v);
-  }
-  for (size_t i = 0; i < edge_arc.size(); ++i) {
-    push_col(edge_weights[i], edge_arc[i].first, edge_arc[i].second);
-  }
-  lp.num_col_ = static_cast<HighsInt>(col_arc.size());
-  lp.sense_ = ObjSense::kMinimize;
-  if (highs.passModel(lp) == HighsStatus::kError) {
-    throw std::runtime_error("HiGHS passModel failed (check LP)");
-  }
-
-  for (const std::vector<char>& in_S : cuts) {
-    std::vector<HighsInt> idx;
-    std::vector<double> val;
-    for (size_t c = 0; c < col_arc.size(); ++c) {
-      const auto& [u, v] = col_arc[c];
-      if (in_S[u] && !in_S[v]) {
-        idx.push_back(static_cast<HighsInt>(c));
-        val.push_back(1.0);
-      }
-    }
-    if (highs.addRow(
-            1.0,
-            kHighsInf,
-            static_cast<HighsInt>(idx.size()),
-            idx.data(),
-            val.data()
-        ) == HighsStatus::kError) {
-      throw std::runtime_error("HiGHS addRow failed (check LP)");
-    }
-  }
-
-  if (highs.run() == HighsStatus::kError) {
-    throw std::runtime_error("HiGHS run failed (check LP)");
-  }
-  if (highs.getModelStatus() != HighsModelStatus::kOptimal) {
-    throw std::runtime_error(
-        "Check LP not optimal: " +
-        highs.modelStatusToString(highs.getModelStatus())
-    );
-  }
-  return highs.getObjectiveValue();
-}
-
 // Per-edge floored min lambda-modified candidate value (over ALL candidates).
 // Flooring keeps the bound valid.
 std::vector<int> FlooredModifiedWeights(
-    const std::vector<CandidateEdge>& edges,
-    const std::unordered_map<LambdaKey, double>& lambda
+    const std::vector<CandidateEdge>& edges, const std::vector<double>& lambda
 ) {
-  auto lam = [&](const std::optional<LambdaKey>& k) -> double {
-    if (!k.has_value()) return 0.0;
-    auto it = lambda.find(*k);
-    return it == lambda.end() ? 0.0 : it->second;
-  };
   std::vector<int> weights;
   weights.reserve(edges.size());
   for (const CandidateEdge& e : edges) {
     double m = std::numeric_limits<double>::infinity();
     for (const Candidate& c : e.candidates) {
-      m = std::min(m, c.value + lam(c.arr) - lam(c.dep));
+      m = std::min(m, ModifiedValue(c, lambda));
     }
     weights.push_back(static_cast<int>(std::floor(m + 1e-9)));
   }
@@ -763,8 +831,14 @@ int main(int argc, char* argv[]) {
   app.add_option(
       "--seed-eps",
       seed_eps,
-      "Column-generation seed width in seconds (0 = one min candidate per "
-      "edge)"
+      "Column-generation seed width in seconds around the min lambda-modified "
+      "candidate per edge"
+  );
+  int sg_iters = 30;
+  app.add_option(
+      "--sg-iters",
+      sg_iters,
+      "Subgradient warm-start iterations for the seed lambda (0 = off)"
   );
   bool no_consistency = false;
   app.add_flag(
@@ -812,7 +886,8 @@ int main(int argc, char* argv[]) {
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
   TarelEdgeIntermediateData data =
       ComputeTarelIntermediateData(completed.AllMergedSteps());
-  std::vector<CandidateEdge> edges = EnumerateCandidateEdges(data);
+  KeyInterner keys;
+  std::vector<CandidateEdge> edges = EnumerateCandidateEdges(data, keys);
   CheckCandidatesAgainstTarelEdges(edges, data);
 
   size_t total_candidates = 0;
@@ -820,8 +895,9 @@ int main(int argc, char* argv[]) {
     total_candidates += e.candidates.size();
   }
   std::cout << "Tarel edges: " << edges.size()
-            << ", deduped candidates: " << total_candidates << " ("
-            << Secs(t_enum) << ")" << std::endl;
+            << ", deduped candidates: " << total_candidates
+            << ", lambda keys: " << keys.size() << " (" << Secs(t_enum) << ")"
+            << std::endl;
 
   // Size gate: build the full LP directly when small enough, otherwise seed a
   // window around each edge's min and price the rest.
@@ -895,20 +971,13 @@ int main(int argc, char* argv[]) {
             << graph.expected_num_cycle_edges << " expected in a tour"
             << std::endl;
 
-  // ---- Build and solve the LP with cut (and pricing) rounds ----
-  auto t_lp = std::chrono::steady_clock::now();
-  LagrangianLp lp(
-      edges,
-      edge_arc,
-      cycle_arcs,
-      num_vertices,
-      !no_consistency,
-      seed_eps,
-      seed_all
-  );
+  auto corrected = [&](double obj) {
+    return obj + 1000.0 * graph.expected_num_cycle_edges;
+  };
 
-  // Seed one subtour cut per multi-state stop: its -1000 within-stop cycle is
-  // a subtour the LP would otherwise exploit.
+  // One subtour cut per multi-state stop: its -1000 within-stop cycle is a
+  // subtour the LPs would otherwise exploit.
+  std::vector<std::vector<char>> stop_cuts;
   {
     std::map<StopId, std::vector<int>> vertices_by_stop;
     for (size_t id = 0; id < graph.state_by_id.size(); ++id) {
@@ -924,13 +993,123 @@ int main(int argc, char* argv[]) {
       for (int v : vertices) {
         in_S[v] = 1;
       }
-      lp.AddCut(std::move(in_S));
+      stop_cuts.push_back(std::move(in_S));
     }
   }
 
-  auto corrected = [&](double obj) {
-    return obj + 1000.0 * graph.expected_num_cycle_edges;
-  };
+  // ---- Subgradient warm start ----
+  // A few Polyak-style iterations on the small fixed-weight LP produce a
+  // near-optimal lambda to seed the big LP's columns with, plus a cut pool
+  // discovered along the way. This only shapes the starting point; the big
+  // LP's own pricing and duals determine the final (valid) bound.
+  std::vector<double> seed_lambda;
+  std::vector<std::vector<char>> initial_cuts = stop_cuts;
+  if (!seed_all && !no_consistency && sg_iters > 0) {
+    auto t_sg = std::chrono::steady_clock::now();
+    FixedWeightLp sg_lp(num_vertices, cycle_arcs, edge_arc);
+    for (const std::vector<char>& in_S : stop_cuts) {
+      sg_lp.AddCutRow(in_S);
+    }
+    std::vector<double> lambda(keys.size(), 0.0);
+    std::vector<double> best_lambda = lambda;
+    double best_dual = -std::numeric_limits<double>::infinity();
+    std::vector<double> weights(edges.size());
+    std::vector<double> momentum(keys.size(), 0.0);
+    double margin = 500.0;
+    int no_improvement_streak = 0;
+    for (int iter = 0; iter < sg_iters; ++iter) {
+      for (size_t i = 0; i < edges.size(); ++i) {
+        double min_mod = std::numeric_limits<double>::infinity();
+        for (const Candidate& c : edges[i].candidates) {
+          min_mod = std::min(min_mod, ModifiedValue(c, lambda));
+        }
+        weights[i] = min_mod;
+      }
+      sg_lp.SetEdgeWeights(weights);
+      double obj = sg_lp.Solve();
+      while (sg_lp.SeparateCuts() > 0) {
+        obj = sg_lp.Solve();
+      }
+      double dual = corrected(obj);
+      if (dual > best_dual) {
+        best_dual = dual;
+        best_lambda = lambda;
+        no_improvement_streak = 0;
+      } else {
+        no_improvement_streak += 1;
+        if (no_improvement_streak >= 3) {
+          margin *= 0.5;
+          no_improvement_streak = 0;
+        }
+      }
+      // Subgradient of the dual: per unit of flow on edge i, its min-modified
+      // candidate creates its arr event and consumes its dep event. Spread
+      // over all near-min candidates (only support edges need a rescan),
+      // which smooths the subgradient considerably.
+      constexpr double kSpreadEps = 30.0;
+      std::vector<double> flows = sg_lp.EdgeFlows();
+      std::vector<double> g(lambda.size(), 0.0);
+      for (size_t i = 0; i < edges.size(); ++i) {
+        if (flows[i] <= 1e-9) {
+          continue;
+        }
+        int num_near = 0;
+        for (const Candidate& c : edges[i].candidates) {
+          if (ModifiedValue(c, lambda) < weights[i] + kSpreadEps) {
+            num_near += 1;
+          }
+        }
+        double w = flows[i] / num_near;
+        for (const Candidate& c : edges[i].candidates) {
+          if (ModifiedValue(c, lambda) < weights[i] + kSpreadEps) {
+            if (c.arr >= 0) g[c.arr] += w;
+            if (c.dep >= 0) g[c.dep] -= w;
+          }
+        }
+      }
+      for (size_t k = 0; k < g.size(); ++k) {
+        g[k] += 0.7 * momentum[k];
+      }
+      double norm2 = 0.0;
+      for (double v : g) {
+        norm2 += v * v;
+      }
+      std::cout << "Subgradient iter " << iter << ": dual " << CeilBound(dual)
+                << std::endl;
+      if (norm2 < 1e-12) {
+        break;
+      }
+      // Polyak step toward an adaptive optimistic target; oscillation is fine
+      // since only the best lambda is kept.
+      double step = std::max(0.0, best_dual + margin - dual) / norm2;
+      for (size_t k = 0; k < lambda.size(); ++k) {
+        lambda[k] += step * g[k];
+      }
+      momentum = std::move(g);
+    }
+    seed_lambda = std::move(best_lambda);
+    initial_cuts = sg_lp.Cuts();
+    std::cout << "Subgradient warm start: best dual " << CeilBound(best_dual)
+              << ", " << initial_cuts.size() << " cuts (" << Secs(t_sg) << ")"
+              << std::endl;
+  }
+
+  // ---- Build and solve the LP with cut (and pricing) rounds ----
+  auto t_lp = std::chrono::steady_clock::now();
+  LagrangianLp lp(
+      edges,
+      edge_arc,
+      cycle_arcs,
+      num_vertices,
+      keys.size(),
+      !no_consistency,
+      seed_eps,
+      seed_all,
+      seed_lambda
+  );
+  for (const std::vector<char>& in_S : initial_cuts) {
+    lp.AddCut(in_S);
+  }
 
   double obj = lp.Solve();
   std::cout << "Initial LP (" << lp.NumCols() << " cols): bound "
@@ -999,12 +1178,16 @@ int main(int argc, char* argv[]) {
   int best_check_bound = std::numeric_limits<int>::min();
   std::vector<int> best_weights;
   for (double sign : {1.0, -1.0}) {
-    std::unordered_map<LambdaKey, double> lambda = lp.ExtractLambda(sign);
+    std::vector<double> lambda = lp.ExtractLambda(sign);
     std::vector<int> weights = FlooredModifiedWeights(edges, lambda);
-    double check_obj = SolveDegreeCutLp(
-        num_vertices, cycle_arcs, edge_arc, weights, lp.Cuts()
+    FixedWeightLp check_lp(num_vertices, cycle_arcs, edge_arc);
+    for (const std::vector<char>& in_S : lp.Cuts()) {
+      check_lp.AddCutRow(in_S);
+    }
+    check_lp.SetEdgeWeights(
+        std::vector<double>(weights.begin(), weights.end())
     );
-    int check_bound = CeilBound(corrected(check_obj));
+    int check_bound = CeilBound(corrected(check_lp.Solve()));
     std::cout << "Dual sign " << (sign > 0 ? "+1" : "-1") << ": check LP bound "
               << check_bound << std::endl;
     if (check_bound > best_check_bound) {
