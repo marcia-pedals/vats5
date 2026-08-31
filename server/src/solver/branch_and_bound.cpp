@@ -402,7 +402,9 @@ BranchAndBoundResult BranchAndBoundSolve(
       }
     }
 
-    std::vector<Step> primitive_steps;
+    // The best primitive path for each tarel tour leg; the primitive tour is
+    // their concatenation.
+    std::vector<Path> leg_best_paths;
     for (const TarelEdge& e : lb_result.tour_edges) {
       const auto& paths =
           completed.PathsBetween(e.origin.stop, e.destination.stop);
@@ -413,7 +415,11 @@ BranchAndBoundResult BranchAndBoundSolve(
           best = p;
         }
       }
-      for (const Step& s : best.steps) {
+      leg_best_paths.push_back(std::move(best));
+    }
+    std::vector<Step> primitive_steps;
+    for (const Path& p : leg_best_paths) {
+      for (const Step& s : p.steps) {
         primitive_steps.push_back(s);
       }
     }
@@ -435,15 +441,102 @@ BranchAndBoundResult BranchAndBoundSolve(
       continue;
     }
 
-    // Select branch edge by hashing edges on LB path.
-    // size_t edge_hash = 0;
-    // for (const Step& s : primitive_steps) {
-    //   edge_hash ^= std::hash<int>{}(s.destination.stop.v) * 31 +
-    //   std::hash<int>{}(s.origin.stop.v);
-    // }
-    // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
-    // Step& branch_step = primitive_steps[edge_hash % primitive_steps.size()];
-    Step& branch_step = primitive_steps[0];
+    // Select the branch step: the primitive step out of some tarel tour stop
+    // x. Note that x can appear several times in the primitive tour (as an
+    // intermediate stop of other legs); we branch on the instance at x's
+    // position in the tarel tour, which is the first step of the primitive
+    // path of the leg leaving x.
+    std::optional<Step> branch_step_opt;
+    const ProblemConstraint* prev_constraint = nullptr;
+    if (cur_node.edge_index != -1 &&
+        !search_edges[cur_node.edge_index].constraints.empty()) {
+      prev_constraint = &search_edges[cur_node.edge_index].constraints.back();
+    }
+    if (prev_constraint != nullptr &&
+        std::holds_alternative<ConstraintForbidEdge>(*prev_constraint)) {
+      // The previous constraint forbade x -> y: keep refining the same
+      // decision by branching on the step that now leaves x.
+      StopId x = std::get<ConstraintForbidEdge>(*prev_constraint).a;
+      for (size_t i = 0; i < lb_result.tour_edges.size(); ++i) {
+        if (lb_result.tour_edges[i].origin.stop == x) {
+          branch_step_opt = leg_best_paths[i].steps[0];
+          break;
+        }
+      }
+      // x can be missing from the tour (the tarel remapping may report a
+      // different member of x's required group); fall through to gap
+      // selection in that case.
+      if (!branch_step_opt.has_value() && search_log != nullptr) {
+        *search_log << "  forbidden stop " << state.StopName(x)
+                    << " not in tour; falling back to gap selection\n";
+      }
+    }
+    if (!branch_step_opt.has_value()) {
+      // No previous constraint, or it was a require: branch at the tour stop
+      // with the biggest time-travel gap, i.e. the stop x where allowing one
+      // time travel shortens the feasible path along the tour the most. The
+      // path splits into an independent prefix (start .. x) and suffix
+      // (x .. end), so the with-time-travel duration is the sum of the min
+      // feasible path along each; maximizing the gap is minimizing that sum.
+      auto MinDurationSeconds = [](const std::vector<Path>& paths) {
+        return std::min_element(
+                   paths.begin(),
+                   paths.end(),
+                   [](const Path& a, const Path& b) {
+                     return a.DurationSeconds() < b.DurationSeconds();
+                   }
+        )->DurationSeconds();
+      };
+      if (search_log != nullptr) {
+        *search_log << "  with one time travel at:\n";
+      }
+      int best_with_time_travel = std::numeric_limits<int>::max();
+      for (size_t i = 1; i + 1 < stop_sequence.size(); ++i) {
+        std::vector<StopId> prefix(
+            stop_sequence.begin(), stop_sequence.begin() + i + 1
+        );
+        std::vector<StopId> suffix(
+            stop_sequence.begin() + i, stop_sequence.end()
+        );
+        std::vector<Path> prefix_paths =
+            ComputeMinimalFeasiblePathsAlong(prefix, completed);
+        std::vector<Path> suffix_paths =
+            ComputeMinimalFeasiblePathsAlong(suffix, completed);
+        if (prefix_paths.empty() || suffix_paths.empty()) {
+          if (search_log != nullptr) {
+            *search_log << "    " << state.StopName(stop_sequence[i])
+                        << ": no feasible "
+                        << (prefix_paths.empty() ? "prefix" : "suffix") << "\n";
+          }
+          continue;
+        }
+        int with_time_travel =
+            MinDurationSeconds(prefix_paths) + MinDurationSeconds(suffix_paths);
+        if (search_log != nullptr) {
+          *search_log << "    " << state.StopName(stop_sequence[i]) << ": "
+                      << TimeSinceServiceStart{with_time_travel} << "\n";
+        }
+        if (with_time_travel < best_with_time_travel) {
+          best_with_time_travel = with_time_travel;
+          branch_step_opt = leg_best_paths[i].steps[0];
+        }
+      }
+      if (!branch_step_opt.has_value()) {
+        // No tour stop had a feasible prefix and suffix; fall back to the
+        // first primitive step.
+        if (search_log != nullptr) {
+          *search_log << "  no time-travel candidate; branching on first "
+                         "primitive step\n";
+        }
+        branch_step_opt = primitive_steps[0];
+      }
+    }
+    Step branch_step = branch_step_opt.value();
+    if (search_log != nullptr) {
+      *search_log << "  branch on " << state.StopName(branch_step.origin.stop)
+                  << " -> " << state.StopName(branch_step.destination.stop)
+                  << "\n";
+    }
     BranchEdge branch_edge_fw{
         branch_step.origin.stop, branch_step.destination.stop
     };
