@@ -55,7 +55,16 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchPreservesSolutionSpace, ()) {
   // the branches.
 }
 
-RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
+// Branching must never make the lower bound invalid: each branch's bound has
+// to stay at or below that branch's own optimum. Note the bound is NOT
+// monotone across branching, in two ways: requiring an edge can re-classify
+// extreme vs inner stops (via ComputeExtremeStops), splitting a merged
+// journey and losing its waiting time; and slack forwarding's floors and
+// forwards shift when branching changes the step groups, so even a forbid
+// branch's bound can come out below its parent's. Branch and bound is robust
+// to both because it prunes each node against the max of its own bound and
+// its parent's.
+RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundStillValid, ()) {
   int num_partitions = *rc::gen::inRange(1, 20);
   ProblemState state_orig = *GenProblemState(
       std::nullopt,
@@ -109,22 +118,24 @@ RC_GTEST_PROP(BranchAndBoundTest, BranchLowerBoundNonDecreasing, ()) {
     RC_LOG() << "no solution\n";
   }
 
-  // Use an if-guard instead of || inside RC_ASSERT, because RC_ASSERT uses
-  // expression templates that overload operator||, which does NOT short-circuit
-  // in C++. Without the guard, result_forbid->optimal_value would be evaluated
-  // even when result_forbid is empty, causing undefined behavior.
+  RC_ASSERT(
+      result_orig->optimal_value <= BruteForceSolveOptimalDuration(state_orig)
+  );
+  // Use if-guards instead of || inside RC_ASSERT, because RC_ASSERT uses
+  // expression templates that overload operator||, which does NOT
+  // short-circuit in C++.
   if (result_forbid.has_value()) {
-    RC_ASSERT(result_forbid->optimal_value >= result_orig->optimal_value);
+    RC_ASSERT(
+        result_forbid->optimal_value <=
+        BruteForceSolveOptimalDuration(state_forbid)
+    );
   }
-
-  // Non-decreasing does not hold for the require branch. The tarel relaxation
-  // captures waiting times in merged edges between stops, but when requiring an
-  // edge changes which stops are "extreme" vs "inner" (via
-  // ComputeExtremeStops), a previously-inner stop can become an explicit TSP
-  // stop. This lets the TSP split a merged journey into separate edges, losing
-  // the waiting time and producing a looser (lower) bound.
-  // RC_ASSERT(!result_require.has_value() || result_require->optimal_value >=
-  // result_orig->optimal_value);
+  if (result_require.has_value()) {
+    RC_ASSERT(
+        result_require->optimal_value <=
+        BruteForceSolveOptimalDuration(state_require)
+    );
+  }
 }
 
 // Regression test for a stop id collision in ApplyConstraints. Requiring an
