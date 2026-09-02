@@ -28,7 +28,7 @@ struct TwoOptResult {
   // END, in the ProblemState's stop ids.
   std::vector<StopId> best_tour;
 
-  // Number of tour orders evaluated (cache misses only).
+  // Number of tour orders scored.
   long long evaluations = 0;
 
   int restarts_completed = 0;

@@ -6,7 +6,6 @@
 #include <climits>
 #include <limits>
 #include <random>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -19,69 +18,96 @@ namespace {
 
 constexpr int kUnreachable = std::numeric_limits<int>::max();
 
-// The Pareto front of ways to travel from START through a prefix of the tour:
-// scheduled elements are (departure from the first stop, arrival at the
-// current stop), sorted by departure with no element dominated by another
-// (later or equal departure and earlier or equal arrival). `flex` is the
-// duration of the best pure-flex chain (takeable at any time), or -1 if none.
-struct Cover {
-  std::vector<std::pair<int, int>> sched;
-  int flex = -1;
+// A PairSteps doubles as the Pareto front of ways to travel a section of the
+// tour: scheduled elements are (departure from the section's first stop,
+// arrival at its last), sorted by departure with no element dominated by
+// another (later or equal departure and earlier or equal arrival), and
+// flex_seconds is the duration of the best pure-flex chain (takeable at any
+// time), or -1 if none. A single leg's PairSteps is the base case; Compose
+// joins two adjacent sections into one, so a tour can be scored from
+// precomputed sections instead of leg by leg.
 
-  bool Empty() const { return sched.empty() && flex < 0; }
+bool Empty(const PairSteps& p) { return p.deps.empty() && p.flex_seconds < 0; }
 
-  int MinDuration() const {
-    int best = flex >= 0 ? flex : kUnreachable;
-    for (const auto& [dep, arr] : sched) {
-      best = std::min(best, arr - dep);
-    }
-    return best;
+int MinDuration(const PairSteps& p) {
+  int best = p.flex_seconds >= 0 ? p.flex_seconds : kUnreachable;
+  for (size_t i = 0; i < p.deps.size(); ++i) {
+    best = std::min(best, p.arrs[i] - p.deps[i]);
   }
-};
+  return best;
+}
 
-// Extends `cur` by one leg. Mirrors the path-merging semantics of
+// The empty section: ready to leave at any time, at no cost.
+PairSteps Identity() {
+  PairSteps p;
+  p.flex_seconds = 0;
+  return p;
+}
+
+void Clear(PairSteps& p) {
+  p.deps.clear();
+  p.arrs.clear();
+  p.flex_seconds = -1;
+}
+
+// Sets `out` to the join of `cur` with the section `next` that starts where
+// `cur` ends (`out` must be neither). Mirrors the path-merging semantics of
 // ComputeMinimalFeasiblePathsAlong: waiting at a stop is free (the next
 // scheduled departure at or after the arrival is taken), a flex leg departs
 // exactly on arrival, and chains that would depart before 00:00:00 are
 // dropped (departures only ever move earlier along a chain, so dropping them
 // eagerly loses nothing).
-Cover ComposeLeg(const Cover& cur, const PairSteps& pair) {
-  Cover out;
-  if (cur.flex >= 0 && pair.flex_seconds >= 0) {
-    out.flex = cur.flex + pair.flex_seconds;
+void Compose(const PairSteps& cur, const PairSteps& next, PairSteps& out) {
+  Clear(out);
+  if (cur.flex_seconds >= 0 && next.flex_seconds >= 0) {
+    out.flex_seconds = cur.flex_seconds + next.flex_seconds;
   }
 
-  std::vector<std::pair<int, int>> cand;
-  cand.reserve(cur.sched.size() + pair.deps.size());
-  for (const auto& [dep, arr] : cur.sched) {
-    int best = pair.EarliestArrival(arr);
-    if (best != kPairStepsUnreachable) {
-      cand.emplace_back(dep, best);
-    }
-  }
-  if (cur.flex >= 0) {
-    // A pure-flex prefix arrives "just in time" for every scheduled
-    // departure of this leg.
-    for (size_t i = 0; i < pair.deps.size(); ++i) {
-      int dep = pair.deps[i] - cur.flex;
-      if (dep >= 0) {
-        cand.emplace_back(dep, pair.arrs[i]);
+  // The candidate elements come from two streams, each already sorted by
+  // departure: each element of `cur` continued by the earliest arrival of
+  // `next` after it, and, if `cur` has a pure-flex chain, each scheduled
+  // element of `next` reached "just in time" by that chain. Merge the two
+  // from the latest departure down, keeping elements that strictly improve
+  // the arrival, which leaves exactly the Pareto front.
+  size_t i = cur.deps.size();
+  size_t j = cur.flex_seconds >= 0 ? next.deps.size() : 0;
+  int min_arr = kUnreachable;
+  while (i > 0 || j > 0) {
+    int dep;
+    int arr;
+    // On equal departures, take the earlier arrival first so that the other
+    // is dropped as dominated.
+    bool take_j =
+        j > 0 &&
+        (i == 0 ||
+         next.deps[j - 1] - cur.flex_seconds > cur.deps[i - 1] ||
+         (next.deps[j - 1] - cur.flex_seconds == cur.deps[i - 1] &&
+          next.arrs[j - 1] < next.EarliestArrival(cur.arrs[i - 1])));
+    if (take_j) {
+      --j;
+      dep = next.deps[j] - cur.flex_seconds;
+      if (dep < 0) {
+        // Every remaining departure of this stream is earlier still.
+        j = 0;
+        continue;
+      }
+      arr = next.arrs[j];
+    } else {
+      --i;
+      dep = cur.deps[i];
+      arr = next.EarliestArrival(cur.arrs[i]);
+      if (arr == kPairStepsUnreachable) {
+        continue;
       }
     }
-  }
-
-  // Keep the Pareto front: sort by departure and sweep from the latest
-  // departure, keeping elements that strictly improve the arrival.
-  std::sort(cand.begin(), cand.end());
-  int min_arr = kUnreachable;
-  for (size_t i = cand.size(); i-- > 0;) {
-    if (cand[i].second < min_arr) {
-      min_arr = cand[i].second;
-      out.sched.push_back(cand[i]);
+    if (arr < min_arr) {
+      min_arr = arr;
+      out.deps.push_back(dep);
+      out.arrs.push_back(arr);
     }
   }
-  std::reverse(out.sched.begin(), out.sched.end());
-  return out;
+  std::reverse(out.deps.begin(), out.deps.end());
+  std::reverse(out.arrs.begin(), out.arrs.end());
 }
 
 struct TwoOptGraph {
@@ -135,6 +161,13 @@ struct Candidate {
   std::vector<int> chosen;  // Per middle group, index into its stop list.
 };
 
+// Scores the neighbors of a base candidate. A neighbor differs from the base
+// in one section of the tour (a reversed segment, or one replaced stop), so
+// its value is composed from precomputed sections of the base: the prefix
+// before the change and the suffix after it. For a reversal, the reversed
+// segment's cover is carried along as the segment grows by one leg at a time
+// (see EvaluateReversal), so only the two legs joining the changed section
+// to the rest are composed leg by leg for each move.
 class Evaluator {
  public:
   Evaluator(
@@ -143,39 +176,115 @@ class Evaluator {
   )
       : graph_(graph), mid_groups_(mid_groups) {}
 
-  // The exact optimal duration of a tour visiting the candidate's stops in
-  // its order, or kUnreachable if no such tour exists.
-  int Evaluate(const Candidate& c) {
+  // Makes `c` the base candidate and returns the exact optimal duration of a
+  // tour visiting its stops in its order, or kUnreachable if none exists.
+  int SetBase(const Candidate& c) {
     seq_.clear();
     seq_.push_back(graph_.boundary.start);
     for (int g : c.order) {
       seq_.push_back(mid_groups_[g][c.chosen[g]]);
     }
     seq_.push_back(graph_.boundary.end);
+    n_ = static_cast<int>(seq_.size());
 
-    auto it = cache_.find(seq_);
-    if (it != cache_.end()) {
-      return it->second;
+    // The tables are resized (not reassigned) so their buffers are reused
+    // across bases; every entry is cleared or recomputed below.
+    // prefix_[b]: the section from seq_[0] to seq_[b].
+    prefix_.resize(n_);
+    ClearAll(prefix_);
+    prefix_[0] = Identity();
+    for (int b = 1; b < n_ && !Empty(prefix_[b - 1]); ++b) {
+      Compose(prefix_[b - 1], graph_.Pair(seq_[b - 1], seq_[b]), prefix_[b]);
+    }
+    // suffix_[a]: the section from seq_[a] to seq_[n_ - 1].
+    suffix_.resize(n_);
+    ClearAll(suffix_);
+    suffix_[n_ - 1] = Identity();
+    for (int a = n_ - 2; a >= 0 && !Empty(suffix_[a + 1]); --a) {
+      Compose(graph_.Pair(seq_[a], seq_[a + 1]), suffix_[a + 1], suffix_[a]);
     }
 
-    Cover cover;
-    cover.flex = 0;  // At START, ready to leave at any time.
-    for (size_t i = 0; i + 1 < seq_.size() && !cover.Empty(); ++i) {
-      cover = ComposeLeg(cover, graph_.Pair(seq_[i], seq_[i + 1]));
-    }
-    int val = cover.MinDuration();
-    cache_.emplace(seq_, val);
     ++evaluations_;
-    return val;
+    return MinDuration(prefix_[n_ - 1]);
+  }
+
+  // The value of the base with order positions i..j (i < j) reversed. For a
+  // given j, must be called with i = j - 1, j - 2, ... in that order: the
+  // cover of the reversed segment (from seq_[j] back to seq_[i]) is kept
+  // across calls and extended by one leg at its end per call. (Extending at
+  // the end, rather than the start, keeps the composition in its cheap
+  // orientation: a small cover followed by a leg with many departures.)
+  int EvaluateReversal(int i, int j) {
+    ++evaluations_;
+    int si = i + 1;  // seq_ index of order position i.
+    int sj = j + 1;
+    if (i == j - 1) {
+      Clear(reversed_);
+      reversed_.flex_seconds = 0;  // Identity: the segment is just seq_[sj].
+    } else {
+      assert(j == reversed_j_ && i == reversed_i_ - 1);
+    }
+    reversed_i_ = i;
+    reversed_j_ = j;
+    Compose(reversed_, graph_.Pair(seq_[si + 1], seq_[si]), scratch_a_);
+    std::swap(reversed_, scratch_a_);
+    if (Empty(reversed_)) {
+      return kUnreachable;
+    }
+
+    Compose(prefix_[si - 1], graph_.Pair(seq_[si - 1], seq_[sj]), scratch_a_);
+    if (Empty(scratch_a_)) {
+      return kUnreachable;
+    }
+    Compose(scratch_a_, reversed_, scratch_b_);
+    if (Empty(scratch_b_)) {
+      return kUnreachable;
+    }
+    Compose(scratch_b_, graph_.Pair(seq_[si], seq_[sj + 1]), scratch_a_);
+    if (Empty(scratch_a_)) {
+      return kUnreachable;
+    }
+    Compose(scratch_a_, suffix_[sj + 1], scratch_b_);
+    return MinDuration(scratch_b_);
+  }
+
+  // The value of the base with the stop at order position p replaced by x.
+  int EvaluateSwap(int p, StopId x) {
+    ++evaluations_;
+    int s = p + 1;  // seq_ index of order position p.
+    Compose(prefix_[s - 1], graph_.Pair(seq_[s - 1], x), scratch_a_);
+    if (Empty(scratch_a_)) {
+      return kUnreachable;
+    }
+    Compose(scratch_a_, graph_.Pair(x, seq_[s + 1]), scratch_b_);
+    if (Empty(scratch_b_)) {
+      return kUnreachable;
+    }
+    Compose(scratch_b_, suffix_[s + 1], scratch_a_);
+    return MinDuration(scratch_a_);
   }
 
   long long NumEvaluations() const { return evaluations_; }
 
  private:
+  static void ClearAll(std::vector<PairSteps>& table) {
+    for (PairSteps& p : table) {
+      Clear(p);
+    }
+  }
+
   const TwoOptGraph& graph_;
   const std::vector<std::vector<StopId>>& mid_groups_;
   std::vector<StopId> seq_;
-  std::unordered_map<std::vector<StopId>, int, StopIdVectorHash> cache_;
+  int n_ = 0;
+  std::vector<PairSteps> prefix_;
+  std::vector<PairSteps> suffix_;
+  // The reversed segment of the last EvaluateReversal call, and its i and j.
+  PairSteps reversed_;
+  int reversed_i_ = -1;
+  int reversed_j_ = -1;
+  PairSteps scratch_a_;
+  PairSteps scratch_b_;
   long long evaluations_ = 0;
 };
 
@@ -241,7 +350,7 @@ TwoOptResult TwoOptSolve(
       }
     }
 
-    int cur_val = evaluator.Evaluate(c);
+    int cur_val = evaluator.SetBase(c);
 
     // Best-improvement hill climbing over 2-opt segment reversals and
     // group-member swaps.
@@ -250,17 +359,21 @@ TwoOptResult TwoOptSolve(
     bool improved = true;
     while (improved && !deadline_passed()) {
       improved = false;
-      Candidate best_move;
       int best_move_val = cur_val;
+      // The best move: a reversal of order positions i..j if best_j >= 0,
+      // otherwise a swap of group best_g's stop to best_m.
+      int best_i = -1;
+      int best_j = -1;
+      int best_g = -1;
+      int best_m = -1;
 
-      for (int i = 0; i < k; ++i) {
-        for (int j = i + 1; j < k; ++j) {
-          Candidate cand = c;
-          std::reverse(cand.order.begin() + i, cand.order.begin() + j + 1);
-          int val = evaluator.Evaluate(cand);
+      for (int j = 1; j < k; ++j) {
+        for (int i = j - 1; i >= 0; --i) {
+          int val = evaluator.EvaluateReversal(i, j);
           if (val < best_move_val) {
             best_move_val = val;
-            best_move = std::move(cand);
+            best_i = i;
+            best_j = j;
           }
         }
       }
@@ -270,19 +383,26 @@ TwoOptResult TwoOptSolve(
           if (static_cast<int>(m) == c.chosen[g]) {
             continue;
           }
-          Candidate cand = c;
-          cand.chosen[g] = static_cast<int>(m);
-          int val = evaluator.Evaluate(cand);
+          int val = evaluator.EvaluateSwap(p, mid_groups[g][m]);
           if (val < best_move_val) {
             best_move_val = val;
-            best_move = std::move(cand);
+            best_j = -1;
+            best_g = g;
+            best_m = static_cast<int>(m);
           }
         }
       }
 
       if (best_move_val < cur_val) {
-        c = std::move(best_move);
-        cur_val = best_move_val;
+        if (best_j >= 0) {
+          std::reverse(
+              c.order.begin() + best_i, c.order.begin() + best_j + 1
+          );
+        } else {
+          c.chosen[best_g] = best_m;
+        }
+        cur_val = evaluator.SetBase(c);
+        assert(cur_val == best_move_val);
         improved = true;
       }
     }
