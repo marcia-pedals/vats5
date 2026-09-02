@@ -1,6 +1,7 @@
 #include "step_merge.h"
 
 #include <algorithm>
+#include <cassert>
 #include <limits>
 
 #include "solver/data.h"
@@ -88,12 +89,57 @@ Step MergedStep(Step ab, Step bc) {
   };
 }
 
+namespace {
+
+// A sorted minimal vector of Steps as a cover view for MergeCovers.
+struct StepsCoverView {
+  const std::vector<Step>& steps;
+
+  bool HasFlex() const { return !steps.empty() && steps[0].is_flex; }
+  int FlexSeconds() const { return steps[0].FlexDurationSeconds(); }
+  size_t NumScheduled() const { return steps.size() - (HasFlex() ? 1 : 0); }
+  int Dep(size_t i) const { return At(i).origin.time.seconds; }
+  int Arr(size_t i) const { return At(i).destination.time.seconds; }
+
+  // The vector index of the flex step, or of scheduled step i.
+  size_t Index(size_t i) const {
+    return i == kMergeViaFlex ? 0 : i + (HasFlex() ? 1 : 0);
+  }
+  const Step& At(size_t i) const { return steps[Index(i)]; }
+};
+
+// Materializes MergeCovers' result as Steps, with provenance.
+struct StepsSink {
+  StepsCoverView ab;
+  StepsCoverView bc;
+  std::vector<Step>& result;
+  std::vector<StepProvenance>* provenance;
+
+  void Flex(int) { Add(kMergeViaFlex, kMergeViaFlex); }
+  void Scheduled(int dep, int arr, size_t ab_i, size_t bc_i) {
+    Add(ab_i, bc_i);
+    assert(result.back().origin.time.seconds == dep);
+    assert(result.back().destination.time.seconds == arr);
+  }
+  void Add(size_t ab_i, size_t bc_i) {
+    result.push_back(MergedStep(ab.At(ab_i), bc.At(bc_i)));
+    if (provenance) {
+      provenance->push_back({ab.Index(ab_i), bc.Index(bc_i)});
+    }
+  }
+};
+
+}  // namespace
+
 std::vector<Step> PairwiseMergedSteps(
     const std::vector<Step>& ab,
     const std::vector<Step>& bc,
     std::vector<StepProvenance>* provenance
 ) {
   std::vector<Step> result;
+  if (provenance) {
+    provenance->clear();
+  }
   if (ab.empty() || bc.empty()) {
     return result;
   }
@@ -108,134 +154,20 @@ std::vector<Step> PairwiseMergedSteps(
     }
   }
 
-  // Reserve a (pretty tight I think) upper bound on the amount of space we're
-  // gonna allocate.
-  size_t alloc_ub = 0;
-  if (ab[0].is_flex) {
-    alloc_ub += bc.size();
-  }
-  if (bc[0].is_flex) {
-    alloc_ub += ab.size();
-  }
-  alloc_ub += std::min(ab.size(), bc.size());
-  result.reserve(alloc_ub);
+  StepsSink sink{
+      .ab = StepsCoverView{ab},
+      .bc = StepsCoverView{bc},
+      .result = result,
+      .provenance = provenance
+  };
+  MergeCovers(sink.ab, sink.bc, sink);
 
+  // The sink received the scheduled steps from the latest departure down.
+  size_t first_scheduled = (ab[0].is_flex && bc[0].is_flex) ? 1 : 0;
+  std::reverse(result.begin() + first_scheduled, result.end());
   if (provenance) {
-    provenance->clear();
-    provenance->reserve(alloc_ub);
+    std::reverse(provenance->begin() + first_scheduled, provenance->end());
   }
-
-  // If both have flex steps, make a combined flex step and put it first in the
-  // result.
-  if (ab[0].is_flex && bc[0].is_flex) {
-    result.emplace_back(MergedStep(ab[0], bc[0]));
-    if (provenance) {
-      provenance->push_back({0, 0});
-    }
-  }
-
-  size_t ab_start = ab[0].is_flex ? 1 : 0;
-  size_t bc_start = bc[0].is_flex ? 1 : 0;
-
-  // Think of this as a 3-way merge of sorted lists into a sorted list.
-  //
-  // This lists are:
-  // ab_flex - [ab flex step] x bc[non-flex]
-  // bc_flex - ab[non-flex] x [bc flex step]
-  // non_flex - ab[non-flex] x bc[non-flex]
-  //
-  // They are sorted by the `SortSteps` order.
-  size_t ab_flex_bc_i =
-      ab[0].is_flex ? bc_start : bc.size();  // Only use this if ab has flex.
-  size_t bc_flex_ab_i =
-      bc[0].is_flex ? ab_start : ab.size();  // Only use this if bc has flex.
-  size_t non_flex_ab_i = ab_start;
-  size_t non_flex_bc_i = bc_start;
-
-  const auto MakeNonFlexValidMinimal =
-      [&non_flex_ab_i, &non_flex_bc_i, &ab, &bc]() {
-        // first make the connection valid by advancing bc_i
-        while (non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size() &&
-               ab[non_flex_ab_i].destination.time >
-                   bc[non_flex_bc_i].origin.time) {
-          non_flex_bc_i += 1;
-        }
-        // then make the conection minimal by advancing ab_i
-        while (non_flex_ab_i + 1 < ab.size() && non_flex_bc_i < bc.size() &&
-               ab[non_flex_ab_i + 1].destination.time <=
-                   bc[non_flex_bc_i].origin.time) {
-          non_flex_ab_i += 1;
-        }
-      };
-  MakeNonFlexValidMinimal();
-
-  Step BAD_STEP = Step::PrimitiveScheduled(
-      StopId{0},
-      StopId{0},
-      TimeSinceServiceStart{std::numeric_limits<int>::max()},
-      TimeSinceServiceStart{std::numeric_limits<int>::max()},
-      TripId{0}
-  );
-
-  const auto GetABFlexStep = [&ab_flex_bc_i, &ab, &bc, &BAD_STEP]() {
-    return ab_flex_bc_i < bc.size() ? MergedStep(ab[0], bc[ab_flex_bc_i])
-                                    : BAD_STEP;
-  };
-  const auto GetBCFlexStep = [&bc_flex_ab_i, &ab, &bc, &BAD_STEP]() {
-    return bc_flex_ab_i < ab.size() ? MergedStep(ab[bc_flex_ab_i], bc[0])
-                                    : BAD_STEP;
-  };
-  const auto GetNonFlexStep =
-      [&non_flex_ab_i, &non_flex_bc_i, &ab, &bc, &BAD_STEP] {
-        return non_flex_ab_i < ab.size() && non_flex_bc_i < bc.size()
-                   ? MergedStep(ab[non_flex_ab_i], bc[non_flex_bc_i])
-                   : BAD_STEP;
-      };
-
-  Step ab_flex_step = GetABFlexStep();
-  Step bc_flex_step = GetBCFlexStep();
-  Step non_flex_step = GetNonFlexStep();
-
-  const auto StepGood = [](const Step& s) {
-    return s.origin.time.seconds != std::numeric_limits<int>::max();
-  };
-
-  while (StepGood(ab_flex_step) || StepGood(bc_flex_step) ||
-         StepGood(non_flex_step)) {
-    if (SmallerOrEqualStep(ab_flex_step, bc_flex_step) &&
-        SmallerOrEqualStep(ab_flex_step, non_flex_step)) {
-      // ab_flex_step is smallest (or tied)
-      result.emplace_back(ab_flex_step);
-      if (provenance) {
-        provenance->push_back({0, ab_flex_bc_i});
-      }
-      ab_flex_bc_i += 1;
-      ab_flex_step = GetABFlexStep();
-    } else if (SmallerOrEqualStep(bc_flex_step, non_flex_step)) {
-      // bc_flex_step is smallest (or tied with non_flex)
-      result.emplace_back(bc_flex_step);
-      if (provenance) {
-        provenance->push_back({bc_flex_ab_i, 0});
-      }
-      bc_flex_ab_i += 1;
-      bc_flex_step = GetBCFlexStep();
-    } else {
-      // non_flex_step is smallest
-      result.emplace_back(non_flex_step);
-      if (provenance) {
-        provenance->push_back({non_flex_ab_i, non_flex_bc_i});
-      }
-      non_flex_ab_i += 1;
-      MakeNonFlexValidMinimal();
-      non_flex_step = GetNonFlexStep();
-    }
-  }
-
-  // The 3-way merge may have introduced dominated steps. Delete them.
-  // TODO: I think it might be possible to suppress these during the 3-way merge
-  // so that we don't have to allocate space and then do an extra sweep to
-  // delete them.
-  MakeMinimalCover(result, provenance);
   return result;
 }
 
