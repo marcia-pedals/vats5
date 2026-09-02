@@ -688,9 +688,8 @@ int main(int argc, char* argv[]) {
       for (StopId stop : required_subset) {
         subset_representatives.insert(state.required.Representative(stop));
       }
-      bool held_karp =
-          subset_representatives.size() <=
-          static_cast<size_t>(std::max(held_karp_max_groups, 0));
+      bool held_karp = subset_representatives.size() <=
+                       static_cast<size_t>(std::max(held_karp_max_groups, 0));
       bool two_opt = !held_karp;
       const char* solver_name = held_karp ? "held-karp" : "2-opt";
 
