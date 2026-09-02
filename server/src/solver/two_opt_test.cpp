@@ -95,7 +95,7 @@ TEST(TwoOptTest, MatchesHeldKarpOnDenseScheduledInstance) {
   HeldKarpDPResult hk = HeldKarpDPSolve(state, 0);
   ASSERT_LT(hk.best_val, std::numeric_limits<int>::max());
 
-  TwoOptResult result = TwoOptSolve(state, {}, &std::cerr);
+  TwoOptResult result = TwoOptSolve(state, 0, {}, &std::cerr);
   EXPECT_EQ(result.best_val, hk.best_val);
   CheckTourAchievesBestVal(state, result);
 }
@@ -109,8 +109,25 @@ TEST(TwoOptTest, HandlesFlexOnlyMiddleSteps) {
   HeldKarpDPResult hk = HeldKarpDPSolve(state, 0);
   ASSERT_LT(hk.best_val, std::numeric_limits<int>::max());
 
-  TwoOptResult result = TwoOptSolve(state, {}, &std::cerr);
+  TwoOptResult result = TwoOptSolve(state, 0, {}, &std::cerr);
   EXPECT_EQ(result.best_val, hk.best_val);
+  CheckTourAchievesBestVal(state, result);
+}
+
+TEST(TwoOptTest, StopsOnceKnownLbIsReached) {
+  std::vector<Step> steps;
+  steps.push_back(Step::PrimitiveFlex(StopId{0}, StopId{1}, 100, TripId{0}));
+  steps.push_back(Step::PrimitiveFlex(StopId{1}, StopId{0}, 150, TripId{1}));
+  ProblemState state = MakeTestState(2, std::move(steps));
+
+  HeldKarpDPResult hk = HeldKarpDPSolve(state, 0);
+  ASSERT_LT(hk.best_val, std::numeric_limits<int>::max());
+
+  // Every restart of this two-stop instance reaches the optimum, so with the
+  // optimum as known_lb the search must return after the first one.
+  TwoOptResult result = TwoOptSolve(state, hk.best_val, {}, &std::cerr);
+  EXPECT_EQ(result.best_val, hk.best_val);
+  EXPECT_EQ(result.restarts_completed, 1);
   CheckTourAchievesBestVal(state, result);
 }
 
@@ -119,7 +136,7 @@ RC_GTEST_PROP(TwoOptTest, IsSoundOnRandomStates, ()) {
 
   TwoOptOptions options;
   options.restarts = 50;
-  TwoOptResult result = TwoOptSolve(state, options, &RC_LOG());
+  TwoOptResult result = TwoOptSolve(state, 0, options, &RC_LOG());
   RC_ASSERT(
       result.restart_seconds.size() ==
       static_cast<size_t>(result.restarts_completed)

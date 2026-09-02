@@ -236,6 +236,7 @@ class Candidate {
 
 TwoOptResult TwoOptSolve(
     const ProblemState& state,
+    int known_lb,
     const TwoOptOptions& options,
     std::ostream* search_log
 ) {
@@ -316,7 +317,10 @@ TwoOptResult TwoOptSolve(
     // candidate found.
     // TODO: Candidate could simply DP over group-member selection so that we
     // don't have to evaluate switch moves.
-    while (!deadline_passed()) {
+    //
+    // The climb also stops once the candidate achieves known_lb, since the
+    // caller has proven that no tour can beat it.
+    while (!deadline_passed() && c.value() > known_lb) {
       std::shuffle(units.begin(), units.end(), rng);
       // The improving move found: a reversal of path_[move_i..move_j] if
       // move_j >= 0, otherwise a switch of path_[move_p] to move_stop.
@@ -381,6 +385,15 @@ TwoOptResult TwoOptSolve(
                           ? "infeasible"
                           : TimeSinceServiceStart{result.best_val}.ToString())
                   << "\n";
+    }
+    if (result.best_val <= known_lb) {
+      // The best tour achieves a duration the caller knows can't be beaten,
+      // so skip the remaining restarts.
+      if (search_log != nullptr) {
+        *search_log << "Search terminated: reached known_lb ("
+                    << TimeSinceServiceStart{known_lb} << ")\n";
+      }
+      break;
     }
   }
 

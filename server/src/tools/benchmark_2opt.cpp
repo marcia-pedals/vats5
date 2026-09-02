@@ -60,7 +60,7 @@ int main(int argc, char* argv[]) {
 
   auto start = std::chrono::steady_clock::now();
   TwoOptResult result =
-      TwoOptSolve(state, options, quiet ? nullptr : &std::cerr);
+      TwoOptSolve(state, 0, options, quiet ? nullptr : &std::cerr);
   auto end = std::chrono::steady_clock::now();
 
   int total_ms =

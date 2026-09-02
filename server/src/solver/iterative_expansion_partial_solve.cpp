@@ -87,7 +87,12 @@ PartialSolution PartialSolveBranchAndBound(
       partial_problem, known_lb, search_log, std::nullopt, -1, on_event
   );
   if (bb_result.best_paths.empty()) {
-    return PartialSolution{};
+    // The search ran to completion without finding a path, so the partial
+    // problem is infeasible.
+    return PartialSolution{
+        .lb = std::numeric_limits<int>::max(),
+        .ub = std::numeric_limits<int>::max(),
+    };
   }
 
   // Find the original problem paths corresponding to the partial problem paths.
@@ -144,7 +149,15 @@ PartialSolution PartialSolveBranchAndBound(
   // TODO: Think about wither `paths` could contain duplicate
   // paths or other non-minimality.
 
-  return PartialSolution{.paths = std::move(paths)};
+  return PartialSolution{
+      // Branch and bound only terminates successfully if it finds the optimal
+      // solution, so we can treat it as a lb.
+      // TODO: We probably want bnb with a budget that reports a lower bound
+      // when it runs out of time.
+      .lb = bb_result.best_ub,
+      .ub = bb_result.best_ub,
+      .paths = std::move(paths)
+  };
 }
 
 PartialSolution PartialSolveHeldKarp(
@@ -157,7 +170,12 @@ PartialSolution PartialSolveHeldKarp(
   // already a full tour from START to END.
   HeldKarpDPResult hk = HeldKarpDPSolve(partial_problem, known_lb, search_log);
   if (hk.best_tour.empty()) {
-    return PartialSolution{};
+    // The DP is exhaustive, so no tour means the partial problem is
+    // infeasible.
+    return PartialSolution{
+        .lb = std::numeric_limits<int>::max(),
+        .ub = std::numeric_limits<int>::max(),
+    };
   }
   const std::vector<StopId>& tour = hk.best_tour;
   assert(tour.front() == original_problem.boundary.start);
@@ -194,17 +212,22 @@ PartialSolution PartialSolveHeldKarp(
     );
   }
 
-  return PartialSolution{.paths = std::move(paths)};
+  return PartialSolution{
+      .lb = hk.best_val, .ub = hk.best_val, .paths = std::move(paths)
+  };
 }
 
 PartialSolution PartialSolveTwoOpt(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     const TwoOptOptions& options,
     std::ostream* search_log
 ) {
-  TwoOptResult two_opt = TwoOptSolve(partial_problem, options, search_log);
+  TwoOptResult two_opt =
+      TwoOptSolve(partial_problem, known_lb, options, search_log);
   if (two_opt.best_tour.empty()) {
+    // 2-opt is a heuristic, so finding nothing proves nothing.
     return PartialSolution{};
   }
   const std::vector<StopId>& tour = two_opt.best_tour;
@@ -241,7 +264,12 @@ PartialSolution PartialSolveTwoOpt(
     );
   }
 
-  return PartialSolution{.paths = std::move(paths)};
+  return PartialSolution{
+      // 2-opt does not prove a lower bound.
+      .lb = 0,
+      .ub = two_opt.best_val,
+      .paths = std::move(paths)
+  };
 }
 
 TourPathSets TourPathSets::Compute(
@@ -329,7 +357,8 @@ PartialSolution NaivelyExtendPartialSolution(
     }
   }
 
-  return PartialSolution{.paths = best_paths};
+  // Insertion is a heuristic, so it proves no lower bound.
+  return PartialSolution{.ub = best_duration, .paths = std::move(best_paths)};
 }
 
 }  // namespace vats5

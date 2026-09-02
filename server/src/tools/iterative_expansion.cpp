@@ -677,7 +677,7 @@ int main(int argc, char* argv[]) {
   std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
-  int prev_iteration_optimal = 0;
+  int known_lb = 0;
 
   try {
     for (int iteration = 0;; iteration++) {
@@ -717,15 +717,19 @@ int main(int argc, char* argv[]) {
         std::cout << "Wrote iteration problem state to: " << path << "\n";
       }
 
-      // No known_lb for 2-opt: prev_iteration_optimal is only a valid bound
-      // while every previous iteration was solved exactly, which stops being
-      // true once 2-opt (a heuristic) takes over.
       PartialSolution solution =
           held_karp
               ? PartialSolveHeldKarp(
-                    partial_problem, state, prev_iteration_optimal, &std::cout
+                    partial_problem, state, known_lb, &std::cout
                 )
-              : PartialSolveTwoOpt(partial_problem, state, {}, &std::cout);
+              : PartialSolveTwoOpt(
+                    partial_problem, state, known_lb, {}, &std::cout
+                );
+
+      // Because the partial problem is a relaxation of the overall problem, the
+      // partial problem lb is a lb of the overall problem. The same is not true
+      // for the ub, of course.
+      known_lb = std::max(known_lb, solution.lb);
 
       // Choose the path that visits the most required stops.
       auto best_solution_path_it =
@@ -760,7 +764,7 @@ int main(int argc, char* argv[]) {
         TwoOptOptions polish_options;
         polish_options.restarts = two_opt_polish_restarts;
         PartialSolution polished = PartialSolveTwoOpt(
-            partial_problem, state, polish_options, &std::cout
+            partial_problem, state, known_lb, polish_options, &std::cout
         );
         auto polished_it = polished.BestPathByRequiredStops(state.required);
         if (polished_it != polished.paths.end()) {
@@ -779,7 +783,6 @@ int main(int argc, char* argv[]) {
       }
 
       const Path& best_path = best_solution_path.path;
-      prev_iteration_optimal = best_path.DurationSeconds();
 
       // Write partial solution to viz SQLite.
       {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iosfwd>
+#include <limits>
 #include <unordered_set>
 #include <vector>
 
@@ -30,6 +31,13 @@ int CountRequiredStops(const Path& path, const RequiredStops& required);
 // A "partial problem" is a problem where the paths are required to visit a
 // certain subset of the required stops. This is a solution to such a problem.
 struct PartialSolution {
+  // Lower bound proven by the solver. Defaults to the trivial bound.
+  int lb = 0;
+
+  // Upper bound proven by the solver. INT_MAX means no solution was found.
+  int ub = std::numeric_limits<int>::max();
+
+  // At least one path achieving `ub`.
   std::vector<PartialSolutionPath> paths;
 
   // Returns the path that visits the most required stops.
@@ -70,14 +78,15 @@ PartialSolution PartialSolveHeldKarp(
 // Solves the same partial problem as PartialSolveBranchAndBound, by 2-opt
 // local search over the required groups. Unlike the other two this is a
 // heuristic: the returned paths are exact optima for their visit order, but
-// the order itself may be suboptimal. It takes no known_lb: the previous
-// iteration's value would only be a valid bound if it were an optimum, which
-// a 2-opt result is not guaranteed to be.
+// the order itself may be suboptimal. The search returns as soon as it finds
+// a tour achieving `known_lb`, a lower bound on the partial problem's optimum
+// that the caller has already proven (0 if nothing is known).
 //
 // `search_log` may be null.
 PartialSolution PartialSolveTwoOpt(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
+    int known_lb,
     const TwoOptOptions& options = {},
     std::ostream* search_log = nullptr
 );
