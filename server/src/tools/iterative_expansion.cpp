@@ -390,7 +390,7 @@ constexpr int kDefaultHeldKarpMaxGroups = 22;
 // polished result may be a shorter tour that no longer visits everything, in
 // which case the expansion just continues (and the next full solution is
 // polished again).
-constexpr int kDefaultTwoOptPolishRestarts = 1000;
+constexpr int kDefaultTwoOptPolishRestarts = 5000;
 
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};

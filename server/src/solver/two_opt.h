@@ -11,7 +11,7 @@ namespace vats5 {
 
 struct TwoOptOptions {
   // Number of hill-climbing starts.
-  int restarts = 100;
+  int restarts = 250;
 
   int seed = 1;
 

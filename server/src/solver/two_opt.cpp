@@ -325,6 +325,23 @@ TwoOptResult TwoOptSolve(
     return elapsed.count() >= *options.time_limit_seconds;
   };
 
+  // A unit of the neighborhood scan: the reversals ending at order position
+  // j if j >= 0, otherwise the swap of group g's stop to its member m.
+  struct Unit {
+    int j = -1;
+    int g = -1;
+    int m = -1;
+  };
+  std::vector<Unit> units;
+  for (int j = 1; j < k; ++j) {
+    units.push_back(Unit{.j = j});
+  }
+  for (int g = 0; g < k; ++g) {
+    for (size_t m = 0; m < mid_groups[g].size(); ++m) {
+      units.push_back(Unit{.g = g, .m = static_cast<int>(m)});
+    }
+  }
+
   Candidate best_candidate;
   std::mt19937 rng(options.seed);
 
@@ -350,61 +367,72 @@ TwoOptResult TwoOptSolve(
       }
     }
 
+    // position_of[g]: the order position of group g.
+    std::vector<int> position_of(k);
+    for (int p = 0; p < k; ++p) {
+      position_of[c.order[p]] = p;
+    }
+
     int cur_val = evaluator.SetBase(c);
 
-    // Best-improvement hill climbing over 2-opt segment reversals and
-    // group-member swaps.
+    // First-improvement hill climbing over 2-opt segment reversals and
+    // group-member swaps: each step scans the neighborhood in a fresh random
+    // order of its units (all reversals ending at a given position j, with i
+    // walking down from j - 1 as EvaluateReversal requires, or one
+    // group-member swap) and applies the first improving move found.
     // TODO: The evaluator could simply DP over group-member selection so that
     // we don't have to evaluate swap moves.
-    bool improved = true;
-    while (improved && !deadline_passed()) {
-      improved = false;
-      int best_move_val = cur_val;
-      // The best move: a reversal of order positions i..j if best_j >= 0,
-      // otherwise a swap of group best_g's stop to best_m.
-      int best_i = -1;
-      int best_j = -1;
-      int best_g = -1;
-      int best_m = -1;
+    while (!deadline_passed()) {
+      std::shuffle(units.begin(), units.end(), rng);
+      // The improving move found: a reversal of order positions i..j if
+      // move_j >= 0, otherwise a swap of group move_g's stop to member move_m.
+      int move_val = cur_val;
+      int move_i = -1;
+      int move_j = -1;
+      int move_g = -1;
+      int move_m = -1;
 
-      for (int j = 1; j < k; ++j) {
-        for (int i = j - 1; i >= 0; --i) {
-          int val = evaluator.EvaluateReversal(i, j);
-          if (val < best_move_val) {
-            best_move_val = val;
-            best_i = i;
-            best_j = j;
+      for (const Unit& unit : units) {
+        if (unit.j >= 0) {
+          for (int i = unit.j - 1; i >= 0 && move_val == cur_val; --i) {
+            int val = evaluator.EvaluateReversal(i, unit.j);
+            if (val < cur_val) {
+              move_val = val;
+              move_i = i;
+              move_j = unit.j;
+            }
           }
-        }
-      }
-      for (int p = 0; p < k; ++p) {
-        int g = c.order[p];
-        for (size_t m = 0; m < mid_groups[g].size(); ++m) {
-          if (static_cast<int>(m) == c.chosen[g]) {
+        } else {
+          if (unit.m == c.chosen[unit.g]) {
             continue;
           }
-          int val = evaluator.EvaluateSwap(p, mid_groups[g][m]);
-          if (val < best_move_val) {
-            best_move_val = val;
-            best_j = -1;
-            best_g = g;
-            best_m = static_cast<int>(m);
+          int val = evaluator.EvaluateSwap(
+              position_of[unit.g], mid_groups[unit.g][unit.m]
+          );
+          if (val < cur_val) {
+            move_val = val;
+            move_g = unit.g;
+            move_m = unit.m;
           }
+        }
+        if (move_val < cur_val) {
+          break;
         }
       }
 
-      if (best_move_val < cur_val) {
-        if (best_j >= 0) {
-          std::reverse(
-              c.order.begin() + best_i, c.order.begin() + best_j + 1
-          );
-        } else {
-          c.chosen[best_g] = best_m;
-        }
-        cur_val = evaluator.SetBase(c);
-        assert(cur_val == best_move_val);
-        improved = true;
+      if (move_val == cur_val) {
+        break;  // Local optimum.
       }
+      if (move_j >= 0) {
+        std::reverse(c.order.begin() + move_i, c.order.begin() + move_j + 1);
+        for (int p = move_i; p <= move_j; ++p) {
+          position_of[c.order[p]] = p;
+        }
+      } else {
+        c.chosen[move_g] = move_m;
+      }
+      cur_val = evaluator.SetBase(c);
+      assert(cur_val == move_val);
     }
 
     ++result.restarts_completed;
