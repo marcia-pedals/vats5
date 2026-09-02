@@ -2,14 +2,11 @@ steps:
   - label: ":lint-roller: Pre-commit"
     agents:
       queue: hetzner
-    plugins:
-      # Check out over SSH with the deploy key in the VATS5_DEPLOY_KEY secret
-      # rather than with the agent's anonymous HTTPS access, which GitHub
-      # rate-limits.
-      - &ssh_checkout
-        git-ssh-checkout#v0.4.1:
-          ssh-secret-key-name: VATS5_DEPLOY_KEY
-          repository-url: git@github.com:marcia-pedals/vats5.git
+    # Check out over SSH with the deploy key in the VATS5_DEPLOY_KEY secret
+    # rather than with the agent's anonymous HTTPS access, which GitHub
+    # rate-limits. ssh_secret is not inherited, so every step sets it.
+    checkout:
+      ssh_secret: "VATS5_DEPLOY_KEY"
     command: |
       set -euo pipefail
 
@@ -30,6 +27,8 @@ steps:
       queue: hetzner
     secrets:
       - CPP_SUITE_TOKEN
+    checkout:
+      ssh_secret: "VATS5_DEPLOY_KEY"
     command: |
       set -euo pipefail
 
@@ -52,7 +51,6 @@ steps:
     artifact_paths:
       - "server/build-debug/test-results.xml"
     plugins:
-      - *ssh_checkout
       - test-collector#v1.10.2:
           files: "server/build-debug/test-results.xml"
           format: "junit"
