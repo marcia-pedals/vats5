@@ -413,6 +413,11 @@ InitializeProblemStateResult InitializeProblemState(
 struct TarelStateRemapResult {
   std::vector<TarelEdge> edges;
   std::unordered_map<TarelState, TarelState> mapped_to_original;
+
+  // Maps every original state appearing in the input edges to the state it was
+  // merged into. (Unlike mapped_to_original, this is total: every original
+  // state is a key.)
+  std::unordered_map<TarelState, TarelState> original_to_mapped;
 };
 
 TarelStateRemapResult RemapTarelStates(
