@@ -2,6 +2,11 @@ steps:
   - label: ":lint-roller: Pre-commit"
     agents:
       queue: hetzner
+    # Check out over SSH with the deploy key in the VATS5_DEPLOY_KEY secret
+    # rather than with the agent's anonymous HTTPS access, which GitHub
+    # rate-limits. ssh_secret is not inherited, so every step sets it.
+    checkout:
+      ssh_secret: "VATS5_DEPLOY_KEY"
     command: |
       set -euo pipefail
 
@@ -22,6 +27,8 @@ steps:
       queue: hetzner
     secrets:
       - CPP_SUITE_TOKEN
+    checkout:
+      ssh_secret: "VATS5_DEPLOY_KEY"
     command: |
       set -euo pipefail
 
