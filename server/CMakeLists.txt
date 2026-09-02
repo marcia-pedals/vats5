@@ -51,6 +51,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+FetchContent_Declare(
+  highs
+  GIT_REPOSITORY https://github.com/ERGO-Code/HiGHS.git
+  GIT_TAG        v1.14.0
+)
+FetchContent_MakeAvailable(highs)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 endif()
@@ -199,6 +206,10 @@ target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 # Add benchmark_hk tool
 add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
 target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
+
+# Add lagrangian_lb tool
+add_executable(lagrangian_lb src/tools/lagrangian_lb.cpp)
+target_link_libraries(lagrangian_lb PUBLIC tarel_graph held_karp_dp highs CLI11::CLI11)
 
 # Create iterative_expansion_partial_solve library target
 add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)

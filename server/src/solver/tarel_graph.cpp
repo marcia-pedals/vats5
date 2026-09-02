@@ -716,6 +716,10 @@ TarelStateRemapResult RemapTarelStates(
 
   TarelStateRemapResult result;
 
+  for (const auto& [ts, _] : signatures) {
+    result.original_to_mapped[ts] = final_state(ts);
+  }
+
   // Collect weight for each merged edge.
   // Key is (new_origin, new_dest).
   struct MergedEdgeData {
