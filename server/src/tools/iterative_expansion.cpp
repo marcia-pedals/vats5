@@ -387,6 +387,17 @@ void WriteRequiredSubsetToml(
 // PartialSolveHeldKarp instead of PartialSolveBranchAndBound.
 constexpr int kDefaultHeldKarpMaxGroups = 30;
 
+// From this many required groups on, an iteration is solved by the 2-opt
+// heuristic (PartialSolveTwoOpt) instead of an exact solver.
+constexpr int kDefaultTwoOptMinGroups = 18;
+
+// When a 2-opt iteration's solution visits every required stop, the iteration
+// is re-solved with this many restarts before the solution is accepted. The
+// polished result may be a shorter tour that no longer visits everything, in
+// which case the expansion just continues (and the next full solution is
+// polished again).
+constexpr int kDefaultTwoOptPolishRestarts = 1000;
+
 int main(int argc, char* argv[]) {
   CLI::App app{"Iterative expansion tool"};
 
@@ -415,6 +426,24 @@ int main(int argc, char* argv[]) {
       held_karp_max_groups,
       "Solve an iteration by Held-Karp DP rather than branch and bound when "
       "it has at most this many required groups"
+  );
+
+  int two_opt_min_groups = kDefaultTwoOptMinGroups;
+  app.add_option(
+      "--two_opt_min_groups",
+      two_opt_min_groups,
+      "Solve an iteration by the 2-opt heuristic when it has at least this "
+      "many required groups (takes precedence over the exact solvers; <= 0 "
+      "disables 2-opt)"
+  );
+
+  int two_opt_polish_restarts = kDefaultTwoOptPolishRestarts;
+  app.add_option(
+      "--two_opt_polish_restarts",
+      two_opt_polish_restarts,
+      "When a 2-opt iteration's solution visits every required stop, re-solve "
+      "the iteration with this many restarts before accepting it (<= 0 "
+      "disables polishing)"
   );
 
   std::string seed_stops_path;
@@ -681,18 +710,26 @@ int main(int argc, char* argv[]) {
       for (StopId stop : required_subset) {
         subset_representatives.insert(state.required.Representative(stop));
       }
-      bool held_karp = subset_representatives.size() <=
-                       static_cast<size_t>(std::max(held_karp_max_groups, 0));
+      bool two_opt =
+          two_opt_min_groups > 0 && subset_representatives.size() >=
+                                        static_cast<size_t>(two_opt_min_groups);
+      bool held_karp =
+          !two_opt &&
+          subset_representatives.size() <=
+              static_cast<size_t>(std::max(held_karp_max_groups, 0));
+      const char* solver_name =
+          two_opt ? "2-opt" : (held_karp ? "held-karp" : "branch and bound");
 
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
-      iteration_span.SetMetadata("solver", held_karp ? "hk" : "bnb");
+      iteration_span.SetMetadata(
+          "solver", two_opt ? "2opt" : (held_karp ? "hk" : "bnb")
+      );
       WriteRequiredSubsetToml(
           state, intermediate_output_dir, iteration, required_subset
       );
-      std::cout << "=== Iteration " << iteration << ": "
-                << (held_karp ? "held-karp" : "branch and bound") << " on "
-                << required_subset.size() << " leaves in "
+      std::cout << "=== Iteration " << iteration << ": " << solver_name
+                << " on " << required_subset.size() << " leaves in "
                 << subset_representatives.size() << " groups ===\n";
       ProblemState partial_problem =
           MakePartialProblemState(required_subset, state);
@@ -709,8 +746,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Wrote iteration problem state to: " << path << "\n";
       }
 
+      // No known_lb for 2-opt: prev_iteration_optimal is only a valid bound
+      // while every previous iteration was solved exactly, which stops being
+      // true once 2-opt (a heuristic) takes over.
       PartialSolution solution =
-          held_karp
+          two_opt ? PartialSolveTwoOpt(partial_problem, state, {}, &std::cout)
+          : held_karp
               ? PartialSolveHeldKarp(
                     partial_problem, state, prev_iteration_optimal, &std::cout
                 )
@@ -742,10 +783,39 @@ int main(int argc, char* argv[]) {
       std::cout << "After greedy improve: "
                 << best_solution_path.path.IntermediateStopCount() << "\n";
 
+      std::vector<StopDistance> distances =
+          RequiredStopDistances(best_solution_path.path, state);
+
+      // A full solution from the 2-opt heuristic gets one much more thorough
+      // attempt at the same subset before being accepted: a shorter tour may
+      // exist that no longer covers everything, in which case the expansion
+      // continues (and the next full solution is polished again).
+      if (two_opt && two_opt_polish_restarts > 0 && distances.empty()) {
+        std::cout << "Full solution found; polishing with "
+                  << two_opt_polish_restarts << " restarts\n";
+        TwoOptOptions polish_options;
+        polish_options.restarts = two_opt_polish_restarts;
+        PartialSolution polished = PartialSolveTwoOpt(
+            partial_problem, state, polish_options, &std::cout
+        );
+        auto polished_it = polished.BestPathByRequiredStops(state.required);
+        if (polished_it != polished.paths.end()) {
+          best_solution_path = *polished_it;
+          solution = std::move(polished);
+          std::cout << "Before greedy improve: "
+                    << best_solution_path.path.IntermediateStopCount() << "\n";
+          best_solution_path =
+              GreedilyExtendAsMuchAsPossibleWithoutIncreasingDuration(
+                  state, best_solution_path, path_cache
+              );
+          std::cout << "After greedy improve: "
+                    << best_solution_path.path.IntermediateStopCount() << "\n";
+          distances = RequiredStopDistances(best_solution_path.path, state);
+        }
+      }
+
       const Path& best_path = best_solution_path.path;
       prev_iteration_optimal = best_path.DurationSeconds();
-      const std::vector<StopDistance> distances =
-          RequiredStopDistances(best_path, state);
 
       // Write partial solution to viz SQLite.
       {

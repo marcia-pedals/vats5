@@ -216,6 +216,69 @@ TEST(PartialSolveHeldKarpTest, InfeasibleSubsetHasNoPaths) {
   EXPECT_TRUE(solution.paths.empty());
 }
 
+// PartialSolveTwoOpt on the partial problem for `subset`.
+PartialSolution SolveTwoOpt(
+    const std::unordered_set<StopId>& subset, const ProblemState& state
+) {
+  return PartialSolveTwoOpt(MakePartialProblemState(subset, state), state);
+}
+
+TEST(PartialSolveTwoOptTest, VisitsTheSubsetInTheCheapestOrder) {
+  ProblemState state = LineState();
+  PartialSolution solution =
+      SolveTwoOpt(WholeGroups(state, {StopId{0}, StopId{1}, StopId{2}}), state);
+
+  ASSERT_FALSE(solution.paths.empty());
+  EXPECT_EQ(OptimalDuration(solution), 200);
+  for (const PartialSolutionPath& path : solution.paths) {
+    EXPECT_EQ(
+        TourNames(state, path.subset_tour),
+        (std::vector<std::string>{"START", "a", "b", "c", "END"})
+    );
+  }
+}
+
+TEST(PartialSolveTwoOptTest, VisitsOneStopPerGroup) {
+  ProblemState state = MakeState(
+      3,
+      {
+          Flex(0, 1, 100, 0),
+          Flex(1, 0, 100, 1),
+          Flex(0, 2, 10, 2),
+          Flex(2, 0, 10, 3),
+      }
+  );
+  state.required.representative[StopId{2}] = StopId{1};
+
+  PartialSolution solution =
+      SolveTwoOpt(WholeGroups(state, {StopId{0}, StopId{1}}), state);
+
+  ASSERT_FALSE(solution.paths.empty());
+  EXPECT_EQ(OptimalDuration(solution), 10);
+  for (const PartialSolutionPath& path : solution.paths) {
+    std::vector<std::string> names = TourNames(state, path.subset_tour);
+    EXPECT_TRUE(std::ranges::contains(names, "c")) << names.size();
+    EXPECT_FALSE(std::ranges::contains(names, "b"));
+  }
+}
+
+TEST(PartialSolveTwoOptTest, EmptySubsetGoesStraightToEnd) {
+  ProblemState state = LineState();
+  PartialSolution solution = SolveTwoOpt({}, state);
+
+  ASSERT_FALSE(solution.paths.empty());
+  EXPECT_EQ(OptimalDuration(solution), 0);
+}
+
+TEST(PartialSolveTwoOptTest, InfeasibleSubsetHasNoPaths) {
+  ProblemState state = MakeState(3, {Flex(0, 1, 100, 0), Flex(1, 0, 100, 1)});
+
+  PartialSolution solution =
+      SolveTwoOpt(WholeGroups(state, {StopId{0}, StopId{1}, StopId{2}}), state);
+
+  EXPECT_TRUE(solution.paths.empty());
+}
+
 // A subset of `state`'s required stops, holding whole groups, which is what
 // both PartialSolve* functions require of it.
 std::unordered_set<StopId> GenRequiredSubset(const ProblemState& state) {
