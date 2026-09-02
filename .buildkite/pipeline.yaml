@@ -7,7 +7,7 @@ steps:
       # rather than with the agent's anonymous HTTPS access, which GitHub
       # rate-limits.
       - &ssh_checkout
-        git-ssh-checkout#v1.0.0:
+        git-ssh-checkout#v0.4.1:
           ssh-secret-key-name: VATS5_DEPLOY_KEY
           repository-url: git@github.com:marcia-pedals/vats5.git
     command: |
