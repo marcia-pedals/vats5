@@ -224,6 +224,8 @@ TwoOptResult TwoOptSolve(
       break;
     }
 
+    auto restart_start = std::chrono::steady_clock::now();
+
     // Build a random initial candidate.
     Candidate c;
     c.chosen.assign(k, 0);
@@ -243,6 +245,8 @@ TwoOptResult TwoOptSolve(
 
     // Best-improvement hill climbing over 2-opt segment reversals and
     // group-member swaps.
+    // TODO: The evaluator could simply DP over group-member selection so that
+    // we don't have to evaluate swap moves.
     bool improved = true;
     while (improved && !deadline_passed()) {
       improved = false;
@@ -284,6 +288,12 @@ TwoOptResult TwoOptSolve(
     }
 
     ++result.restarts_completed;
+    result.restart_seconds.push_back(
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - restart_start
+        )
+            .count()
+    );
     if (cur_val < result.best_val) {
       result.best_val = cur_val;
       best_candidate = c;

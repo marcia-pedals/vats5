@@ -32,6 +32,9 @@ struct TwoOptResult {
   long long evaluations = 0;
 
   int restarts_completed = 0;
+
+  // Wall-clock seconds each completed restart took, in restart order.
+  std::vector<double> restart_seconds;
 };
 
 // Heuristically solves the tour problem by multi-start 2-opt local search

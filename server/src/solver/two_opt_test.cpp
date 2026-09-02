@@ -122,6 +122,10 @@ RC_GTEST_PROP(TwoOptTest, IsSoundOnRandomStates, ()) {
   TwoOptOptions options;
   options.restarts = 5;
   TwoOptResult result = TwoOptSolve(state, options, &RC_LOG());
+  RC_ASSERT(
+      result.restart_seconds.size() ==
+      static_cast<size_t>(result.restarts_completed)
+  );
   if (result.best_val == std::numeric_limits<int>::max()) {
     return;
   }

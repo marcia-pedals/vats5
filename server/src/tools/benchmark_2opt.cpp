@@ -1,8 +1,10 @@
 #include <CLI/CLI.hpp>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
@@ -77,6 +79,23 @@ int main(int argc, char* argv[]) {
   }
 
   std::cout << "\nTotal time: " << FormatDuration(total_ms) << "\n";
+
+  const std::vector<double>& secs = result.restart_seconds;
+  if (!secs.empty()) {
+    double n = static_cast<double>(secs.size());
+    double mean = std::accumulate(secs.begin(), secs.end(), 0.0) / n;
+    std::cout << "Time per restart: mean " << std::fixed
+              << std::setprecision(3) << (mean * 1000) << " ms";
+    if (secs.size() > 1) {
+      double sum_sq = 0;
+      for (double s : secs) {
+        sum_sq += (s - mean) * (s - mean);
+      }
+      double sd = std::sqrt(sum_sq / (n - 1));
+      std::cout << ", sd " << (sd * 1000) << " ms";
+    }
+    std::cout << "\n";
+  }
 
   return 0;
 }
