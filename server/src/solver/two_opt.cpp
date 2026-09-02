@@ -224,58 +224,18 @@ TwoOptResult TwoOptSolve(
       break;
     }
 
-    // Build the initial candidate.
+    // Build a random initial candidate.
     Candidate c;
     c.chosen.assign(k, 0);
-    if (restart == 0) {
-      // Greedy earliest-arrival construction.
-      std::vector<bool> used(k, false);
-      StopId cur = graph.boundary.start;
-      int t = 0;
-      for (int step = 0; step < k; ++step) {
-        int best_g = -1;
-        int best_m = 0;
-        int best_arrival = kUnreachable;
-        for (int g = 0; g < k; ++g) {
-          if (used[g]) {
-            continue;
-          }
-          for (size_t m = 0; m < mid_groups[g].size(); ++m) {
-            int arrival = graph.Pair(cur, mid_groups[g][m]).EarliestArrival(t);
-            if (arrival < best_arrival) {
-              best_arrival = arrival;
-              best_g = g;
-              best_m = static_cast<int>(m);
-            }
-          }
-        }
-        if (best_g == -1) {
-          // Nothing reachable; append the remaining groups arbitrarily.
-          for (int g = 0; g < k; ++g) {
-            if (!used[g]) {
-              c.order.push_back(g);
-              used[g] = true;
-            }
-          }
-          break;
-        }
-        used[best_g] = true;
-        c.order.push_back(best_g);
-        c.chosen[best_g] = best_m;
-        cur = mid_groups[best_g][best_m];
-        t = best_arrival;
-      }
-    } else {
-      c.order.resize(k);
-      for (int g = 0; g < k; ++g) {
-        c.order[g] = g;
-      }
-      std::shuffle(c.order.begin(), c.order.end(), rng);
-      for (int g = 0; g < k; ++g) {
-        if (mid_groups[g].size() > 1) {
-          c.chosen[g] = std::uniform_int_distribution<
-              int>(0, static_cast<int>(mid_groups[g].size()) - 1)(rng);
-        }
+    c.order.resize(k);
+    for (int g = 0; g < k; ++g) {
+      c.order[g] = g;
+    }
+    std::shuffle(c.order.begin(), c.order.end(), rng);
+    for (int g = 0; g < k; ++g) {
+      if (mid_groups[g].size() > 1) {
+        c.chosen[g] = std::uniform_int_distribution<
+            int>(0, static_cast<int>(mid_groups[g].size()) - 1)(rng);
       }
     }
 

@@ -21,7 +21,6 @@
 #include <vector>
 
 #include "algorithm/union_find.h"
-#include "solver/branch_and_bound.h"
 #include "solver/data.h"
 #include "solver/iterative_expansion_partial_solve.h"
 #include "solver/step_merge.h"
@@ -179,8 +178,7 @@ std::unordered_set<StopId> MstLeaves(const ProblemState& state) {
   return leaves;
 }
 
-// Thrown when --timeout elapses. Checked between outer iterations and, more
-// finely, on every branch-and-bound search event.
+// Thrown when --timeout elapses. Checked between outer iterations.
 struct SolveTimeout : std::runtime_error {
   SolveTimeout() : std::runtime_error("solve timed out") {}
 };
@@ -383,13 +381,9 @@ void WriteRequiredSubsetToml(
   }
 }
 
-// Up to this many required groups, an iteration is solved by
-// PartialSolveHeldKarp instead of PartialSolveBranchAndBound.
-constexpr int kDefaultHeldKarpMaxGroups = 30;
-
-// From this many required groups on, an iteration is solved by the 2-opt
-// heuristic (PartialSolveTwoOpt) instead of an exact solver.
-constexpr int kDefaultTwoOptMinGroups = 18;
+// Up to this many required groups, an iteration is solved exactly by
+// PartialSolveHeldKarp; beyond it, by the 2-opt heuristic (PartialSolveTwoOpt).
+constexpr int kDefaultHeldKarpMaxGroups = 22;
 
 // When a 2-opt iteration's solution visits every required stop, the iteration
 // is re-solved with this many restarts before the solution is accepted. The
@@ -424,17 +418,8 @@ int main(int argc, char* argv[]) {
   app.add_option(
       "--held_karp_max_groups",
       held_karp_max_groups,
-      "Solve an iteration by Held-Karp DP rather than branch and bound when "
-      "it has at most this many required groups"
-  );
-
-  int two_opt_min_groups = kDefaultTwoOptMinGroups;
-  app.add_option(
-      "--two_opt_min_groups",
-      two_opt_min_groups,
-      "Solve an iteration by the 2-opt heuristic when it has at least this "
-      "many required groups (takes precedence over the exact solvers; <= 0 "
-      "disables 2-opt)"
+      "Solve an iteration exactly by Held-Karp DP when it has at most this "
+      "many required groups, and by the 2-opt heuristic otherwise"
   );
 
   int two_opt_polish_restarts = kDefaultTwoOptPolishRestarts;
@@ -459,8 +444,7 @@ int main(int argc, char* argv[]) {
       "--timeout",
       timeout_seconds,
       "Give up after this many seconds (0 = no timeout). Checked between "
-      "iterations and on each branch-and-bound search event, so a single "
-      "long-running Concorde solve can overshoot it."
+      "iterations, so a single long-running iteration can overshoot it."
   );
 
   CLI11_PARSE(app, argc, argv);
@@ -481,12 +465,6 @@ int main(int argc, char* argv[]) {
       throw SolveTimeout{};
     }
   };
-  SearchEventCallback on_search_event = nullptr;
-  if (deadline) {
-    on_search_event = [&check_deadline](const SearchEvent&) {
-      check_deadline();
-    };
-  }
 
   std::string viz_sqlite_path = viz::VizSqlitePath(input_path);
 
@@ -710,21 +688,15 @@ int main(int argc, char* argv[]) {
       for (StopId stop : required_subset) {
         subset_representatives.insert(state.required.Representative(stop));
       }
-      bool two_opt =
-          two_opt_min_groups > 0 && subset_representatives.size() >=
-                                        static_cast<size_t>(two_opt_min_groups);
       bool held_karp =
-          !two_opt &&
           subset_representatives.size() <=
-              static_cast<size_t>(std::max(held_karp_max_groups, 0));
-      const char* solver_name =
-          two_opt ? "2-opt" : (held_karp ? "held-karp" : "branch and bound");
+          static_cast<size_t>(std::max(held_karp_max_groups, 0));
+      bool two_opt = !held_karp;
+      const char* solver_name = held_karp ? "held-karp" : "2-opt";
 
       TraceSpan iteration_span(trace, "iter " + std::to_string(iteration));
       iteration_span.SetMetadata("stops", required_subset.size());
-      iteration_span.SetMetadata(
-          "solver", two_opt ? "2opt" : (held_karp ? "hk" : "bnb")
-      );
+      iteration_span.SetMetadata("solver", held_karp ? "hk" : "2opt");
       WriteRequiredSubsetToml(
           state, intermediate_output_dir, iteration, required_subset
       );
@@ -750,18 +722,11 @@ int main(int argc, char* argv[]) {
       // while every previous iteration was solved exactly, which stops being
       // true once 2-opt (a heuristic) takes over.
       PartialSolution solution =
-          two_opt ? PartialSolveTwoOpt(partial_problem, state, {}, &std::cout)
-          : held_karp
+          held_karp
               ? PartialSolveHeldKarp(
                     partial_problem, state, prev_iteration_optimal, &std::cout
                 )
-              : PartialSolveBranchAndBound(
-                    partial_problem,
-                    state,
-                    prev_iteration_optimal,
-                    &std::cout,
-                    on_search_event
-                );
+              : PartialSolveTwoOpt(partial_problem, state, {}, &std::cout);
 
       // Choose the path that visits the most required stops.
       auto best_solution_path_it =

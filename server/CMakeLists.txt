@@ -216,7 +216,7 @@ target_include_directories(iterative_expansion_partial_solve PUBLIC src)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)

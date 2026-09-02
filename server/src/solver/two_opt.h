@@ -10,8 +10,7 @@
 namespace vats5 {
 
 struct TwoOptOptions {
-  // Number of hill-climbing starts. The first start uses a greedy
-  // earliest-arrival construction, subsequent ones use random shuffles.
+  // Number of hill-climbing starts.
   int restarts = 100;
 
   int seed = 1;
@@ -38,11 +37,6 @@ struct TwoOptResult {
 // Heuristically solves the tour problem by multi-start 2-opt local search
 // over visit orders of the required groups (plus group-member swaps for
 // groups with more than one stop).
-//
-// Every candidate order is scored exactly on the shortest-path-completed
-// graph, flex steps included: the score is the true optimal duration of a
-// tour visiting the stops in that order. No arrival-time discretization is
-// involved, unlike the GLKH encoding.
 TwoOptResult TwoOptSolve(
     const ProblemState& state,
     const TwoOptOptions& options = {},
