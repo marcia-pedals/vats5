@@ -71,10 +71,7 @@ using MidGroups = std::vector<std::vector<StopId>>;
 
 // The search state: which stop of each middle group is visited and in which
 // order the groups are visited, with its value and the tables that score its
-// neighbors. A neighbor differs from it in one section of the tour (a
-// reversed segment, or one replaced stop), so a neighbor's value is composed
-// from the precomputed covers of the prefix before the change and the suffix
-// after it; only the changed section is composed leg by leg.
+// neighbors.
 class Candidate {
  public:
   // `order` is a permutation of the middle group indices; `chosen[g]` is the
