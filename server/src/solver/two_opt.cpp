@@ -220,8 +220,8 @@ class Candidate {
   // The tour's stops, including START and END.
   std::vector<StopId> path_;
 
-    // The cost of `path_`.
-    int value_;
+  // The cost of `path_`.
+  int value_;
 
   // prefix_[i] is all pareto-optimal steps along path_ from path_[0] (START) to
   // path[i].
