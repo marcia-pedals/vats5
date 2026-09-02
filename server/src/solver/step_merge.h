@@ -15,9 +15,9 @@ struct StepProvenance {
   size_t bc_index;
 };
 
-// A sorted minimal cover of ways from one stop to another, as MergeCovers
-// reads it: an optional flex step, and scheduled steps whose departures and
-// arrivals are both strictly increasing in their index.
+// A sorted minimal cover of ways from one stop to another: optional flex step,
+// and 0-indexed scheduled steps whose departures and arrivals are both strictly
+// increasing in their index and have duration less than the flex step.
 template <typename T>
 concept CoverView = requires(const T& view, size_t i) {
   { view.HasFlex() } -> std::same_as<bool>;
@@ -30,11 +30,6 @@ concept CoverView = requires(const T& view, size_t i) {
 // The index MergeCovers reports for a leg taken by its flex step.
 inline constexpr size_t kMergeViaFlex = std::numeric_limits<size_t>::max();
 
-// Where MergeCovers writes its result: Flex(seconds) first, if both legs
-// have a flex step, then Scheduled(dep, arr, ab_i, bc_i) for each scheduled
-// step of the result from the LATEST departure to the earliest, where ab_i
-// and bc_i are the scheduled indices of the steps combined, or
-// kMergeViaFlex for a leg taken by its flex step.
 template <typename T>
 concept CoverSink = requires(T& sink, int seconds, size_t i) {
   sink.Flex(seconds);
@@ -44,11 +39,10 @@ concept CoverSink = requires(T& sink, int seconds, size_t i) {
 // Merges the sorted minimal covers of two consecutive legs A->B and B->C into
 // the sorted minimal cover of A->C, generically over how covers are stored.
 //
-// Semantics: waiting at B is free, so a scheduled A->B step continues by the
-// earliest arrival at C from its arrival at B (a scheduled B->C step or the
-// flex step); the A->B flex step reaches each scheduled B->C departure just
-// in time. Scheduled steps no faster than the result's flex step are
-// dropped.
+// Writes the flex step to the sink first, then Scheduled(dep, arr, ab_i, bc_i)
+// for each scheduled step of the result from the LATEST departure to the
+// earliest, where ab_i and bc_i are the scheduled indices of the steps
+// combined, or kMergeViaFlex for a leg taken by its flex step.
 template <CoverView AbView, CoverView BcView, CoverSink Sink>
 void MergeCovers(const AbView& ab, const BcView& bc, Sink& sink) {
   constexpr int kUnreachable = std::numeric_limits<int>::max();
