@@ -8,6 +8,7 @@
 #include "solver/data.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
+#include "solver/two_opt.h"
 
 namespace vats5 {
 
@@ -63,6 +64,21 @@ PartialSolution PartialSolveHeldKarp(
     const ProblemState& partial_problem,
     const ProblemState& original_problem,
     int known_lb,
+    std::ostream* search_log = nullptr
+);
+
+// Solves the same partial problem as PartialSolveBranchAndBound, by 2-opt
+// local search over the required groups. Unlike the other two this is a
+// heuristic: the returned paths are exact optima for their visit order, but
+// the order itself may be suboptimal. It takes no known_lb: the previous
+// iteration's value would only be a valid bound if it were an optimum, which
+// a 2-opt result is not guaranteed to be.
+//
+// `search_log` may be null.
+PartialSolution PartialSolveTwoOpt(
+    const ProblemState& partial_problem,
+    const ProblemState& original_problem,
+    const TwoOptOptions& options = {},
     std::ostream* search_log = nullptr
 );
 

@@ -15,6 +15,7 @@
 #include "solver/steps_adjacency_list.h"
 #include "solver/steps_shortest_path.h"
 #include "solver/tour_paths.h"
+#include "solver/two_opt.h"
 
 namespace vats5 {
 
@@ -177,6 +178,53 @@ PartialSolution PartialSolveHeldKarp(
   // because otherwise hk.best_val isn't the best duration in the partial
   // problem.
   assert(best_duration == hk.best_val);
+
+  std::vector<PartialSolutionPath> paths;
+  for (Path& path : original_paths) {
+    if (path.DurationSeconds() != best_duration) {
+      continue;
+    }
+    assert(path.merged_step.origin.stop == original_problem.boundary.start);
+    assert(path.merged_step.destination.stop == original_problem.boundary.end);
+    paths.push_back(
+        PartialSolutionPath{
+            .path = std::move(path),
+            .subset_tour = tour,
+        }
+    );
+  }
+
+  return PartialSolution{.paths = std::move(paths)};
+}
+
+PartialSolution PartialSolveTwoOpt(
+    const ProblemState& partial_problem,
+    const ProblemState& original_problem,
+    const TwoOptOptions& options,
+    std::ostream* search_log
+) {
+  TwoOptResult two_opt = TwoOptSolve(partial_problem, options, search_log);
+  if (two_opt.best_tour.empty()) {
+    return PartialSolution{};
+  }
+  const std::vector<StopId>& tour = two_opt.best_tour;
+  assert(tour.front() == original_problem.boundary.start);
+  assert(tour.back() == original_problem.boundary.end);
+
+  // Reconstruct the paths through all original problem stops.
+  std::vector<Path> original_paths =
+      ComputeMinimalFeasiblePathsAlong(tour, original_problem.minimal);
+  // There must be paths along a tour the search found, because all paths in
+  // the partial problem are also paths in the full problem.
+  assert(!original_paths.empty());
+
+  int best_duration = std::numeric_limits<int>::max();
+  for (const Path& path : original_paths) {
+    best_duration = std::min(best_duration, path.DurationSeconds());
+  }
+  // The best path along the tour must achieve exactly the search's value,
+  // because that value is the exact optimum for this visit order.
+  assert(best_duration == two_opt.best_val);
 
   std::vector<PartialSolutionPath> paths;
   for (Path& path : original_paths) {

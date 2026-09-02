@@ -138,6 +138,11 @@ add_library(held_karp_dp STATIC src/solver/held_karp_dp.cpp)
 target_link_libraries(held_karp_dp PUBLIC tarel_graph tour_paths steps_shortest_path)
 target_include_directories(held_karp_dp PUBLIC src)
 
+# Create two_opt library target
+add_library(two_opt STATIC src/solver/two_opt.cpp)
+target_link_libraries(two_opt PUBLIC tarel_graph steps_shortest_path)
+target_include_directories(two_opt PUBLIC src)
+
 # Create sqlite_wrapper library target
 add_library(sqlite_wrapper STATIC src/visualization/sqlite_wrapper.cpp)
 target_link_libraries(sqlite_wrapper PUBLIC SQLite::SQLite3)
@@ -200,14 +205,18 @@ target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
 target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
 
+# Add benchmark_2opt tool
+add_executable(benchmark_2opt src/tools/benchmark_2opt.cpp)
+target_link_libraries(benchmark_2opt PUBLIC two_opt CLI11::CLI11)
+
 # Create iterative_expansion_partial_solve library target
 add_library(iterative_expansion_partial_solve src/solver/iterative_expansion_partial_solve.cpp)
-target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound held_karp_dp steps_shortest_path)
+target_link_libraries(iterative_expansion_partial_solve PUBLIC tarel_graph tour_paths branch_and_bound held_karp_dp two_opt steps_shortest_path)
 target_include_directories(iterative_expansion_partial_solve PUBLIC src)
 
 # Add iterative_expansion tool
 add_executable(iterative_expansion src/tools/iterative_expansion.cpp)
-target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths branch_and_bound iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
+target_link_libraries(iterative_expansion PUBLIC tarel_graph tour_paths iterative_expansion_partial_solve union_find CLI11::CLI11 visualization)
 
 # Test utility libraries (in src/solver/test_util/)
 add_library(cached_test_data INTERFACE)
@@ -309,6 +318,11 @@ add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+
+# Add two_opt test executable
+add_executable(two_opt_test src/solver/two_opt_test.cpp)
+target_link_libraries(two_opt_test PUBLIC gunit two_opt held_karp_dp tour_paths problem_state_gen naive_solve rapidcheck_gtest)
+add_test(NAME two_opt_test COMMAND two_opt_test)
 
 # Add held_karp_dp test executable
 add_executable(held_karp_dp_test src/solver/held_karp_dp_test.cpp)
