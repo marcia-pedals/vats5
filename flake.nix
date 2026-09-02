@@ -34,6 +34,9 @@
         # Concorde TSP solver
         concorde = pkgs.callPackage ./third_party/concorde.nix { inherit qsopt; };
 
+        # GLKH generalized TSP solver
+        glkh = pkgs.callPackage ./third_party/glkh.nix { };
+
         # Test data (GTFS feeds for tests and dev tools)
         testData = pkgs.fetchzip {
           url = "https://pub-42e805ab0ef7400f8f4eca373798da93.r2.dev/vats5-test-data-v2.tar.gz";
@@ -44,7 +47,7 @@
       {
         # Export packages so they can be built with `nix build .#qsopt` etc.
         packages = {
-          inherit qsopt concorde testData;
+          inherit qsopt concorde glkh testData;
           default = concorde;
         };
 
@@ -80,6 +83,7 @@
             sqlite
           ] ++ [
             concorde
+            glkh
           ];
 
           shellHook = ''

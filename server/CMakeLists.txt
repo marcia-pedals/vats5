@@ -138,6 +138,11 @@ add_library(held_karp_dp STATIC src/solver/held_karp_dp.cpp)
 target_link_libraries(held_karp_dp PUBLIC tarel_graph tour_paths steps_shortest_path)
 target_include_directories(held_karp_dp PUBLIC src)
 
+# Create glkh library target
+add_library(glkh STATIC src/solver/glkh.cpp)
+target_link_libraries(glkh PUBLIC tarel_graph tour_paths steps_shortest_path)
+target_include_directories(glkh PUBLIC src)
+
 # Create two_opt library target
 add_library(two_opt STATIC src/solver/two_opt.cpp)
 target_link_libraries(two_opt PUBLIC tarel_graph steps_shortest_path)
@@ -204,6 +209,10 @@ target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 # Add benchmark_hk tool
 add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
 target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
+
+# Add benchmark_glkh tool
+add_executable(benchmark_glkh src/tools/benchmark_glkh.cpp)
+target_link_libraries(benchmark_glkh PUBLIC glkh CLI11::CLI11)
 
 # Add benchmark_2opt tool
 add_executable(benchmark_2opt src/tools/benchmark_2opt.cpp)
@@ -318,6 +327,11 @@ add_executable(tarel_graph_test src/solver/tarel_graph_test.cpp)
 target_link_libraries(tarel_graph_test PUBLIC gunit tarel_graph problem_state_gen naive_solve cached_test_data rapidcheck_gtest)
 add_test(NAME tarel_graph_test COMMAND tarel_graph_test)
 set_tests_properties(tarel_graph_test PROPERTIES LABELS "slow")
+
+# Add glkh test executable
+add_executable(glkh_test src/solver/glkh_test.cpp)
+target_link_libraries(glkh_test PUBLIC gunit glkh held_karp_dp problem_state_gen naive_solve rapidcheck_gtest)
+add_test(NAME glkh_test COMMAND glkh_test)
 
 # Add two_opt test executable
 add_executable(two_opt_test src/solver/two_opt_test.cpp)
