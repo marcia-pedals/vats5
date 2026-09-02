@@ -101,8 +101,6 @@ TEST(TwoOptTest, MatchesHeldKarpOnDenseScheduledInstance) {
 }
 
 TEST(TwoOptTest, HandlesFlexOnlyMiddleSteps) {
-  // Unlike the GLKH encoding, 2-opt evaluates on the real completed graph and
-  // handles flex steps between middle stops.
   std::vector<Step> steps;
   steps.push_back(Step::PrimitiveFlex(StopId{0}, StopId{1}, 100, TripId{0}));
   steps.push_back(Step::PrimitiveFlex(StopId{1}, StopId{0}, 150, TripId{1}));
@@ -120,7 +118,7 @@ RC_GTEST_PROP(TwoOptTest, IsSoundOnRandomStates, ()) {
   ProblemState state = *GenProblemState();
 
   TwoOptOptions options;
-  options.restarts = 5;
+  options.restarts = 50;
   TwoOptResult result = TwoOptSolve(state, options, &RC_LOG());
   RC_ASSERT(
       result.restart_seconds.size() ==

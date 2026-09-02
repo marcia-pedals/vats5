@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <climits>
-#include <limits>
 #include <random>
 #include <unordered_map>
 #include <utility>
