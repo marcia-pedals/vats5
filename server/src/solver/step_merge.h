@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +14,130 @@ struct StepProvenance {
   size_t ab_index;
   size_t bc_index;
 };
+
+// A sorted minimal cover of ways from one stop to another: optional flex step,
+// and 0-indexed scheduled steps whose departures and arrivals are both strictly
+// increasing in their index and have duration less than the flex step.
+template <typename T>
+concept CoverView = requires(const T& view, size_t i) {
+  { view.HasFlex() } -> std::same_as<bool>;
+  { view.FlexSeconds() } -> std::same_as<int>;
+  { view.NumScheduled() } -> std::same_as<size_t>;
+  { view.Dep(i) } -> std::same_as<int>;
+  { view.Arr(i) } -> std::same_as<int>;
+};
+
+// The index MergeCovers reports for a leg taken by its flex step.
+inline constexpr size_t kMergeViaFlex = std::numeric_limits<size_t>::max();
+
+template <typename T>
+concept CoverSink = requires(T& sink, int seconds, size_t i) {
+  sink.Flex(seconds);
+  sink.Scheduled(seconds, seconds, i, i);
+};
+
+// Merges the sorted minimal covers of two consecutive legs A->B and B->C into
+// the sorted minimal cover of A->C, generically over how covers are stored.
+//
+// Writes the flex step to the sink first, then Scheduled(dep, arr, ab_i, bc_i)
+// for each scheduled step of the result from the LATEST departure to the
+// earliest, where ab_i and bc_i are the scheduled indices of the steps
+// combined, or kMergeViaFlex for a leg taken by its flex step.
+template <CoverView AbView, CoverView BcView, CoverSink Sink>
+void MergeCovers(const AbView& ab, const BcView& bc, Sink& sink) {
+  constexpr int kUnreachable = std::numeric_limits<int>::max();
+  int flex_seconds = kUnreachable;
+  if (ab.HasFlex() && bc.HasFlex()) {
+    flex_seconds = ab.FlexSeconds() + bc.FlexSeconds();
+    sink.Flex(flex_seconds);
+  }
+
+  // The earliest arrival at C leaving B at or after t, and how.
+  auto earliest_arrival = [&bc](int t, size_t& bc_i) {
+    size_t lo = 0;
+    size_t hi = bc.NumScheduled();
+    while (lo < hi) {
+      size_t mid = (lo + hi) / 2;
+      if (bc.Dep(mid) < t) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    int best = kUnreachable;
+    bc_i = kMergeViaFlex;
+    if (lo < bc.NumScheduled()) {
+      best = bc.Arr(lo);
+      bc_i = lo;
+    }
+    if (bc.HasFlex() && t + bc.FlexSeconds() < best) {
+      best = t + bc.FlexSeconds();
+      bc_i = kMergeViaFlex;
+    }
+    return best;
+  };
+
+  // The candidates come from two streams, each sorted by departure: each
+  // scheduled A->B step continued by the earliest arrival at C (stream i),
+  // and each scheduled B->C step reached just in time by the A->B flex step
+  // (stream j). Merge them from the latest departure down, keeping steps
+  // that strictly improve the arrival, which leaves exactly the minimal
+  // cover. On equal departures the earlier arrival goes first so that the
+  // other is dropped as dominated.
+  size_t i = ab.NumScheduled();
+  size_t j = ab.HasFlex() ? bc.NumScheduled() : 0;
+  int dep_i = 0;
+  int arr_i = 0;
+  size_t bc_i_of_i = kMergeViaFlex;
+  int dep_j = 0;
+  int arr_j = 0;
+  auto peek_i = [&]() {
+    if (i > 0) {
+      dep_i = ab.Dep(i - 1);
+      arr_i = earliest_arrival(ab.Arr(i - 1), bc_i_of_i);
+    }
+  };
+  auto peek_j = [&]() {
+    if (j > 0) {
+      dep_j = bc.Dep(j - 1) - ab.FlexSeconds();
+      arr_j = bc.Arr(j - 1);
+    }
+  };
+  peek_i();
+  peek_j();
+
+  int min_arr = kUnreachable;
+  while (i > 0 || j > 0) {
+    int dep;
+    int arr;
+    size_t ab_i;
+    size_t bc_i;
+    bool take_j =
+        j > 0 && (i == 0 || dep_j > dep_i || (dep_j == dep_i && arr_j < arr_i));
+    if (take_j) {
+      --j;
+      dep = dep_j;
+      arr = arr_j;
+      ab_i = kMergeViaFlex;
+      bc_i = j;
+      peek_j();
+    } else {
+      --i;
+      dep = dep_i;
+      arr = arr_i;
+      ab_i = i;
+      bc_i = bc_i_of_i;
+      peek_i();
+      if (arr == kUnreachable) {
+        continue;
+      }
+    }
+    if (arr < min_arr && arr - dep < flex_seconds) {
+      min_arr = arr;
+      sink.Scheduled(dep, arr, ab_i, bc_i);
+    }
+  }
+}
 
 // Check that this is sorted in the sense that: Flex step(s) come first, and all
 // non-flex steps are sorted by origin_time ascending.
