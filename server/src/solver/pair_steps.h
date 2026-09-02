@@ -70,6 +70,7 @@ struct PairSteps {
     return best;
   }
 };
+static_assert(CoverView<PairSteps>);
 
 // Sets `out` to the cover of the two legs `cur` then `next` taken in turn
 // (`out` must be neither). See MergeCovers for the semantics.
