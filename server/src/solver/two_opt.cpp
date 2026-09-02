@@ -18,12 +18,10 @@ namespace {
 
 constexpr int kUnreachable = kPairStepsUnreachable;
 
-// Composes two sections of a tour. Chains that would depart before 00:00:00
-// are dropped, as ComputeMinimalFeasiblePathsAlong does (departures only
-// ever move earlier along a chain, so dropping them eagerly loses nothing).
-void Compose(const PairSteps& cur, const PairSteps& next, PairSteps& out) {
-  Compose(cur, next, out, 0);
-}
+// A tour cannot depart before 00:00:00. Chains that do are carried through
+// the covers (they never dominate one that does not) and excluded only when
+// a tour is scored, as ComputeMinimalFeasiblePathsAlong does.
+constexpr int kEarliestDeparture = 0;
 
 struct TwoOptGraph {
   ProblemBoundary boundary;  // In compacted stop ids.
@@ -210,7 +208,7 @@ class Candidate {
         Compose(graph.Pair(seq_[a], seq_[a + 1]), suffix_[a + 1], suffix_[a]);
       }
     }
-    value_ = prefix_[n - 1].MinDuration();
+    value_ = prefix_[n - 1].MinDuration(kEarliestDeparture);
   }
 
   // The value of the tour made of prefix_[p], then `sections` in order, then
@@ -233,7 +231,7 @@ class Candidate {
       cur = &scratch_b;
     }
     Compose(*cur, suffix_[s], scratch_a);
-    return scratch_a.MinDuration();
+    return scratch_a.MinDuration(kEarliestDeparture);
   }
 
   std::vector<int> order_;        // Permutation of middle group indices.

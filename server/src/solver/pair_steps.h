@@ -32,10 +32,13 @@ struct PairSteps {
     flex_seconds = -1;
   }
 
-  // The shortest duration of any step; kPairStepsUnreachable if Empty().
-  int MinDuration() const {
+  // The shortest duration of any step departing at or after
+  // `earliest_departure` (the flex step always can);
+  // kPairStepsUnreachable if none.
+  int MinDuration(int earliest_departure) const {
     int best = flex_seconds >= 0 ? flex_seconds : kPairStepsUnreachable;
-    for (size_t i = 0; i < deps.size(); ++i) {
+    auto it = std::lower_bound(deps.begin(), deps.end(), earliest_departure);
+    for (size_t i = it - deps.begin(); i < deps.size(); ++i) {
       best = std::min(best, arrs[i] - deps[i]);
     }
     return best;
@@ -69,13 +72,9 @@ struct PairSteps {
 };
 
 // Sets `out` to the cover of the two legs `cur` then `next` taken in turn
-// (`out` must be neither), dropping steps that depart before
-// `earliest_departure`. See MergeCovers for the semantics.
+// (`out` must be neither). See MergeCovers for the semantics.
 inline void Compose(
-    const PairSteps& cur,
-    const PairSteps& next,
-    PairSteps& out,
-    int earliest_departure
+    const PairSteps& cur, const PairSteps& next, PairSteps& out
 ) {
   struct Sink {
     PairSteps& out;
@@ -87,7 +86,7 @@ inline void Compose(
   };
   out.Clear();
   Sink sink{out};
-  MergeCovers(cur, next, sink, earliest_departure);
+  MergeCovers(cur, next, sink);
   std::reverse(out.deps.begin(), out.deps.end());
   std::reverse(out.arrs.begin(), out.arrs.end());
 }
