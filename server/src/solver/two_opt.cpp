@@ -16,98 +16,13 @@
 namespace vats5 {
 namespace {
 
-constexpr int kUnreachable = std::numeric_limits<int>::max();
+constexpr int kUnreachable = kPairStepsUnreachable;
 
-// A PairSteps doubles as the Pareto front of ways to travel a section of the
-// tour: scheduled elements are (departure from the section's first stop,
-// arrival at its last), sorted by departure with no element dominated by
-// another (later or equal departure and earlier or equal arrival), and
-// flex_seconds is the duration of the best pure-flex chain (takeable at any
-// time), or -1 if none. A single leg's PairSteps is the base case; Compose
-// joins two adjacent sections into one, so a tour can be scored from
-// precomputed sections instead of leg by leg.
-
-bool Empty(const PairSteps& p) { return p.deps.empty() && p.flex_seconds < 0; }
-
-int MinDuration(const PairSteps& p) {
-  int best = p.flex_seconds >= 0 ? p.flex_seconds : kUnreachable;
-  for (size_t i = 0; i < p.deps.size(); ++i) {
-    best = std::min(best, p.arrs[i] - p.deps[i]);
-  }
-  return best;
-}
-
-// The empty section: ready to leave at any time, at no cost.
-PairSteps Identity() {
-  PairSteps p;
-  p.flex_seconds = 0;
-  return p;
-}
-
-void Clear(PairSteps& p) {
-  p.deps.clear();
-  p.arrs.clear();
-  p.flex_seconds = -1;
-}
-
-// Sets `out` to the join of `cur` with the section `next` that starts where
-// `cur` ends (`out` must be neither). Mirrors the path-merging semantics of
-// ComputeMinimalFeasiblePathsAlong: waiting at a stop is free (the next
-// scheduled departure at or after the arrival is taken), a flex leg departs
-// exactly on arrival, and chains that would depart before 00:00:00 are
-// dropped (departures only ever move earlier along a chain, so dropping them
-// eagerly loses nothing).
+// Composes two sections of a tour. Chains that would depart before 00:00:00
+// are dropped, as ComputeMinimalFeasiblePathsAlong does (departures only
+// ever move earlier along a chain, so dropping them eagerly loses nothing).
 void Compose(const PairSteps& cur, const PairSteps& next, PairSteps& out) {
-  Clear(out);
-  if (cur.flex_seconds >= 0 && next.flex_seconds >= 0) {
-    out.flex_seconds = cur.flex_seconds + next.flex_seconds;
-  }
-
-  // The candidate elements come from two streams, each already sorted by
-  // departure: each element of `cur` continued by the earliest arrival of
-  // `next` after it, and, if `cur` has a pure-flex chain, each scheduled
-  // element of `next` reached "just in time" by that chain. Merge the two
-  // from the latest departure down, keeping elements that strictly improve
-  // the arrival, which leaves exactly the Pareto front.
-  size_t i = cur.deps.size();
-  size_t j = cur.flex_seconds >= 0 ? next.deps.size() : 0;
-  int min_arr = kUnreachable;
-  while (i > 0 || j > 0) {
-    int dep;
-    int arr;
-    // On equal departures, take the earlier arrival first so that the other
-    // is dropped as dominated.
-    bool take_j =
-        j > 0 &&
-        (i == 0 ||
-         next.deps[j - 1] - cur.flex_seconds > cur.deps[i - 1] ||
-         (next.deps[j - 1] - cur.flex_seconds == cur.deps[i - 1] &&
-          next.arrs[j - 1] < next.EarliestArrival(cur.arrs[i - 1])));
-    if (take_j) {
-      --j;
-      dep = next.deps[j] - cur.flex_seconds;
-      if (dep < 0) {
-        // Every remaining departure of this stream is earlier still.
-        j = 0;
-        continue;
-      }
-      arr = next.arrs[j];
-    } else {
-      --i;
-      dep = cur.deps[i];
-      arr = next.EarliestArrival(cur.arrs[i]);
-      if (arr == kPairStepsUnreachable) {
-        continue;
-      }
-    }
-    if (arr < min_arr) {
-      min_arr = arr;
-      out.deps.push_back(dep);
-      out.arrs.push_back(arr);
-    }
-  }
-  std::reverse(out.deps.begin(), out.deps.end());
-  std::reverse(out.arrs.begin(), out.arrs.end());
+  Compose(cur, next, out, 0);
 }
 
 struct TwoOptGraph {
@@ -244,7 +159,7 @@ class Candidate {
       int si = i + 1;
       Compose(reversed, graph.Pair(seq_[si + 1], seq_[si]), scratch_a);
       std::swap(reversed, scratch_a);
-      if (Empty(reversed)) {
+      if (reversed.Empty()) {
         break;
       }
       const PairSteps* sections[] = {
@@ -282,20 +197,20 @@ class Candidate {
   void Recompute(const TwoOptGraph& graph, int first, int last) {
     int n = static_cast<int>(seq_.size());
     for (int b = first; b < n; ++b) {
-      if (Empty(prefix_[b - 1])) {
-        Clear(prefix_[b]);
+      if (prefix_[b - 1].Empty()) {
+        prefix_[b].Clear();
       } else {
         Compose(prefix_[b - 1], graph.Pair(seq_[b - 1], seq_[b]), prefix_[b]);
       }
     }
     for (int a = last; a >= 0; --a) {
-      if (Empty(suffix_[a + 1])) {
-        Clear(suffix_[a]);
+      if (suffix_[a + 1].Empty()) {
+        suffix_[a].Clear();
       } else {
         Compose(graph.Pair(seq_[a], seq_[a + 1]), suffix_[a + 1], suffix_[a]);
       }
     }
-    value_ = MinDuration(prefix_[n - 1]);
+    value_ = prefix_[n - 1].MinDuration();
   }
 
   // The value of the tour made of prefix_[p], then `sections` in order, then
@@ -311,14 +226,14 @@ class Candidate {
     const PairSteps* cur = &prefix_[p];
     for (const PairSteps* section : sections) {
       Compose(*cur, *section, scratch_a);
-      if (Empty(scratch_a)) {
+      if (scratch_a.Empty()) {
         return kUnreachable;
       }
       std::swap(scratch_a, scratch_b);
       cur = &scratch_b;
     }
     Compose(*cur, suffix_[s], scratch_a);
-    return MinDuration(scratch_a);
+    return scratch_a.MinDuration();
   }
 
   std::vector<int> order_;        // Permutation of middle group indices.
