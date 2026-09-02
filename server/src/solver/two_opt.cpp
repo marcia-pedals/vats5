@@ -174,7 +174,7 @@ class Candidate {
   }
 
  private:
-  // Recomputes the tables and the value after path_[first..last] changed:
+  // Recomputes value_, prefix_, and suffix_ after path_[first..last] changed:
   // prefix_[b], the section from path_[0] to path_[b], for b >= first, and
   // suffix_[a], the section from path_[a] to path_[n - 1], for a <= last.
   void Recompute(const TwoOptGraph& graph, int first, int last) {
@@ -219,10 +219,19 @@ class Candidate {
     return scratch_a.MinDuration(kEarliestDeparture);
   }
 
-  std::vector<StopId> path_;  // The tour's stops, START to END.
+  // The tour's stops, including START and END.
+  std::vector<StopId> path_;
+
+    // The cost of `path_`.
+    int value_;
+
+  // prefix_[i] is all pareto-optimal steps along path_ from path_[0] (START) to
+  // path[i].
   std::vector<PairSteps> prefix_;
+
+  // suffix_[i] is all pareto-optimal steps along path_ from path_[i] to
+  // path_.back() (END).
   std::vector<PairSteps> suffix_;
-  int value_;
 };
 
 }  // namespace
