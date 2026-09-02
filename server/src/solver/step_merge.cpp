@@ -107,6 +107,7 @@ struct StepsCoverView {
   }
   const Step& At(size_t i) const { return steps[Index(i)]; }
 };
+static_assert(CoverView<StepsCoverView>);
 
 // Materializes MergeCovers' result as Steps, with provenance.
 struct StepsSink {
@@ -128,6 +129,7 @@ struct StepsSink {
     }
   }
 };
+static_assert(CoverSink<StepsSink>);
 
 }  // namespace
 
