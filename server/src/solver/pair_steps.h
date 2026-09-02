@@ -11,16 +11,14 @@ namespace vats5 {
 inline constexpr int kPairStepsUnreachable = std::numeric_limits<int>::max();
 
 // Scheduled (non-flex) steps of one directed stop pair, plus its optional
-// flex step. Departure and arrival times are both strictly increasing (the
-// adjacency list groups are minimal covers).
+// flex step. Departure and arrival times are both strictly increasing.
 struct PairSteps {
   std::vector<int> deps;
   std::vector<int> arrs;
   int flex_seconds = -1;  // -1 if the pair has no flex step.
 
   // Earliest scheduled arrival departing at or after `t`;
-  // kPairStepsUnreachable if none. The minimal-cover property makes the first
-  // departure at or after `t` also the earliest arrival.
+  // kPairStepsUnreachable if none.
   int EarliestScheduledArrival(int t) const {
     auto it = std::lower_bound(deps.begin(), deps.end(), t);
     if (it == deps.end()) {
@@ -34,22 +32,6 @@ struct PairSteps {
     int best = EarliestScheduledArrival(t);
     if (flex_seconds >= 0) {
       best = std::min(best, t + flex_seconds);
-    }
-    return best;
-  }
-
-  // Minimum elapsed time of a trip that arrives at or before `t` (i.e. `t`
-  // minus the latest departure arriving by `t`), flex included;
-  // kPairStepsUnreachable if none. The latest arrival at or before `t` also
-  // has the latest departure, again by the minimal-cover property.
-  int MinElapsedArrivingBy(int t) const {
-    int best = kPairStepsUnreachable;
-    auto it = std::upper_bound(arrs.begin(), arrs.end(), t);
-    if (it != arrs.begin()) {
-      best = t - deps[(it - arrs.begin()) - 1];
-    }
-    if (flex_seconds >= 0) {
-      best = std::min(best, flex_seconds);
     }
     return best;
   }

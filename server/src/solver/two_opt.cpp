@@ -154,138 +154,180 @@ std::optional<TwoOptGraph> MakeTwoOptGraph(const ProblemState& state) {
   return graph;
 }
 
-// The search state: which stop of each middle group is visited, and in which
-// order the groups are visited.
-struct Candidate {
-  std::vector<int> order;   // Permutation of middle group indices.
-  std::vector<int> chosen;  // Per middle group, index into its stop list.
-};
+using MidGroups = std::vector<std::vector<StopId>>;
 
-// Scores the neighbors of a base candidate. A neighbor differs from the base
-// in one section of the tour (a reversed segment, or one replaced stop), so
-// its value is composed from precomputed sections of the base: the prefix
-// before the change and the suffix after it. For a reversal, the reversed
-// segment's cover is carried along as the segment grows by one leg at a time
-// (see EvaluateReversal), so only the two legs joining the changed section
-// to the rest are composed leg by leg for each move.
-class Evaluator {
+// The search state: which stop of each middle group is visited and in which
+// order the groups are visited, with its value and the tables that score its
+// neighbors. A neighbor differs from it in one section of the tour (a
+// reversed segment, or one replaced stop), so a neighbor's value is composed
+// from the precomputed covers of the prefix before the change and the suffix
+// after it; only the changed section is composed leg by leg.
+class Candidate {
  public:
-  Evaluator(
+  // `order` is a permutation of the middle group indices; `chosen[g]` is the
+  // index of the visited stop in mid_groups[g].
+  Candidate(
       const TwoOptGraph& graph,
-      const std::vector<std::vector<StopId>>& mid_groups
+      const MidGroups& mid_groups,
+      std::vector<int> order,
+      std::vector<int> chosen
   )
-      : graph_(graph), mid_groups_(mid_groups) {}
-
-  // Makes `c` the base candidate and returns the exact optimal duration of a
-  // tour visiting its stops in its order, or kUnreachable if none exists.
-  int SetBase(const Candidate& c) {
-    seq_.clear();
-    seq_.push_back(graph_.boundary.start);
-    for (int g : c.order) {
-      seq_.push_back(mid_groups_[g][c.chosen[g]]);
-    }
-    seq_.push_back(graph_.boundary.end);
-    n_ = static_cast<int>(seq_.size());
-
-    // The tables are resized (not reassigned) so their buffers are reused
-    // across bases; every entry is cleared or recomputed below.
-    // prefix_[b]: the section from seq_[0] to seq_[b].
-    prefix_.resize(n_);
-    ClearAll(prefix_);
-    prefix_[0] = Identity();
-    for (int b = 1; b < n_ && !Empty(prefix_[b - 1]); ++b) {
-      Compose(prefix_[b - 1], graph_.Pair(seq_[b - 1], seq_[b]), prefix_[b]);
-    }
-    // suffix_[a]: the section from seq_[a] to seq_[n_ - 1].
-    suffix_.resize(n_);
-    ClearAll(suffix_);
-    suffix_[n_ - 1] = Identity();
-    for (int a = n_ - 2; a >= 0 && !Empty(suffix_[a + 1]); --a) {
-      Compose(graph_.Pair(seq_[a], seq_[a + 1]), suffix_[a + 1], suffix_[a]);
+      : order_(std::move(order)), chosen_(std::move(chosen)) {
+    int k = static_cast<int>(order_.size());
+    position_of_.resize(k);
+    for (int p = 0; p < k; ++p) {
+      position_of_[order_[p]] = p;
     }
 
-    ++evaluations_;
-    return MinDuration(prefix_[n_ - 1]);
+    seq_.reserve(k + 2);
+    seq_.push_back(graph.boundary.start);
+    for (int g : order_) {
+      seq_.push_back(mid_groups[g][chosen_[g]]);
+    }
+    seq_.push_back(graph.boundary.end);
+    int n = static_cast<int>(seq_.size());
+
+    prefix_.resize(n);
+    prefix_[0].flex_seconds = 0;  // Identity: ready to leave START any time.
+    suffix_.resize(n);
+    suffix_[n - 1].flex_seconds = 0;
+    Recompute(graph, 1, n - 2);
   }
 
-  // The value of the base with order positions i..j (i < j) reversed. For a
-  // given j, must be called with i = j - 1, j - 2, ... in that order: the
-  // cover of the reversed segment (from seq_[j] back to seq_[i]) is kept
-  // across calls and extended by one leg at its end per call. (Extending at
-  // the end, rather than the start, keeps the composition in its cheap
-  // orientation: a small cover followed by a leg with many departures.)
-  int EvaluateReversal(int i, int j) {
-    ++evaluations_;
-    int si = i + 1;  // seq_ index of order position i.
-    int sj = j + 1;
-    if (i == j - 1) {
-      Clear(reversed_);
-      reversed_.flex_seconds = 0;  // Identity: the segment is just seq_[sj].
-    } else {
-      assert(j == reversed_j_ && i == reversed_i_ - 1);
-    }
-    reversed_i_ = i;
-    reversed_j_ = j;
-    Compose(reversed_, graph_.Pair(seq_[si + 1], seq_[si]), scratch_a_);
-    std::swap(reversed_, scratch_a_);
-    if (Empty(reversed_)) {
-      return kUnreachable;
-    }
+  const std::vector<int>& order() const { return order_; }
+  const std::vector<int>& chosen() const { return chosen_; }
+  int PositionOf(int g) const { return position_of_[g]; }
 
-    Compose(prefix_[si - 1], graph_.Pair(seq_[si - 1], seq_[sj]), scratch_a_);
-    if (Empty(scratch_a_)) {
-      return kUnreachable;
+  // The exact optimal duration of a tour visiting the candidate's stops in
+  // its order, or kUnreachable if there is none.
+  int value() const { return value_; }
+
+  // Reverses order positions i..j.
+  void Reverse(const TwoOptGraph& graph, int i, int j) {
+    std::reverse(order_.begin() + i, order_.begin() + j + 1);
+    for (int p = i; p <= j; ++p) {
+      position_of_[order_[p]] = p;
     }
-    Compose(scratch_a_, reversed_, scratch_b_);
-    if (Empty(scratch_b_)) {
-      return kUnreachable;
-    }
-    Compose(scratch_b_, graph_.Pair(seq_[si], seq_[sj + 1]), scratch_a_);
-    if (Empty(scratch_a_)) {
-      return kUnreachable;
-    }
-    Compose(scratch_a_, suffix_[sj + 1], scratch_b_);
-    return MinDuration(scratch_b_);
+    std::reverse(seq_.begin() + i + 1, seq_.begin() + j + 2);
+    Recompute(graph, i + 1, j + 1);
   }
 
-  // The value of the base with the stop at order position p replaced by x.
-  int EvaluateSwap(int p, StopId x) {
-    ++evaluations_;
-    int s = p + 1;  // seq_ index of order position p.
-    Compose(prefix_[s - 1], graph_.Pair(seq_[s - 1], x), scratch_a_);
-    if (Empty(scratch_a_)) {
-      return kUnreachable;
-    }
-    Compose(scratch_a_, graph_.Pair(x, seq_[s + 1]), scratch_b_);
-    if (Empty(scratch_b_)) {
-      return kUnreachable;
-    }
-    Compose(scratch_b_, suffix_[s + 1], scratch_a_);
-    return MinDuration(scratch_a_);
+  // Visits member m of group g instead.
+  void SetMember(
+      const TwoOptGraph& graph, const MidGroups& mid_groups, int g, int m
+  ) {
+    chosen_[g] = m;
+    int s = position_of_[g] + 1;
+    seq_[s] = mid_groups[g][m];
+    Recompute(graph, s, s);
   }
 
-  long long NumEvaluations() const { return evaluations_; }
+  struct Reversal {
+    int i;      // -1 if no reversal ending at j is feasible.
+    int value;  // kUnreachable in that case.
+  };
+
+  // The best of the reversals of order positions i..j over all i < j, with
+  // its value. The cover of the reversed segment (from seq_[j] back to
+  // seq_[i]) is extended by one leg at its end as i walks down, so each
+  // reversal costs a constant number of compositions. (Extending at the end,
+  // rather than the start, keeps the composition in its cheap orientation: a
+  // small cover followed by a leg with many departures.)
+  Reversal BestReversalEndingAt(const TwoOptGraph& graph, int j) const {
+    Reversal best{.i = -1, .value = kUnreachable};
+    int sj = j + 1;  // seq_ index of order position j.
+    PairSteps reversed;
+    reversed.flex_seconds = 0;  // Identity: the segment is just seq_[sj].
+    PairSteps scratch_a;
+    PairSteps scratch_b;
+    for (int i = j - 1; i >= 0; --i) {
+      int si = i + 1;
+      Compose(reversed, graph.Pair(seq_[si + 1], seq_[si]), scratch_a);
+      std::swap(reversed, scratch_a);
+      if (Empty(reversed)) {
+        break;
+      }
+      const PairSteps* sections[] = {
+          &graph.Pair(seq_[si - 1], seq_[sj]),
+          &reversed,
+          &graph.Pair(seq_[si], seq_[sj + 1]),
+      };
+      int val = ValueOf(si - 1, sections, sj + 1, scratch_a, scratch_b);
+      if (val < best.value) {
+        best = Reversal{.i = i, .value = val};
+      }
+    }
+    return best;
+  }
+
+  // The value of the candidate visiting member m of group g instead.
+  int MemberValue(
+      const TwoOptGraph& graph, const MidGroups& mid_groups, int g, int m
+  ) const {
+    int s = position_of_[g] + 1;  // seq_ index of the group's stop.
+    StopId x = mid_groups[g][m];
+    const PairSteps* sections[] = {
+        &graph.Pair(seq_[s - 1], x),
+        &graph.Pair(x, seq_[s + 1]),
+    };
+    PairSteps scratch_a;
+    PairSteps scratch_b;
+    return ValueOf(s - 1, sections, s + 1, scratch_a, scratch_b);
+  }
 
  private:
-  static void ClearAll(std::vector<PairSteps>& table) {
-    for (PairSteps& p : table) {
-      Clear(p);
+  // Recomputes the tables and the value after seq_[first..last] changed:
+  // prefix_[b], the section from seq_[0] to seq_[b], for b >= first, and
+  // suffix_[a], the section from seq_[a] to seq_[n - 1], for a <= last.
+  void Recompute(const TwoOptGraph& graph, int first, int last) {
+    int n = static_cast<int>(seq_.size());
+    for (int b = first; b < n; ++b) {
+      if (Empty(prefix_[b - 1])) {
+        Clear(prefix_[b]);
+      } else {
+        Compose(prefix_[b - 1], graph.Pair(seq_[b - 1], seq_[b]), prefix_[b]);
+      }
     }
+    for (int a = last; a >= 0; --a) {
+      if (Empty(suffix_[a + 1])) {
+        Clear(suffix_[a]);
+      } else {
+        Compose(graph.Pair(seq_[a], seq_[a + 1]), suffix_[a + 1], suffix_[a]);
+      }
+    }
+    value_ = MinDuration(prefix_[n - 1]);
   }
 
-  const TwoOptGraph& graph_;
-  const std::vector<std::vector<StopId>>& mid_groups_;
-  std::vector<StopId> seq_;
-  int n_ = 0;
+  // The value of the tour made of prefix_[p], then `sections` in order, then
+  // suffix_[s].
+  template <size_t N>
+  int ValueOf(
+      int p,
+      const PairSteps* (&sections)[N],
+      int s,
+      PairSteps& scratch_a,
+      PairSteps& scratch_b
+  ) const {
+    const PairSteps* cur = &prefix_[p];
+    for (const PairSteps* section : sections) {
+      Compose(*cur, *section, scratch_a);
+      if (Empty(scratch_a)) {
+        return kUnreachable;
+      }
+      std::swap(scratch_a, scratch_b);
+      cur = &scratch_b;
+    }
+    Compose(*cur, suffix_[s], scratch_a);
+    return MinDuration(scratch_a);
+  }
+
+  std::vector<int> order_;        // Permutation of middle group indices.
+  std::vector<int> chosen_;       // Per middle group, index into its stops.
+  std::vector<int> position_of_;  // Per middle group, its position in order_.
+  std::vector<StopId> seq_;       // The tour's stops, START to END.
   std::vector<PairSteps> prefix_;
   std::vector<PairSteps> suffix_;
-  // The reversed segment of the last EvaluateReversal call, and its i and j.
-  PairSteps reversed_;
-  int reversed_i_ = -1;
-  int reversed_j_ = -1;
-  PairSteps scratch_a_;
-  PairSteps scratch_b_;
-  long long evaluations_ = 0;
+  int value_;
 };
 
 }  // namespace
@@ -306,7 +348,7 @@ TwoOptResult TwoOptSolve(
   // Middle groups: required groups not containing START or END.
   StopId start_rep = graph.required.Representative(graph.boundary.start);
   StopId end_rep = graph.required.Representative(graph.boundary.end);
-  std::vector<std::vector<StopId>> mid_groups;
+  MidGroups mid_groups;
   for (const std::vector<StopId>& group : graph.required.Groups()) {
     StopId rep = graph.required.Representative(group[0]);
     if (rep != start_rep && rep != end_rep) {
@@ -315,7 +357,6 @@ TwoOptResult TwoOptSolve(
   }
   int k = static_cast<int>(mid_groups.size());
 
-  Evaluator evaluator(graph, mid_groups);
   auto deadline_passed = [&, start_time = std::chrono::steady_clock::now()]() {
     if (!options.time_limit_seconds.has_value()) {
       return false;
@@ -342,8 +383,9 @@ TwoOptResult TwoOptSolve(
     }
   }
 
-  Candidate best_candidate;
+  std::optional<Candidate> best_candidate;
   std::mt19937 rng(options.seed);
+  long long evaluations = 0;
 
   for (int restart = 0; restart < options.restarts; ++restart) {
     if (deadline_passed()) {
@@ -353,86 +395,71 @@ TwoOptResult TwoOptSolve(
     auto restart_start = std::chrono::steady_clock::now();
 
     // Build a random initial candidate.
-    Candidate c;
-    c.chosen.assign(k, 0);
-    c.order.resize(k);
+    std::vector<int> order(k);
     for (int g = 0; g < k; ++g) {
-      c.order[g] = g;
+      order[g] = g;
     }
-    std::shuffle(c.order.begin(), c.order.end(), rng);
+    std::shuffle(order.begin(), order.end(), rng);
+    std::vector<int> chosen(k, 0);
     for (int g = 0; g < k; ++g) {
       if (mid_groups[g].size() > 1) {
-        c.chosen[g] = std::uniform_int_distribution<
+        chosen[g] = std::uniform_int_distribution<
             int>(0, static_cast<int>(mid_groups[g].size()) - 1)(rng);
       }
     }
-
-    // position_of[g]: the order position of group g.
-    std::vector<int> position_of(k);
-    for (int p = 0; p < k; ++p) {
-      position_of[c.order[p]] = p;
-    }
-
-    int cur_val = evaluator.SetBase(c);
+    Candidate c(graph, mid_groups, std::move(order), std::move(chosen));
+    ++evaluations;
 
     // First-improvement hill climbing over 2-opt segment reversals and
     // group-member swaps: each step scans the neighborhood in a fresh random
-    // order of its units (all reversals ending at a given position j, with i
-    // walking down from j - 1 as EvaluateReversal requires, or one
-    // group-member swap) and applies the first improving move found.
-    // TODO: The evaluator could simply DP over group-member selection so that
-    // we don't have to evaluate swap moves.
+    // order of its units (all reversals ending at a given position, or one
+    // group-member swap) and moves to the first improving candidate found.
+    // TODO: Candidate could simply DP over group-member selection so that we
+    // don't have to evaluate swap moves.
     while (!deadline_passed()) {
       std::shuffle(units.begin(), units.end(), rng);
       // The improving move found: a reversal of order positions i..j if
       // move_j >= 0, otherwise a swap of group move_g's stop to member move_m.
-      int move_val = cur_val;
+      int move_val = c.value();
       int move_i = -1;
       int move_j = -1;
       int move_g = -1;
       int move_m = -1;
-
       for (const Unit& unit : units) {
         if (unit.j >= 0) {
-          for (int i = unit.j - 1; i >= 0 && move_val == cur_val; --i) {
-            int val = evaluator.EvaluateReversal(i, unit.j);
-            if (val < cur_val) {
-              move_val = val;
-              move_i = i;
-              move_j = unit.j;
-            }
+          Candidate::Reversal reversal = c.BestReversalEndingAt(graph, unit.j);
+          evaluations += unit.j;
+          if (reversal.value < c.value()) {
+            move_val = reversal.value;
+            move_i = reversal.i;
+            move_j = unit.j;
           }
         } else {
-          if (unit.m == c.chosen[unit.g]) {
+          if (unit.m == c.chosen()[unit.g]) {
             continue;
           }
-          int val = evaluator.EvaluateSwap(
-              position_of[unit.g], mid_groups[unit.g][unit.m]
-          );
-          if (val < cur_val) {
+          int val = c.MemberValue(graph, mid_groups, unit.g, unit.m);
+          ++evaluations;
+          if (val < c.value()) {
             move_val = val;
             move_g = unit.g;
             move_m = unit.m;
           }
         }
-        if (move_val < cur_val) {
+        if (move_val < c.value()) {
           break;
         }
       }
-
-      if (move_val == cur_val) {
+      if (move_val == c.value()) {
         break;  // Local optimum.
       }
       if (move_j >= 0) {
-        std::reverse(c.order.begin() + move_i, c.order.begin() + move_j + 1);
-        for (int p = move_i; p <= move_j; ++p) {
-          position_of[c.order[p]] = p;
-        }
+        c.Reverse(graph, move_i, move_j);
       } else {
-        c.chosen[move_g] = move_m;
+        c.SetMember(graph, mid_groups, move_g, move_m);
       }
-      cur_val = evaluator.SetBase(c);
-      assert(cur_val == move_val);
+      assert(c.value() == move_val);
+      ++evaluations;
     }
 
     ++result.restarts_completed;
@@ -442,15 +469,16 @@ TwoOptResult TwoOptSolve(
         )
             .count()
     );
-    if (cur_val < result.best_val) {
-      result.best_val = cur_val;
+    int local_val = c.value();
+    if (local_val < result.best_val) {
+      result.best_val = local_val;
       best_candidate = c;
     }
     if (search_log != nullptr) {
       *search_log << "restart " << restart << ": local opt "
-                  << (cur_val == kUnreachable
+                  << (local_val == kUnreachable
                           ? "infeasible"
-                          : TimeSinceServiceStart{cur_val}.ToString())
+                          : TimeSinceServiceStart{local_val}.ToString())
                   << ", global best "
                   << (result.best_val == kUnreachable
                           ? "infeasible"
@@ -459,7 +487,7 @@ TwoOptResult TwoOptSolve(
     }
   }
 
-  result.evaluations = evaluator.NumEvaluations();
+  result.evaluations = evaluations;
   if (result.best_val == kUnreachable) {
     return result;
   }
@@ -467,8 +495,8 @@ TwoOptResult TwoOptSolve(
   result.best_tour.push_back(
       graph.compact.mapping.new_to_original[graph.boundary.start.v]
   );
-  for (int g : best_candidate.order) {
-    StopId stop = mid_groups[g][best_candidate.chosen[g]];
+  for (int g : best_candidate->order()) {
+    StopId stop = mid_groups[g][best_candidate->chosen()[g]];
     result.best_tour.push_back(graph.compact.mapping.new_to_original[stop.v]);
   }
   result.best_tour.push_back(
