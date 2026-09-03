@@ -1,7 +1,7 @@
 problem_spec_id = "munich-bahn-202608-w1"
 gtfs_source_id = "munich"
 target_stops_id = "munich-ubahn-202608"
-title = "walk 1m/s, full network"
+title = "walk 1m/s, full"
 sync = true
 
 max_walking_distance = 500

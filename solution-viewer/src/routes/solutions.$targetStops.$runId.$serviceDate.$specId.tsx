@@ -129,10 +129,14 @@ function GridTable({
             {grid.specs.map((spec) => (
               <th
                 key={spec.id}
-                className="w-24 text-right font-medium py-1 pl-4 normal-case whitespace-nowrap"
+                className="w-24 text-center font-medium py-1 pl-4 normal-case align-bottom"
                 title={spec.id}
               >
-                {spec.title}
+                {/* Fixed-width block so long titles wrap instead of widening
+                    the column. */}
+                <div className="mx-auto w-24 whitespace-normal break-words">
+                  {spec.title}
+                </div>
               </th>
             ))}
           </tr>

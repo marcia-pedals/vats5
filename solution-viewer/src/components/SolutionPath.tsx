@@ -8,7 +8,7 @@ import type { PathStep, SolutionPath, SolutionRoute, SolutionStop } from "../sch
  * metadata that iterative_expansion reports in its solution JSON.
  */
 
-const MAP_HEIGHT = 420;
+const MAP_HEIGHT = 630;
 const MAP_PAD = 34; // px of margin around the projected stops
 const DOT_R = 4; // constant screen-px
 const LABEL_FONT_SIZE = 9; // constant screen-px
@@ -547,7 +547,7 @@ export function SolutionPathView({
     // the map, and side by side both are on screen at once.
     <div className="flex items-start gap-3">
       <div
-        className="w-64 shrink-0 overflow-y-auto rounded-panel border border-tc-border"
+        className="w-96 shrink-0 overflow-y-auto overscroll-contain rounded-panel border border-tc-border"
         style={{ maxHeight: MAP_HEIGHT }}
       >
         <table className="w-full border-collapse font-mono text-[11px]">
