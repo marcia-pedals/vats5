@@ -718,13 +718,12 @@ int main(int argc, char* argv[]) {
       }
 
       PartialSolution solution =
-          held_karp
-              ? PartialSolveHeldKarp(
-                    partial_problem, state, global_lb, &std::cout
-                )
-              : PartialSolveTwoOpt(
-                    partial_problem, state, global_lb, {}, &std::cout
-                );
+          held_karp ? PartialSolveHeldKarp(
+                          partial_problem, state, global_lb, &std::cout
+                      )
+                    : PartialSolveTwoOpt(
+                          partial_problem, state, global_lb, {}, &std::cout
+                      );
 
       // Because the partial problem is a relaxation of the overall problem, the
       // partial problem lb is a lb of the overall problem. The same is not true
@@ -846,7 +845,8 @@ int main(int argc, char* argv[]) {
         MakePartialProblemState(required_subset, state);
     auto tarel_lb = ComputeTarelLowerBound(partial_problem);
     if (tarel_lb.has_value()) {
-      std::cout << "tarel_lb " << TimeSinceServiceStart{tarel_lb->optimal_value} << "\n";
+      std::cout << "tarel_lb " << TimeSinceServiceStart{tarel_lb->optimal_value}
+                << "\n";
       global_lb = std::max(global_lb, tarel_lb->optimal_value);
     }
   } else {
