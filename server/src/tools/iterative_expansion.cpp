@@ -674,10 +674,10 @@ int main(int argc, char* argv[]) {
 
   // Outcome of the loop below, reported via --solution_json.
   std::string status = "solved";
-  std::optional<int> optimal_duration_seconds;
   std::optional<VizPath> solution_path;
 
-  int prev_iteration_optimal = 0;
+  int global_lb = 0;
+  int global_ub = std::numeric_limits<int>::max();
 
   try {
     for (int iteration = 0;; iteration++) {
@@ -717,15 +717,18 @@ int main(int argc, char* argv[]) {
         std::cout << "Wrote iteration problem state to: " << path << "\n";
       }
 
-      // No known_lb for 2-opt: prev_iteration_optimal is only a valid bound
-      // while every previous iteration was solved exactly, which stops being
-      // true once 2-opt (a heuristic) takes over.
       PartialSolution solution =
-          held_karp
-              ? PartialSolveHeldKarp(
-                    partial_problem, state, prev_iteration_optimal, &std::cout
-                )
-              : PartialSolveTwoOpt(partial_problem, state, {}, &std::cout);
+          held_karp ? PartialSolveHeldKarp(
+                          partial_problem, state, global_lb, &std::cout
+                      )
+                    : PartialSolveTwoOpt(
+                          partial_problem, state, global_lb, {}, &std::cout
+                      );
+
+      // Because the partial problem is a relaxation of the overall problem, the
+      // partial problem lb is a lb of the overall problem. The same is not true
+      // for the ub, of course.
+      global_lb = std::max(global_lb, solution.lb);
 
       // Choose the path that visits the most required stops.
       auto best_solution_path_it =
@@ -760,7 +763,7 @@ int main(int argc, char* argv[]) {
         TwoOptOptions polish_options;
         polish_options.restarts = two_opt_polish_restarts;
         PartialSolution polished = PartialSolveTwoOpt(
-            partial_problem, state, polish_options, &std::cout
+            partial_problem, state, global_lb, polish_options, &std::cout
         );
         auto polished_it = polished.BestPathByRequiredStops(state.required);
         if (polished_it != polished.paths.end()) {
@@ -779,7 +782,6 @@ int main(int argc, char* argv[]) {
       }
 
       const Path& best_path = best_solution_path.path;
-      prev_iteration_optimal = best_path.DurationSeconds();
 
       // Write partial solution to viz SQLite.
       {
@@ -809,7 +811,7 @@ int main(int argc, char* argv[]) {
 
       if (distances.empty()) {
         std::cout << "\nAll required stops are visited.\n";
-        optimal_duration_seconds = best_path.DurationSeconds();
+        global_ub = best_path.DurationSeconds();
         solution_path = ToReportedVizPath(best_path);
         break;
       }
@@ -836,12 +838,26 @@ int main(int argc, char* argv[]) {
     status = "timeout";
   }
 
+  if (global_lb < global_ub) {
+    std::cout << "global_lb " << TimeSinceServiceStart{global_lb} << "\n";
+    std::cout << "global_ub " << TimeSinceServiceStart{global_ub} << "\n";
+    ProblemState partial_problem =
+        MakePartialProblemState(required_subset, state);
+    auto tarel_lb = ComputeTarelLowerBound(partial_problem);
+    if (tarel_lb.has_value()) {
+      std::cout << "tarel_lb " << TimeSinceServiceStart{tarel_lb->optimal_value}
+                << "\n";
+      global_lb = std::max(global_lb, tarel_lb->optimal_value);
+    }
+  } else {
+    std::cout << "Exact solution\n";
+  }
+
   if (!solution_json_path.empty()) {
     nlohmann::json solution_info;
     solution_info["status"] = status;
-    if (optimal_duration_seconds.has_value()) {
-      solution_info["optimal_duration_seconds"] = *optimal_duration_seconds;
-    }
+    solution_info["global_lb"] = global_lb;
+    solution_info["global_ub"] = global_ub;
     if (status == "timeout") {
       solution_info["timeout_seconds"] = timeout_seconds;
     }

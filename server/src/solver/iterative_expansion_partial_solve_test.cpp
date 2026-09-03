@@ -220,7 +220,7 @@ TEST(PartialSolveHeldKarpTest, InfeasibleSubsetHasNoPaths) {
 PartialSolution SolveTwoOpt(
     const std::unordered_set<StopId>& subset, const ProblemState& state
 ) {
-  return PartialSolveTwoOpt(MakePartialProblemState(subset, state), state);
+  return PartialSolveTwoOpt(MakePartialProblemState(subset, state), state, 0);
 }
 
 TEST(PartialSolveTwoOptTest, VisitsTheSubsetInTheCheapestOrder) {

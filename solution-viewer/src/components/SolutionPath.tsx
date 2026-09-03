@@ -8,7 +8,7 @@ import type { PathStep, SolutionPath, SolutionRoute, SolutionStop } from "../sch
  * metadata that iterative_expansion reports in its solution JSON.
  */
 
-const MAP_HEIGHT = 420;
+const MAP_HEIGHT = 630;
 const MAP_PAD = 34; // px of margin around the projected stops
 const DOT_R = 4; // constant screen-px
 const LABEL_FONT_SIZE = 9; // constant screen-px
@@ -547,7 +547,7 @@ export function SolutionPathView({
     // the map, and side by side both are on screen at once.
     <div className="flex items-start gap-3">
       <div
-        className="w-64 shrink-0 overflow-y-auto rounded-panel border border-tc-border"
+        className="w-96 shrink-0 overflow-y-auto overscroll-contain rounded-panel border border-tc-border"
         style={{ maxHeight: MAP_HEIGHT }}
       >
         <table className="w-full border-collapse font-mono text-[11px]">
@@ -585,46 +585,5 @@ export function SolutionPathView({
         />
       </div>
     </div>
-  );
-}
-
-/**
- * The gist of a path in one line: where it starts and ends, and how much of it
- * there is. Kept apart from the view above so the details card can sit it on
- * the same row as its own title rather than spending a row on it.
- */
-export function SolutionPathSummary({
-  stops,
-  path,
-}: {
-  stops: SolutionStop[];
-  path: SolutionPath;
-}) {
-  const stopNames = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const stop of stops) names.set(stop.id, stop.name);
-    return names;
-  }, [stops]);
-
-  const first = path.steps[0];
-  const last = path.steps[path.steps.length - 1];
-  if (!first || !last) {
-    return null;
-  }
-
-  return (
-    <span className="flex min-w-0 items-baseline gap-3 font-mono text-xs">
-      {/* Matches the green and amber rings the map draws on these two. */}
-      <span className="min-w-0 truncate text-tc-text-muted">
-        <span className="text-tc-green">●</span> {formatTimeOfDay(first.depart_time)}{" "}
-        {stopNames.get(first.origin_stop_id) ?? first.origin_stop_id} →{" "}
-        <span className="text-tc-amber">●</span> {formatTimeOfDay(last.arrive_time)}{" "}
-        {stopNames.get(last.destination_stop_id) ?? last.destination_stop_id}
-      </span>
-      <span className="whitespace-nowrap text-tc-text-dim">
-        {path.steps.length} leg{path.steps.length === 1 ? "" : "s"} · {formatSpan(path.duration)}{" "}
-        total
-      </span>
-    </span>
   );
 }

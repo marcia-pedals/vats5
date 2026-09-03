@@ -111,6 +111,16 @@ DUPLICATE_SERVICE_PATTERN_EXIT_CODE = 3
 DUPLICATE_STATUS = "duplicate_service_pattern"
 
 
+def describe_bounds(solution: dict[str, Any]) -> str:
+    """The bounds iterative_expansion reports, for a log line: "21300" when
+    they meet, "21000..21300" when they do not, "no bounds" when absent."""
+    lb = solution.get("global_lb")
+    ub = solution.get("global_ub")
+    if lb is None or ub is None:
+        return "no bounds"
+    return str(ub) if lb == ub else f"{lb}..{ub}"
+
+
 class RunError(Exception):
     """Raised for conditions that should stop the whole run."""
 
@@ -376,19 +386,18 @@ def solve_one(
             "duplicate_of_service_date": duplicated_date,
             "matched_on": duplicate_of["matched_on"],
         }
-        # Copied so that a query for the duration of this date does not have to
-        # join with the duplicated date's row. Absent when that date has no
-        # duration either, e.g. when its solve timed out.
-        duplicated_duration = solved_solutions[duplicated_date].get(
-            "optimal_duration_seconds"
-        )
-        if duplicated_duration is not None:
-            solution["optimal_duration_seconds"] = duplicated_duration
+        # Copied so that a query for the bounds of this date does not have to
+        # join with the duplicated date's row. Absent when that date has none
+        # either, e.g. when its solve died before writing them.
+        duplicated = solved_solutions[duplicated_date]
+        for key in ("global_lb", "global_ub"):
+            if key in duplicated:
+                solution[key] = duplicated[key]
         return finish(
             solution,
             [initialize_node],
             f"same {duplicate_of['matched_on']} as {duplicated_date} "
-            f"({duplicated_duration}), skipped",
+            f"({describe_bounds(duplicated)}), skipped",
         )
 
     if returncode != 0:
@@ -421,7 +430,7 @@ def solve_one(
     # its own, including a timeout; a missing file means it died first.
     if solution_json.exists():
         solution = json.loads(solution_json.read_text())
-        outcome = f"{solution['status']}: {solution.get('optimal_duration_seconds')}"
+        outcome = f"{solution['status']}: {describe_bounds(solution)}"
     else:
         solution = {
             "status": "killed" if returncode is None else "solve_failed",

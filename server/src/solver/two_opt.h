@@ -40,8 +40,13 @@ struct TwoOptResult {
 // Heuristically solves the tour problem by multi-start 2-opt local search
 // over visit orders of the required groups (plus group-member swaps for
 // groups with more than one stop).
+//
+// `known_lb` is a lower bound on the optimal duration that the caller has
+// already proven. The search returns as soon as it finds a tour achieving it,
+// since no tour can beat it. Pass 0 if nothing is known.
 TwoOptResult TwoOptSolve(
     const ProblemState& state,
+    int known_lb,
     const TwoOptOptions& options = {},
     std::ostream* search_log = nullptr
 );
