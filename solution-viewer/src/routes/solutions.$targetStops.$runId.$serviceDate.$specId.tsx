@@ -134,9 +134,7 @@ function GridTable({
               >
                 {/* Fixed-width block so long titles wrap instead of widening
                     the column. */}
-                <div className="mx-auto w-24 whitespace-normal break-words">
-                  {spec.title}
-                </div>
+                <div className="mx-auto w-24 whitespace-normal break-words">{spec.title}</div>
               </th>
             ))}
           </tr>
