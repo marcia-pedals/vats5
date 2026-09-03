@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { trpc } from "../client/trpc";
-import { SolutionPathSummary, SolutionPathView } from "../components/SolutionPath";
+import { SolutionPathView } from "../components/SolutionPath";
 import type { Solution, TraceNode } from "../schemas";
 import {
   buildGrid,
@@ -63,10 +63,12 @@ function ErrorIcon() {
 }
 
 function SolutionCellContents({ solution }: { solution: Solution }) {
-  const { status, optimal_duration_seconds } = solution.data;
+  const { status, global_ub } = solution.data;
 
-  if (status === "solved" && optimal_duration_seconds !== undefined) {
-    return <span className="text-tc-text">{formatDuration(optimal_duration_seconds)}</span>;
+  // The upper bound is the duration of the path found, which for an exact
+  // solve is the optimum; the cell page says how tight it is.
+  if (status === "solved" && global_ub !== undefined) {
+    return <span className="text-tc-text">{formatDuration(global_ub)}</span>;
   }
 
   // Anything that is not a solve -- timeout included -- is a failure, shown as
@@ -285,25 +287,49 @@ function TraceChart({ root }: { root: TraceNode }) {
   );
 }
 
+/**
+ * "5h55m (exact)" when the bounds meet, otherwise "5h50m <= opt <= 5h55m
+ * (1.4% gap)", the gap being relative to the upper bound.
+ */
+function formatBounds(lb: number, ub: number): string {
+  if (lb === ub) {
+    return `${formatDuration(ub)} (exact)`;
+  }
+  const gap = ((ub - lb) / ub) * 100;
+  return `${formatDuration(lb)} <= opt <= ${formatDuration(ub)} (${gap.toFixed(1)}% gap)`;
+}
+
 function SolutionDetails({ solution }: { solution: Solution }) {
-  // Everything named here is either laid out below or, like the optimal
-  // duration -- which the summary in the title row already gives -- pulled out
-  // so `rest` does not render it again as a generic metadata row.
-  const { status, optimal_duration_seconds, trace, stops, routes, solution_path, ...rest } =
+  // Everything named here is laid out below, so `rest` does not render it
+  // again as a generic metadata row. The bounds only get a line of their own
+  // for a solve; a timeout's upper bound is a sentinel, not a duration, so
+  // its bounds stay in the metadata list as they are.
+  const { status, global_lb, global_ub, trace, stops, routes, solution_path, ...rest } =
     solution.data;
   const { weekday, label } = formatServiceDate(solution.service_date);
   const solved = status === "solved";
+  const bounds =
+    solved && global_lb !== undefined && global_ub !== undefined
+      ? { lb: global_lb, ub: global_ub }
+      : undefined;
+  const metadata = Object.entries(bounds ? rest : { global_lb, global_ub, ...rest }).filter(
+    ([, value]) => value !== undefined
+  );
 
   return (
     <section className="panel max-h-full min-w-0 flex-1 space-y-4 overflow-y-auto p-3">
-      {/* A cell is always shown, so there is nothing to close back to. The
-          path's one-line gist rides along here rather than taking a row of
-          its own under the map. */}
+      {/* A cell is always shown, so there is nothing to close back to. How
+          good the solve is rides along here rather than taking a row of its
+          own under the map. */}
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="whitespace-nowrap font-display text-base text-tc-text">
           {weekday} {label} <span className="text-tc-text-muted">· {solution.spec_title}</span>
         </h2>
-        {solution_path && stops && <SolutionPathSummary stops={stops} path={solution_path} />}
+        {bounds && (
+          <span className="whitespace-nowrap font-mono text-xs tabular-nums text-tc-text">
+            {formatBounds(bounds.lb, bounds.ub)}
+          </span>
+        )}
       </header>
 
       {/* The path is what the card is for, so it runs straight on from the
@@ -332,7 +358,7 @@ function SolutionDetails({ solution }: { solution: Solution }) {
         <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 font-mono text-xs">
           <dt className="text-tc-text-dim">status</dt>
           <dd className={solved ? "text-tc-green" : "text-tc-red"}>{status.replace(/_/g, " ")}</dd>
-          {Object.entries(rest).map(([key, value]) => (
+          {metadata.map(([key, value]) => (
             <div key={key} className="contents">
               <dt className="text-tc-text-dim">{key.replace(/_/g, " ")}</dt>
               <dd className="text-tc-text break-all">{JSON.stringify(value)}</dd>
