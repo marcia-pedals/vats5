@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <unordered_set>
 
 namespace vats5 {
@@ -263,14 +264,14 @@ TEST(ConcordeTest, EdgeWeightOverflowThrown) {
 
 // Test with a deterministic 5-node complete graph that goes through Concorde.
 // Graph: complete with weights w(i,j) = 10*(i+1) + (j+1).
-//   0->1:11 0->2:12 0->3:13 0->4:14
-//   1->0:21 1->2:22 1->3:23 1->4:24
-//   2->0:31 2->1:32 2->3:33 2->4:34
-//   3->0:41 3->1:42 3->2:43 3->4:44
+//   0->1:12 0->2:13 0->3:14 0->4:15
+//   1->0:21 1->2:23 1->3:24 1->4:25
+//   2->0:31 2->1:32 2->3:34 2->4:35
+//   3->0:41 3->1:42 3->2:43 3->4:45
 //   4->0:51 4->1:52 4->2:53 4->3:54
 //
-// Optimal tour: 0->1->2->3->4->0 = 11+22+33+44+51 = 161
-// (This is optimal because each step uses the smallest available forward edge.)
+// Every tour costs 10*(1+2+3+4+5) + (1+2+3+4+5) = 165, since each node is the
+// origin of exactly one edge and the destination of exactly one edge.
 TEST(ConcordeTest, Simple5NodeATSP) {
   std::vector<WeightedEdge> edges;
   for (int i = 0; i < 5; ++i) {
@@ -313,6 +314,55 @@ TEST(ConcordeTest, Simple5NodeATSP) {
 
 RC_GTEST_PROP(ConcordeTest, UniquePermutationTour_BruteForce, ()) {
   CheckUniquePermutationTour(*rc::gen::inRange(2, 5));
+}
+
+// Same graph as Simple5NodeATSP (every tour costs 165), exercising the upper
+// bound through the Concorde path. The bound is strict: a tour is only
+// returned if its cost is less than ub.
+std::vector<WeightedEdge> Make5NodeEdges() {
+  std::vector<WeightedEdge> edges;
+  for (int i = 0; i < 5; ++i) {
+    for (int j = 0; j < 5; ++j) {
+      if (i != j) {
+        edges.push_back(
+            WeightedEdge{StopId{i}, StopId{j}, 10 * (i + 1) + (j + 1)}
+        );
+      }
+    }
+  }
+  return edges;
+}
+
+TEST(ConcordeTest, UpperBoundAboveOptimumReturnsSolution) {
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(Make5NodeEdges());
+  std::optional<ConcordeSolution> solution = SolveTspWithConcorde(relaxed, 166);
+  ASSERT_TRUE(solution.has_value());
+  EXPECT_EQ(solution->optimal_value, 165);
+  EXPECT_EQ(solution->tour.size(), 5);
+}
+
+TEST(ConcordeTest, UpperBoundEqualToOptimumReturnsNullopt) {
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(Make5NodeEdges());
+  EXPECT_FALSE(SolveTspWithConcorde(relaxed, 165).has_value());
+}
+
+TEST(ConcordeTest, UpperBoundBelowOptimumReturnsNullopt) {
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(Make5NodeEdges());
+  EXPECT_FALSE(SolveTspWithConcorde(relaxed, 100).has_value());
+}
+
+// Concorde's output should be captured into tsp_log rather than printed.
+TEST(ConcordeTest, OutputGoesToTspLog) {
+  RelaxedAdjacencyList relaxed =
+      MakeRelaxedAdjacencyListFromEdges(Make5NodeEdges());
+  std::ostringstream log;
+  std::optional<ConcordeSolution> solution =
+      SolveTspWithConcorde(relaxed, std::nullopt, &log);
+  ASSERT_TRUE(solution.has_value());
+  EXPECT_NE(log.str().find("CCtsp_solve_dat"), std::string::npos);
 }
 
 }  // namespace vats5

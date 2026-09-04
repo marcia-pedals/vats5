@@ -1,29 +1,34 @@
 #include "solver/concorde.h"
 
-#include <signal.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
 
+#include "solver/concorde_shim.h"
+
 namespace vats5 {
 namespace {
 
+// Instances with fewer stops than this are solved by brute force. This must be
+// at least 5: the doubled graph handed to Concorde then has >= 10 nodes, which
+// is the minimum CCtsp_solve_dat handles (the concorde CLI special-cases
+// smaller instances with Held-Karp, but the library entry point does not).
 constexpr int kBruteForceThreshold = 5;
+static_assert(kBruteForceThreshold >= 5);
 
 // Solve small ATSP instances by enumerating all permutations.
 // Returns nullopt if no valid Hamiltonian cycle exists or the best tour
@@ -187,56 +192,6 @@ class DoubledGraphWeights {
   std::vector<int> edge_weights_;
 };
 
-// Output a RelaxedAdjacencyList as a Concorde TSP instance using UPPER_ROW
-// format.
-void OutputConcordeTsp(std::ostream& out, const DoubledGraphWeights& weights) {
-  int doubled_n = weights.DoubledN();
-
-  // Output TSP header
-  out << "NAME: vats5\n";
-  out << "TYPE: TSP\n";
-  out << "DIMENSION: " << doubled_n << "\n";
-  out << "EDGE_WEIGHT_TYPE: EXPLICIT\n";
-  out << "EDGE_WEIGHT_FORMAT: UPPER_ROW\n";
-  out << "EDGE_WEIGHT_SECTION\n";
-
-  // Output upper triangular matrix (excluding diagonal)
-  // For row i, output weights to j for all j > i
-  for (int i = 0; i < doubled_n; ++i) {
-    for (int j = i + 1; j < doubled_n; ++j) {
-      int weight = weights.GetDoubledWeight(i, j);
-      out << weight;
-      if (j < doubled_n - 1) {
-        out << " ";
-      }
-    }
-    if (i < doubled_n - 1) {
-      out << "\n";
-    }
-  }
-  out << "\nEOF\n";
-}
-
-// Read the raw doubled tour from Concorde's solution file.
-std::vector<int> ReadDoubledTour(const std::string& solution_path) {
-  std::ifstream in(solution_path);
-  if (!in) {
-    throw std::runtime_error("Failed to open solution file: " + solution_path);
-  }
-
-  int doubled_n;
-  in >> doubled_n;
-
-  std::vector<int> doubled_tour;
-  doubled_tour.reserve(doubled_n);
-  for (int i = 0; i < doubled_n; ++i) {
-    int node;
-    in >> node;
-    doubled_tour.push_back(node);
-  }
-  return doubled_tour;
-}
-
 // Check if any edge in the doubled tour uses a forbidden weight.
 bool DoubledTourUsesForbiddenEdge(
     const std::vector<int>& doubled_tour, const DoubledGraphWeights& weights
@@ -314,6 +269,46 @@ std::vector<StopId> ValidateAndExtractTour(
   return tour;
 }
 
+// Per-solve scratch directory for Concorde's checkpoint files and log.
+// Removed on destruction.
+class WorkDir {
+ public:
+  WorkDir() {
+    // Create under concorde_work/ in cwd so it works in Claude sandbox (which
+    // restricts /tmp) and doesn't clutter the cwd.
+    if (mkdir("concorde_work", 0755) != 0 && errno != EEXIST) {
+      throw std::runtime_error("Failed to create concorde_work directory");
+    }
+    std::string temp_dir = "concorde_work/vats5_tsp_XXXXXX";
+    if (mkdtemp(temp_dir.data()) == nullptr) {
+      throw std::runtime_error("Failed to create temp directory");
+    }
+    // Absolute, because the shim chdirs into it and must be able to find it
+    // regardless of cwd.
+    path_ = std::filesystem::absolute(temp_dir).string();
+  }
+
+  ~WorkDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+  }
+
+  WorkDir(const WorkDir&) = delete;
+  WorkDir& operator=(const WorkDir&) = delete;
+
+  const std::string& path() const { return path_; }
+
+ private:
+  std::string path_;
+};
+
+std::string ReadFile(const std::string& path) {
+  std::ifstream in(path);
+  return std::string(
+      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()
+  );
+}
+
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
@@ -322,150 +317,83 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 ) {
   DoubledGraphWeights weights(relaxed);
   int n = weights.NumStops();
+  int doubled_n = weights.DoubledN();
 
-  // Create temp directory under concorde_work/ in cwd so it works in Claude
-  // sandbox (which restricts /tmp) and doesn't clutter the cwd.
-  if (mkdir("concorde_work", 0755) != 0 && errno != EEXIST) {
-    throw std::runtime_error("Failed to create concorde_work directory");
-  }
-  std::string temp_dir = "concorde_work/vats5_tsp_XXXXXX";
-  if (mkdtemp(temp_dir.data()) == nullptr) {
-    throw std::runtime_error("Failed to create temp directory");
-  }
-  std::string problem_path = temp_dir + "/problem";
-  std::string solution_path = temp_dir + "/solution";
-
-  auto cleanup_temp = [&]() { std::filesystem::remove_all(temp_dir); };
-
-  // Write TSP problem to temp file
-  {
-    std::ofstream out(problem_path);
-    OutputConcordeTsp(out, weights);
+  // Complete graph on the doubled vertices: every pair a < b.
+  int ecount = doubled_n * (doubled_n - 1) / 2;
+  std::vector<int> elist;
+  std::vector<int> elen;
+  elist.reserve(2 * ecount);
+  elen.reserve(ecount);
+  for (int a = 0; a < doubled_n; ++a) {
+    for (int b = a + 1; b < doubled_n; ++b) {
+      elist.push_back(a);
+      elist.push_back(b);
+      elen.push_back(weights.GetDoubledWeight(a, b));
+    }
   }
 
   std::optional<int> concorde_ub;
+  std::optional<double> concorde_ub_double;
   if (ub.has_value()) {
     concorde_ub =
         *ub + n * kInterVertexOffset + n * weights.NegativeWeightOffset();
+    concorde_ub_double = static_cast<double>(*concorde_ub);
   }
 
-  // Invoke Concorde from temp dir so its temp files don't conflict when running
-  // in parallel.
-  //
-  // We use fork/exec instead of popen so we have the child PID. Concorde
-  // occasionally crashes with SIGABRT and hangs; having the PID lets us kill
-  // it immediately and retry.
-  std::string seed_str = std::to_string(seed);
-  std::string ub_str;
-  if (concorde_ub.has_value()) {
-    ub_str = std::to_string(*concorde_ub);
+  WorkDir work_dir;
+  std::string log_path = work_dir.path() + "/log";
+
+  // The shim redirects fds 1 and 2; flush the C++ streams first so their
+  // buffered output doesn't land in Concorde's log.
+  std::cout.flush();
+  std::cerr.flush();
+
+  int success = 0;
+  int found_tour = 0;
+  double optval = 0.0;
+  std::vector<int> doubled_tour(doubled_n);
+  int rval = vats5_concorde_solve(
+      doubled_n,
+      ecount,
+      elist.data(),
+      elen.data(),
+      kForbiddenEdgeWeight,
+      concorde_ub_double.has_value() ? &*concorde_ub_double : nullptr,
+      seed,
+      work_dir.path().c_str(),
+      log_path.c_str(),
+      &success,
+      &found_tour,
+      &optval,
+      doubled_tour.data()
+  );
+
+  std::string concorde_output = ReadFile(log_path);
+  if (tsp_log) {
+    *tsp_log << concorde_output << std::flush;
   }
 
-  int pipefd[2];
-  if (pipe(pipefd) != 0) {
-    cleanup_temp();
-    throw std::runtime_error("Failed to create pipe for concorde");
-  }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    close(pipefd[0]);
-    close(pipefd[1]);
-    cleanup_temp();
-    throw std::runtime_error("Failed to fork for concorde");
-  }
-
-  if (pid == 0) {
-    // Child: redirect stdout+stderr to pipe, chdir, exec concorde.
-    close(pipefd[0]);
-    dup2(pipefd[1], STDOUT_FILENO);
-    dup2(pipefd[1], STDERR_FILENO);
-    close(pipefd[1]);
-    if (chdir(temp_dir.c_str()) != 0) {
-      _exit(127);
-    }
-    if (concorde_ub.has_value()) {
-      execlp(
-          "concorde",
-          "concorde",
-          "-s",
-          seed_str.c_str(),
-          "-u",
-          ub_str.c_str(),
-          "-x",
-          "-o",
-          "solution",
-          "problem",
-          nullptr
-      );
-    } else {
-      execlp(
-          "concorde",
-          "concorde",
-          "-s",
-          seed_str.c_str(),
-          "-x",
-          "-o",
-          "solution",
-          "problem",
-          nullptr
-      );
-    }
-    _exit(127);
-  }
-
-  // Parent: read concorde output, watching for crashes.
-  close(pipefd[1]);
-  FILE* pipe_read = fdopen(pipefd[0], "r");
-
-  std::string concorde_output;
-  char buffer[256];
-  bool crashed = false;
-  while (fgets(buffer, sizeof(buffer), pipe_read) != nullptr) {
-    if (tsp_log) {
-      *tsp_log << buffer << std::flush;
-    }
-    concorde_output += buffer;
-    if (strstr(buffer, "SIGABRT") != nullptr) {
-      crashed = true;
-      break;
-    }
-  }
-
-  if (crashed) {
-    kill(pid, SIGKILL);
-    waitpid(pid, nullptr, 0);
-    fclose(pipe_read);
-    cleanup_temp();
-    throw ConcordeCrash(
-        "Concorde crashed with SIGABRT. Output:\n" + concorde_output
+  if (rval != 0 || !success) {
+    throw ConcordeFailure(
+        "Concorde failed (rval=" + std::to_string(rval) + ", success=" +
+        std::to_string(success) + "). Output:\n" + concorde_output
     );
   }
 
-  fclose(pipe_read);
-  waitpid(pid, nullptr, 0);
-
-  size_t pos = concorde_output.find("Optimal Solution:");
-  if (pos == std::string::npos) {
-    // throw std::runtime_error(
-    //     "Concorde did not find optimal solution. Output:\n" + concorde_output
-    // );
-    // TODO: Consider whether this is really infeasible always or if there are
-    // error cases we should detect and fail for.
-    cleanup_temp();
-    return std::nullopt;
-  }
-  int raw_optimal_value =
-      static_cast<int>(std::round(std::stod(concorde_output.substr(pos + 17))));
-
-  if (ub.has_value() && raw_optimal_value >= concorde_ub) {
-    // Cleanup temp directory before returning
-    cleanup_temp();
+  // No tour: either Concorde proved the LP infeasible, or (with an upper
+  // bound) no tour better than the bound exists.
+  if (!found_tour) {
     return std::nullopt;
   }
 
-  // Read the doubled tour
-  std::vector<int> doubled_tour = ReadDoubledTour(solution_path);
+  int raw_optimal_value = static_cast<int>(std::round(optval));
+
+  // Concorde may report a tour whose value equals the bound; the bound is
+  // strict, so treat that as no solution.
+  if (concorde_ub.has_value() && raw_optimal_value >= *concorde_ub) {
+    return std::nullopt;
+  }
 
   // If the optimal tour uses a forbidden edge, then say that the problem is
   // infeasible.
@@ -476,8 +404,6 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // actually there is a feasible solution. Seems unlikely to matter in
   // practice, because kForbiddenEdgeCost is so big.
   if (DoubledTourUsesForbiddenEdge(doubled_tour, weights)) {
-    // Cleanup temp directory before returning
-    cleanup_temp();
     return std::nullopt;
   }
 
@@ -489,9 +415,6 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // by the negative-weight offset.
   int optimal_value = raw_optimal_value - n * kInterVertexOffset -
                       n * weights.NegativeWeightOffset();
-
-  // Cleanup temp directory
-  cleanup_temp();
 
   return ConcordeSolution{
       .tour = std::move(tour), .optimal_value = optimal_value
@@ -519,6 +442,9 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
     } catch (const InvalidTourStructure&) {
       // Don't retry - indicates insufficient kInterVertexOffset or a bug, not
       // transient.
+      throw;
+    } catch (const EdgeWeightOverflow&) {
+      // Don't retry - deterministic property of the input.
       throw;
     } catch (const std::exception&) {
       if (attempt == kMaxRetries) {
