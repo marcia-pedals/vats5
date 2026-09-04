@@ -47,11 +47,15 @@ clangStdenv.mkDerivation rec {
     # Install linkern (Lin-Kernighan heuristic solver)
     cp LINKERN/linkern $out/bin/
 
-    # Install the library
+    # Install the library. libconcorde.a has undefined references into QSopt,
+    # so also install qsopt.a (renamed with the lib prefix so -lqsopt works)
+    # to make this package self-contained for linking.
     cp concorde.a $out/lib/libconcorde.a
+    cp ${qsopt}/lib/qsopt.a $out/lib/libqsopt.a
 
     # Install headers
     cp concorde.h $out/include/
+    cp ${qsopt}/include/qsopt.h $out/include/
   '';
 
   meta = with lib; {

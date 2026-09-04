@@ -4,7 +4,7 @@ include(FetchContent)
 project(vats5
     VERSION 1.0.0
     DESCRIPTION "Visit All The Stops!!!"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Crow)
 find_package(nlohmann_json REQUIRED)
 find_package(SQLite3 REQUIRED)
+
+# Concorde TSP solver, linked as a static library. Provided by the nix
+# `concorde` package (see third_party/concorde.nix), which also bundles the
+# QSopt LP solver that libconcorde depends on.
+find_path(CONCORDE_INCLUDE_DIR concorde.h REQUIRED)
+find_library(CONCORDE_LIBRARY concorde REQUIRED)
+find_library(QSOPT_LIBRARY qsopt REQUIRED)
 
 FetchContent_Declare(
   csv
@@ -98,10 +105,13 @@ add_library(relaxed_adjacency_list STATIC src/solver/relaxed_adjacency_list.cpp)
 target_link_libraries(relaxed_adjacency_list PUBLIC steps_adjacency_list)
 target_include_directories(relaxed_adjacency_list PUBLIC src)
 
-# Create concorde library target
-add_library(concorde STATIC src/solver/concorde.cpp)
-target_link_libraries(concorde PUBLIC relaxed_adjacency_list)
-target_include_directories(concorde PUBLIC src)
+# Create concorde library target. concorde_shim.c is the only translation
+# unit that includes concorde.h (it is not C++-clean).
+add_library(concorde STATIC src/solver/concorde.cpp src/solver/concorde_shim.c)
+target_link_libraries(concorde
+    PUBLIC relaxed_adjacency_list
+    PRIVATE ${CONCORDE_LIBRARY} ${QSOPT_LIBRARY} m)
+target_include_directories(concorde PUBLIC src PRIVATE ${CONCORDE_INCLUDE_DIR})
 
 # Create relaxed_shortest_path library target
 add_library(relaxed_shortest_path STATIC src/solver/relaxed_shortest_path.cpp)

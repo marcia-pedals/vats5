@@ -35,10 +35,12 @@ class EdgeWeightOverflow : public std::exception {
   std::string message_;
 };
 
-// Thrown when Concorde crashes (e.g., SIGABRT). Retrying may succeed.
-class ConcordeCrash : public std::exception {
+// Thrown when Concorde reports an internal failure. Retrying with a different
+// seed may succeed.
+class ConcordeFailure : public std::exception {
  public:
-  explicit ConcordeCrash(std::string message) : message_(std::move(message)) {}
+  explicit ConcordeFailure(std::string message)
+      : message_(std::move(message)) {}
   const char* what() const noexcept override { return message_.c_str(); }
 
  private:
@@ -53,11 +55,15 @@ struct ConcordeSolution {
   int optimal_value;
 };
 
-// Solves TSP using Concorde and returns the tour.
+// Solves TSP using Concorde (linked in as a library) and returns the tour.
 // The tour visits all stops in the relaxed adjacency list exactly once.
 // If tsp_log is non-null, Concorde's output is written to it.
+// If ub is set, only tours with cost strictly less than ub are returned.
 // Returns nullopt if the optimal tour uses a forbidden edge (no valid tour
-// exists).
+// exists) or no tour beats ub.
+//
+// Not thread-safe: the call temporarily changes the process's cwd and
+// redirects stdout/stderr while Concorde runs.
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub = std::nullopt,
