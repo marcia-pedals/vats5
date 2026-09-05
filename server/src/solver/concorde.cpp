@@ -96,8 +96,19 @@ constexpr int kInterVertexOffset = 11000;
 // Vertices: 2i = in(i), 2i+1 = out(i)
 class DoubledGraphWeights {
  public:
-  explicit DoubledGraphWeights(const RelaxedAdjacencyList& relaxed)
-      : n_(relaxed.NumStops()), edge_weights_(n_ * n_, kForbiddenEdgeWeight) {
+  DoubledGraphWeights(const RelaxedAdjacencyList& relaxed, int weight_scale)
+      : n_(relaxed.NumStops()),
+        // The forbidden sentinel is deliberately NOT scaled: Concorde's
+        // fixed-point bound arithmetic overflows if a heuristic tour full of
+        // forbidden edges exceeds ~2^31, and 2n * kForbiddenEdgeWeight is
+        // sized for that. Scaled real weights must stay well below it (checked
+        // below).
+        forbidden_(kForbiddenEdgeWeight),
+        inter_offset_(kInterVertexOffset * weight_scale),
+        edge_weights_(n_ * n_, forbidden_) {
+    if (weight_scale < 1 || weight_scale > 50) {
+      throw std::invalid_argument("weight_scale must be in [1, 50]");
+    }
     for (int origin = 0; origin < n_; ++origin) {
       for (const auto& edge : relaxed.GetEdges(StopId{origin})) {
         edge_weights_[origin * n_ + edge.destination_stop.v] =
@@ -109,21 +120,41 @@ class DoubledGraphWeights {
     // edge weights correctly.
     int min_weight = 0;
     for (int w : edge_weights_) {
-      if (w < kForbiddenEdgeWeight) {
+      if (w < forbidden_) {
         min_weight = std::min(min_weight, w);
       }
     }
     negative_weight_offset_ = -min_weight;
+    if (weight_scale > 1) {
+      // Every real doubled-graph weight is w + negative offset + inter-vertex
+      // offset; keep it under half the sentinel so forbidden edges stay
+      // prohibitively expensive.
+      int max_w = 0;
+      for (int w : edge_weights_) {
+        if (w < forbidden_) {
+          max_w = std::max(max_w, w);
+        }
+      }
+      long worst =
+          static_cast<long>(max_w) + negative_weight_offset_ + inter_offset_;
+      if (worst >= forbidden_ / 2) {
+        throw EdgeWeightOverflow(
+            "Scaled weights too large for weight_scale " +
+            std::to_string(weight_scale) + ": max doubled weight " +
+            std::to_string(worst) + " >= " + std::to_string(forbidden_ / 2)
+        );
+      }
+    }
     if (negative_weight_offset_ > 0) {
       for (int& w : edge_weights_) {
-        if (w < kForbiddenEdgeWeight) {
+        if (w < forbidden_) {
           w += negative_weight_offset_;
-          if (w >= kForbiddenEdgeWeight) {
+          if (w >= forbidden_) {
             throw EdgeWeightOverflow(
                 "Edge weight " + std::to_string(w - negative_weight_offset_) +
                 " + offset " + std::to_string(negative_weight_offset_) + " = " +
-                std::to_string(w) + " >= kForbiddenEdgeWeight " +
-                std::to_string(kForbiddenEdgeWeight)
+                std::to_string(w) + " >= forbidden weight " +
+                std::to_string(forbidden_)
             );
           }
         }
@@ -134,6 +165,7 @@ class DoubledGraphWeights {
   int NumStops() const { return n_; }
   int DoubledN() const { return 2 * n_; }
   int NegativeWeightOffset() const { return negative_weight_offset_; }
+  int InterVertexOffset() const { return inter_offset_; }
 
   // Get asymmetric weight from original vertex `from` to `to`.
   int GetAsymmetricWeight(int from, int to) const {
@@ -158,31 +190,33 @@ class DoubledGraphWeights {
     if (!a_is_in && b_is_in) {
       // out(a_orig) <-> in(b_orig): asymmetric weight w(a_orig, b_orig)
       int w = GetAsymmetricWeight(a_orig, b_orig);
-      if (w >= kForbiddenEdgeWeight) {
-        return kForbiddenEdgeWeight;
+      if (w >= forbidden_) {
+        return forbidden_;
       }
-      return w + kInterVertexOffset;
+      return w + inter_offset_;
     } else if (a_is_in && !b_is_in) {
       // in(a_orig) <-> out(b_orig): asymmetric weight w(b_orig, a_orig)
       int w = GetAsymmetricWeight(b_orig, a_orig);
-      if (w >= kForbiddenEdgeWeight) {
-        return kForbiddenEdgeWeight;
+      if (w >= forbidden_) {
+        return forbidden_;
       }
-      return w + kInterVertexOffset;
+      return w + inter_offset_;
     } else {
       // Both in or both out: forbidden
-      return kForbiddenEdgeWeight;
+      return forbidden_;
     }
   }
 
   // Check if an edge in the doubled tour uses a forbidden weight.
   bool IsForbiddenEdge(int a, int b) const {
     if (a > b) std::swap(a, b);
-    return GetDoubledWeight(a, b) >= kForbiddenEdgeWeight;
+    return GetDoubledWeight(a, b) >= forbidden_;
   }
 
  private:
   int n_;
+  int forbidden_;
+  int inter_offset_;
   int negative_weight_offset_ = 0;
   std::vector<int> edge_weights_;
 };
@@ -318,9 +352,10 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
     std::ostream* tsp_log,
-    int seed
+    int seed,
+    int weight_scale
 ) {
-  DoubledGraphWeights weights(relaxed);
+  DoubledGraphWeights weights(relaxed, weight_scale);
   int n = weights.NumStops();
 
   // Create temp directory under concorde_work/ in cwd so it works in Claude
@@ -345,8 +380,8 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
   std::optional<int> concorde_ub;
   if (ub.has_value()) {
-    concorde_ub =
-        *ub + n * kInterVertexOffset + n * weights.NegativeWeightOffset();
+    concorde_ub = *ub + n * weights.InterVertexOffset() +
+                  n * weights.NegativeWeightOffset();
   }
 
   // Invoke Concorde from temp dir so its temp files don't conflict when running
@@ -487,7 +522,7 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   // Subtract the offsets added during graph construction. A proper tour has
   // exactly n inter-vertex edges, each inflated by kInterVertexOffset and
   // by the negative-weight offset.
-  int optimal_value = raw_optimal_value - n * kInterVertexOffset -
+  int optimal_value = raw_optimal_value - n * weights.InterVertexOffset() -
                       n * weights.NegativeWeightOffset();
 
   // Cleanup temp directory
@@ -500,10 +535,18 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
 
 }  // namespace
 
+int MaxConcordeEdgeWeight(int weight_scale, int min_weight) {
+  long negative_offset = std::max(0, -min_weight);
+  long limit = kForbiddenEdgeWeight / 2 - negative_offset -
+               static_cast<long>(kInterVertexOffset) * weight_scale - 1;
+  return static_cast<int>(std::max(0L, limit));
+}
+
 std::optional<ConcordeSolution> SolveTspWithConcorde(
     const RelaxedAdjacencyList& relaxed,
     std::optional<int> ub,
-    std::ostream* tsp_log
+    std::ostream* tsp_log,
+    int weight_scale
 ) {
   if (relaxed.NumStops() < kBruteForceThreshold) {
     return SolveTspBruteForce(relaxed, ub);
@@ -514,7 +557,7 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
   for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
     try {
       return SolveTspWithConcordeImpl(
-          relaxed, ub, tsp_log, kBaseSeed + attempt - 1
+          relaxed, ub, tsp_log, kBaseSeed + attempt - 1, weight_scale
       );
     } catch (const InvalidTourStructure&) {
       // Don't retry - indicates insufficient kInterVertexOffset or a bug, not

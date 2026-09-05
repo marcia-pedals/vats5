@@ -22,9 +22,13 @@
 // the relaxed tour is time-consistent at a stop, the two cancel.
 
 #include <CLI/CLI.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <deque>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -37,9 +41,11 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Highs.h"
+#include "solver/concorde.h"
 #include "solver/held_karp_dp.h"
 #include "solver/tarel_graph.h"
 #include "solver/tour_paths.h"
@@ -908,11 +914,68 @@ struct IterationResult {
   std::string engine_stats;
 };
 
+// Deterministic per-edge tie-breaking perturbation for the exact TSP oracle.
+// Weights are scaled by `scale` and each original (unmerged) tarel edge gets a
+// hash-derived offset in [0, max_delta]; the hash depends only on the edge's
+// endpoint states, so the same edge is perturbed identically in every
+// iteration. The perturbation is subtracted from the bound: a canonical tour
+// uses exactly one inter-stop edge per stop group, so its perturbed cost
+// exceeds scale * cost by at most num_groups * max_delta.
+struct TspPerturbation {
+  int scale = 1;      // 1 disables
+  int max_delta = 0;  // per-edge perturbation in scaled units
+
+  static uint64_t Mix(uint64_t x) {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+  }
+  int Delta(const TarelEdge& e) const {
+    if (scale == 1 || max_delta == 0) {
+      return 0;
+    }
+    uint64_t h =
+        Mix(static_cast<uint64_t>(static_cast<uint32_t>(e.origin.stop.v))
+                << 32 |
+            static_cast<uint32_t>(e.origin.partition.v));
+    h =
+        Mix(h ^
+            (static_cast<uint64_t>(static_cast<uint32_t>(e.destination.stop.v))
+                 << 32 |
+             static_cast<uint32_t>(e.destination.partition.v)));
+    return static_cast<int>(h % static_cast<uint64_t>(max_delta + 1));
+  }
+};
+
 std::optional<IterationResult> SolveIterationConcorde(
     const ProblemState& state,
-    const std::vector<AnnotatedTarelEdge>& annotated,
-    std::ostream* tsp_log
+    const std::vector<AnnotatedTarelEdge>& annotated_in,
+    std::ostream* tsp_log,
+    const TspPerturbation& perturb = {}
 ) {
+  // Scaled + perturbed copy (identity when perturbation is disabled). Long
+  // edges are capped so the scaled weights fit Concorde's range; capping only
+  // lowers costs, so the bound stays valid.
+  std::vector<AnnotatedTarelEdge> annotated = annotated_in;
+  int num_capped = 0;
+  if (perturb.scale != 1) {
+    int min_w = kCycleEdgeWeight;
+    for (const AnnotatedTarelEdge& a : annotated) {
+      min_w = std::min(min_w, a.edge.weight);
+    }
+    int cap = MaxConcordeEdgeWeight(perturb.scale, min_w * perturb.scale) -
+              perturb.max_delta;
+    for (AnnotatedTarelEdge& a : annotated) {
+      long scaled = static_cast<long>(a.edge.weight) * perturb.scale;
+      if (scaled > cap) {
+        scaled = cap;
+        num_capped += 1;
+      }
+      a.edge.weight = static_cast<int>(scaled) + perturb.Delta(a.edge);
+    }
+  }
+
   std::vector<TarelEdge> edges;
   edges.reserve(annotated.size());
   for (const AnnotatedTarelEdge& a : annotated) {
@@ -920,7 +983,8 @@ std::optional<IterationResult> SolveIterationConcorde(
   }
 
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
-  TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
+  TspGraphData graph =
+      MakeTspGraphEdges(remap.edges, state.boundary, perturb.scale);
 
   // Check that at least one representative from each group of required stops
   // appears in `graph` (same check as ComputeTarelLowerBound).
@@ -958,15 +1022,34 @@ std::optional<IterationResult> SolveIterationConcorde(
     }
   }
 
+  int lower_bound = result->optimal_value;
+  if (perturb.scale != 1) {
+    // opt_scaled <= scale * opt + num_groups * max_delta for the canonical
+    // tour of any real tour, so opt >= ceil((opt_scaled - slack) / scale).
+    long num_groups = static_cast<long>(graph.num_states_by_stop.size());
+    long slack = num_groups * perturb.max_delta;
+    long numer = static_cast<long>(result->optimal_value) - slack;
+    // Ceil division for possibly negative numerators.
+    long q = numer / perturb.scale;
+    if (numer % perturb.scale != 0 && numer > 0) {
+      q += 1;
+    }
+    lower_bound = static_cast<int>(q);
+  }
+
   IterationResult out{
-      .lower_bound = result->optimal_value,
+      .lower_bound = lower_bound,
       .active = {},
-      .engine_stats = "tsp_n " + std::to_string(graph.state_by_id.size()),
+      .engine_stats =
+          "tsp_n " + std::to_string(graph.state_by_id.size()) +
+          (perturb.scale != 1 ? ", capped " + std::to_string(num_capped) : ""),
   };
   for (const TarelEdge& tour_edge : result->tour_edges) {
-    out.active.push_back(
-        {best_by_merged.at({tour_edge.origin, tour_edge.destination}), 1.0}
-    );
+    // best_by_merged points into the local perturbed copy; translate back to
+    // the caller's vector by index.
+    const AnnotatedTarelEdge* local =
+        best_by_merged.at({tour_edge.origin, tour_edge.destination});
+    out.active.push_back({&annotated_in[local - annotated.data()], 1.0});
   }
   return out;
 }
@@ -1355,6 +1438,12 @@ class LpTarelBound {
           k >= first_inter ? std::optional(k - first_inter) : std::nullopt
       );
     }
+    annotated_to_col_.assign(mapped_edges.size(), -1);
+    for (size_t c = 0; c < col_annotated_.size(); ++c) {
+      if (col_annotated_[c].has_value()) {
+        annotated_to_col_[*col_annotated_[c]] = static_cast<int>(c);
+      }
+    }
 
     // Base LP: out-degree row v, in-degree row num_vertices_ + v, all == 1.
     HighsLp lp;
@@ -1410,6 +1499,25 @@ class LpTarelBound {
   int num_vertices() const { return num_vertices_; }
   int num_cuts() const { return num_cuts_; }
 
+  // Branch-and-bound support: fix the LP column of an inter-stop edge (by
+  // annotated index) to [lo, hi]. Returns false if the edge has no column.
+  bool SetAnnotatedBounds(size_t annotated_idx, double lo, double hi) {
+    if (annotated_idx >= annotated_to_col_.size() ||
+        annotated_to_col_[annotated_idx] < 0) {
+      return false;
+    }
+    highs_.changeColBounds(annotated_to_col_[annotated_idx], lo, hi);
+    return true;
+  }
+  // Restores [0, 1] on every column.
+  void ResetAllBounds() {
+    std::vector<double> lo(col_origin_.size(), 0.0);
+    std::vector<double> hi(col_origin_.size(), 1.0);
+    highs_.changeColsBounds(
+        0, static_cast<HighsInt>(col_origin_.size()) - 1, lo.data(), hi.data()
+    );
+  }
+
   struct LpResult {
     // ceil(LP objective - cycle bonus correction): a valid integer lower
     // bound on the tarel TSP value (of the modified weights).
@@ -1432,7 +1540,6 @@ class LpTarelBound {
         0, static_cast<HighsInt>(col_cost_.size()) - 1, col_cost_.data()
     );
 
-    constexpr double kSupportTol = 1e-6;
     constexpr int kMaxRounds = 100;
     int rounds = 0;
     while (true) {
@@ -1441,6 +1548,10 @@ class LpTarelBound {
         return std::nullopt;
       }
       const std::vector<double>& x = highs_.getSolution().col_value;
+
+      if (rounds >= kMaxRounds) {
+        break;
+      }
 
       // Components of the support graph; each component that isn't everything
       // is a violated subtour cut (its outflow is 0).
@@ -1462,15 +1573,30 @@ class LpTarelBound {
       for (int v = 0; v < num_vertices_; ++v) {
         components[find(v)].push_back(v);
       }
-      if (components.size() == 1 || rounds >= kMaxRounds) {
-        break;
-      }
-      for (const auto& [root, members] : components) {
-        std::vector<char> in_set(num_vertices_, 0);
-        for (int v : members) {
-          in_set[v] = 1;
+      int added = 0;
+      if (components.size() > 1) {
+        for (const auto& [root, members] : components) {
+          std::vector<char> in_set(num_vertices_, 0);
+          for (int v : members) {
+            in_set[v] = 1;
+          }
+          added += AddCutForSet(in_set) ? 1 : 0;
         }
-        AddCutForSet(in_set);
+      } else {
+        // Connected support: look for fractional subtours, i.e. vertex sets
+        // whose (symmetrized) cut mass is below 2.
+        std::vector<std::vector<char>> violated = SeparateMinCuts(x);
+        for (const std::vector<char>& in_set : violated) {
+          added += AddCutForSet(in_set) ? 1 : 0;
+        }
+        if (!violated.empty() && added == 0) {
+          std::cerr << "LpTarelBound: " << violated.size()
+                    << " violated subtour cuts already in the pool; the LP "
+                       "solution should satisfy them\n";
+        }
+      }
+      if (added == 0) {
+        break;
       }
       rounds += 1;
     }
@@ -1693,7 +1819,24 @@ class LpTarelBound {
   }
 
  private:
-  void AddCutForSet(const std::vector<char>& in_set) {
+  // Adds the subtour cut out(S) >= 1 for S = {v : in_set[v]} unless an
+  // equivalent row is already in the pool (S and V \ S give the same row
+  // under the degree equalities). Returns whether a row was added.
+  bool AddCutForSet(const std::vector<char>& in_set) {
+    // Canonical key: the side not containing vertex 0.
+    std::vector<int> key;
+    bool flip = in_set[0];
+    for (int v = 0; v < num_vertices_; ++v) {
+      if (static_cast<bool>(in_set[v]) != flip) {
+        key.push_back(v);
+      }
+    }
+    if (key.empty() || static_cast<int>(key.size()) == num_vertices_) {
+      return false;
+    }
+    if (!cut_pool_.insert(key).second) {
+      return false;
+    }
     std::vector<HighsInt> indices;
     std::vector<double> values;
     for (size_t c = 0; c < col_origin_.size(); ++c) {
@@ -1710,16 +1853,250 @@ class LpTarelBound {
         values.data()
     );
     num_cuts_ += 1;
+    return true;
   }
+
+  // Exact subtour separation on a connected support graph. Symmetrize the LP
+  // solution into undirected masses w(u,v) = x(u,v) + x(v,u); under the degree
+  // equalities every vertex has w-degree 2 and a set S violates out(S) >= 1
+  // iff its undirected cut mass is below 2. Runs Stoer-Wagner and returns
+  // every phase cut below 2 (each is a valid violated cut, not only the global
+  // minimum), after Padberg-Rinaldi contraction: if w(u,v) >= d(u)/2 then for
+  // any cut S separating u from v, moving u to v's side does not increase the
+  // cut, so some violated cut (if any) keeps u and v together -- unless S = {u}
+  // itself, which is recorded before contracting.
+  std::vector<std::vector<char>> SeparateMinCuts(
+      const std::vector<double>& x
+  ) const {
+    constexpr double kViolationTol = 1e-4;
+    const int n = num_vertices_;
+    std::vector<std::unordered_map<int, double>> adj(n);
+    std::vector<double> degree(n, 0.0);
+    for (size_t c = 0; c < col_origin_.size(); ++c) {
+      if (x[c] > kSupportTol) {
+        adj[col_origin_[c]][col_dest_[c]] += x[c];
+        adj[col_dest_[c]][col_origin_[c]] += x[c];
+        degree[col_origin_[c]] += x[c];
+        degree[col_dest_[c]] += x[c];
+      }
+    }
+    std::vector<std::vector<int>> members(n);
+    for (int v = 0; v < n; ++v) {
+      members[v] = {v};
+    }
+    std::vector<char> alive(n, 1);
+    int num_alive = n;
+    auto contract = [&](int keep, int gone) {
+      double shared = 0.0;
+      for (const auto& [u, wt] : adj[gone]) {
+        adj[u].erase(gone);
+        if (u != keep) {
+          adj[keep][u] += wt;
+          adj[u][keep] += wt;
+        } else {
+          shared = wt;
+        }
+      }
+      adj[gone].clear();
+      adj[keep].erase(gone);
+      degree[keep] = degree[keep] + degree[gone] - 2.0 * shared;
+      degree[gone] = 0.0;
+      members[keep].insert(
+          members[keep].end(), members[gone].begin(), members[gone].end()
+      );
+      members[gone].clear();
+      alive[gone] = 0;
+      num_alive -= 1;
+    };
+
+    std::vector<std::vector<char>> cuts;
+    std::set<std::vector<int>> seen;
+    auto record = [&](int v) {
+      std::vector<int> key = members[v];
+      std::sort(key.begin(), key.end());
+      if (seen.insert(key).second) {
+        std::vector<char> in_set(n, 0);
+        for (int u : key) {
+          in_set[u] = 1;
+        }
+        cuts.push_back(std::move(in_set));
+      }
+    };
+
+    // Padberg-Rinaldi contraction until no edge qualifies. A merged set whose
+    // own cut is below 2 is itself violated; record it (it would otherwise be
+    // hidden inside later merges).
+    bool contracted = true;
+    while (contracted) {
+      contracted = false;
+      for (int v = 0; v < n && num_alive > 1; ++v) {
+        if (!alive[v]) {
+          continue;
+        }
+        int partner = -1;
+        for (const auto& [u, wt] : adj[v]) {
+          if (wt >= degree[v] / 2.0 - 1e-9 || wt >= degree[u] / 2.0 - 1e-9) {
+            partner = u;
+            break;
+          }
+        }
+        if (partner >= 0) {
+          contract(v, partner);
+          if (degree[v] < 2.0 - kViolationTol) {
+            record(v);
+          }
+          contracted = true;
+        }
+      }
+    }
+
+    std::vector<double> w(n);
+    std::vector<char> added(n);
+    while (num_alive > 1) {
+      std::fill(w.begin(), w.end(), 0.0);
+      std::fill(added.begin(), added.end(), 0);
+      std::priority_queue<std::pair<double, int>> pq;
+      int prev = -1;
+      int last = -1;
+      double last_w = 0.0;
+      int count = 0;
+      int next_seed = 0;
+      while (count < num_alive) {
+        if (pq.empty()) {
+          // Disconnected remainder; seed the next unvisited super-vertex.
+          while (!alive[next_seed] || added[next_seed]) {
+            next_seed += 1;
+          }
+          pq.push({0.0, next_seed});
+        }
+        auto [key, v] = pq.top();
+        pq.pop();
+        if (added[v] || key < w[v]) {
+          continue;  // stale heap entry
+        }
+        added[v] = 1;
+        count += 1;
+        prev = last;
+        last = v;
+        last_w = w[v];
+        for (const auto& [u, wt] : adj[v]) {
+          if (!added[u]) {
+            w[u] += wt;
+            pq.push({w[u], u});
+          }
+        }
+      }
+      if (last_w < 2.0 - kViolationTol) {
+        record(last);
+      }
+      if (prev < 0) {
+        break;
+      }
+      contract(prev, last);
+    }
+    return cuts;
+  }
+
+ public:
+  // Debug cross-check of SeparateMinCuts: global min cut of the symmetrized
+  // support graph of the last LP solution, computed independently as the
+  // minimum over t of the (0, t) max flow (Dinic). Returns the min cut value;
+  // anything below 2 means a violated subtour cut survived separation.
+  double DebugGlobalMinCut() const {
+    const std::vector<double>& x = highs_.getSolution().col_value;
+    const int n = num_vertices_;
+    struct Arc {
+      int to;
+      double cap;
+    };
+    std::vector<Arc> arcs;
+    std::vector<std::vector<int>> out(n);
+    std::map<std::pair<int, int>, double> w;
+    for (size_t c = 0; c < col_origin_.size(); ++c) {
+      if (x[c] > kSupportTol) {
+        int a = std::min(col_origin_[c], col_dest_[c]);
+        int b = std::max(col_origin_[c], col_dest_[c]);
+        w[{a, b}] += x[c];
+      }
+    }
+    for (const auto& [key, wt] : w) {
+      out[key.first].push_back(static_cast<int>(arcs.size()));
+      arcs.push_back({key.second, wt});
+      out[key.second].push_back(static_cast<int>(arcs.size()));
+      arcs.push_back({key.first, wt});
+    }
+    std::vector<double> cap0(arcs.size());
+    for (size_t i = 0; i < arcs.size(); ++i) {
+      cap0[i] = arcs[i].cap;
+    }
+    std::vector<int> level(n);
+    std::vector<size_t> it(n);
+    auto bfs = [&](int s, int t) {
+      std::fill(level.begin(), level.end(), -1);
+      std::queue<int> q;
+      q.push(s);
+      level[s] = 0;
+      while (!q.empty()) {
+        int v = q.front();
+        q.pop();
+        for (int i : out[v]) {
+          if (arcs[i].cap > 1e-12 && level[arcs[i].to] < 0) {
+            level[arcs[i].to] = level[v] + 1;
+            q.push(arcs[i].to);
+          }
+        }
+      }
+      return level[t] >= 0;
+    };
+    std::function<double(int, int, double)> dfs = [&](int v, int t, double f) {
+      if (v == t) {
+        return f;
+      }
+      for (; it[v] < out[v].size(); ++it[v]) {
+        int i = out[v][it[v]];
+        if (arcs[i].cap > 1e-12 && level[arcs[i].to] == level[v] + 1) {
+          double d = dfs(arcs[i].to, t, std::min(f, arcs[i].cap));
+          if (d > 1e-12) {
+            arcs[i].cap -= d;
+            arcs[i ^ 1].cap += d;
+            return d;
+          }
+        }
+      }
+      return 0.0;
+    };
+    double best = std::numeric_limits<double>::infinity();
+    for (int t = 1; t < n; ++t) {
+      for (size_t i = 0; i < arcs.size(); ++i) {
+        arcs[i].cap = cap0[i];
+      }
+      double flow = 0.0;
+      while (bfs(0, t)) {
+        std::fill(it.begin(), it.end(), 0);
+        double f;
+        while ((f = dfs(0, t, std::numeric_limits<double>::infinity())) >
+               1e-12) {
+          flow += f;
+        }
+      }
+      best = std::min(best, flow);
+    }
+    return best;
+  }
+
+ private:
+  static constexpr double kSupportTol = 1e-6;
 
   Highs highs_;
   int num_vertices_ = 0;
   int correction_ = 0;
   std::vector<TarelState> state_by_id_;
   int num_cuts_ = 0;
+  std::set<std::vector<int>> cut_pool_;
   std::vector<int> col_origin_;
   std::vector<int> col_dest_;
   std::vector<std::optional<size_t>> col_annotated_;
+  std::vector<int> annotated_to_col_;
   std::vector<double> col_cost_;
   bool ok_ = false;
 };
@@ -1754,6 +2131,7 @@ struct SweepSolveOptions {
   int cov_res = 60;
   // Per-iteration progress lines when non-null.
   std::ostream* log = nullptr;
+  int log_every = 1;
 };
 
 struct SweepSolveResult {
@@ -1763,6 +2141,9 @@ struct SweepSolveResult {
   // The LP active set at the best bound (annotated indices with mass).
   std::vector<std::pair<size_t, double>> best_active;
   int iterations_run = 0;
+  // The last LP solution had a zero subgradient (a time-consistent relaxed
+  // tour): the bound is optimal for this relaxation.
+  bool zero_subgradient = false;
 };
 
 // Arrival-time upper bounds for flex-arrival states: a state whose flex
@@ -1807,11 +2188,16 @@ std::unordered_map<TarelState, int> ComputeFlexArrivalUbs(
   return ubs;
 }
 
+// If `persistent_lp` is non-null it is used (with whatever column bounds and
+// cut pool it carries) instead of building a fresh LP; the caller guarantees
+// it was built from the same edge set as BuildTarelEdgesWithCosts(data, .)
+// produces.
 SweepSolveResult RunSubgradientLp(
     const ProblemState& state,
     const TarelEdgeIntermediateData& data,
     const SweepSolveOptions& opts,
-    Prices warm
+    Prices warm,
+    LpTarelBound* persistent_lp = nullptr
 ) {
   SweepSolveResult result;
   // Two-phase schedule: optimize the stop-time lambdas alone first (they
@@ -1825,7 +2211,12 @@ SweepSolveResult RunSubgradientLp(
 
   std::vector<AnnotatedTarelEdge> annotated =
       BuildTarelEdgesWithCosts(data, prices);
-  LpTarelBound lp(annotated, state.required, state.boundary);
+  std::optional<LpTarelBound> owned_lp;
+  if (persistent_lp == nullptr) {
+    owned_lp.emplace(annotated, state.required, state.boundary);
+    persistent_lp = &*owned_lp;
+  }
+  LpTarelBound& lp = *persistent_lp;
   if (!lp.ok()) {
     result.infeasible = true;
     return result;
@@ -1986,13 +2377,15 @@ SweepSolveResult RunSubgradientLp(
     for (double g : span_gradient) {
       norm_sq += g * g;
     }
-    if (opts.log != nullptr) {
+    if (opts.log != nullptr && (iter % std::max(1, opts.log_every) == 0 ||
+                                iter + 1 == opts.max_iterations)) {
       *opts.log << "Iteration " << std::setw(4) << iter << ": bound " << bound
                 << ", best " << result.best_bound << ", |g|^2 "
                 << std::setprecision(3) << norm_sq << ", delta " << delta
                 << ", cov_c " << cov_constant << std::endl;
     }
     if (norm_sq == 0.0) {
+      result.zero_subgradient = true;
       break;
     }
 
@@ -2257,6 +2650,66 @@ int main(int argc, char* argv[]) {
       use_concorde,
       "Solve the tarel TSP exactly with Concorde every iteration instead of "
       "the LP relaxation"
+  );
+
+  int certify_every = 200;
+  app.add_option(
+      "--certify-every",
+      certify_every,
+      "LP mode: every this many iterations, solve the TSP exactly with "
+      "Concorde at the best lambdas so far and print the certified bound "
+      "(default 200; 0 disables)"
+  );
+
+  bool lp_bnb = false;
+  app.add_flag(
+      "--lp-bnb",
+      lp_bnb,
+      "Lagrangian branch-and-bound on one persistent LP: subgradient ascent "
+      "at every node, branching by fixing tarel-edge columns to 0/1 "
+      "(best-first, children warm-started from the parent's lambdas)"
+  );
+  int lp_bnb_root_iters = 1000;
+  app.add_option(
+      "--lp-bnb-root-iters",
+      lp_bnb_root_iters,
+      "Subgradient steps at the --lp-bnb root (default 1000)"
+  );
+  int lp_bnb_node_iters = 100;
+  app.add_option(
+      "--lp-bnb-node-iters",
+      lp_bnb_node_iters,
+      "Subgradient steps at each --lp-bnb child node (default 100)"
+  );
+  int lp_bnb_nodes = 100;
+  app.add_option(
+      "--lp-bnb-nodes",
+      lp_bnb_nodes,
+      "Max --lp-bnb nodes to expand (default 100)"
+  );
+  double lp_bnb_seconds = 0.0;
+  app.add_option(
+      "--lp-bnb-seconds",
+      lp_bnb_seconds,
+      "Wall-clock limit for --lp-bnb in seconds (default 0 = none)"
+  );
+
+  int tsp_perturb = 1;
+  app.add_option(
+      "--tsp-perturb",
+      tsp_perturb,
+      "With --concorde: scale TSP weights by this factor (2..50) and add a "
+      "deterministic per-edge tie-breaking offset of at most "
+      "floor(scale / num_stop_groups) scaled units; the bound is corrected "
+      "so it loses at most 1 s (default 1 = off)"
+  );
+
+  bool verify_cuts = false;
+  app.add_flag(
+      "--verify-cuts",
+      verify_cuts,
+      "After each LP solve, cross-check subtour separation with an "
+      "independent max-flow global min cut (slow; debugging)"
   );
 
   bool debug_mip = false;
@@ -2655,6 +3108,327 @@ int main(int argc, char* argv[]) {
       sched_t_min = std::min(sched_t_min, s.origin.time.seconds);
       sched_t_max = std::max(sched_t_max, s.origin.time.seconds);
     }
+  }
+
+  if (lp_bnb) {
+    if (!ub.has_value()) {
+      std::cerr << "--lp-bnb requires --ub or --hk\n";
+      return 1;
+    }
+    auto bnb_start = std::chrono::steady_clock::now();
+    auto elapsed_s = [&]() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - bnb_start
+             )
+                 .count() /
+             1000.0;
+    };
+    auto name = [&](StopId stop) {
+      std::string n = state.StopName(stop);
+      return n.size() > 18 ? n.substr(0, 18) : n;
+    };
+
+    TarelEdgeIntermediateData bnb_data =
+        ComputeTarelIntermediateData(std::vector<Step>(merged_steps));
+    std::vector<AnnotatedTarelEdge> annotated0 =
+        BuildTarelEdgesWithCosts(bnb_data, Prices{});
+    LpTarelBound lp(annotated0, state.required, state.boundary);
+    if (!lp.ok()) {
+      std::cerr << "Failed to build tarel LP\n";
+      return 1;
+    }
+    std::cout << "LP B&B: " << lp.num_vertices() << " vertices, "
+              << annotated0.size() << " edge columns, " << lp.num_cuts()
+              << " seeded cuts; root " << lp_bnb_root_iters
+              << " steps, children " << lp_bnb_node_iters << " steps"
+              << std::endl;
+
+    struct Fixing {
+      size_t annotated;
+      int value;  // 0 = forbid, 1 = require
+    };
+    struct LpBnbNode {
+      int id;
+      int parent;
+      int depth;
+      std::vector<Fixing> fixings;
+      int bound;  // valid lower bound for tours satisfying `fixings`
+      LagrangianCosts costs;  // best lambdas here (children warm-start)
+      std::vector<std::pair<size_t, double>> active;  // LP solution there
+    };
+    enum class NodeStatus { kOpen, kInfeasible, kPruned, kLeaf };
+
+    auto apply_fixings = [&](const std::vector<Fixing>& fixings) {
+      lp.ResetAllBounds();
+      for (const Fixing& f : fixings) {
+        lp.SetAnnotatedBounds(f.annotated, f.value, f.value);
+      }
+    };
+    auto solve_node = [&](LpBnbNode& node, int iters, bool is_root) {
+      apply_fixings(node.fixings);
+      SweepSolveOptions o{
+          .ub = *ub,
+          .max_iterations = iters,
+          .mu = mu,
+          .initial_delta = delta,
+          .patience = patience,
+          .momentum = momentum,
+          .eps = eps,
+          .log = is_root ? &std::cout : nullptr,
+          .log_every = 100,
+      };
+      Prices warm;
+      warm.stop_time = node.costs;
+      SweepSolveResult r =
+          RunSubgradientLp(state, bnb_data, o, std::move(warm), &lp);
+      if (r.infeasible) {
+        return std::pair(NodeStatus::kInfeasible, 0);
+      }
+      node.bound = std::max(node.bound, r.best_bound);
+      node.costs = std::move(r.best_prices.stop_time);
+      node.active = std::move(r.best_active);
+      if (node.bound >= *ub) {
+        return std::pair(NodeStatus::kPruned, r.iterations_run);
+      }
+      if (r.zero_subgradient) {
+        return std::pair(NodeStatus::kLeaf, r.iterations_run);
+      }
+      return std::pair(NodeStatus::kOpen, r.iterations_run);
+    };
+
+    // Branching edge: the unfixed column with mass closest to 1/2. If the
+    // solution is integral (a time-inconsistent tour), the out-edge at the
+    // stop group with the largest arrival/departure time mismatch.
+    struct BranchPick {
+      size_t annotated;
+      double mass;
+      const char* why;
+    };
+    auto choose_branch =
+        [&](const LpBnbNode& node) -> std::optional<BranchPick> {
+      std::unordered_set<size_t> fixed;
+      for (const Fixing& f : node.fixings) {
+        fixed.insert(f.annotated);
+      }
+      std::optional<BranchPick> best;
+      double best_score = std::numeric_limits<double>::infinity();
+      for (const auto& [idx, mass] : node.active) {
+        if (fixed.contains(idx) || mass <= 1e-6 || mass >= 1.0 - 1e-6) {
+          continue;
+        }
+        double score = std::abs(mass - 0.5);
+        if (score < best_score) {
+          best_score = score;
+          best = BranchPick{idx, mass, "fractional"};
+        }
+      }
+      if (best.has_value()) {
+        return best;
+      }
+      Prices node_prices;
+      node_prices.stop_time = node.costs;
+      std::vector<AnnotatedTarelEdge> ann =
+          BuildTarelEdgesWithCosts(bnb_data, node_prices);
+      std::unordered_map<StopId, size_t> in_by_group;
+      std::unordered_map<StopId, size_t> out_by_group;
+      for (const auto& [idx, mass] : node.active) {
+        if (mass > 0.5) {
+          in_by_group[state.required
+                          .Representative(ann[idx].edge.destination.stop)] =
+              idx;
+          out_by_group[state.required
+                           .Representative(ann[idx].edge.origin.stop)] = idx;
+        }
+      }
+      double worst = -1.0;
+      for (const auto& [group, out_idx] : out_by_group) {
+        auto it = in_by_group.find(group);
+        if (it == in_by_group.end() || fixed.contains(out_idx)) {
+          continue;
+        }
+        const AnnotatedTarelEdge& e_in = ann[it->second];
+        const AnnotatedTarelEdge& e_out = ann[out_idx];
+        if (!e_in.destination_arrival.has_value() ||
+            !e_out.origin_arrival.has_value()) {
+          continue;
+        }
+        double diff = std::abs(
+            static_cast<double>(e_in.destination_arrival->seconds) -
+            e_out.origin_arrival->seconds
+        );
+        if (diff > worst) {
+          worst = diff;
+          best = BranchPick{out_idx, 1.0, "inconsistent tour"};
+        }
+      }
+      return best;
+    };
+    auto edge_label = [&](size_t idx) {
+      const TarelEdge& e = annotated0[idx].edge;
+      return name(e.origin.stop) + " p" + std::to_string(e.origin.partition.v) +
+             " -> " + name(e.destination.stop) + " p" +
+             std::to_string(e.destination.partition.v);
+    };
+
+    std::deque<LpBnbNode> nodes;
+    // Min-heap on (bound, id): expand the weakest bound first.
+    std::priority_queue<
+        std::pair<int, int>,
+        std::vector<std::pair<int, int>>,
+        std::greater<>>
+        pq;
+    std::vector<int> leaf_bounds;
+    int next_id = 0;
+    int num_pruned = 0;
+    int num_infeasible = 0;
+    int num_stuck = 0;
+    int num_leaves = 0;
+
+    nodes.push_back(
+        LpBnbNode{
+            .id = next_id++,
+            .parent = -1,
+            .depth = 0,
+            .fixings = {},
+            .bound = std::numeric_limits<int>::min(),
+            .costs = {},
+            .active = {},
+        }
+    );
+    std::cout << "Root: " << lp_bnb_root_iters << " subgradient steps..."
+              << std::endl;
+    auto [root_status, root_iters] =
+        solve_node(nodes[0], lp_bnb_root_iters, true);
+    if (root_status == NodeStatus::kInfeasible) {
+      std::cout << "Root LP infeasible: no tour exists.\n";
+      return 0;
+    }
+    std::cout << "Root bound: " << TimeSinceServiceStart{nodes[0].bound} << " ("
+              << nodes[0].bound << " s) after " << root_iters << " steps, "
+              << FormatDuration(static_cast<int>(elapsed_s() * 1000))
+              << ", gap " << std::fixed << std::setprecision(2)
+              << 100.0 * (*ub - nodes[0].bound) / *ub << "%" << std::endl;
+    if (root_status == NodeStatus::kPruned) {
+      std::cout << "Root bound >= UB: UB " << *ub << " is optimal.\n";
+      return 0;
+    }
+    if (root_status == NodeStatus::kLeaf) {
+      std::cout << "Root relaxed tour is time-consistent; bound "
+                << nodes[0].bound << " is the relaxation's optimum.\n";
+      return 0;
+    }
+    pq.push({nodes[0].bound, 0});
+
+    auto global_lb = [&]() {
+      int lb = *ub;
+      if (!pq.empty()) {
+        lb = std::min(lb, pq.top().first);
+      }
+      for (int b : leaf_bounds) {
+        lb = std::min(lb, b);
+      }
+      return lb;
+    };
+
+    int expanded = 0;
+    while (!pq.empty()) {
+      if (expanded >= lp_bnb_nodes) {
+        std::cout << "Node limit reached.\n";
+        break;
+      }
+      if (lp_bnb_seconds > 0.0 && elapsed_s() >= lp_bnb_seconds) {
+        std::cout << "Time limit reached.\n";
+        break;
+      }
+      auto [pq_bound, id] = pq.top();
+      pq.pop();
+      LpBnbNode& node = nodes[id];
+      if (node.bound >= *ub) {
+        num_pruned += 1;
+        continue;
+      }
+      std::optional<BranchPick> pick = choose_branch(node);
+      if (!pick.has_value()) {
+        // Every tour edge is already fixed and the ascent budget ran out
+        // before the (inconsistent) tour's bound cleared the UB; keep its
+        // bound as a leaf.
+        num_stuck += 1;
+        leaf_bounds.push_back(node.bound);
+        std::cout << "Node " << node.id
+                  << ": no branch candidate (stuck), "
+                     "bound "
+                  << node.bound << " kept as leaf\n";
+        continue;
+      }
+      expanded += 1;
+      std::cout << "\nNode " << node.id << " (depth " << node.depth
+                << ", parent " << node.parent << "): bound " << node.bound
+                << ", " << node.fixings.size() << " fixings; branch on "
+                << edge_label(pick->annotated) << " (mass " << std::fixed
+                << std::setprecision(3) << pick->mass << ", " << pick->why
+                << ")" << std::endl;
+      for (int value : {1, 0}) {
+        LpBnbNode child{
+            .id = next_id++,
+            .parent = node.id,
+            .depth = node.depth + 1,
+            .fixings = node.fixings,
+            .bound = node.bound,
+            .costs = node.costs,
+            .active = {},
+        };
+        child.fixings.push_back(Fixing{pick->annotated, value});
+        auto [status, iters] = solve_node(child, lp_bnb_node_iters, false);
+        std::cout << "  child " << child.id << " (x=" << value << "): ";
+        switch (status) {
+          case NodeStatus::kInfeasible:
+            num_infeasible += 1;
+            std::cout << "infeasible";
+            break;
+          case NodeStatus::kPruned:
+            num_pruned += 1;
+            std::cout << "bound " << child.bound << " >= UB, pruned";
+            break;
+          case NodeStatus::kLeaf:
+            num_leaves += 1;
+            leaf_bounds.push_back(child.bound);
+            std::cout << "bound " << child.bound
+                      << ", time-consistent relaxed tour (leaf)";
+            break;
+          case NodeStatus::kOpen:
+            std::cout << "bound " << child.bound << " (+"
+                      << (child.bound - node.bound) << ")";
+            nodes.push_back(std::move(child));
+            pq.push({nodes.back().bound, nodes.back().id});
+            break;
+        }
+        std::cout << ", " << iters << " steps" << std::endl;
+      }
+      int lb = global_lb();
+      std::cout << "  global LB " << TimeSinceServiceStart{lb} << " (" << lb
+                << " s), gap " << std::fixed << std::setprecision(2)
+                << 100.0 * (*ub - lb) / *ub << "%, open " << pq.size()
+                << ", expanded " << expanded << ", "
+                << FormatDuration(static_cast<int>(elapsed_s() * 1000))
+                << std::endl;
+    }
+
+    int lb = global_lb();
+    std::cout << "\nLP B&B: " << expanded << " nodes expanded, " << num_pruned
+              << " pruned, " << num_infeasible << " infeasible, " << num_leaves
+              << " consistent leaves, " << num_stuck << " stuck, " << pq.size()
+              << " open\n";
+    if (pq.empty() && leaf_bounds.empty()) {
+      std::cout << "All branches pruned: UB " << TimeSinceServiceStart{*ub}
+                << " (" << *ub << " s) is optimal.\n";
+    } else {
+      std::cout << "Global lower bound: " << TimeSinceServiceStart{lb} << " ("
+                << lb << " s), gap " << std::fixed << std::setprecision(2)
+                << 100.0 * (*ub - lb) / *ub << "%\n";
+    }
+    std::cout << "Total time: "
+              << FormatDuration(static_cast<int>(elapsed_s() * 1000)) << "\n";
+    return 0;
   }
 
   if (span_bnb) {
@@ -3383,6 +4157,8 @@ int main(int argc, char* argv[]) {
   const double initial_delta = delta;
   int initial_bound = std::numeric_limits<int>::min();
   int best_bound = std::numeric_limits<int>::min();
+  int best_iter = -1;
+  int iterations_run = 0;
   int iterations_without_improvement = 0;
   std::optional<LpTarelBound> lp;
 
@@ -3390,7 +4166,72 @@ int main(int argc, char* argv[]) {
   // with the decay chosen each iteration to keep it an ascent direction.
   std::unordered_map<CostKey, double> direction;
 
+  // Concorde certification of the best LP lambdas: run at checkpoints during
+  // the loop and once at the end (skipped if the last checkpoint already
+  // certified the final best iterate).
+  std::optional<int> best_certified;
+  int best_certified_iter = -1;
+  int last_certified_best_iter = -2;
+  auto certify_best = [&](const std::string& label) -> std::optional<int> {
+    auto cert_start = std::chrono::steady_clock::now();
+    std::vector<AnnotatedTarelEdge> annotated_best =
+        BuildTarelEdgesWithCosts(data, best_costs);
+    std::optional<int> cert = SolveUnmergedTspBound(
+        annotated_best, state.required, state.boundary, nullptr
+    );
+    auto cert_end = std::chrono::steady_clock::now();
+    int cert_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      cert_end - cert_start
+    )
+                      .count();
+    last_certified_best_iter = best_iter;
+    if (!cert.has_value()) {
+      std::cout << label << ": Concorde solve failed" << std::endl;
+      return std::nullopt;
+    }
+    std::cout << label << ": certified TSP bound "
+              << TimeSinceServiceStart{*cert} << " (" << *cert
+              << " s) at the best LP iterate " << best_bound << " (iteration "
+              << best_iter << "), gap " << (*cert - best_bound) << " s, in "
+              << FormatDuration(cert_ms) << std::endl;
+    if (!best_certified.has_value() || *cert > *best_certified) {
+      best_certified = *cert;
+      best_certified_iter = best_iter;
+    }
+    return cert;
+  };
+
+  TspPerturbation perturbation;
+  if (use_concorde && tsp_perturb != 1) {
+    if (tsp_perturb < 2 || tsp_perturb > 50) {
+      std::cerr << "--tsp-perturb must be in [2, 50]\n";
+      return 1;
+    }
+    // Number of stop groups = number of inter-stop edges in a canonical tour.
+    std::set<StopId> groups;
+    for (const auto& [s, arrivals] : data.arrival_times_to) {
+      groups.insert(state.required.Representative(s.stop));
+    }
+    groups.insert(state.boundary.start);
+    groups.insert(state.boundary.end);
+    int num_groups = static_cast<int>(groups.size());
+    perturbation.scale = tsp_perturb;
+    perturbation.max_delta = std::max(1, tsp_perturb / num_groups);
+    std::ios_base::fmtflags saved_flags = std::cout.flags();
+    std::streamsize saved_precision = std::cout.precision();
+    std::cout << "TSP perturbation: scale " << perturbation.scale
+              << ", per-edge delta in [0, " << perturbation.max_delta << "], "
+              << num_groups << " stop groups, bound slack " << std::fixed
+              << std::setprecision(2)
+              << static_cast<double>(num_groups) * perturbation.max_delta /
+                     perturbation.scale
+              << " s" << std::endl;
+    std::cout.flags(saved_flags);
+    std::cout.precision(saved_precision);
+  }
+
   for (int iter = 0; iter < max_iterations; ++iter) {
+    iterations_run = iter + 1;
     auto iter_start = std::chrono::steady_clock::now();
     std::vector<AnnotatedTarelEdge> annotated =
         BuildTarelEdgesWithCosts(data, costs);
@@ -3398,8 +4239,24 @@ int main(int argc, char* argv[]) {
     std::optional<IterationResult> result;
     if (use_concorde) {
       result = SolveIterationConcorde(
-          state, annotated, verbose_tsp ? &std::cerr : nullptr
+          state, annotated, verbose_tsp ? &std::cerr : nullptr, perturbation
       );
+      // Diagnostic: the LP-strength bound at the same lambdas, so the log
+      // shows the integrality gap Concorde's branch-and-bound has to close.
+      if (result.has_value()) {
+        if (!lp.has_value()) {
+          lp.emplace(annotated, state.required, state.boundary);
+        }
+        if (lp->ok()) {
+          std::optional<LpTarelBound::LpResult> lp_diag = lp->Solve(annotated);
+          if (lp_diag.has_value()) {
+            result->engine_stats +=
+                ", lp " + std::to_string(lp_diag->lower_bound) + " (gap " +
+                std::to_string(result->lower_bound - lp_diag->lower_bound) +
+                ")";
+          }
+        }
+      }
     } else {
       if (!lp.has_value()) {
         // The tarel edge set doesn't depend on the costs, so the LP structure
@@ -3414,6 +4271,14 @@ int main(int argc, char* argv[]) {
                   << " seeded cuts" << std::endl;
       }
       std::optional<LpTarelBound::LpResult> lp_result = lp->Solve(annotated);
+      if (verify_cuts && lp_result.has_value()) {
+        double min_cut = lp->DebugGlobalMinCut();
+        std::cout << "Verify cuts: global min cut of LP support "
+                  << std::setprecision(6) << min_cut
+                  << (min_cut < 2.0 - 1e-4 ? "  ** VIOLATED SUBTOUR CUT **"
+                                           : " (ok)")
+                  << std::endl;
+      }
       if (debug_mip) {
         std::cout << "LP bound: "
                   << (lp_result.has_value()
@@ -3486,6 +4351,7 @@ int main(int argc, char* argv[]) {
     }
     if (result->lower_bound > best_bound) {
       best_bound = result->lower_bound;
+      best_iter = iter;
       best_costs = costs;
       iterations_without_improvement = 0;
       delta = std::min(delta * 1.2, initial_delta);
@@ -3565,6 +4431,14 @@ int main(int argc, char* argv[]) {
       std::cout << "Bound reached the upper bound.\n";
       break;
     }
+    if (!use_concorde && certify_every > 0 && (iter + 1) % certify_every == 0) {
+      std::optional<int> cert =
+          certify_best("Checkpoint after iteration " + std::to_string(iter));
+      if (cert.has_value() && ub.has_value() && *cert >= *ub) {
+        std::cout << "Certified bound reached the upper bound.\n";
+        break;
+      }
+    }
 
     // CFM momentum: mix the previous direction in when it disagrees with the
     // new subgradient, damping oscillation between alternating optimal tours.
@@ -3628,26 +4502,26 @@ int main(int argc, char* argv[]) {
 
   // In LP mode the per-iteration bounds are LP-strength; solve the TSP
   // exactly once at the best costs to get the full TSP-strength bound.
+  if (best_bound > std::numeric_limits<int>::min()) {
+    std::cout << "\nBest iterate: " << TimeSinceServiceStart{best_bound} << " ("
+              << best_bound << " s) first reached at iteration " << best_iter
+              << " of " << iterations_run << " run"
+              << (use_concorde ? " (exact TSP each iteration)" : " (LP)")
+              << std::endl;
+  }
   std::optional<int> certified_bound;
   if (!use_concorde && best_bound > std::numeric_limits<int>::min()) {
-    std::cout << "\nCertifying best costs with Concorde..." << std::endl;
-    auto cert_start = std::chrono::steady_clock::now();
-    std::vector<AnnotatedTarelEdge> annotated_best =
-        BuildTarelEdgesWithCosts(data, best_costs);
-    std::optional<int> cert = SolveUnmergedTspBound(
-        annotated_best, state.required, state.boundary, nullptr
-    );
-    auto cert_end = std::chrono::steady_clock::now();
-    int cert_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      cert_end - cert_start
-    )
-                      .count();
-    if (cert.has_value()) {
-      certified_bound = *cert;
-      std::cout << "Certified TSP bound at best costs: "
-                << TimeSinceServiceStart{*cert} << " (" << *cert << " s) in "
-                << FormatDuration(cert_ms) << std::endl;
-      best_bound = std::max(best_bound, *cert);
+    if (last_certified_best_iter != best_iter) {
+      std::cout << "\nCertifying best costs with Concorde..." << std::endl;
+      certify_best("Final");
+    }
+    certified_bound = best_certified;
+    if (best_certified.has_value()) {
+      std::cout << "Best certified TSP bound: "
+                << TimeSinceServiceStart{*best_certified} << " ("
+                << *best_certified << " s), from the LP iterate of iteration "
+                << best_certified_iter << std::endl;
+      best_bound = std::max(best_bound, *best_certified);
     } else {
       std::cout << "Certification solve failed; keeping LP bound." << std::endl;
     }

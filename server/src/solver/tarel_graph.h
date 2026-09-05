@@ -369,6 +369,10 @@ struct TspGraphData {
   std::unordered_map<StopId, int> num_states_by_stop;
   std::vector<WeightedEdge> tsp_edges;
   int expected_num_cycle_edges;
+  // Factor by which the caller pre-scaled the input edge weights (1 = none);
+  // cycle edges and Concorde's internal offsets are scaled to match.
+  int weight_scale = 1;
+  int cycle_edge_weight = kCycleEdgeWeight;
 };
 
 // Return type for SolveTspAndExtractTour.
@@ -425,7 +429,9 @@ TarelStateRemapResult RemapTarelStates(
 );
 
 TspGraphData MakeTspGraphEdges(
-    const std::vector<TarelEdge>& edges, const ProblemBoundary& boundary
+    const std::vector<TarelEdge>& edges,
+    const ProblemBoundary& boundary,
+    int weight_scale = 1
 );
 
 std::optional<TspTourResult> SolveTspAndExtractTour(

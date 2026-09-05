@@ -764,9 +764,13 @@ TarelStateRemapResult RemapTarelStates(
 }
 
 TspGraphData MakeTspGraphEdges(
-    const std::vector<TarelEdge>& edges, const ProblemBoundary& boundary
+    const std::vector<TarelEdge>& edges,
+    const ProblemBoundary& boundary,
+    int weight_scale
 ) {
   TspGraphData result;
+  result.weight_scale = weight_scale;
+  result.cycle_edge_weight = kCycleEdgeWeight * weight_scale;
 
   // Assign contiguous ids to all TarelStates.
   auto insert_state_if_new = [&](const TarelState& state) {
@@ -800,7 +804,7 @@ TspGraphData MakeTspGraphEdges(
               .origin = result.id_by_state.at(TarelState{stop, partition}),
               .destination =
                   result.id_by_state.at(TarelState{stop, next_partition}),
-              .weight_seconds = kCycleEdgeWeight,
+              .weight_seconds = result.cycle_edge_weight,
           }
       );
     }
@@ -843,12 +847,15 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
 
   std::optional<int> atsp_ub;
   if (ub.has_value()) {
-    atsp_ub = *ub + graph.expected_num_cycle_edges * kCycleEdgeWeight;
+    atsp_ub = *ub + graph.expected_num_cycle_edges * graph.cycle_edge_weight;
   }
 
   auto concorde_start = std::chrono::steady_clock::now();
   std::optional<ConcordeSolution> solution = SolveTspWithConcorde(
-      MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), atsp_ub, tsp_log
+      MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges),
+      atsp_ub,
+      tsp_log,
+      graph.weight_scale
   );
   auto concorde_end = std::chrono::steady_clock::now();
   if (on_event) {
@@ -870,7 +877,8 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   }
 
   // Adjust optimal value and rotate tour.
-  solution->optimal_value -= graph.expected_num_cycle_edges * kCycleEdgeWeight;
+  solution->optimal_value -=
+      graph.expected_num_cycle_edges * graph.cycle_edge_weight;
   auto tour_start_it = std::find(
       solution->tour.begin(),
       solution->tour.end(),
