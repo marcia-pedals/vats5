@@ -293,6 +293,98 @@ RC_GTEST_PROP(TarelGraphTest, LowerBoundFlexComplete, ()) {
   RC_ASSERT(lower_bound == actual_value);
 }
 
+// A fixed instance where a fast step exists in the timetable but is not
+// catchable from any arrival at its origin, and the tour is forced through a
+// slow step instead. Guards against lower-bound schemes that overcharge such
+// tours (e.g. by comparing a step against the fastest step from the same
+// origin without asking whether that fastest step is ever usable).
+//
+// Timetable (all partition 0):
+//   S -> P dep  900 arr 1000  (the only way to reach P)
+//   S -> A dep    0 arr  200  (morning direct; fastest S->A)
+//   P -> A dep  100 arr  110  (morning express: uncatchable, P unreachable
+//                              before 1000)
+//   P -> A dep 1000 arr 1600  (evening local; the tour must use this)
+//   A -> B dep 1600 arr 1700  (zero-wait connection off the local)
+//
+// The only feasible order is S, P, A, B, with duration 1700 - 900 = 800.
+TEST(TarelGraphTest, LowerBoundUncatchableFastStep) {
+  StopId s{0}, p{1}, a{2}, b{3};
+  StepPartitionId q{0};
+
+  std::vector<Step> steps = {
+      Step::PrimitiveScheduled(
+          s,
+          p,
+          TimeSinceServiceStart{900},
+          TimeSinceServiceStart{1000},
+          TripId{0},
+          q
+      ),
+      Step::PrimitiveScheduled(
+          s,
+          a,
+          TimeSinceServiceStart{0},
+          TimeSinceServiceStart{200},
+          TripId{1},
+          q
+      ),
+      Step::PrimitiveScheduled(
+          p,
+          a,
+          TimeSinceServiceStart{100},
+          TimeSinceServiceStart{110},
+          TripId{2},
+          q
+      ),
+      Step::PrimitiveScheduled(
+          p,
+          a,
+          TimeSinceServiceStart{1000},
+          TimeSinceServiceStart{1600},
+          TripId{3},
+          q
+      ),
+      Step::PrimitiveScheduled(
+          a,
+          b,
+          TimeSinceServiceStart{1600},
+          TimeSinceServiceStart{1700},
+          TripId{4},
+          q
+      ),
+  };
+
+  std::unordered_set<StopId> stops = {s, p, a, b};
+  std::unordered_map<StopId, ProblemStateStopInfo> stop_infos;
+  stop_infos[s] = ProblemStateStopInfo{GtfsStopId{"s"}, "S"};
+  stop_infos[p] = ProblemStateStopInfo{GtfsStopId{"p"}, "P"};
+  stop_infos[a] = ProblemStateStopInfo{GtfsStopId{"a"}, "A"};
+  stop_infos[b] = ProblemStateStopInfo{GtfsStopId{"b"}, "B"};
+
+  RequiredStops required;
+  for (StopId stop : stops) {
+    required.representative[stop] = stop;
+  }
+
+  ProblemBoundary boundary{.start = StopId{4}, .end = StopId{5}};
+  AddBoundary(steps, stops, stop_infos, boundary);
+  required.representative[boundary.start] = boundary.start;
+  required.representative[boundary.end] = boundary.end;
+
+  ProblemState state = MakeProblemState(
+      MakeAdjacencyList(steps), boundary, required, stop_infos, {}, {}
+  );
+
+  std::optional<TspTourResult> result = ComputeTarelLowerBound(state);
+  ASSERT_TRUE(result.has_value());
+  int lower_bound = result->optimal_value;
+  int actual_value = BruteForceSolveOptimalDuration(state);
+
+  EXPECT_EQ(actual_value, 800);
+  EXPECT_LE(lower_bound, actual_value);
+}
+
 // Serialization round-trip: serialize to JSON and deserialize back should
 // produce an equivalent ProblemState.
 RC_GTEST_PROP(TarelGraphTest, SerializationRoundTrip, ()) {
