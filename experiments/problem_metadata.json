@@ -63,7 +63,7 @@
     },
     "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_14.json": {
       "ub": 12830,
-      "lb": 11710
+      "lb": 11750
     },
     "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_15.json": {
       "ub": 12830,
@@ -75,11 +75,11 @@
     },
     "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_17.json": {
       "ub": 12950,
-      "lb": 11856
+      "lb": 11910
     },
     "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_18.json": {
       "ub": 13130,
-      "lb": 11870
+      "lb": 11930
     },
     "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_19.json": {
       "ub": 13430,
