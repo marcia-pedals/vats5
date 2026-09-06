@@ -6,13 +6,21 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <string>
 
+#include "solver/search_event.h"
 #include "solver/tarel_graph.h"
 #include "solver/two_opt.h"
+#include "tools/benchmark_events.h"
 
 using namespace vats5;
+
+template <class... Ts>
+struct Overloaded : Ts... {
+  using Ts::operator()...;
+};
 
 std::string FormatDuration(int ms) {
   if (ms < 1000) {
@@ -37,11 +45,27 @@ int main(int argc, char* argv[]) {
   app.add_option("--time-limit", time_limit, "Time limit in seconds");
   bool quiet = false;
   app.add_flag("--quiet", quiet, "Suppress per-restart progress output");
+  int known_lb = 0;
+  app.add_option(
+      "--known-lb",
+      known_lb,
+      "A proven lower bound on the optimal duration in seconds; the search "
+      "stops as soon as it finds a tour achieving it"
+  );
+
+  std::optional<std::string> events_out;
+  app.add_option(
+      "--events-out",
+      events_out,
+      "Path to write bound events as JSON Lines (see benchmark_events.h)"
+  );
 
   CLI11_PARSE(app, argc, argv);
   if (time_limit > 0) {
     options.time_limit_seconds = time_limit;
   }
+
+  BenchmarkEventLog events(events_out);
 
   std::ifstream in(input_path);
   if (!in.is_open()) {
@@ -58,10 +82,28 @@ int main(int argc, char* argv[]) {
   std::cout << "Required stops: " << state.required.size() << "\n";
   std::cout << "\n";
 
+  auto on_event = [&](const SearchEvent& event) {
+    std::visit(
+        Overloaded{
+            [&](const TarelSolve&) {},
+            [&](const NewLowerBound& e) { events.LowerBound(e.lb); },
+            [&](const NewUpperBound& e) { events.UpperBound(e.ub); },
+        },
+        event
+    );
+  };
+
   auto start = std::chrono::steady_clock::now();
-  TwoOptResult result =
-      TwoOptSolve(state, 0, options, quiet ? nullptr : &std::cerr);
+  events.Start();
+  TwoOptResult result = TwoOptSolve(
+      state, known_lb, options, quiet ? nullptr : &std::cerr, on_event
+  );
   auto end = std::chrono::steady_clock::now();
+  // 2-opt is a heuristic: it has converged only if it reached the bound the
+  // caller proved no tour can beat.
+  if (known_lb > 0 && result.best_val <= known_lb) {
+    events.Converged();
+  }
 
   int total_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
@@ -69,6 +111,11 @@ int main(int argc, char* argv[]) {
 
   std::cout << "\nRestarts: " << result.restarts_completed
             << ", evaluations: " << result.evaluations << "\n";
+  if (known_lb > 0) {
+    std::cout << "Known lb: " << TimeSinceServiceStart{known_lb}
+              << (result.best_val <= known_lb ? " (reached)" : " (not reached)")
+              << "\n";
+  }
   std::cout << "Best duration: " << TimeSinceServiceStart{result.best_val}
             << "\n";
   if (!result.best_tour.empty()) {

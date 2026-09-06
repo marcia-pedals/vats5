@@ -3,12 +3,15 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <string>
 
 #include "solver/held_karp_dp.h"
 #include "solver/tarel_graph.h"
+#include "tools/benchmark_events.h"
 
 using namespace vats5;
 
@@ -28,7 +31,16 @@ int main(int argc, char* argv[]) {
   app.add_option("input_path", input_path, "Path to ProblemState JSON file")
       ->required();
 
+  std::optional<std::string> events_out;
+  app.add_option(
+      "--events-out",
+      events_out,
+      "Path to write bound events as JSON Lines (see benchmark_events.h)"
+  );
+
   CLI11_PARSE(app, argc, argv);
+
+  BenchmarkEventLog events(events_out);
 
   std::ifstream in(input_path);
   if (!in.is_open()) {
@@ -46,8 +58,17 @@ int main(int argc, char* argv[]) {
   std::cout << "\n";
 
   auto start = std::chrono::steady_clock::now();
+  events.Start();
   auto result = HeldKarpDPSolve(state, 0, &std::cerr);
   auto end = std::chrono::steady_clock::now();
+
+  // Held-Karp is exact, so its answer is both bounds at once, and only known
+  // once the whole sweep is done.
+  if (result.best_val < std::numeric_limits<int>::max()) {
+    events.LowerBound(result.best_val);
+    events.UpperBound(result.best_val);
+  }
+  events.Converged();
 
   int total_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)

@@ -1,0 +1,217 @@
+{
+  "name": "hk-baseline",
+  "description": "",
+  "dir": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations",
+  "results": [
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_0.json",
+      "iteration": 0,
+      "num_required_groups": 15,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 0.165209292,
+          "lb": 10550
+        },
+        {
+          "type": "ub",
+          "t": 0.165251667,
+          "ub": 10550
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 0.165255458
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_1.json",
+      "iteration": 1,
+      "num_required_groups": 16,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 0.3332025,
+          "lb": 11060
+        },
+        {
+          "type": "ub",
+          "t": 0.333242375,
+          "ub": 11060
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 0.333247375
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_2.json",
+      "iteration": 2,
+      "num_required_groups": 17,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 0.7570885,
+          "lb": 11270
+        },
+        {
+          "type": "ub",
+          "t": 0.757145375,
+          "ub": 11270
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 0.757150875
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_3.json",
+      "iteration": 3,
+      "num_required_groups": 18,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 1.38811875,
+          "lb": 11390
+        },
+        {
+          "type": "ub",
+          "t": 1.388174417,
+          "ub": 11390
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 1.388179958
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_4.json",
+      "iteration": 4,
+      "num_required_groups": 19,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 2.695364125,
+          "lb": 11750
+        },
+        {
+          "type": "ub",
+          "t": 2.695424459,
+          "ub": 11750
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 2.695430209
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_5.json",
+      "iteration": 5,
+      "num_required_groups": 20,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 6.16070675,
+          "lb": 11930
+        },
+        {
+          "type": "ub",
+          "t": 6.160767959,
+          "ub": 11930
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 6.160773334
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_6.json",
+      "iteration": 6,
+      "num_required_groups": 21,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 16.294085417,
+          "lb": 12100
+        },
+        {
+          "type": "ub",
+          "t": 16.294167625,
+          "ub": 12100
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 16.294175709
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_7.json",
+      "iteration": 7,
+      "num_required_groups": 22,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 32.168363708,
+          "lb": 12160
+        },
+        {
+          "type": "ub",
+          "t": 32.168428167,
+          "ub": 12160
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 32.168433292
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_8.json",
+      "iteration": 8,
+      "num_required_groups": 23,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 64.550006833,
+          "lb": 12170
+        },
+        {
+          "type": "ub",
+          "t": 64.550078917,
+          "ub": 12170
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 64.550084375
+    },
+    {
+      "path": "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_9.json",
+      "iteration": 9,
+      "num_required_groups": 24,
+      "time_limit": 300.0,
+      "events": [
+        {
+          "type": "lb",
+          "t": 156.182129666,
+          "lb": 12350
+        },
+        {
+          "type": "ub",
+          "t": 156.182200166,
+          "ub": 12350
+        }
+      ],
+      "timed_out": false,
+      "exit_code": 0,
+      "converge_t": 156.182205416
+    }
+  ]
+}

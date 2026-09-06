@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "solver/data.h"
+#include "solver/search_event.h"
 #include "solver/tarel_graph.h"
 
 namespace vats5 {
@@ -44,11 +45,15 @@ struct TwoOptResult {
 // `known_lb` is a lower bound on the optimal duration that the caller has
 // already proven. The search returns as soon as it finds a tour achieving it,
 // since no tour can beat it. Pass 0 if nothing is known.
+//
+// `on_event` (may be null) is called with a NewUpperBound each time the best
+// tour improves.
 TwoOptResult TwoOptSolve(
     const ProblemState& state,
     int known_lb,
     const TwoOptOptions& options = {},
-    std::ostream* search_log = nullptr
+    std::ostream* search_log = nullptr,
+    const SearchEventCallback& on_event = nullptr
 );
 
 }  // namespace vats5

@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -12,8 +13,14 @@
 #include "solver/branch_and_bound.h"
 #include "solver/search_event.h"
 #include "solver/tarel_graph.h"
+#include "tools/benchmark_events.h"
 
 using namespace vats5;
+
+template <class... Ts>
+struct Overloaded : Ts... {
+  using Ts::operator()...;
+};
 
 std::string FormatDuration(int ms) {
   if (ms < 1000) {
@@ -37,7 +44,16 @@ int main(int argc, char* argv[]) {
   )
       ->default_val(-1);
 
+  std::optional<std::string> events_out;
+  app.add_option(
+      "--events-out",
+      events_out,
+      "Path to write bound events as JSON Lines (see benchmark_events.h)"
+  );
+
   CLI11_PARSE(app, argc, argv);
+
+  BenchmarkEventLog events(events_out);
 
   std::ifstream in(input_path);
   if (!in.is_open()) {
@@ -56,14 +72,24 @@ int main(int argc, char* argv[]) {
 
   std::vector<TarelSolve> solves;
   auto on_event = [&](const SearchEvent& event) {
-    std::visit([&](const TarelSolve& e) { solves.push_back(e); }, event);
+    std::visit(
+        Overloaded{
+            [&](const TarelSolve& e) { solves.push_back(e); },
+            [&](const NewLowerBound& e) { events.LowerBound(e.lb); },
+            [&](const NewUpperBound& e) { events.UpperBound(e.ub); },
+        },
+        event
+    );
   };
 
   auto start = std::chrono::steady_clock::now();
+  events.Start();
   auto result = BranchAndBoundSolve(
       state, 0, &std::cerr, std::nullopt, max_iter, on_event
   );
   auto end = std::chrono::steady_clock::now();
+  // The search only returns once it has proven its best tour optimal.
+  events.Converged();
 
   int total_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
