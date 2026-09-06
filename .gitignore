@@ -1,3 +1,5 @@
 .direnv/
 server/data
 concorde_work/
+.ipynb_checkpoints/
+__pycache__/

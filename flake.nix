@@ -76,7 +76,7 @@
             nodejs
             postgresql_17
             pre-commit
-            (python313.withPackages (ps: with ps; [ psycopg ]))
+            (python313.withPackages (ps: with ps; [ psycopg jupyter matplotlib ]))
             sqlite
           ] ++ [
             concorde

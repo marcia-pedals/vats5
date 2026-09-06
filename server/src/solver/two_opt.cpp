@@ -238,7 +238,8 @@ TwoOptResult TwoOptSolve(
     const ProblemState& state,
     int known_lb,
     const TwoOptOptions& options,
-    std::ostream* search_log
+    std::ostream* search_log,
+    const SearchEventCallback& on_event
 ) {
   TwoOptResult result{.best_val = kUnreachable, .best_tour = {}};
 
@@ -374,6 +375,9 @@ TwoOptResult TwoOptSolve(
     if (local_val < result.best_val) {
       result.best_val = local_val;
       best_candidate = c;
+      if (on_event) {
+        on_event(NewUpperBound{local_val});
+      }
     }
     if (search_log != nullptr) {
       *search_log << "restart " << restart << ": local opt "

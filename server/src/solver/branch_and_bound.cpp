@@ -234,6 +234,30 @@ BranchAndBoundResult BranchAndBoundSolve(
   std::vector<Path> best_paths;
   std::unordered_map<StopId, PlainEdge> best_original_edges;
 
+  // The lower bound reported so far, so that NewLowerBound only reports
+  // improvements. The popped node has the smallest parent_lb of all live
+  // nodes, and pruned nodes can't beat best_ub, so min(parent_lb, best_ub) is
+  // a global lower bound; it never decreases because children are pushed with
+  // at least their parent's bound. Starts at 0 so that the trivial bound of
+  // the root node is not reported.
+  int reported_lb = 0;
+  auto ReportLowerBound = [&](int lb) {
+    if (on_event && lb > reported_lb) {
+      reported_lb = lb;
+      on_event(NewLowerBound{lb});
+    }
+  };
+  // Ends the search: no live node can beat best_ub, so it is also the lower
+  // bound.
+  auto Finish = [&]() {
+    if (best_ub < std::numeric_limits<int>::max()) {
+      ReportLowerBound(best_ub);
+    }
+    return BranchAndBoundResult{
+        best_ub, std::move(best_paths), std::move(best_original_edges)
+    };
+  };
+
   while (!q.empty()) {
     if (max_iter > 0 && iter_num >= max_iter) {
       throw std::runtime_error("Exceeded max_iter");
@@ -281,11 +305,13 @@ BranchAndBoundResult BranchAndBoundSolve(
     //   *search_log << "\n";
     // }
 
+    ReportLowerBound(std::min(cur_node.parent_lb, best_ub));
+
     if (cur_node.parent_lb >= best_ub) {
       if (search_log != nullptr) {
         *search_log << "Search terminated: LB >= UB\n";
       }
-      return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+      return Finish();
     }
 
     StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
@@ -373,6 +399,9 @@ BranchAndBoundResult BranchAndBoundSolve(
           }
         }
         best_original_edges = state.original_edges;
+        if (on_event) {
+          on_event(NewUpperBound{best_ub});
+        }
         if (search_log != nullptr) {
           *search_log << "  found new ub " << TimeSinceServiceStart{best_ub}
                       << " " << ub_path.merged_step.origin.time << " "
@@ -383,9 +412,7 @@ BranchAndBoundResult BranchAndBoundSolve(
             *search_log << "Search terminated: UB reached known_lb ("
                         << TimeSinceServiceStart{known_lb} << ")\n";
           }
-          return {
-              best_ub, std::move(best_paths), std::move(best_original_edges)
-          };
+          return Finish();
         }
         // Prune nodes that can no longer beat the new UB.
         size_t old_size = q.size();
@@ -479,7 +506,7 @@ BranchAndBoundResult BranchAndBoundSolve(
     );
   }
 
-  return {best_ub, std::move(best_paths), std::move(best_original_edges)};
+  return Finish();
 }
 
 }  // namespace vats5

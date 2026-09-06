@@ -1,0 +1,117 @@
+{
+  "datasets": {
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations": {
+      "name": "munich-bahn-baseline-202609"
+    }
+  },
+  "problems": {
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_0.json": {
+      "lb": 10550,
+      "ub": 10550
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_1.json": {
+      "lb": 11060,
+      "ub": 11060
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_2.json": {
+      "lb": 11270,
+      "ub": 11270
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_3.json": {
+      "lb": 11390,
+      "ub": 11390
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_4.json": {
+      "lb": 11750,
+      "ub": 11750
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_5.json": {
+      "lb": 11930,
+      "ub": 11930
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_6.json": {
+      "lb": 12100,
+      "ub": 12100
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_7.json": {
+      "lb": 12160,
+      "ub": 12160
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_8.json": {
+      "lb": 12170,
+      "ub": 12170
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_9.json": {
+      "lb": 12350,
+      "ub": 12350
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_10.json": {
+      "ub": 12400,
+      "lb": 11580
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_11.json": {
+      "ub": 12500,
+      "lb": 11590
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_12.json": {
+      "ub": 12530,
+      "lb": 11530
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_13.json": {
+      "ub": 12800,
+      "lb": 11650
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_14.json": {
+      "ub": 12830,
+      "lb": 11710
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_15.json": {
+      "ub": 12830,
+      "lb": 11760
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_16.json": {
+      "ub": 12950,
+      "lb": 11756
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_17.json": {
+      "ub": 12950,
+      "lb": 11856
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_18.json": {
+      "ub": 13130,
+      "lb": 11870
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_19.json": {
+      "ub": 13430,
+      "lb": 11846
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_20.json": {
+      "ub": 13310,
+      "lb": 11876
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_21.json": {
+      "ub": 13430,
+      "lb": 11876
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_22.json": {
+      "ub": 13370,
+      "lb": 12050
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_23.json": {
+      "ub": 13310,
+      "lb": 12050
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_24.json": {
+      "ub": 13370,
+      "lb": 12050
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_25.json": {
+      "ub": 13430,
+      "lb": 11990
+    },
+    "/Users/admin/vats5-reference-data/munich-bahn-baseline-202609/iterations/problem_state_iteration_26.json": {
+      "ub": 13600,
+      "lb": 12020
+    }
+  }
+}
