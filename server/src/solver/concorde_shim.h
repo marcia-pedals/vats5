@@ -50,6 +50,38 @@ int vats5_concorde_solve(
     int* out_tour
 );
 
+// Like vats5_concorde_solve, but the graph is handed to Concorde as a
+// CC_SPARSE datagroup: only the listed edges exist, and node pairs not listed
+// get length `default_len` lazily (never materialized). All of Concorde's
+// pricing, elimination and bounding then run over the listed edges only.
+// Requires the sparse-friendly Concorde patch (third_party/concorde-sparse.patch)
+// for the setup phase to also be sparse.
+//
+// `default_len` must exceed the cost of any tour made of listed edges, so
+// that a tour containing an unlisted edge is never preferred; if the optimal
+// tour still contains one, *found_tour is 0 (no tour of listed edges exists).
+// Edges must not be listed twice.
+//
+// `in_tour` may be NULL. When set it is a permutation of the nodes used as
+// Concorde's starting tour (and its length as the initial upper bound), so
+// Concorde skips its own tour heuristic.
+int vats5_concorde_solve_sparse(
+    int ncount,
+    int ecount,
+    const int* elist,
+    const int* elen,
+    int default_len,
+    const int* in_tour,
+    const double* upper_bound,
+    int seed,
+    const char* work_dir,
+    const char* log_path,
+    int* success,
+    int* found_tour,
+    double* optval,
+    int* out_tour
+);
+
 #ifdef __cplusplus
 }
 #endif

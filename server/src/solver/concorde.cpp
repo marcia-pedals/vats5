@@ -1,17 +1,10 @@
 #include "solver/concorde.h"
 
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cassert>
-#include <cerrno>
 #include <cmath>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <numeric>
 #include <optional>
 #include <ostream>
@@ -19,6 +12,7 @@
 #include <stdexcept>
 
 #include "solver/concorde_shim.h"
+#include "solver/concorde_workdir.h"
 
 namespace vats5 {
 namespace {
@@ -267,46 +261,6 @@ std::vector<StopId> ValidateAndExtractTour(
     std::reverse(tour.begin(), tour.end());
   }
   return tour;
-}
-
-// Per-solve scratch directory for Concorde's checkpoint files and log.
-// Removed on destruction.
-class WorkDir {
- public:
-  WorkDir() {
-    // Create under concorde_work/ in cwd so it works in Claude sandbox (which
-    // restricts /tmp) and doesn't clutter the cwd.
-    if (mkdir("concorde_work", 0755) != 0 && errno != EEXIST) {
-      throw std::runtime_error("Failed to create concorde_work directory");
-    }
-    std::string temp_dir = "concorde_work/vats5_tsp_XXXXXX";
-    if (mkdtemp(temp_dir.data()) == nullptr) {
-      throw std::runtime_error("Failed to create temp directory");
-    }
-    // Absolute, because the shim chdirs into it and must be able to find it
-    // regardless of cwd.
-    path_ = std::filesystem::absolute(temp_dir).string();
-  }
-
-  ~WorkDir() {
-    std::error_code ec;
-    std::filesystem::remove_all(path_, ec);
-  }
-
-  WorkDir(const WorkDir&) = delete;
-  WorkDir& operator=(const WorkDir&) = delete;
-
-  const std::string& path() const { return path_; }
-
- private:
-  std::string path_;
-};
-
-std::string ReadFile(const std::string& path) {
-  std::ifstream in(path);
-  return std::string(
-      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()
-  );
 }
 
 std::optional<ConcordeSolution> SolveTspWithConcordeImpl(

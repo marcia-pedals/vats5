@@ -1,0 +1,2042 @@
+--- a/BIGGUY/bigguy.c
++++ b/BIGGUY/bigguy.c
+@@ -80,6 +80,34 @@
+ 
+ #ifdef  CC_BIGGUY_BUILTIN
+ 
++#ifdef CC_BIGGUY_INT128
++
++int CCbigguy_swrite (CC_SFILE *f, CCbigguy x)
++{
++    int i;
++
++    for (i = 112; i >= 0; i -= 16) {
++        if (CCutil_swrite_ushort (f, (unsigned short) ((x>>i)&0xffff)))
++            return -1;
++    }
++    return 0;
++}
++
++int CCbigguy_sread (CC_SFILE *f, CCbigguy *x)
++{
++    unsigned short y;
++    int i;
++
++    *x = 0;
++    for (i = 112; i >= 0; i -= 16) {
++        if (CCutil_sread_ushort (f, &y)) return -1;
++        *x |= ((CCbigguy) y) << i;
++    }
++    return 0;
++}
++
++#else /* CC_BIGGUY_INT128 */
++
+ int CCbigguy_swrite (CC_SFILE *f, CCbigguy x)
+ {
+     if (CCutil_swrite_ushort (f, (unsigned short) ((x>>48)&0xffff))) return -1;
+@@ -105,6 +133,8 @@
+     return 0;
+ }
+ 
++#endif /* CC_BIGGUY_INT128 */
++
+ #else  /* CC_BIGGUY_BUILTIN */
+ 
+ const CCbigguy CCbigguy_MINBIGGUY = {0x8000,0x0000,0x0000,0x0001};
+--- a/INCLUDE/bigguy.h
++++ b/INCLUDE/bigguy.h
+@@ -21,6 +21,16 @@
+ #undef CC_BIGGUY_LONG
+ #undef CC_BIGGUY_LONGLONG
+ 
++/* A 128-bit fixed point: 32 fractional bits and 95 integer bits, so that
++   sums of large duals over many nodes (as arise for big-M sparse instances)
++   cannot overflow the way the 32-bit integer part of the portable
++   implementation does. */
++#ifdef __SIZEOF_INT128__
++typedef __int128 CCbigguy;
++#define CC_BIGGUY_BUILTIN
++#define CC_BIGGUY_INT128
++#endif
++
+ #ifdef  CC_BIGGUY_LONGLONG
+ typedef long long CCbigguy;
+ #define CC_BIGGUY_BUILTIN
+@@ -36,8 +46,13 @@
+ #define CCbigguy_FRACBITS 32
+ #define CCbigguy_DUALSCALE (((CCbigguy) 1) << CCbigguy_FRACBITS)
+ #define CCbigguy_FRACPART(x) ((x) & (CCbigguy_DUALSCALE-1))
++#ifdef CC_BIGGUY_INT128
++#define CCbigguy_MAXBIGGUY (((((CCbigguy) 1) << 126) - 1) + \
++                            (((CCbigguy) 1) << 126))
++#else
+ #define CCbigguy_MAXBIGGUY (((((CCbigguy) 1) << 62) - 1) + \
+                             (((CCbigguy) 1) << 62))
++#endif
+ #define CCbigguy_MINBIGGUY (-CCbigguy_MAXBIGGUY)
+ #define CCbigguy_bigguytod(x) (((double) (x)) / ((double) CCbigguy_DUALSCALE))
+ #define CCbigguy_itobigguy(d) ((CCbigguy) ((d) * (double) CCbigguy_DUALSCALE))
+--- a/INCLUDE/tsp.h
++++ b/INCLUDE/tsp.h
+@@ -1304,6 +1304,8 @@
+ /****************************************************************************/
+ 
+ int
++    CCtsp_sparse_k_cheapest (int ncount, CCdatagroup *dat, int k,
++        int *ecount, int **elist, int **elen),
+     CCtsp_solve_sparse (int ncount, int ecount, int *elist, int *elen,
+         int *in_tour, int *out_tour, double *in_val, double *optval,
+         int *success, int *foundtour, char *name, double *timebound,
+--- a/TSP/ex_price.c
++++ b/TSP/ex_price.c
+@@ -1090,6 +1090,94 @@
+     }
+ }
+ 
++/* In a bipartite LP graph, adding t to the duals on one side and
++   subtracting t on the other changes no reduced cost, and when both sides of
++   a component have the same size it changes no dual objective either.  The
++   LP solver may return duals far along that free direction (they are then
++   huge with opposite signs), and their sum can overflow the exact
++   arithmetic below.  Shift each component so that both sides have the same
++   mean; the bound and the reduced costs are unaffected. */
++static void balance_bipartite_duals (CCtsp_lp *lp, double *node_pi)
++{
++    int ncount = lp->graph.ncount;
++    int ecount = lp->graph.ecount;
++    int i, j, k, a, b, head, tail, ncomp = 0;
++    int *start = (int *) NULL, *nbr = (int *) NULL, *color = (int *) NULL;
++    int *queue = (int *) NULL, *fill = (int *) NULL;
++    double maxshift = 0.0, t, sum0, sum1;
++    int n0, n1;
++
++    start = CC_SAFE_MALLOC (ncount + 1, int);
++    fill  = CC_SAFE_MALLOC (ncount + 1, int);
++    nbr   = CC_SAFE_MALLOC (2 * ecount + 1, int);
++    color = CC_SAFE_MALLOC (ncount, int);
++    queue = CC_SAFE_MALLOC (ncount, int);
++    if (!start || !fill || !nbr || !color || !queue) goto CLEANUP;
++
++    for (i = 0; i <= ncount; i++) start[i] = 0;
++    for (i = 0; i < ecount; i++) {
++        start[lp->graph.edges[i].ends[0] + 1]++;
++        start[lp->graph.edges[i].ends[1] + 1]++;
++    }
++    for (i = 0; i < ncount; i++) {
++        start[i + 1] += start[i];
++        fill[i] = start[i];
++    }
++    for (i = 0; i < ecount; i++) {
++        a = lp->graph.edges[i].ends[0];
++        b = lp->graph.edges[i].ends[1];
++        nbr[fill[a]++] = b;
++        nbr[fill[b]++] = a;
++    }
++    for (i = 0; i < ncount; i++) color[i] = -1;
++
++    for (i = 0; i < ncount; i++) {
++        if (color[i] != -1) continue;
++        head = tail = 0;
++        queue[tail++] = i;
++        color[i] = 0;
++        n0 = n1 = 0;
++        sum0 = sum1 = 0.0;
++        while (head < tail) {
++            a = queue[head++];
++            if (color[a] == 0) { n0++; sum0 += node_pi[a]; }
++            else               { n1++; sum1 += node_pi[a]; }
++            for (k = start[a]; k < start[a + 1]; k++) {
++                b = nbr[k];
++                if (color[b] == -1) {
++                    color[b] = 1 - color[a];
++                    queue[tail++] = b;
++                } else if (color[b] == color[a]) {
++                    goto CLEANUP;   /* odd cycle: not bipartite, no shift */
++                }
++            }
++        }
++        if (n0 != n1 || n0 == 0) continue;
++        t = (sum1 / n1 - sum0 / n0) / 2.0;
++        if (t > maxshift) maxshift = t;
++        if (-t > maxshift) maxshift = -t;
++        for (j = 0; j < tail; j++) {
++            a = queue[j];
++            if (color[a] == 0) node_pi[a] += t;
++            else               node_pi[a] -= t;
++        }
++        ncomp++;
++    }
++    if (ncomp > 0) {
++        printf ("Balanced bipartite duals in %d components, max shift %.1f\n",
++                ncomp, maxshift);
++        fflush (stdout);
++    }
++
++CLEANUP:
++
++    CC_IFFREE (start, int);
++    CC_IFFREE (fill, int);
++    CC_IFFREE (nbr, int);
++    CC_IFFREE (color, int);
++    CC_IFFREE (queue, int);
++}
++
+ int CCtsp_exact_dual (CCtsp_lp *lp)
+ {
+     int i;
+@@ -1109,6 +1197,8 @@
+         goto CLEANUP;
+     }
+ 
++    balance_bipartite_duals (lp, d_node_pi);
++
+     d = CC_SAFE_MALLOC (1, CCtsp_bigdual);
+     if (!(d)) {
+         fprintf (stderr, "out of memory in CCtsp_exact_dual C\n");
+--- a/TSP/tsp_call.c
++++ b/TSP/tsp_call.c
+@@ -92,7 +92,12 @@
+      build_extra_edges (int ncount, CCdatagroup *dat, int *ecount,
+          int **elist, int **elen, int *valid),
+      grab_plan_edges (int ncount, CCdatagroup *dat, CCedgegengroup *plan,
+-         int *ecount, int **elist, int **elen, CCrandstate *rstate);
++         int *ecount, int **elist, int **elen, CCrandstate *rstate),
++     sparse_incidence (int ncount, CCdatagroup *dat, int **p_start,
++         int **p_nbr, int **p_len),
++     sparse_greedy_tour (int ncount, CCdatagroup *dat, int *cyc),
++     sparse_good_tour (int ncount, CCdatagroup *dat, int *tour,
++         double *tval, int trials, CCrandstate *rstate);
+ 
+ 
+ int CCtsp_solve_sparse (int ncount, int ecount, int *elist, int *elen,
+@@ -513,7 +518,14 @@
+     int *cyc     = (int *) NULL;
+     int *tmp;
+     double val, bestval, szeit;
+-    int i, kicks, istour;
++    int i, kicks, istour, norm;
++
++    /* The edgegen calls below fall back to brute-force all-pairs code for
++       the CC_SPARSE norm (Theta(n^2 * degree)); use the sparse version. */
++    CCutil_dat_getnorm (dat, &norm);
++    if (norm == CC_SPARSE) {
++        return sparse_good_tour (ncount, dat, tour, tval, trials, rstate);
++    }
+ 
+     szeit = CCutil_zeit ();
+     bestval = CCtsp_LP_MAXDOUBLE;
+@@ -652,29 +664,18 @@
+                 goto CLEANUP;
+             }
+         } else {
+-            int tecount;
+-            int *telist = (int *) NULL;
+-            int *telen  = (int *) NULL;
+-
+-            CCedgegen_init_edgegengroup (&plan);
+-            plan.nearest = 4;
+-            rval = grab_plan_edges (ncount, dat, &plan, &tecount, &telist,
+-                                    &telen, rstate);
+-            if (rval) {
+-                fprintf (stderr, "grab_plan_edges failed\n"); goto CLEANUP;
+-            }
+-
+-            rval = CCutil_sparse_strip_edges (dat, tecount, telist, telen,
+-                                              ecount, elist, elen);
++            /* Same nearest-4 subgraph the edgegen code would produce, but
++               selected directly from the adjacency lists in O(m) instead of
++               by a brute-force all-pairs scan.  Every candidate is a real
++               edge, so no artificial edges need stripping. */
++            printf ("Sparse initial edge set: 4 cheapest edges per node\n");
++            fflush (stdout);
++            rval = CCtsp_sparse_k_cheapest (ncount, dat, 4, ecount, elist, elen);
+             if (rval) {
+-                fprintf (stderr, "CCutil_sparse_strip_edges failed\n");
+-                CC_IFFREE (telist, int);
+-                CC_IFFREE (telen, int);
+-                goto CLEANUP;
++                fprintf (stderr, "CCtsp_sparse_k_cheapest failed\n"); goto CLEANUP;
+             }
+-
+-            CC_IFFREE (telist, int);
+-            CC_IFFREE (telen, int);
++            printf ("Sparse initial edge set: %d edges\n", *ecount);
++            fflush (stdout);
+         }
+     } else {
+         CCedgegen_init_edgegengroup (&plan);
+@@ -759,4 +760,401 @@
+     return rval;
+ } 
+ 
++/****************************************************************************/
++/*                                                                          */
++/*  Sparse-graph (CC_SPARSE norm) replacements for the tour and edge-set    */
++/*  construction above.  Everything here runs in O(m log m) for m sparse    */
++/*  edges and never enumerates the implicit complete graph.                 */
++/*                                                                          */
++/****************************************************************************/
++
++typedef struct sparse_pair {
++    int a;
++    int b;
++} sparse_pair;
++
++static int sparse_pair_cmp (const void *x, const void *y)
++{
++    const sparse_pair *p = (const sparse_pair *) x;
++    const sparse_pair *q = (const sparse_pair *) y;
++
++    if (p->a != q->a) return (p->a > q->a) - (p->a < q->a);
++    return (p->b > q->b) - (p->b < q->b);
++}
++
++/* Symmetric incidence lists.  A CC_SPARSE datagroup stores each edge only
++   under its smaller endpoint; here node i's neighbors and edge lengths are
++   nbr[start[i] .. start[i+1]-1] and len[...]. */
++static int sparse_incidence (int ncount, CCdatagroup *dat, int **p_start,
++        int **p_nbr, int **p_len)
++{
++    int rval = 0, i, j, k, m = dat->sparse_ecount;
++    int *start = (int *) NULL, *nbr = (int *) NULL, *len = (int *) NULL;
++    int *fill = (int *) NULL;
++
++    *p_start = (int *) NULL;
++    *p_nbr   = (int *) NULL;
++    *p_len   = (int *) NULL;
++
++    start = CC_SAFE_MALLOC (ncount + 1, int);
++    fill  = CC_SAFE_MALLOC (ncount + 1, int);
++    nbr   = CC_SAFE_MALLOC (2 * m + 1, int);
++    len   = CC_SAFE_MALLOC (2 * m + 1, int);
++    if (!start || !fill || !nbr || !len) {
++        fprintf (stderr, "out of memory in sparse_incidence\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    for (i = 0; i <= ncount; i++) start[i] = 0;
++    for (i = 0; i < ncount; i++) {
++        for (j = 0; j < dat->degree[i]; j++) {
++            start[i + 1]++;
++            start[dat->adj[i][j] + 1]++;
++        }
++    }
++    for (i = 0; i < ncount; i++) {
++        start[i + 1] += start[i];
++        fill[i] = start[i];
++    }
++    for (i = 0; i < ncount; i++) {
++        for (j = 0; j < dat->degree[i]; j++) {
++            k = dat->adj[i][j];
++            nbr[fill[i]] = k;
++            len[fill[i]] = dat->len[i][j];
++            fill[i]++;
++            nbr[fill[k]] = i;
++            len[fill[k]] = dat->len[i][j];
++            fill[k]++;
++        }
++    }
++
++    *p_start = start;
++    *p_nbr   = nbr;
++    *p_len   = len;
++
++CLEANUP:
++
++    CC_IFFREE (fill, int);
++    if (rval) {
++        CC_IFFREE (start, int);
++        CC_IFFREE (nbr, int);
++        CC_IFFREE (len, int);
++    }
++    return rval;
++}
++
++/* The union over all nodes of each node's k cheapest incident edges, as an
++   undirected edge list without duplicates.  Public because the x-heuristic
++   in xtour.c needs the same candidate set. */
++int CCtsp_sparse_k_cheapest (int ncount, CCdatagroup *dat, int k,
++        int *ecount, int **elist, int **elen)
++{
++    int rval = 0, i, j, deg, maxdeg = 0, cnt = 0, uniq;
++    int *start = (int *) NULL, *nbr = (int *) NULL, *len = (int *) NULL;
++    int *perm = (int *) NULL;
++    sparse_pair *pairs = (sparse_pair *) NULL;
++
++    *ecount = 0;
++    *elist  = (int *) NULL;
++    *elen   = (int *) NULL;
++
++    rval = sparse_incidence (ncount, dat, &start, &nbr, &len);
++    if (rval) {
++        fprintf (stderr, "sparse_incidence failed\n"); goto CLEANUP;
++    }
++
++    for (i = 0; i < ncount; i++) {
++        deg = start[i + 1] - start[i];
++        if (deg > maxdeg) maxdeg = deg;
++    }
++
++    perm  = CC_SAFE_MALLOC (maxdeg + 1, int);
++    pairs = CC_SAFE_MALLOC ((size_t) k * ncount + 1, sparse_pair);
++    if (!perm || !pairs) {
++        fprintf (stderr, "out of memory in sparse_k_cheapest\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    for (i = 0; i < ncount; i++) {
++        deg = start[i + 1] - start[i];
++        for (j = 0; j < deg; j++) perm[j] = j;
++        if (deg > k) {
++            CCutil_int_perm_quicksort (perm, len + start[i], deg);
++            deg = k;
++        }
++        for (j = 0; j < deg; j++) {
++            int other = nbr[start[i] + perm[j]];
++            pairs[cnt].a = (i < other) ? i : other;
++            pairs[cnt].b = (i < other) ? other : i;
++            cnt++;
++        }
++    }
++
++    qsort (pairs, cnt, sizeof (sparse_pair), sparse_pair_cmp);
++    uniq = 0;
++    for (i = 0; i < cnt; i++) {
++        if (i == 0 || pairs[i].a != pairs[i-1].a ||
++                      pairs[i].b != pairs[i-1].b) {
++            pairs[uniq++] = pairs[i];
++        }
++    }
++
++    *elist = CC_SAFE_MALLOC (2 * uniq + 1, int);
++    *elen  = CC_SAFE_MALLOC (uniq + 1, int);
++    if (!(*elist) || !(*elen)) {
++        fprintf (stderr, "out of memory in sparse_k_cheapest\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < uniq; i++) {
++        (*elist)[2*i]   = pairs[i].a;
++        (*elist)[2*i+1] = pairs[i].b;
++        (*elen)[i] = CCutil_dat_edgelen (pairs[i].a, pairs[i].b, dat);
++    }
++    *ecount = uniq;
++
++CLEANUP:
++
++    CC_IFFREE (start, int);
++    CC_IFFREE (nbr, int);
++    CC_IFFREE (len, int);
++    CC_IFFREE (perm, int);
++    CC_IFFREE (pairs, sparse_pair);
++    if (rval) {
++        CC_IFFREE (*elist, int);
++        CC_IFFREE (*elen, int);
++        *ecount = 0;
++    }
++    return rval;
++}
++
++static int sparse_uf_find (int *parent, int x)
++{
++    while (parent[x] != x) {
++        parent[x] = parent[parent[x]];
++        x = parent[x];
++    }
++    return x;
++}
++
++/* Greedy tour: scan the sparse edges by increasing length, keeping an edge
++   whenever both ends have degree < 2 and it does not close a cycle.  This
++   leaves a set of vertex-disjoint paths (isolated nodes are 1-node paths)
++   whose endpoints are then chained into a single cycle.  The chaining edges
++   are in general not sparse edges (they cost default_len), and Lin-Kernighan
++   removes them first since each removal gains about default_len. */
++static int sparse_greedy_tour (int ncount, CCdatagroup *dat, int *cyc)
++{
++    int rval = 0, i, e, a, b, ra, rb, m = 0, k = 0, nfrag = 0, istour;
++    int *elist = (int *) NULL, *elen = (int *) NULL, *perm = (int *) NULL;
++    int *parent = (int *) NULL, *deg = (int *) NULL, *tlist = (int *) NULL;
++    int *end1 = (int *) NULL, *end2 = (int *) NULL, *frag = (int *) NULL;
++
++    rval = CCutil_get_sparse_dat_edges (ncount, dat, &m, &elist, &elen);
++    if (rval) {
++        fprintf (stderr, "CCutil_get_sparse_dat_edges failed\n");
++        goto CLEANUP;
++    }
++
++    perm   = CC_SAFE_MALLOC (m + 1, int);
++    parent = CC_SAFE_MALLOC (ncount, int);
++    deg    = CC_SAFE_MALLOC (ncount, int);
++    tlist  = CC_SAFE_MALLOC (2 * ncount, int);
++    end1   = CC_SAFE_MALLOC (ncount, int);
++    end2   = CC_SAFE_MALLOC (ncount, int);
++    frag   = CC_SAFE_MALLOC (ncount, int);
++    if (!perm || !parent || !deg || !tlist || !end1 || !end2 || !frag) {
++        fprintf (stderr, "out of memory in sparse_greedy_tour\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    for (i = 0; i < m; i++) perm[i] = i;
++    CCutil_int_perm_quicksort (perm, elen, m);
+ 
++    for (i = 0; i < ncount; i++) {
++        parent[i] = i;
++        deg[i] = 0;
++        end1[i] = end2[i] = -1;
++    }
++
++    for (e = 0; e < m; e++) {
++        i = perm[e];
++        a = elist[2*i];
++        b = elist[2*i+1];
++        if (a == b || deg[a] >= 2 || deg[b] >= 2) continue;
++        ra = sparse_uf_find (parent, a);
++        rb = sparse_uf_find (parent, b);
++        if (ra == rb) continue;
++        parent[ra] = rb;
++        deg[a]++;
++        deg[b]++;
++        tlist[2*k]   = a;
++        tlist[2*k+1] = b;
++        k++;
++    }
++
++    /* Path endpoints have degree < 2; an isolated node is both ends. */
++    for (i = 0; i < ncount; i++) {
++        if (deg[i] < 2) {
++            ra = sparse_uf_find (parent, i);
++            if (end1[ra] == -1) end1[ra] = i;
++            else                end2[ra] = i;
++        }
++    }
++    for (i = 0; i < ncount; i++) {
++        if (sparse_uf_find (parent, i) == i) {
++            if (end1[i] == -1) {
++                fprintf (stderr, "fragment without endpoints\n");
++                rval = 1; goto CLEANUP;
++            }
++            if (end2[i] == -1) end2[i] = end1[i];
++            frag[nfrag++] = i;
++        }
++    }
++
++    for (i = 0; i < nfrag; i++) {
++        tlist[2*k]   = end2[frag[i]];
++        tlist[2*k+1] = end1[frag[(i + 1) % nfrag]];
++        k++;
++    }
++    if (k != ncount) {
++        fprintf (stderr, "sparse_greedy_tour: %d edges for %d nodes\n",
++                 k, ncount);
++        rval = 1; goto CLEANUP;
++    }
++    printf ("Sparse greedy tour: %d path fragments joined\n", nfrag);
++    fflush (stdout);
++
++    rval = CCutil_edge_to_cycle (ncount, tlist, &istour, cyc);
++    if (rval) {
++        fprintf (stderr, "CCutil_edge_to_cycle failed\n"); goto CLEANUP;
++    }
++    if (!istour) {
++        fprintf (stderr, "sparse_greedy_tour did not build a tour\n");
++        rval = 1; goto CLEANUP;
++    }
++
++CLEANUP:
++
++    CC_IFFREE (elist, int);
++    CC_IFFREE (elen, int);
++    CC_IFFREE (perm, int);
++    CC_IFFREE (parent, int);
++    CC_IFFREE (deg, int);
++    CC_IFFREE (tlist, int);
++    CC_IFFREE (end1, int);
++    CC_IFFREE (end2, int);
++    CC_IFFREE (frag, int);
++    return rval;
++}
++
++#define SPARSE_LK_CANDIDATES 10
++
++/* find_good_tour for the CC_SPARSE norm: Lin-Kernighan on a candidate set of
++   the 10 cheapest sparse edges at each node, started from the greedy tour.
++   Same run structure as find_good_tour. */
++static int sparse_good_tour (int ncount, CCdatagroup *dat, int *tour,
++        double *tval, int trials, CCrandstate *rstate)
++{
++    int rval = 0;
++    int ecount = 0;
++    int *elist = (int *) NULL;
++    int *elen  = (int *) NULL;
++    int *gcyc    = (int *) NULL;
++    int *bestcyc = (int *) NULL;
++    int *cyc     = (int *) NULL;
++    int *tmp;
++    double val, bestval, szeit;
++    int i, kicks, istour;
++
++    szeit = CCutil_zeit ();
++    bestval = CCtsp_LP_MAXDOUBLE;
++
++    if (trials == -1) {
++        kicks = (ncount > 400 ? 100 : ncount/4);
++    } else {
++        kicks = (ncount > 1000 ? 500 : ncount/2);
++    }
++
++    printf ("Finding a good tour for compression (sparse) ...\n");
++    fflush (stdout);
++
++    gcyc    = CC_SAFE_MALLOC (ncount, int);
++    cyc     = CC_SAFE_MALLOC (ncount, int);
++    bestcyc = CC_SAFE_MALLOC (ncount, int);
++    if (!gcyc || !cyc || !bestcyc) {
++        fprintf (stderr, "out of memory in sparse_good_tour\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    rval = CCtsp_sparse_k_cheapest (ncount, dat, SPARSE_LK_CANDIDATES,
++                                    &ecount, &elist, &elen);
++    if (rval) {
++        fprintf (stderr, "CCtsp_sparse_k_cheapest failed\n"); goto CLEANUP;
++    }
++    printf ("Sparse LK candidate set: %d edges\n", ecount); fflush (stdout);
++
++    rval = sparse_greedy_tour (ncount, dat, gcyc);
++    if (rval) {
++        fprintf (stderr, "sparse_greedy_tour failed\n"); goto CLEANUP;
++    }
++
++    /* Every run starts from the greedy tour; the kicks supply diversity. */
++    rval = CClinkern_tour (ncount, dat, ecount, elist, ncount, kicks,
++                    gcyc, bestcyc, &bestval, 0, 0.0, 0.0, (char *) NULL,
++                    CC_LK_CLOSE_KICK, rstate);
++    if (rval) {
++        fprintf (stderr, "CClinkern_tour failed\n"); goto CLEANUP;
++    }
++    printf ("LK Initial Run: %.1f\n", bestval); fflush (stdout);
++
++    for (i = 0; i < trials; i++) {
++        rval = CClinkern_tour (ncount, dat, ecount, elist, ncount, kicks,
++                        gcyc, cyc, &val, 1, 0.0, 0.0, (char *) NULL,
++                        CC_LK_CLOSE_KICK, rstate);
++        if (rval) {
++            fprintf (stderr, "CClinkern_tour failed\n"); goto CLEANUP;
++        }
++        printf ("LK Run %d: %.1f\n", i, val); fflush (stdout);
++        if (val < bestval) {
++            CC_SWAP (cyc, bestcyc, tmp);
++            bestval = val;
++        }
++    }
++
++    if (trials > 0) {
++        rval = CClinkern_tour (ncount, dat, ecount, elist, ncount, 2 * kicks,
++                        bestcyc, tour, tval, 1, 0.0, 0.0, (char *) NULL,
++                        CC_LK_CLOSE_KICK, rstate);
++        if (rval) {
++            fprintf (stderr, "CClinkern_tour failed\n"); goto CLEANUP;
++        }
++        printf ("LK Run from best tour: %.1f\n", *tval); fflush (stdout);
++    } else {
++        for (i = 0; i < ncount; i++) {
++            tour[i] = bestcyc[i];
++        }
++        *tval = bestval;
++    }
++
++    rval = CCutil_sparse_real_tour (ncount, dat, tour, &istour);
++    if (rval) {
++        fprintf (stderr, "CCutil_sparse_real_tour failed\n"); goto CLEANUP;
++    }
++    if (!istour) {
++        printf ("WARNING: sparse LK tour uses artificial edges\n");
++        fflush (stdout);
++    }
++
++    printf ("Time to find compression tour: %.2f (seconds)\n",
++            CCutil_zeit() - szeit);
++    fflush (stdout);
++
++CLEANUP:
++
++    CC_IFFREE (gcyc, int);
++    CC_IFFREE (cyc, int);
++    CC_IFFREE (bestcyc, int);
++    CC_IFFREE (elist, int);
++    CC_IFFREE (elen, int);
++    return rval;
++}
+--- a/TSP/tsp_lp.c
++++ b/TSP/tsp_lp.c
+@@ -295,6 +295,8 @@
+ static int
+     first_lp (CCtsp_lp *lp, char *probloc, int ncount, int ecount, int *elist,
+         int *elen, int silent, CCrandstate *rstate),
++    first_lp_2factor_warmstart (CCtsp_lp *lp, int ncount, int ecount,
++        int *elist, int *elen, int silent, CCrandstate *rstate),
+     find_edge_full (CCtsp_lp *lp, int from, int to),
+     load_lp (CCtsp_lp *lp, int silent),
+     build_lp_cols (CCtsp_lpgraph *g, CCtsp_lpcuts *cuts, int estart, int eend,
+@@ -551,7 +553,8 @@
+         fprintf (stderr, "Fractional matching routine failed\n");
+         CC_FREE (basis, int);
+         CC_FREE (match, int);
+-        return 0;
++        return first_lp_2factor_warmstart (lp, ncount, ecount, elist, elen,
++                                           silent, rstate);
+     }
+ 
+     rval = CClp_create_info (&info, ncount, ecount);
+@@ -618,6 +621,129 @@
+     return rval;
+ }
+ 
++/* Warm start for graphs where the fractional matching has no basic solution
++   in the sense of fmatch.c (a tree plus one odd circuit per component).
++   This is the case for bipartite graphs, where the optimal fractional
++   2-matching is an integral 2-factor; the cycles of that 2-factor give a
++   basis directly: in each cycle every edge but one is basic (at value 1),
++   the remaining edge is nonbasic at its upper bound, and the degree row of
++   one node of the cycle has a basic slack.  Leaves lp->warmstart unset if
++   the matching turns out not to be integral. */
++static int first_lp_2factor_warmstart (CCtsp_lp *lp, int ncount, int ecount,
++        int *elist, int *elen, int silent, CCrandstate *rstate)
++{
++    double v;
++    int *match = (int *) NULL;
++    int *madj  = (int *) NULL;
++    int *mdeg  = (int *) NULL;
++    int *mark  = (int *) NULL;
++    int i, a, b, e, cur, prev, next, start, ncycles = 0, rval = 0;
++    CClp_info *info = (CClp_info *) NULL;
++
++    match = CC_SAFE_MALLOC ((6 * ncount) + 1, int);
++    madj  = CC_SAFE_MALLOC (2 * ncount, int);
++    mdeg  = CC_SAFE_MALLOC (ncount, int);
++    mark  = CC_SAFE_MALLOC (ncount, int);
++    if (!match || !madj || !mdeg || !mark) {
++        fprintf (stderr, "out of memory in first_lp_2factor_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    rval = CCfmatch_fractional_2match (ncount, ecount, elist, elen,
++            (CCdatagroup *) NULL, &v, match, (int *) NULL, (int *) NULL, 0,
++            silent, rstate);
++    if (rval) {
++        fprintf (stderr, "Fractional matching without basis failed too\n");
++        rval = 0; goto CLEANUP;
++    }
++
++    for (i = 0; i < ncount; i++) {
++        mdeg[i] = 0;
++        mark[i] = 0;
++    }
++    for (i = 0; i <= 6*ncount && match[i] > -1; i += 3) {
++        if (match[i+2] != 2) {
++            printf ("Fractional matching is not integral, no warmstart\n");
++            fflush (stdout);
++            goto CLEANUP;
++        }
++        a = match[i];
++        b = match[i+1];
++        if (mdeg[a] >= 2 || mdeg[b] >= 2) {
++            fprintf (stderr, "2-factor has a node of degree > 2\n");
++            goto CLEANUP;
++        }
++        madj[2*a + mdeg[a]] = b; mdeg[a]++;
++        madj[2*b + mdeg[b]] = a; mdeg[b]++;
++    }
++    for (i = 0; i < ncount; i++) {
++        if (mdeg[i] != 2) {
++            fprintf (stderr, "2-factor has a node of degree %d\n", mdeg[i]);
++            goto CLEANUP;
++        }
++    }
++
++    rval = CClp_create_info (&info, ncount, ecount);
++    if (rval) {
++        fprintf (stderr, "CClp_create_info failed\n");
++        goto CLEANUP;
++    }
++    for (i = 0; i < ncount; i++) {
++        CClp_set_row_active (info, i);
++    }
++    for (i = 0; i < ecount; i++) {
++        CClp_set_col_inactive (info, i);
++    }
++
++    for (start = 0; start < ncount; start++) {
++        if (mark[start]) continue;
++        CClp_set_row_inactive (info, start);
++        ncycles++;
++        prev = -1;
++        cur = start;
++        do {
++            mark[cur] = 1;
++            next = madj[2*cur];
++            if (next == prev && madj[2*cur + 1] != prev) {
++                next = madj[2*cur + 1];
++            }
++            e = CCtsp_find_edge (&lp->graph, cur, next);
++            if (e < 0) {
++                fprintf (stderr, "2-factor edge %d,%d not in edgelist\n",
++                         cur, next);
++                CClp_free_info (&info);
++                goto CLEANUP;
++            }
++            if (next == start) {
++                CClp_set_col_upper (info, e);
++            } else {
++                CClp_set_col_active (info, e);
++            }
++            prev = cur;
++            cur = next;
++        } while (cur != start);
++    }
++
++    rval = CClp_build_warmstart (&(lp->warmstart), info);
++    if (rval) {
++        fprintf (stderr, "CClp_build_warmstart failed\n");
++        goto CLEANUP;
++    }
++    if (!silent) {
++        printf ("2-factor warmstart: %d cycles, value %.1f\n", ncycles, v);
++        fflush (stdout);
++    }
++
++CLEANUP:
++
++    CC_IFFREE (match, int);
++    CC_IFFREE (madj, int);
++    CC_IFFREE (mdeg, int);
++    CC_IFFREE (mark, int);
++    CClp_free_info (&info);
++    return rval;
++}
++
+ int CCtsp_build_lpgraph (CCtsp_lpgraph *g, int ncount, int ecount,
+         int *elist, int *elen)
+ {
+--- a/TSP/xtour.c
++++ b/TSP/xtour.c
+@@ -56,7 +56,8 @@
+     int rval = 0;
+     int *gcyc = (int *) NULL;
+     int *tlist = (int *) NULL;
+-    int tcount;
++    int *tlen = (int *) NULL;
++    int tcount, norm, istour;
+     double gval;
+     CCedgegengroup plan;
+ 
+@@ -78,13 +79,25 @@
+         fprintf (stderr, "CCtsp_x_greedy_tour failed\n"); goto CLEANUP;
+     }
+ 
+-    CCedgegen_init_edgegengroup (&plan);
+-    plan.quadnearest = 2;
+-
+-    rval = CCedgegen_edges (&plan, ncount, dat, (double *) NULL, &tcount,
+-                            &tlist, silent, rstate);
+-    if (rval) {
+-        fprintf (stderr, "CCedgegen_edges failed\n"); goto CLEANUP;
++    CCutil_dat_getnorm (dat, &norm);
++    if (norm == CC_SPARSE) {
++        /* The edgegen code below would fall back to a brute-force all-pairs
++           scan for the sparse norm; take the cheapest sparse edges instead. */
++        rval = CCtsp_sparse_k_cheapest (ncount, dat, 10, &tcount, &tlist,
++                                        &tlen);
++        if (rval) {
++            fprintf (stderr, "CCtsp_sparse_k_cheapest failed\n");
++            goto CLEANUP;
++        }
++    } else {
++        CCedgegen_init_edgegengroup (&plan);
++        plan.quadnearest = 2;
++
++        rval = CCedgegen_edges (&plan, ncount, dat, (double *) NULL, &tcount,
++                                &tlist, silent, rstate);
++        if (rval) {
++            fprintf (stderr, "CCedgegen_edges failed\n"); goto CLEANUP;
++        }
+     }
+ 
+     rval = CClinkern_tour (ncount, dat, tcount, tlist, ncount,
+@@ -94,9 +107,28 @@
+         fprintf (stderr, "CClinkern_tour failed\n"); goto CLEANUP;
+     }
+ 
++    if (norm == CC_SPARSE) {
++        /* A tour through an artificial edge is not a tour of the sparse
++           graph, and its length can overflow the exact arithmetic used
++           downstream; report it as no tour. */
++        rval = CCutil_sparse_real_tour (ncount, dat, cyc, &istour);
++        if (rval) {
++            fprintf (stderr, "CCutil_sparse_real_tour failed\n");
++            goto CLEANUP;
++        }
++        if (!istour) {
++            if (!silent) {
++                printf ("x-heuristic tour uses artificial edges, ignored\n");
++                fflush (stdout);
++            }
++            *val = 1e30;
++        }
++    }
++
+ CLEANUP:
+ 
+     CC_IFFREE (tlist, int);
++    CC_IFFREE (tlen, int);
+     CC_IFFREE (gcyc, int);
+     return rval;
+ }
+--- a/UTIL/edgelen.c
++++ b/UTIL/edgelen.c
+@@ -510,17 +510,26 @@
+ static int sparse_edgelen (int i, int j, CCdatagroup *dat)
+ {
+     int *adj;
+-    int k, deg;
++    int k, lo, hi, mid;
+ 
+     if (i > j) {
+         CC_SWAP (i, j, k);
+     }
+-    adj = dat->adj[i];
+-    deg = dat->degree[i];
+ 
+-    for (k = 0; k < deg; k++) {
+-        if (adj[k] == j) {
+-            return dat->len[i][k];
++    /* Adjacency lists are kept sorted by neighbor (see sort_sparse_adj in
++       getdata.c), so an edge lookup is a binary search rather than a scan
++       of the whole list.  This matters for high-degree nodes. */
++    adj = dat->adj[i];
++    lo = 0;
++    hi = dat->degree[i] - 1;
++    while (lo <= hi) {
++        mid = lo + (hi - lo) / 2;
++        if (adj[mid] < j) {
++            lo = mid + 1;
++        } else if (adj[mid] > j) {
++            hi = mid - 1;
++        } else {
++            return dat->len[i][mid];
+         }
+     }
+     return dat->default_len;
+--- a/UTIL/getdata.c
++++ b/UTIL/getdata.c
+@@ -343,7 +343,8 @@
+     writedat_sparse (CC_SFILE *out, int ncount, CCdatagroup *dat),
+     readdat_sparse (CC_SFILE *in, int ncount, CCdatagroup *dat),
+     permute_sparse (int ncount, CCdatagroup *dat, int *perm),
+-    copy_sparse (int ncount, CCdatagroup *indat, CCdatagroup *outdat);
++    copy_sparse (int ncount, CCdatagroup *indat, CCdatagroup *outdat),
++    sort_sparse_adj (int ncount, CCdatagroup *dat);
+ 
+ 
+ int CCutil_getdata (char *datname, int binary_in, int innorm,
+@@ -2273,6 +2274,52 @@
+     return rval;
+ }
+ 
++typedef struct sparse_adjpair {
++    int nbr;
++    int len;
++} sparse_adjpair;
++
++static int sparse_adjpair_cmp (const void *a, const void *b)
++{
++    int x = ((const sparse_adjpair *) a)->nbr;
++    int y = ((const sparse_adjpair *) b)->nbr;
++    return (x > y) - (x < y);
++}
++
++/* Sort every adjacency list by neighbor so that sparse_edgelen (edgelen.c)
++   can binary search.  Must be called whenever the lists are (re)built. */
++static int sort_sparse_adj (int ncount, CCdatagroup *dat)
++{
++    int i, j, deg, maxdeg = 0;
++    sparse_adjpair *buf = (sparse_adjpair *) NULL;
++
++    for (i = 0; i < ncount; i++) {
++        if (dat->degree[i] > maxdeg) maxdeg = dat->degree[i];
++    }
++    if (maxdeg < 2) return 0;
++
++    buf = CC_SAFE_MALLOC (maxdeg, sparse_adjpair);
++    if (!buf) {
++        fprintf (stderr, "out of memory in sort_sparse_adj\n");
++        return 1;
++    }
++    for (i = 0; i < ncount; i++) {
++        deg = dat->degree[i];
++        if (deg < 2) continue;
++        for (j = 0; j < deg; j++) {
++            buf[j].nbr = dat->adj[i][j];
++            buf[j].len = dat->len[i][j];
++        }
++        qsort (buf, deg, sizeof (sparse_adjpair), sparse_adjpair_cmp);
++        for (j = 0; j < deg; j++) {
++            dat->adj[i][j] = buf[j].nbr;
++            dat->len[i][j] = buf[j].len;
++        }
++    }
++    CC_FREE (buf, sparse_adjpair);
++    return 0;
++}
++
+ static int build_sparse_dat (int ncount, int ecount, int *elist, int *elen,
+         CCdatagroup *dat, int defaultlen)
+ {
+@@ -2347,6 +2394,11 @@
+     }
+     dat->sparse_ecount = ecount;
+ 
++    if (sort_sparse_adj (ncount, dat)) {
++        CCutil_freedatagroup (dat);
++        return 1;
++    }
++
+     return 0;
+ }
+ 
+@@ -2540,6 +2592,11 @@
+     }
+     dat->sparse_ecount = ecount;
+ 
++    rval = sort_sparse_adj (ncount, dat);
++    if (rval) {
++        fprintf (stderr, "sort_sparse_adj failed\n"); goto CLEANUP;
++    }
++
+ CLEANUP:
+     if (rval) {
+         CCutil_freedatagroup (dat);
+@@ -2617,6 +2674,12 @@
+     CC_IFFREE (dat->lenspace, int);
+     dat->lenspace = tlenspace;
+ 
++    rval = sort_sparse_adj (ncount, dat);
++    if (rval) {
++        fprintf (stderr, "sort_sparse_adj failed\n");
++        goto CLEANUP;
++    }
++
+ CLEANUP:
+ 
+     if (rval) {
+--- /dev/null
++++ b/LP/lphighs.c
+@@ -0,0 +1,1007 @@
++/****************************************************************************/
++/*                                                                          */
++/*  Concorde LP interface (see lp.h) on top of the HiGHS C API.             */
++/*                                                                          */
++/*  Basis statuses in CClp_info / CClp_warmstart are stored as chars:       */
++/*  columns '0' nonbasic at lower, '1' basic, '2' nonbasic at upper,        */
++/*  '3' nonbasic free; rows '0' nonbasic (constraint tight, "active" in     */
++/*  Concorde's terms), '1' basic.                                           */
++/*                                                                          */
++/****************************************************************************/
++
++#include "machdefs.h"
++#include "util.h"
++#include "macrorus.h"
++#include "lp.h"
++#include "tsp.h"
++#include "interfaces/highs_c_api.h"
++
++#define HIGHS_INFINITY (1e30)
++#define HIGHS_ITER_UNLIMITED (2147483647)
++
++#define CSTAT_LOWER '0'
++#define CSTAT_BASIC '1'
++#define CSTAT_UPPER '2'
++#define CSTAT_FREE  '3'
++#define RSTAT_ACTIVE '0'
++#define RSTAT_BASIC  '1'
++
++struct CClp {
++    void *h;
++};
++
++struct CClp_warmstart {
++    int nstruct;
++    int nrows;
++    char *cstat;
++    char *rstat;
++};
++
++struct CClp_info {
++    int nstruct;
++    int nrows;
++    char *cstat;
++    char *rstat;
++};
++
++#define SOLVER_WARMSTART_NAME "HIGH"
++
++static int
++    new_highs (CClp *lp),
++    sense_to_bounds (char sense, double rhs, double *lower, double *upper),
++    run_simplex (CClp *lp, int strategy, int iteration_limit, int *model_status),
++    row_nonbasic_status (CClp *lp, int nrows, HighsInt *row_status);
++
++static void
++    init_warmstart (CClp_warmstart *w);
++
++static int new_highs (CClp *lp)
++{
++    if (lp->h) {
++        Highs_destroy (lp->h);
++        lp->h = (void *) NULL;
++    }
++    lp->h = Highs_create ();
++    if (!lp->h) {
++        fprintf (stderr, "Highs_create failed\n");
++        return 1;
++    }
++    Highs_setBoolOptionValue (lp->h, "output_flag", 0);
++    Highs_setStringOptionValue (lp->h, "presolve", "off");
++    Highs_setStringOptionValue (lp->h, "solver", "simplex");
++    Highs_setIntOptionValue (lp->h, "threads", 1);
++    Highs_setIntOptionValue (lp->h, "simplex_strategy", 1);
++    return 0;
++}
++
++static int sense_to_bounds (char sense, double rhs, double *lower,
++        double *upper)
++{
++    switch (sense) {
++    case 'E': *lower = rhs;             *upper = rhs;            return 0;
++    case 'L': *lower = -HIGHS_INFINITY; *upper = rhs;            return 0;
++    case 'G': *lower = rhs;             *upper = HIGHS_INFINITY; return 0;
++    default:
++        fprintf (stderr, "unknown row sense %c\n", sense);
++        return 1;
++    }
++}
++
++int CClp_init (CClp **lp)
++{
++    CClp_free (lp);
++    (*lp) = CC_SAFE_MALLOC (1, CClp);
++    if ((*lp) == (CClp *) NULL) {
++        fprintf (stderr, "Out of memory in CClp_init\n");
++        return 1;
++    }
++    (*lp)->h = (void *) NULL;
++    return 0;
++}
++
++int CClp_force_perturb (CClp *lp)
++{
++    if (!lp) {
++        fprintf (stderr, "CClp_force_perturb called without an lp\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_tune_small (CClp *lp)
++{
++    if (!lp) {
++        fprintf (stderr, "CClp_tune_small called without an LP\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_disable_presolve (CClp *lp)
++{
++    if (!lp) {
++        fprintf (stderr, "CClp_disable_presolve called without an LP\n");
++        return 1;
++    }
++    return 0;
++}
++
++void CClp_free (CClp **lp)
++{
++    if (*lp) {
++        if ((*lp)->h) Highs_destroy ((*lp)->h);
++        CC_FREE (*lp, CClp);
++    }
++}
++
++void CClp_freelp (CClp **lp)
++{
++    if (*lp) {
++        if ((*lp)->h) Highs_destroy ((*lp)->h);
++        (*lp)->h = (void *) NULL;
++    }
++}
++
++int CClp_loadlp (CClp *lp, const char *name, int ncols, int nrows,
++        int objsense, double *obj, double *rhs, char *sense, int *matbeg,
++        int *matcnt, int *matind, double *matval, double *lb, double *ub)
++{
++    int rval = 0, i, k, nz = 0;
++    double *rlower = (double *) NULL, *rupper = (double *) NULL;
++    HighsInt *astart = (HighsInt *) NULL, *aindex = (HighsInt *) NULL;
++    double *avalue = (double *) NULL;
++
++    (void) name;
++
++    rval = new_highs (lp);
++    if (rval) goto CLEANUP;
++
++    for (i = 0; i < ncols; i++) nz += matcnt[i];
++
++    rlower = CC_SAFE_MALLOC (nrows + 1, double);
++    rupper = CC_SAFE_MALLOC (nrows + 1, double);
++    astart = CC_SAFE_MALLOC (ncols + 1, HighsInt);
++    aindex = CC_SAFE_MALLOC (nz + 1, HighsInt);
++    avalue = CC_SAFE_MALLOC (nz + 1, double);
++    if (!rlower || !rupper || !astart || !aindex || !avalue) {
++        fprintf (stderr, "out of memory in CClp_loadlp\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < nrows; i++) {
++        rval = sense_to_bounds (sense[i], rhs[i], &rlower[i], &rupper[i]);
++        if (rval) goto CLEANUP;
++    }
++    /* Columns may be stored non-contiguously (matbeg/matcnt); compact. */
++    for (i = 0, nz = 0; i < ncols; i++) {
++        astart[i] = nz;
++        for (k = 0; k < matcnt[i]; k++) {
++            aindex[nz] = matind[matbeg[i] + k];
++            avalue[nz] = matval[matbeg[i] + k];
++            nz++;
++        }
++    }
++    astart[ncols] = nz;
++
++    if (Highs_passLp (lp->h, ncols, nrows, nz, kHighsMatrixFormatColwise,
++                      objsense >= 0 ? kHighsObjSenseMinimize
++                                    : kHighsObjSenseMaximize,
++                      0.0, obj, lb, ub, rlower, rupper, astart, aindex,
++                      avalue) == kHighsStatusError) {
++        fprintf (stderr, "Highs_passLp failed\n");
++        rval = 1; goto CLEANUP;
++    }
++
++CLEANUP:
++
++    CC_IFFREE (rlower, double);
++    CC_IFFREE (rupper, double);
++    CC_IFFREE (astart, HighsInt);
++    CC_IFFREE (aindex, HighsInt);
++    CC_IFFREE (avalue, double);
++    return rval;
++}
++
++int CClp_create (CClp *lp, const char *name)
++{
++    (void) name;
++    if (!lp) {
++        fprintf (stderr, "CClp_create called without an lp structure\n");
++        return 1;
++    }
++    return new_highs (lp);
++}
++
++int CClp_new_row (CClp *lp, char sense, double rhs)
++{
++    double lower, upper;
++
++    if (sense_to_bounds (sense, rhs, &lower, &upper)) return 1;
++    if (Highs_addRow (lp->h, lower, upper, 0, (HighsInt *) NULL,
++                      (double *) NULL) == kHighsStatusError) {
++        fprintf (stderr, "Highs_addRow failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_change_sense (CClp *lp, int row, char sense)
++{
++    HighsInt num_row, num_nz;
++    double lower, upper, rhs;
++
++    if (Highs_getRowsByRange (lp->h, row, row, &num_row, &lower, &upper,
++                              &num_nz, (HighsInt *) NULL, (HighsInt *) NULL,
++                              (double *) NULL) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getRowsByRange failed\n");
++        return 1;
++    }
++    rhs = (lower > -HIGHS_INFINITY / 2) ? lower : upper;
++    if (sense_to_bounds (sense, rhs, &lower, &upper)) return 1;
++    if (Highs_changeRowBounds (lp->h, row, lower, upper) == kHighsStatusError) {
++        fprintf (stderr, "Highs_changeRowBounds failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++static int run_simplex (CClp *lp, int strategy, int iteration_limit,
++        int *model_status)
++{
++    HighsInt status;
++
++    Highs_setIntOptionValue (lp->h, "simplex_strategy", strategy);
++    Highs_setIntOptionValue (lp->h, "simplex_iteration_limit",
++                             iteration_limit);
++    status = Highs_run (lp->h);
++    *model_status = Highs_getModelStatus (lp->h);
++    if (status == kHighsStatusError) {
++        fprintf (stderr, "Highs_run failed (model status %d)\n",
++                 *model_status);
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_opt (CClp *lp, int method)
++{
++    int rval, model_status, strategy;
++
++    switch (method) {
++    case CClp_METHOD_PRIMAL:  strategy = 4; break;
++    case CClp_METHOD_DUAL:    strategy = 1; break;
++    case CClp_METHOD_BARRIER:
++        fprintf (stderr, "barrier not used with the HiGHS interface\n");
++        return 1;
++    default:
++        fprintf (stderr, "Nonexistent method in CClp_opt\n");
++        return 1;
++    }
++
++    rval = run_simplex (lp, strategy, HIGHS_ITER_UNLIMITED, &model_status);
++    if (rval) return rval;
++
++    /* Concorde's LPs have bounded variables, so "unbounded or infeasible"
++       means infeasible (HiGHS reports it when the dual simplex proves dual
++       unboundedness without a primal phase). */
++    if (model_status == kHighsModelStatusInfeasible ||
++        model_status == kHighsModelStatusUnboundedOrInfeasible) {
++        return 2;
++    } else if (model_status != kHighsModelStatusOptimal) {
++        fprintf (stderr, "no optimal LP-solution exists: HiGHS status %d\n",
++                 model_status);
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_limited_dualopt (CClp *lp, int iterationlim, int *status,
++        double *objupperlim)
++{
++    int rval, model_status;
++
++    (void) objupperlim;
++
++    rval = run_simplex (lp, 1, iterationlim, &model_status);
++    if (rval) return rval;
++
++    if (status) {
++        if (model_status == kHighsModelStatusInfeasible ||
++            model_status == kHighsModelStatusUnboundedOrInfeasible) {
++            *status = CClp_INFEASIBLE;
++        } else if (model_status == kHighsModelStatusUnbounded) {
++            *status = CClp_UNBOUNDED;
++        } else if (model_status == kHighsModelStatusOptimal ||
++                   model_status == kHighsModelStatusIterationLimit) {
++            *status = CClp_SUCCESS;
++        } else {
++            fprintf (stderr, "no optimal LP-solution exists: HiGHS status %d\n",
++                     model_status);
++            *status = CClp_FAILURE;
++        }
++    }
++    return 0;
++}
++
++int CClp_addrows (CClp *lp, int newrows, int newnz, double *rhs, char *sense,
++        int *rmatbeg, int *rmatind, double *rmatval)
++{
++    int rval = 0, i;
++    double *lower = (double *) NULL, *upper = (double *) NULL;
++
++    lower = CC_SAFE_MALLOC (newrows, double);
++    upper = CC_SAFE_MALLOC (newrows, double);
++    if (!lower || !upper) {
++        fprintf (stderr, "out of memory in CClp_addrows\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < newrows; i++) {
++        rval = sense_to_bounds (sense[i], rhs[i], &lower[i], &upper[i]);
++        if (rval) goto CLEANUP;
++    }
++    if (Highs_addRows (lp->h, newrows, lower, upper, newnz, rmatbeg, rmatind,
++                       rmatval) == kHighsStatusError) {
++        fprintf (stderr, "Highs_addRows failed\n");
++        rval = 1; goto CLEANUP;
++    }
++
++CLEANUP:
++
++    CC_IFFREE (lower, double);
++    CC_IFFREE (upper, double);
++    return rval;
++}
++
++int CClp_addcols (CClp *lp, int newcols, int newnz, double *obj,
++        int *cmatbeg, int *cmatind, double *cmatval, double *lb, double *ub)
++{
++    if (Highs_addCols (lp->h, newcols, obj, lb, ub, newnz, cmatbeg, cmatind,
++                       cmatval) == kHighsStatusError) {
++        fprintf (stderr, "Highs_addCols failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_delete_row (CClp *lp, int i)
++{
++    HighsInt set[1];
++
++    set[0] = i;
++    if (Highs_deleteRowsBySet (lp->h, 1, set) == kHighsStatusError) {
++        fprintf (stderr, "Highs_deleteRowsBySet failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_delete_set_of_rows (CClp *lp, int *delstat)
++{
++    int rval = 0, i, j, rcnt, delcnt = 0;
++    HighsInt *dellist = (HighsInt *) NULL;
++
++    rcnt = Highs_getNumRow (lp->h);
++    for (i = 0; i < rcnt; i++) {
++        if (delstat[i]) delcnt++;
++    }
++    if (delcnt == 0) {
++        fprintf (stderr, "delete_set_of_rows with no deleted rows\n");
++        return 0;
++    }
++    dellist = CC_SAFE_MALLOC (delcnt, HighsInt);
++    if (!dellist) {
++        fprintf (stderr, "out of memory in delete_set_of_rows\n");
++        return 1;
++    }
++    for (i = 0, j = 0; i < rcnt; i++) {
++        if (delstat[i]) dellist[j++] = i;
++    }
++    if (Highs_deleteRowsBySet (lp->h, delcnt, dellist) == kHighsStatusError) {
++        fprintf (stderr, "Highs_deleteRowsBySet failed\n");
++        rval = 1;
++    }
++    CC_IFFREE (dellist, HighsInt);
++    return rval;
++}
++
++int CClp_delete_column (CClp *lp, int i)
++{
++    HighsInt set[1];
++
++    set[0] = i;
++    if (Highs_deleteColsBySet (lp->h, 1, set) == kHighsStatusError) {
++        fprintf (stderr, "Highs_deleteColsBySet failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_delete_set_of_columns (CClp *lp, int *delstat)
++{
++    int rval = 0, i, j, ccnt, delcnt = 0;
++    HighsInt *dellist = (HighsInt *) NULL;
++
++    ccnt = Highs_getNumCol (lp->h);
++    for (i = 0; i < ccnt; i++) {
++        if (delstat[i]) delcnt++;
++    }
++    if (delcnt == 0) {
++        fprintf (stderr, "delete_set_of_columns with no deleted columns\n");
++        return 0;
++    }
++    dellist = CC_SAFE_MALLOC (delcnt, HighsInt);
++    if (!dellist) {
++        fprintf (stderr, "out of memory in delete_set_of_columns\n");
++        return 1;
++    }
++    for (i = 0, j = 0; i < ccnt; i++) {
++        if (delstat[i]) dellist[j++] = i;
++    }
++    if (Highs_deleteColsBySet (lp->h, delcnt, dellist) == kHighsStatusError) {
++        fprintf (stderr, "Highs_deleteColsBySet failed\n");
++        rval = 1;
++    }
++    CC_IFFREE (dellist, HighsInt);
++    return rval;
++}
++
++int CClp_setbnd (CClp *lp, int col, char lower_or_upper, double bnd)
++{
++    HighsInt num_col, num_nz;
++    double cost, lower, upper;
++
++    if (Highs_getColsByRange (lp->h, col, col, &num_col, &cost, &lower,
++                              &upper, &num_nz, (HighsInt *) NULL,
++                              (HighsInt *) NULL, (double *) NULL)
++            == kHighsStatusError) {
++        fprintf (stderr, "Highs_getColsByRange failed\n");
++        return 1;
++    }
++    if (lower_or_upper == 'L') {
++        lower = bnd;
++    } else if (lower_or_upper == 'U') {
++        upper = bnd;
++    } else {
++        fprintf (stderr, "CClp_setbnd: bad bound type %c\n", lower_or_upper);
++        return 1;
++    }
++    if (Highs_changeColBounds (lp->h, col, lower, upper) == kHighsStatusError) {
++        fprintf (stderr, "Highs_changeColBounds failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++/* A nonbasic row's slack sits at the finite side of its bounds. */
++static int row_nonbasic_status (CClp *lp, int nrows, HighsInt *row_status)
++{
++    int rval = 0, i;
++    HighsInt num_row, num_nz;
++    double *lower = (double *) NULL, *upper = (double *) NULL;
++
++    if (nrows == 0) return 0;
++    lower = CC_SAFE_MALLOC (nrows, double);
++    upper = CC_SAFE_MALLOC (nrows, double);
++    if (!lower || !upper) {
++        fprintf (stderr, "out of memory in row_nonbasic_status\n");
++        rval = 1; goto CLEANUP;
++    }
++    if (Highs_getRowsByRange (lp->h, 0, nrows - 1, &num_row, lower, upper,
++                              &num_nz, (HighsInt *) NULL, (HighsInt *) NULL,
++                              (double *) NULL) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getRowsByRange failed\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < nrows; i++) {
++        if (row_status[i] != kHighsBasisStatusBasic) {
++            row_status[i] = (lower[i] <= -HIGHS_INFINITY / 2)
++                                ? kHighsBasisStatusUpper
++                                : kHighsBasisStatusLower;
++        }
++    }
++
++CLEANUP:
++
++    CC_IFFREE (lower, double);
++    CC_IFFREE (upper, double);
++    return rval;
++}
++
++int CClp_get_warmstart (CClp *lp, CClp_warmstart **w)
++{
++    int rval = 0, i;
++    HighsInt *cs = (HighsInt *) NULL, *rs = (HighsInt *) NULL;
++
++    CClp_free_warmstart (w);
++    (*w) = CC_SAFE_MALLOC (1, CClp_warmstart);
++    if (!(*w)) {
++        fprintf (stderr, "Out of memory in CClp_get_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    init_warmstart (*w);
++    (*w)->nstruct = Highs_getNumCol (lp->h);
++    (*w)->nrows = Highs_getNumRow (lp->h);
++    (*w)->cstat = CC_SAFE_MALLOC ((*w)->nstruct + 1, char);
++    (*w)->rstat = CC_SAFE_MALLOC ((*w)->nrows + 1, char);
++    cs = CC_SAFE_MALLOC ((*w)->nstruct + 1, HighsInt);
++    rs = CC_SAFE_MALLOC ((*w)->nrows + 1, HighsInt);
++    if (!(*w)->cstat || !(*w)->rstat || !cs || !rs) {
++        fprintf (stderr, "out of memory in CClp_get_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    if (Highs_getBasis (lp->h, cs, rs) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getBasis failed\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < (*w)->nstruct; i++) {
++        switch (cs[i]) {
++        case kHighsBasisStatusBasic: (*w)->cstat[i] = CSTAT_BASIC; break;
++        case kHighsBasisStatusUpper: (*w)->cstat[i] = CSTAT_UPPER; break;
++        case kHighsBasisStatusZero:  (*w)->cstat[i] = CSTAT_FREE;  break;
++        default:                     (*w)->cstat[i] = CSTAT_LOWER; break;
++        }
++    }
++    for (i = 0; i < (*w)->nrows; i++) {
++        (*w)->rstat[i] = (rs[i] == kHighsBasisStatusBasic) ? RSTAT_BASIC
++                                                           : RSTAT_ACTIVE;
++    }
++
++CLEANUP:
++
++    CC_IFFREE (cs, HighsInt);
++    CC_IFFREE (rs, HighsInt);
++    if (rval) CClp_free_warmstart (w);
++    return rval;
++}
++
++int CClp_load_warmstart (CClp *lp, CClp_warmstart *w)
++{
++    int rval = 0, i, ncols, nrows;
++    HighsInt *cs = (HighsInt *) NULL, *rs = (HighsInt *) NULL;
++
++    if (!w->cstat || !w->rstat) {
++        fprintf (stderr, "WARNING: no basis in call to load_warmstart\n");
++        return 0;
++    }
++    ncols = Highs_getNumCol (lp->h);
++    nrows = Highs_getNumRow (lp->h);
++    if (w->nstruct != ncols || w->nrows != nrows) {
++        fprintf (stderr, "warmstart size (%d x %d) does not match LP (%d x %d)\n",
++                 w->nrows, w->nstruct, nrows, ncols);
++        return 1;
++    }
++    cs = CC_SAFE_MALLOC (ncols + 1, HighsInt);
++    rs = CC_SAFE_MALLOC (nrows + 1, HighsInt);
++    if (!cs || !rs) {
++        fprintf (stderr, "out of memory in CClp_load_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < ncols; i++) {
++        switch (w->cstat[i]) {
++        case CSTAT_BASIC: cs[i] = kHighsBasisStatusBasic; break;
++        case CSTAT_UPPER: cs[i] = kHighsBasisStatusUpper; break;
++        case CSTAT_FREE:  cs[i] = kHighsBasisStatusZero;  break;
++        default:          cs[i] = kHighsBasisStatusLower; break;
++        }
++    }
++    for (i = 0; i < nrows; i++) {
++        rs[i] = (w->rstat[i] == RSTAT_BASIC) ? kHighsBasisStatusBasic
++                                             : kHighsBasisStatusLower;
++    }
++    rval = row_nonbasic_status (lp, nrows, rs);
++    if (rval) goto CLEANUP;
++    if (Highs_setBasis (lp->h, cs, rs) == kHighsStatusError) {
++        fprintf (stderr, "Highs_setBasis failed\n");
++        rval = 1; goto CLEANUP;
++    }
++
++CLEANUP:
++
++    CC_IFFREE (cs, HighsInt);
++    CC_IFFREE (rs, HighsInt);
++    return rval;
++}
++
++int CClp_build_warmstart (CClp_warmstart **w, CClp_info *i)
++{
++    int rval = 0, j;
++
++    CClp_free_warmstart (w);
++    (*w) = CC_SAFE_MALLOC (1, CClp_warmstart);
++    if (!(*w)) {
++        fprintf (stderr, "Out of memory in CClp_build_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    init_warmstart (*w);
++    (*w)->nstruct = i->nstruct;
++    (*w)->nrows = i->nrows;
++    if ((*w)->nstruct == 0 || (*w)->nrows == 0) {
++        fprintf (stderr, "No columns or rows in CClp_info\n");
++        rval = 1; goto CLEANUP;
++    }
++    (*w)->cstat = CC_SAFE_MALLOC ((*w)->nstruct, char);
++    (*w)->rstat = CC_SAFE_MALLOC ((*w)->nrows, char);
++    if (!(*w)->cstat || !(*w)->rstat) {
++        fprintf (stderr, "out of memory in CClp_build_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (j = 0; j < (*w)->nstruct; j++) (*w)->cstat[j] = i->cstat[j];
++    for (j = 0; j < (*w)->nrows; j++)   (*w)->rstat[j] = i->rstat[j];
++
++CLEANUP:
++
++    if (rval) CClp_free_warmstart (w);
++    return rval;
++}
++
++static void init_warmstart (CClp_warmstart *w)
++{
++    if (w) {
++        w->nstruct = 0;
++        w->nrows = 0;
++        w->cstat = (char *) NULL;
++        w->rstat = (char *) NULL;
++    }
++}
++
++void CClp_free_warmstart (CClp_warmstart **w)
++{
++    if (*w) {
++        CC_IFFREE ((*w)->cstat, char);
++        CC_IFFREE ((*w)->rstat, char);
++        CC_FREE (*w, CClp_warmstart);
++    }
++}
++
++int CClp_sread_warmstart (CC_SFILE *f, CClp_warmstart **w)
++{
++    int rval = 0, i, k, nstruct, nrows;
++    char name[5];
++
++    CClp_free_warmstart (w);
++    for (i = 0; i < 4; i++) {
++        if (CCutil_sread_char (f, &name[i])) { rval = 1; goto CLEANUP; }
++    }
++    name[4] = '\0';
++    if (strncmp (name, SOLVER_WARMSTART_NAME, 4)) {
++        fprintf (stderr, "warmstart for another solver (%s) ignored\n", name);
++        goto CLEANUP;
++    }
++    if (CCutil_sread_int (f, &nstruct)) goto CLEANUP;
++    if (CCutil_sread_int (f, &nrows)) goto CLEANUP;
++
++    (*w) = CC_SAFE_MALLOC (1, CClp_warmstart);
++    if (!(*w)) {
++        fprintf (stderr, "Out of memory in CClp_sread_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    init_warmstart (*w);
++    (*w)->cstat = CC_SAFE_MALLOC (nstruct, char);
++    (*w)->rstat = CC_SAFE_MALLOC (nrows, char);
++    if (!(*w)->cstat || !(*w)->rstat) {
++        fprintf (stderr, "out of memory in CClp_sread_warmstart\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (i = 0; i < nstruct; i++) {
++        if (CCutil_sread_bits (f, &k, 2)) { rval = 1; goto CLEANUP; }
++        (*w)->cstat[i] = '0' + k;
++    }
++    for (i = 0; i < nrows; i++) {
++        if (CCutil_sread_bits (f, &k, 1)) { rval = 1; goto CLEANUP; }
++        (*w)->rstat[i] = '0' + k;
++    }
++    (*w)->nstruct = nstruct;
++    (*w)->nrows = nrows;
++
++CLEANUP:
++
++    if (rval) CClp_free_warmstart (w);
++    return rval;
++}
++
++int CClp_swrite_warmstart (CC_SFILE *f, CClp_warmstart *w)
++{
++    int i;
++    const char *name = SOLVER_WARMSTART_NAME;
++
++    for (i = 0; i < 4; i++) {
++        if (CCutil_swrite_char (f, name[i])) return 1;
++    }
++    if (CCutil_swrite_int (f, w->nstruct)) return 1;
++    if (CCutil_swrite_int (f, w->nrows)) return 1;
++    for (i = 0; i < w->nstruct; i++) {
++        if (CCutil_swrite_bits (f, w->cstat[i] - '0', 2)) return 1;
++    }
++    for (i = 0; i < w->nrows; i++) {
++        if (CCutil_swrite_bits (f, w->rstat[i] - '0', 1)) return 1;
++    }
++    return 0;
++}
++
++int CClp_get_info (CClp *lp, CClp_info **i)
++{
++    int rval = 0;
++    CClp_warmstart *w = (CClp_warmstart *) NULL;
++
++    CClp_free_info (i);
++    rval = CClp_get_warmstart (lp, &w);
++    if (rval) goto CLEANUP;
++
++    (*i) = CC_SAFE_MALLOC (1, CClp_info);
++    if (!(*i)) {
++        fprintf (stderr, "Out of memory in CClp_get_info\n");
++        rval = 1; goto CLEANUP;
++    }
++    (*i)->nstruct = w->nstruct;
++    (*i)->nrows = w->nrows;
++    (*i)->cstat = w->cstat;
++    (*i)->rstat = w->rstat;
++    w->cstat = (char *) NULL;
++    w->rstat = (char *) NULL;
++
++CLEANUP:
++
++    CClp_free_warmstart (&w);
++    return rval;
++}
++
++int CClp_create_info (CClp_info **i, int rcount, int ccount)
++{
++    int rval = 0, j;
++
++    CClp_free_info (i);
++    (*i) = CC_SAFE_MALLOC (1, CClp_info);
++    if (!(*i)) {
++        fprintf (stderr, "Out of memory in CClp_create_info\n");
++        rval = 1; goto CLEANUP;
++    }
++    (*i)->cstat = (char *) NULL;
++    (*i)->rstat = (char *) NULL;
++    (*i)->nstruct = ccount;
++    (*i)->nrows = rcount;
++    if (ccount == 0 || rcount == 0) {
++        fprintf (stderr, "No columns or rows in CClp_create_info\n");
++        rval = 1; goto CLEANUP;
++    }
++    (*i)->cstat = CC_SAFE_MALLOC (ccount, char);
++    (*i)->rstat = CC_SAFE_MALLOC (rcount, char);
++    if (!(*i)->cstat || !(*i)->rstat) {
++        fprintf (stderr, "out of memory in CClp_create_info\n");
++        rval = 1; goto CLEANUP;
++    }
++    for (j = 0; j < ccount; j++) (*i)->cstat[j] = CSTAT_LOWER;
++    for (j = 0; j < rcount; j++) (*i)->rstat[j] = RSTAT_ACTIVE;
++
++CLEANUP:
++
++    if (rval) CClp_free_info (i);
++    return rval;
++}
++
++int CClp_is_col_active (CClp_info *i, int c)
++{
++    if (c < 0 || c >= i->nstruct) return 0;
++    return i->cstat[c] == CSTAT_BASIC;
++}
++
++int CClp_is_row_active (CClp_info *i, int r)
++{
++    if (r < 0 || r >= i->nrows) return 0;
++    return i->rstat[r] == RSTAT_ACTIVE;
++}
++
++void CClp_set_col_active (CClp_info *i, int c)
++{
++    if (c >= 0 && c < i->nstruct) i->cstat[c] = CSTAT_BASIC;
++}
++
++void CClp_set_col_inactive (CClp_info *i, int c)
++{
++    if (c >= 0 && c < i->nstruct) i->cstat[c] = CSTAT_LOWER;
++}
++
++void CClp_set_col_upper (CClp_info *i, int c)
++{
++    if (c >= 0 && c < i->nstruct) i->cstat[c] = CSTAT_UPPER;
++}
++
++void CClp_set_row_active (CClp_info *i, int r)
++{
++    if (r >= 0 && r < i->nrows) i->rstat[r] = RSTAT_ACTIVE;
++}
++
++void CClp_set_row_inactive (CClp_info *i, int r)
++{
++    if (r >= 0 && r < i->nrows) i->rstat[r] = RSTAT_BASIC;
++}
++
++void CClp_free_info (CClp_info **i)
++{
++    if (*i) {
++        CC_IFFREE ((*i)->cstat, char);
++        CC_IFFREE ((*i)->rstat, char);
++        CC_FREE (*i, CClp_info);
++    }
++}
++
++int CClp_x (CClp *lp, double *x)
++{
++    if (Highs_getSolution (lp->h, x, (double *) NULL, (double *) NULL,
++                           (double *) NULL) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getSolution (x) failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_rc (CClp *lp, double *rc)
++{
++    if (Highs_getSolution (lp->h, (double *) NULL, rc, (double *) NULL,
++                           (double *) NULL) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getSolution (rc) failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_pi (CClp *lp, double *pi)
++{
++    HighsInt has_ray = 0;
++    int i, nrows;
++
++    if (Highs_getModelStatus (lp->h) == kHighsModelStatusInfeasible) {
++        /* Farkas certificate, in the same orientation as the duals: a
++           combination of the rows proving infeasibility. */
++        if (Highs_getDualRay (lp->h, &has_ray, pi) == kHighsStatusError ||
++            !has_ray) {
++            fprintf (stderr, "Highs_getDualRay failed\n");
++            return 1;
++        }
++        (void) i; (void) nrows;
++        return 0;
++    }
++    if (Highs_getSolution (lp->h, (double *) NULL, (double *) NULL,
++                           (double *) NULL, pi) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getSolution (pi) failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_objval (CClp *lp, double *obj)
++{
++    *obj = Highs_getObjectiveValue (lp->h);
++    return 0;
++}
++
++int CClp_nrows (CClp *lp)
++{
++    return Highs_getNumRow (lp->h);
++}
++
++int CClp_ncols (CClp *lp)
++{
++    return Highs_getNumCol (lp->h);
++}
++
++int CClp_nnonzeros (CClp *lp)
++{
++    return Highs_getNumNz (lp->h);
++}
++
++int CClp_status (CClp *lp, int *status)
++{
++    (void) lp;
++    if (status) *status = 0;
++    return 0;
++}
++
++int CClp_getweight (CClp *lp, int nrows, int *rmatbeg, int *rmatind,
++        double *rmatval, double *weight)
++{
++    (void) lp; (void) nrows; (void) rmatbeg; (void) rmatind; (void) rmatval;
++    (void) weight;
++    fprintf (stderr, "CClp_getweight not available with the HiGHS interface\n");
++    return 1;
++}
++
++int CClp_dump_lp (CClp *lp, const char *fname)
++{
++    if (Highs_writeModel (lp->h, fname) == kHighsStatusError) {
++        fprintf (stderr, "Highs_writeModel failed\n");
++        return 1;
++    }
++    return 0;
++}
++
++int CClp_getgoodlist (CClp *lp, int *goodlist, int *goodlen_p,
++        double *downpen, double *uppen)
++{
++    int rval = 0, i, j, ncols;
++    double *x = (double *) NULL;
++
++    *goodlen_p = 0;
++    ncols = Highs_getNumCol (lp->h);
++    x = CC_SAFE_MALLOC (ncols + 1, double);
++    if (!x) {
++        fprintf (stderr, "out of memory in CClp_getgoodlist\n");
++        rval = 1; goto CLEANUP;
++    }
++    rval = CClp_x (lp, x);
++    if (rval) goto CLEANUP;
++    for (i = 0, j = 0; i < ncols; i++) {
++        if (x[i] >= CCtsp_INTTOL && x[i] <= 1.0 - CCtsp_INTTOL) {
++            goodlist[j] = i;
++            downpen[j] = x[i];
++            uppen[j] = 1.0 - x[i];
++            j++;
++        }
++    }
++    *goodlen_p = j;
++
++CLEANUP:
++
++    CC_IFFREE (x, double);
++    return rval;
++}
++
++/* Strong branching by hand: for each candidate, bound the column to 0 and
++   to 1 in turn, run a limited dual simplex from the current basis, and
++   report the objective (or the upper bound if the LP is infeasible or
++   exceeds it).  The bounds and the basis are restored afterwards. */
++int CClp_strongbranch (CClp *lp, int *candidatelist, int ncand,
++        double *downpen, double *uppen, int iterations, double upperbound)
++{
++    int rval = 0, i, k, ncols, nrows, model_status;
++    HighsInt *cs = (HighsInt *) NULL, *rs = (HighsInt *) NULL;
++    HighsInt num_col, num_nz;
++    double cost, lower, upper, val;
++
++    ncols = Highs_getNumCol (lp->h);
++    nrows = Highs_getNumRow (lp->h);
++    cs = CC_SAFE_MALLOC (ncols + 1, HighsInt);
++    rs = CC_SAFE_MALLOC (nrows + 1, HighsInt);
++    if (!cs || !rs) {
++        fprintf (stderr, "out of memory in CClp_strongbranch\n");
++        rval = 1; goto CLEANUP;
++    }
++    if (Highs_getBasis (lp->h, cs, rs) == kHighsStatusError) {
++        fprintf (stderr, "Highs_getBasis failed\n");
++        rval = 1; goto CLEANUP;
++    }
++
++    for (i = 0; i < ncand; i++) {
++        int col = candidatelist[i];
++        if (Highs_getColsByRange (lp->h, col, col, &num_col, &cost, &lower,
++                                  &upper, &num_nz, (HighsInt *) NULL,
++                                  (HighsInt *) NULL, (double *) NULL)
++                == kHighsStatusError) {
++            fprintf (stderr, "Highs_getColsByRange failed\n");
++            rval = 1; goto CLEANUP;
++        }
++        for (k = 0; k < 2; k++) {
++            double *pen = (k == 0) ? &downpen[i] : &uppen[i];
++            if (k == 0) Highs_changeColBounds (lp->h, col, lower, 0.0);
++            else        Highs_changeColBounds (lp->h, col, 1.0, upper);
++            rval = run_simplex (lp, 1, iterations, &model_status);
++            if (rval) goto CLEANUP;
++            if (model_status == kHighsModelStatusInfeasible) {
++                val = upperbound;
++            } else {
++                val = Highs_getObjectiveValue (lp->h);
++                if (val > upperbound) val = upperbound;
++            }
++            *pen = val;
++            Highs_changeColBounds (lp->h, col, lower, upper);
++            if (Highs_setBasis (lp->h, cs, rs) == kHighsStatusError) {
++                fprintf (stderr, "Highs_setBasis failed\n");
++                rval = 1; goto CLEANUP;
++            }
++        }
++    }
++
++CLEANUP:
++
++    CC_IFFREE (cs, HighsInt);
++    CC_IFFREE (rs, HighsInt);
++    return rval;
++}

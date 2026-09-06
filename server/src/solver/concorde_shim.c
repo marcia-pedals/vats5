@@ -74,6 +74,70 @@ static void RedirectEnd(Redirect* r) {
   free(r->saved_cwd);
 }
 
+// Runs CCtsp_solve_dat on an already-built datagroup with cwd and stdio
+// redirected into work_dir. Takes ownership of *dat (frees it).
+static int SolveDat(
+    int ncount,
+    CCdatagroup* dat,
+    const int* in_tour,
+    const double* upper_bound,
+    int seed,
+    const char* work_dir,
+    const char* log_path,
+    int* success,
+    int* found_tour,
+    double* optval,
+    int* out_tour
+) {
+  Redirect redirect;
+  if (RedirectBegin(work_dir, log_path, &redirect) != 0) {
+    CCutil_freedatagroup(dat);
+    return -1;
+  }
+
+  CCrandstate rstate;
+  CCutil_sprand(seed, &rstate);
+
+  double in_val = 0.0;
+  double* in_val_ptr = NULL;
+  if (upper_bound != NULL) {
+    in_val = *upper_bound;
+    in_val_ptr = &in_val;
+  }
+
+  // Used as the prefix for Concorde's scratch files, relative to work_dir.
+  char name[] = "problem";
+
+  // CCtsp_solve_dat only reads in_tour; the signature predates const.
+  int rval = CCtsp_solve_dat(
+      ncount,
+      dat,
+      (int*)in_tour,
+      out_tour,
+      in_val_ptr,
+      optval,
+      success,
+      found_tour,
+      name,
+      /*timebound=*/NULL,
+      /*hit_timebound=*/NULL,
+      /*silent=*/0,
+      &rstate
+  );
+
+  // When CCtsp_init_lp proves the LP infeasible (possible for sparse graphs:
+  // no tour exists), CCtsp_solve_dat reports optval = CCtsp_LP_MAXDOUBLE
+  // and leaves *found_tour as set by the initial heuristic tour without
+  // writing out_tour. Report that as "no tour".
+  if (rval == 0 && *found_tour && *optval >= CCtsp_LP_MAXDOUBLE) {
+    *found_tour = 0;
+  }
+
+  CCutil_freedatagroup(dat);
+  RedirectEnd(&redirect);
+  return rval;
+}
+
 int vats5_concorde_solve(
     int ncount,
     int ecount,
@@ -93,16 +157,8 @@ int vats5_concorde_solve(
   *found_tour = 0;
   *optval = 0.0;
 
-  Redirect redirect;
-  if (RedirectBegin(work_dir, log_path, &redirect) != 0) {
-    return -1;
-  }
-
   CCdatagroup dat;
   CCutil_init_datagroup(&dat);
-
-  CCrandstate rstate;
-  CCutil_sprand(seed, &rstate);
 
   // CCutil_graph2dat_matrix does not modify elist/elen; the signature just
   // predates const.
@@ -112,37 +168,74 @@ int vats5_concorde_solve(
   if (rval != 0) {
     fprintf(stderr, "concorde_shim: CCutil_graph2dat_matrix failed\n");
     CCutil_freedatagroup(&dat);
-    RedirectEnd(&redirect);
     return rval;
   }
 
-  double in_val = 0.0;
-  double* in_val_ptr = NULL;
-  if (upper_bound != NULL) {
-    in_val = *upper_bound;
-    in_val_ptr = &in_val;
-  }
-
-  // Used as the prefix for Concorde's scratch files, relative to work_dir.
-  char name[] = "problem";
-
-  rval = CCtsp_solve_dat(
+  return SolveDat(
       ncount,
       &dat,
       /*in_tour=*/NULL,
-      out_tour,
-      in_val_ptr,
-      optval,
+      upper_bound,
+      seed,
+      work_dir,
+      log_path,
       success,
       found_tour,
-      name,
-      /*timebound=*/NULL,
-      /*hit_timebound=*/NULL,
-      /*silent=*/0,
-      &rstate
+      optval,
+      out_tour
   );
+}
 
-  CCutil_freedatagroup(&dat);
-  RedirectEnd(&redirect);
-  return rval;
+int vats5_concorde_solve_sparse(
+    int ncount,
+    int ecount,
+    const int* elist,
+    const int* elen,
+    int default_len,
+    const int* in_tour,
+    const double* upper_bound,
+    int seed,
+    const char* work_dir,
+    const char* log_path,
+    int* success,
+    int* found_tour,
+    double* optval,
+    int* out_tour
+) {
+  *success = 0;
+  *found_tour = 0;
+  *optval = 0.0;
+
+  if (default_len <= 0) {
+    // Concorde would pick (max_len + 1) * ncount itself, which overflows or
+    // gets capped for large instances; callers must choose it.
+    fprintf(stderr, "concorde_shim: default_len must be positive\n");
+    return -1;
+  }
+
+  CCdatagroup dat;
+  CCutil_init_datagroup(&dat);
+
+  int rval = CCutil_graph2dat_sparse(
+      ncount, ecount, (int*)elist, (int*)elen, default_len, &dat
+  );
+  if (rval != 0) {
+    fprintf(stderr, "concorde_shim: CCutil_graph2dat_sparse failed\n");
+    // CCutil_graph2dat_sparse frees the datagroup on failure.
+    return rval;
+  }
+
+  return SolveDat(
+      ncount,
+      &dat,
+      in_tour,
+      upper_bound,
+      seed,
+      work_dir,
+      log_path,
+      success,
+      found_tour,
+      optval,
+      out_tour
+  );
 }

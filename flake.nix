@@ -31,8 +31,14 @@
         # QSopt LP solver (prebuilt binary)
         qsopt = pkgs.callPackage ./third_party/qsopt.nix { };
 
-        # Concorde TSP solver
+        # Concorde TSP solver (with QSopt), and a variant with HiGHS as its
+        # LP solver (select in CMake with -DVATS5_CONCORDE_LP=highs).
         concorde = pkgs.callPackage ./third_party/concorde.nix { inherit qsopt; };
+        concorde-highs = pkgs.callPackage ./third_party/concorde.nix {
+          inherit qsopt;
+          highs = pkgs.highs;
+          lpBackend = "highs";
+        };
 
         # Test data (GTFS feeds for tests and dev tools)
         testData = pkgs.fetchzip {
@@ -44,7 +50,7 @@
       {
         # Export packages so they can be built with `nix build .#qsopt` etc.
         packages = {
-          inherit qsopt concorde testData;
+          inherit qsopt concorde concorde-highs testData;
           default = concorde;
         };
 
@@ -80,6 +86,7 @@
             sqlite
           ] ++ [
             concorde
+            highs
           ];
 
           shellHook = ''

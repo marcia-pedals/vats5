@@ -20,7 +20,18 @@ find_package(SQLite3 REQUIRED)
 # QSopt LP solver that libconcorde depends on.
 find_path(CONCORDE_INCLUDE_DIR concorde.h REQUIRED)
 find_library(CONCORDE_LIBRARY concorde REQUIRED)
-find_library(QSOPT_LIBRARY qsopt REQUIRED)
+# Which LP solver the Concorde library was built against: "qsopt" (the
+# default nix `concorde` package) or "highs" (the `concorde-highs` package).
+set(VATS5_CONCORDE_LP "qsopt" CACHE STRING "LP solver linked into Concorde: qsopt or highs")
+if(VATS5_CONCORDE_LP STREQUAL "highs")
+  find_library(HIGHS_LIBRARY highs REQUIRED)
+  set(CONCORDE_LP_LIBRARY ${HIGHS_LIBRARY})
+elseif(VATS5_CONCORDE_LP STREQUAL "qsopt")
+  find_library(QSOPT_LIBRARY qsopt REQUIRED)
+  set(CONCORDE_LP_LIBRARY ${QSOPT_LIBRARY})
+else()
+  message(FATAL_ERROR "VATS5_CONCORDE_LP must be qsopt or highs")
+endif()
 
 FetchContent_Declare(
   csv
@@ -110,7 +121,7 @@ target_include_directories(relaxed_adjacency_list PUBLIC src)
 add_library(concorde STATIC src/solver/concorde.cpp src/solver/concorde_shim.c)
 target_link_libraries(concorde
     PUBLIC relaxed_adjacency_list
-    PRIVATE ${CONCORDE_LIBRARY} ${QSOPT_LIBRARY} m)
+    PRIVATE ${CONCORDE_LIBRARY} ${CONCORDE_LP_LIBRARY} m)
 target_include_directories(concorde PUBLIC src PRIVATE ${CONCORDE_INCLUDE_DIR})
 
 # Create relaxed_shortest_path library target
@@ -203,6 +214,16 @@ target_link_libraries(reduction_diff PUBLIC steps_shortest_path CLI11::CLI11)
 add_executable(initialize_problem_state src/tools/initialize_problem_state.cpp)
 target_link_libraries(initialize_problem_state PUBLIC tarel_graph gtfs_filter service_pattern visualization CLI11::CLI11)
 
+# GTSP over (stop, time) vertices built from scheduled steps.
+add_library(gtsp src/solver/gtsp.cpp)
+target_link_libraries(gtsp PUBLIC steps_adjacency_list tarel_graph)
+target_include_directories(gtsp PUBLIC src)
+
+# Exact GTSP solving via Noon-Bean + doubling + sparse Concorde.
+add_library(gtsp_concorde src/solver/gtsp_concorde.cpp)
+target_link_libraries(gtsp_concorde PUBLIC gtsp concorde)
+target_include_directories(gtsp_concorde PUBLIC src)
+
 # Add load_problem_state tool
 add_executable(load_problem_state src/tools/load_problem_state.cpp)
 target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
@@ -214,6 +235,14 @@ target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 # Add benchmark_hk tool
 add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
 target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)
+
+# Add problem_stats tool
+add_executable(problem_stats src/tools/problem_stats.cpp)
+target_link_libraries(problem_stats PUBLIC tarel_graph gtsp CLI11::CLI11)
+
+# Add benchmark_gtsp tool
+add_executable(benchmark_gtsp src/tools/benchmark_gtsp.cpp)
+target_link_libraries(benchmark_gtsp PUBLIC gtsp_concorde held_karp_dp two_opt CLI11::CLI11)
 
 # Add benchmark_2opt tool
 add_executable(benchmark_2opt src/tools/benchmark_2opt.cpp)
@@ -290,6 +319,12 @@ add_executable(concorde_test src/solver/concorde_test.cpp)
 target_link_libraries(concorde_test PUBLIC gunit concorde rapidcheck rapidcheck_gtest)
 add_test(NAME concorde_test COMMAND concorde_test)
 set_tests_properties(concorde_test PROPERTIES LABELS "slow")
+
+# Add gtsp_concorde test executable
+add_executable(gtsp_concorde_test src/solver/gtsp_concorde_test.cpp)
+target_link_libraries(gtsp_concorde_test PUBLIC gunit gtsp_concorde held_karp_dp problem_state_gen rapidcheck rapidcheck_gtest)
+add_test(NAME gtsp_concorde_test COMMAND gtsp_concorde_test)
+set_tests_properties(gtsp_concorde_test PROPERTIES LABELS "slow")
 
 # Add relaxed_shortest_path test executable
 add_executable(relaxed_shortest_path_test src/solver/relaxed_shortest_path_test.cpp)
