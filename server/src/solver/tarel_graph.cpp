@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -725,6 +726,8 @@ TarelStateRemapResult RemapTarelStates(
   for (const TarelEdge& edge : edges) {
     TarelState new_origin = final_state(edge.origin);
     TarelState new_dest = final_state(edge.destination);
+    result.original_to_mapped[edge.origin] = new_origin;
+    result.original_to_mapped[edge.destination] = new_dest;
 
     // TODO: If multiple states map to the same remapped state, then we
     // arbitrarily pick one. Think more about when this can happen and whether
@@ -956,15 +959,26 @@ std::optional<TspTourResult> SolveTspAndExtractTour(
   };
 }
 
-std::optional<TspTourResult> ComputeTarelLowerBound(
-    const ProblemState& state,
-    std::optional<int> ub,
-    std::ostream* tsp_log,
-    const SearchEventCallback& on_event
-) {
+namespace {
+
+// The group-remapped tarel edges of `state` and the TSP graph built from them.
+struct TarelTspGraph {
+  TarelEdgeIntermediateData intermediate;
+  std::vector<TarelEdge> tarel_edges;
+  TarelStateRemapResult remap;
+  TspGraphData graph;
+};
+
+// Returns nullopt if some group of required stops has no state in the TSP
+// graph, in which case a TSP tour would not visit every group and the
+// problem must be treated as infeasible.
+std::optional<TarelTspGraph> BuildTarelTspGraph(const ProblemState& state) {
   StepPathsAdjacencyList completed = state.ComputeCompletedGraph();
 
-  std::vector<TarelEdge> edges = MakeTarelEdges(completed);
+  TarelEdgeIntermediateData intermediate =
+      ComputeTarelIntermediateData(completed.AllMergedSteps());
+  std::vector<TarelEdge> edges =
+      BuildTarelEdgesFromIntermediateData(intermediate);
   TarelStateRemapResult remap = RemapTarelStates(edges, state.required);
   TspGraphData graph = MakeTspGraphEdges(remap.edges, state.boundary);
 
@@ -987,6 +1001,29 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     }
   }
 
+  return TarelTspGraph{
+      std::move(intermediate),
+      std::move(edges),
+      std::move(remap),
+      std::move(graph)
+  };
+}
+
+}  // namespace
+
+std::optional<TspTourResult> ComputeTarelLowerBound(
+    const ProblemState& state,
+    std::optional<int> ub,
+    std::ostream* tsp_log,
+    const SearchEventCallback& on_event
+) {
+  std::optional<TarelTspGraph> tsp_graph = BuildTarelTspGraph(state);
+  if (!tsp_graph.has_value()) {
+    return std::nullopt;
+  }
+  const TarelStateRemapResult& remap = tsp_graph->remap;
+  const TspGraphData& graph = tsp_graph->graph;
+
   std::optional<TspTourResult> result = SolveTspAndExtractTour(
       remap.edges, graph, state.boundary, ub, tsp_log, on_event
   );
@@ -1000,6 +1037,151 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     edge.destination = remap.mapped_to_original.at(edge.destination);
   }
 
+  return result;
+}
+
+std::optional<TarelRootLpResult> ComputeTarelRootLp(
+    const ProblemState& state, std::ostream* tsp_log
+) {
+  std::optional<TarelTspGraph> tsp_graph = BuildTarelTspGraph(state);
+  if (!tsp_graph.has_value()) {
+    return std::nullopt;
+  }
+  const TarelStateRemapResult& remap = tsp_graph->remap;
+  const TspGraphData& graph = tsp_graph->graph;
+
+  if (tsp_log) {
+    *tsp_log << "Solving root LP with " << graph.state_by_id.size()
+             << " vertices and " << graph.tsp_edges.size() << " edges...\n";
+  }
+
+  std::optional<ConcordeRootLp> lp = SolveTspRootLpWithConcorde(
+      MakeRelaxedAdjacencyListFromEdges(graph.tsp_edges), tsp_log
+  );
+  if (!lp.has_value()) {
+    return std::nullopt;
+  }
+
+  // Every tour uses exactly expected_num_cycle_edges within-stop cycle edges
+  // of weight kCycleEdgeWeight, so removing their contribution keeps the LP
+  // values valid lower bounds on the tarel optimum.
+  int cycle_offset = graph.expected_num_cycle_edges * kCycleEdgeWeight;
+  TarelRootLpResult result{
+      .lp_bound = lp->lp_bound - cycle_offset,
+      .lower_bound = lp->lower_bound - cycle_offset,
+      .support = {},
+      .num_forbidden_support_edges = lp->num_forbidden_support_edges,
+      .cycle_edge_mass = 0.0,
+      .expected_num_cycle_edges = graph.expected_num_cycle_edges,
+      .intermediate = {},
+      .tarel_edges = {},
+      .remap = {},
+  };
+
+  std::map<std::pair<TarelState, TarelState>, TarelEdge> edge_by_states;
+  for (const TarelEdge& edge : remap.edges) {
+    edge_by_states.emplace(std::make_pair(edge.origin, edge.destination), edge);
+  }
+
+  for (const ConcordeSupportEdge& e : lp->support) {
+    const TarelState& from = graph.state_by_id.at(e.from.v);
+    const TarelState& to = graph.state_by_id.at(e.to.v);
+    if (from.stop == to.stop) {
+      // Within-stop cycle edge.
+      result.cycle_edge_mass += e.x;
+      continue;
+    }
+    // Undo the partition offset applied in MakeTspGraphEdges: the TSP edge
+    // out of state (stop, p) carries the tarel edge out of (stop, p + 1).
+    TarelState origin = from;
+    origin.partition.v =
+        (from.partition.v + 1) % graph.num_states_by_stop.at(from.stop);
+    auto it = edge_by_states.find(std::make_pair(origin, to));
+    if (it == edge_by_states.end()) {
+      throw std::logic_error(
+          "ComputeTarelRootLp: LP support edge " + from.Debug(state) + " -> " +
+          to.Debug(state) + " has no tarel edge"
+      );
+    }
+    TarelEdge mapped = it->second;
+    TarelEdge edge = mapped;
+    edge.origin = remap.mapped_to_original.at(edge.origin);
+    edge.destination = remap.mapped_to_original.at(edge.destination);
+    result.support.push_back(TarelSupportEdge{edge, mapped, e.x});
+  }
+
+  result.intermediate = std::move(tsp_graph->intermediate);
+  result.tarel_edges = std::move(tsp_graph->tarel_edges);
+  result.remap = std::move(tsp_graph->remap);
+  return result;
+}
+
+std::optional<CriticalTimes> ComputeCriticalTimes(
+    const TarelEdgeIntermediateData& data, const TarelEdge& edge
+) {
+  auto arrivals_it = data.arrival_times_to.find(edge.origin);
+  if (arrivals_it == data.arrival_times_to.end()) {
+    throw std::logic_error("ComputeCriticalTimes: unknown origin state");
+  }
+  const ArrivalTimes& arrivals = arrivals_it->second;
+  if (arrivals.has_flex) {
+    return std::nullopt;
+  }
+
+  auto from_it = data.steps_from.find(edge.origin.stop);
+  if (from_it == data.steps_from.end()) {
+    throw std::logic_error("ComputeCriticalTimes: origin stop has no steps");
+  }
+  auto steps_it = from_it->second.find(edge.destination);
+  if (steps_it == from_it->second.end()) {
+    throw std::logic_error("ComputeCriticalTimes: no steps to destination");
+  }
+  const std::vector<Step>& steps = steps_it->second;
+
+  // Mirrors the scheduled-arrival case of BuildTarelEdgesFromIntermediateData:
+  // from arrival time t the onward travel takes the flex step's duration (if
+  // any) or the next scheduled departure's arrival minus t, whichever is
+  // less.
+  CriticalTimes result{
+      .times = {},
+      .num_arrival_times = static_cast<int>(arrivals.times.size()),
+  };
+  int step_idx = 0;
+  std::optional<int> flex_duration;
+  if (!steps.empty() && steps[0].is_flex) {
+    flex_duration = steps[0].FlexDurationSeconds();
+    step_idx = 1;
+  }
+  for (const TimeSinceServiceStart arrival_time : arrivals.times) {
+    while (step_idx < static_cast<int>(steps.size()) &&
+           steps[step_idx].origin.time < arrival_time) {
+      step_idx += 1;
+    }
+    int duration = std::numeric_limits<int>::max();
+    if (flex_duration.has_value()) {
+      duration = *flex_duration;
+    }
+    if (step_idx < static_cast<int>(steps.size())) {
+      duration = std::min(
+          duration,
+          steps[step_idx].destination.time.seconds - arrival_time.seconds
+      );
+    }
+    if (duration < edge.weight) {
+      throw std::logic_error(
+          "ComputeCriticalTimes: onward duration " + std::to_string(duration) +
+          " below edge weight " + std::to_string(edge.weight)
+      );
+    }
+    if (duration == edge.weight) {
+      result.times.push_back(arrival_time);
+    }
+  }
+  if (result.times.empty()) {
+    throw std::logic_error(
+        "ComputeCriticalTimes: no arrival time attains the edge weight"
+    );
+  }
   return result;
 }
 

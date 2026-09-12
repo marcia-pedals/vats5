@@ -103,3 +103,13 @@ TODO: Add some data about how the bound grows.
 ## Next steps
 
 The tightness of the relaxation bound is not great and the branch doesn't improve it much. It feels like we might be able to do a lot better.
+
+
+## Next prompt
+
+Ok now I want to implement a second kind of branching which we will also evaluate alongside the edge Require/Forbid branches.
+This is called critical time branching.
+For each tarel edge, the critical times are the arrival times where the onwards step along the edge from that time has duration equal to tarel weight. ie the ones that determine the tarel weight
+One branch is the branch where the only arrival times at the stop are the critical times we found. The other branch is where we remove those arrival times.
+So implement this and evaluate branches for each distinct critical time set arising from all the tarel edges in the root lp support.
+(Note that each tarel edge possibly gives a different set of critical times for the same stop, so we may have multiple different sets of critical times for each stop. Each one is a separate branch.)

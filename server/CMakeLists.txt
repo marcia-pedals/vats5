@@ -211,6 +211,10 @@ target_link_libraries(load_problem_state PUBLIC tarel_graph CLI11::CLI11)
 add_executable(benchmark_bnb src/tools/benchmark_bnb.cpp)
 target_link_libraries(benchmark_bnb PUBLIC branch_and_bound CLI11::CLI11)
 
+# Add strong_branching tool
+add_executable(strong_branching src/tools/strong_branching.cpp)
+target_link_libraries(strong_branching PUBLIC branch_and_bound CLI11::CLI11)
+
 # Add benchmark_hk tool
 add_executable(benchmark_hk src/tools/benchmark_hk.cpp)
 target_link_libraries(benchmark_hk PUBLIC held_karp_dp CLI11::CLI11)

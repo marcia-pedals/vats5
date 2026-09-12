@@ -29,6 +29,26 @@ std::string ConstraintForbidEdge::Debug(const ProblemState& state) const {
   return "[forbid " + state.StopName(a) + " -> " + state.StopName(b) + "]";
 }
 
+std::string ConstraintArrivalTimes::Debug(const ProblemState& state) const {
+  constexpr int kMaxListed = 4;
+  std::string result = std::string(keep ? "[only" : "[no") + " arrivals at " +
+                       state.StopName(stop) + " in {";
+  for (int i = 0; i < static_cast<int>(times.size()) && i < kMaxListed; ++i) {
+    if (i > 0) {
+      result += ", ";
+    }
+    result += times[i].ToString();
+  }
+  if (times.size() > kMaxListed) {
+    result += ", +" + std::to_string(times.size() - kMaxListed) + " more";
+  }
+  result += "}";
+  if (keep) {
+    result += ", not starting there";
+  }
+  return result + "]";
+}
+
 std::string BranchEdge::Debug(const ProblemState& state) const {
   return state.StopName(a) + " -> " + state.StopName(b);
 }
@@ -189,6 +209,25 @@ ProblemState ApplyConstraints(
           erase_from = it->second.b;
         }
       });
+    } else if (std::holds_alternative<ConstraintArrivalTimes>(constraint)) {
+      const ConstraintArrivalTimes& c =
+          std::get<ConstraintArrivalTimes>(constraint);
+      assert(std::is_sorted(c.times.begin(), c.times.end()));
+      std::erase_if(steps, [&](const Step& s) -> bool {
+        if (s.destination.stop != c.stop) {
+          return false;
+        }
+        if (s.is_flex) {
+          // A flex arrival (a walk in, or starting the tour here) happens at
+          // an arbitrary time, so the keep branch drops it; the remove branch
+          // keeps it (see the struct comment).
+          return c.keep;
+        }
+        bool listed = std::binary_search(
+            c.times.begin(), c.times.end(), s.destination.time
+        );
+        return c.keep ? !listed : listed;
+      });
     } else {
       assert(false);
     }
@@ -203,6 +242,149 @@ ProblemState ApplyConstraints(
       state.step_partition_names,
       std::move(original_edges)
   );
+}
+
+std::optional<ArrivalWindowNarrowing> NarrowArrivalTimes(
+    const ProblemState& state, int ub_seconds
+) {
+  std::vector<Step> steps = state.minimal.AllSteps();
+  ProblemState current = state;
+  int earliest = std::numeric_limits<int>::min();
+  int latest = std::numeric_limits<int>::max();
+  int num_removed = 0;
+  int num_rounds = 0;
+
+  while (true) {
+    num_rounds += 1;
+    StepPathsAdjacencyList completed = current.ComputeCompletedGraph();
+
+    // Per stop: range of scheduled completed-path arrival times and of
+    // departure times (ignoring the END->START cycle edge). A range is
+    // nullopt once the stop has a flex path of that kind, since the tour
+    // could then be there at any time.
+    struct Range {
+      int min = std::numeric_limits<int>::max();
+      int max = std::numeric_limits<int>::min();
+      void Add(int t) {
+        min = std::min(min, t);
+        max = std::max(max, t);
+      }
+      void Add(const Range& r) {
+        min = std::min(min, r.min);
+        max = std::max(max, r.max);
+      }
+      bool Empty() const { return min > max; }
+    };
+    struct StopTimes {
+      std::optional<Range> arrivals = Range{};
+      std::optional<Range> departures = Range{};
+      // Whether a START->stop path exists, i.e. the tour may start here.
+      bool can_start = false;
+    };
+    std::unordered_map<StopId, StopTimes> times_by_stop;
+    auto note = [](std::optional<Range>& range, bool is_flex, int t) {
+      if (is_flex) {
+        range = std::nullopt;
+      } else if (range.has_value()) {
+        range->Add(t);
+      }
+    };
+    for (const Step& s : completed.AllMergedSteps()) {
+      if (s.origin.stop == state.boundary.end ||
+          s.destination.stop == state.boundary.start) {
+        // The artificial cycle-closing edge.
+        continue;
+      }
+      if (s.is_flex && s.FlexDurationSeconds() > ub_seconds) {
+        // A walk longer than the whole tour can never be used.
+        continue;
+      }
+      // A path from START is "the tour starts at the destination" only if it
+      // is all flex; otherwise the tour started elsewhere and this is a
+      // scheduled arrival. Likewise an all-flex path to END ends the tour at
+      // its origin, while any other path to END is a scheduled departure.
+      if (s.origin.stop == state.boundary.start && s.is_flex) {
+        times_by_stop[s.destination.stop].can_start = true;
+      } else {
+        note(
+            times_by_stop[s.destination.stop].arrivals,
+            s.is_flex,
+            s.destination.time.seconds
+        );
+      }
+      if (!(s.destination.stop == state.boundary.end && s.is_flex)) {
+        note(
+            times_by_stop[s.origin.stop].departures,
+            s.is_flex,
+            s.origin.time.seconds
+        );
+      }
+    }
+
+    for (const std::vector<StopId>& group : state.required.Groups()) {
+      bool unconstrained = false;
+      Range group_range;
+      for (StopId stop : group) {
+        if (stop == state.boundary.start) {
+          unconstrained = true;
+          break;
+        }
+        auto it = times_by_stop.find(stop);
+        if (it == times_by_stop.end()) {
+          // Only reachable as the sole stop of a trivial tour.
+          continue;
+        }
+        const StopTimes& t = it->second;
+        if (!t.arrivals.has_value()) {
+          unconstrained = true;
+          break;
+        }
+        group_range.Add(*t.arrivals);
+        if (t.can_start) {
+          if (!t.departures.has_value()) {
+            unconstrained = true;
+            break;
+          }
+          group_range.Add(*t.departures);
+        }
+      }
+      if (unconstrained || group_range.Empty()) {
+        continue;
+      }
+      earliest = std::max(earliest, group_range.min - ub_seconds);
+      latest = std::min(latest, group_range.max + ub_seconds);
+    }
+    if (earliest > latest) {
+      return std::nullopt;
+    }
+
+    size_t before = steps.size();
+    std::erase_if(steps, [&](const Step& s) -> bool {
+      return !s.is_flex && (s.origin.time.seconds < earliest ||
+                            s.destination.time.seconds > latest);
+    });
+    int removed = static_cast<int>(before - steps.size());
+    num_removed += removed;
+    if (removed == 0) {
+      break;
+    }
+    current = MakeProblemState(
+        MakeAdjacencyList(steps),
+        state.boundary,
+        state.required,
+        state.stop_infos,
+        state.step_partition_names,
+        state.original_edges
+    );
+  }
+
+  return ArrivalWindowNarrowing{
+      .state = std::move(current),
+      .earliest = TimeSinceServiceStart{earliest},
+      .latest = TimeSinceServiceStart{latest},
+      .num_steps_removed = num_removed,
+      .num_rounds = num_rounds,
+  };
 }
 
 BranchAndBoundResult BranchAndBoundSolve(

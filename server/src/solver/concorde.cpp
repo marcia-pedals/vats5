@@ -421,6 +421,124 @@ std::optional<ConcordeSolution> SolveTspWithConcordeImpl(
   };
 }
 
+std::optional<ConcordeRootLp> SolveTspRootLpWithConcordeImpl(
+    const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log, int seed
+) {
+  DoubledGraphWeights weights(relaxed);
+  int n = weights.NumStops();
+  int doubled_n = weights.DoubledN();
+
+  int ecount = doubled_n * (doubled_n - 1) / 2;
+  std::vector<int> elist;
+  std::vector<int> elen;
+  elist.reserve(2 * ecount);
+  elen.reserve(ecount);
+  for (int a = 0; a < doubled_n; ++a) {
+    for (int b = a + 1; b < doubled_n; ++b) {
+      elist.push_back(a);
+      elist.push_back(b);
+      elen.push_back(weights.GetDoubledWeight(a, b));
+    }
+  }
+
+  WorkDir work_dir;
+  std::string log_path = work_dir.path() + "/log";
+
+  std::cout.flush();
+  std::cerr.flush();
+
+  int infeasible = 0;
+  double lp_bound = 0.0;
+  double exact_bound = 0.0;
+  int xcount = 0;
+  int* xlist = nullptr;
+  double* x = nullptr;
+  int rval = vats5_concorde_root_lp(
+      doubled_n,
+      ecount,
+      elist.data(),
+      elen.data(),
+      kForbiddenEdgeWeight,
+      seed,
+      work_dir.path().c_str(),
+      log_path.c_str(),
+      &infeasible,
+      &lp_bound,
+      &exact_bound,
+      &xcount,
+      &xlist,
+      &x
+  );
+  // Take ownership of the shim's malloc'd arrays before anything can throw.
+  std::vector<int> xlist_vec(xlist, xlist + 2 * xcount);
+  std::vector<double> x_vec(x, x + xcount);
+  free(xlist);
+  free(x);
+
+  std::string concorde_output = ReadFile(log_path);
+  if (tsp_log) {
+    *tsp_log << concorde_output << std::flush;
+  }
+
+  if (rval != 0) {
+    throw ConcordeFailure(
+        "Concorde root LP failed (rval=" + std::to_string(rval) +
+        "). Output:\n" + concorde_output
+    );
+  }
+  if (infeasible) {
+    return std::nullopt;
+  }
+
+  // Every tour has exactly n inter-vertex edges, each inflated by
+  // kInterVertexOffset and by the negative-weight offset, so removing n of
+  // each keeps the LP values valid lower bounds (see the comment at the end
+  // of SolveTspWithConcordeImpl).
+  double offset = static_cast<double>(n) * kInterVertexOffset +
+                  static_cast<double>(n) * weights.NegativeWeightOffset();
+
+  ConcordeRootLp result{
+      .lp_bound = lp_bound - offset,
+      .lower_bound = static_cast<int>(std::ceil(exact_bound - offset - 1e-6)),
+      .support = {},
+      .num_forbidden_support_edges = 0,
+  };
+
+  for (int i = 0; i < xcount; ++i) {
+    int a = xlist_vec[2 * i];
+    int b = xlist_vec[2 * i + 1];
+    if (a > b) std::swap(a, b);
+    int a_orig = a / 2;
+    int b_orig = b / 2;
+    if (a_orig == b_orig) {
+      // in(i) <-> out(i): not a travel edge.
+      continue;
+    }
+    if (weights.IsForbiddenEdge(a, b)) {
+      result.num_forbidden_support_edges += 1;
+      continue;
+    }
+    bool a_is_in = (a % 2 == 0);
+    bool b_is_in = (b % 2 == 0);
+    if (!a_is_in && b_is_in) {
+      // out(a_orig) <-> in(b_orig): travel a_orig -> b_orig.
+      result.support.push_back(
+          ConcordeSupportEdge{StopId{a_orig}, StopId{b_orig}, x_vec[i]}
+      );
+    } else if (a_is_in && !b_is_in) {
+      // in(a_orig) <-> out(b_orig): travel b_orig -> a_orig.
+      result.support.push_back(
+          ConcordeSupportEdge{StopId{b_orig}, StopId{a_orig}, x_vec[i]}
+      );
+    } else {
+      // Both in or both out is always forbidden; handled above.
+      assert(false);
+    }
+  }
+
+  return result;
+}
+
 }  // namespace
 
 std::optional<ConcordeSolution> SolveTspWithConcorde(
@@ -443,6 +561,51 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
       // Don't retry - indicates insufficient kInterVertexOffset or a bug, not
       // transient.
       throw;
+    } catch (const EdgeWeightOverflow&) {
+      // Don't retry - deterministic property of the input.
+      throw;
+    } catch (const std::exception&) {
+      if (attempt == kMaxRetries) {
+        throw;
+      }
+    }
+  }
+  __builtin_unreachable();
+}
+
+std::optional<ConcordeRootLp> SolveTspRootLpWithConcorde(
+    const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log
+) {
+  if (relaxed.NumStops() < kBruteForceThreshold) {
+    std::optional<ConcordeSolution> solution =
+        SolveTspBruteForce(relaxed, std::nullopt);
+    if (!solution.has_value()) {
+      return std::nullopt;
+    }
+    ConcordeRootLp result{
+        .lp_bound = static_cast<double>(solution->optimal_value),
+        .lower_bound = solution->optimal_value,
+        .support = {},
+        .num_forbidden_support_edges = 0,
+    };
+    int n = static_cast<int>(solution->tour.size());
+    for (int i = 0; i < n; ++i) {
+      result.support.push_back(
+          ConcordeSupportEdge{
+              solution->tour[i], solution->tour[(i + 1) % n], 1.0
+          }
+      );
+    }
+    return result;
+  }
+
+  constexpr int kMaxRetries = 5;
+  constexpr int kBaseSeed = 43;
+  for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
+    try {
+      return SolveTspRootLpWithConcordeImpl(
+          relaxed, tsp_log, kBaseSeed + attempt - 1
+      );
     } catch (const EdgeWeightOverflow&) {
       // Don't retry - deterministic property of the input.
       throw;

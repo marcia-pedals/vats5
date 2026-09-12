@@ -412,7 +412,11 @@ InitializeProblemStateResult InitializeProblemState(
 
 struct TarelStateRemapResult {
   std::vector<TarelEdge> edges;
+  // One arbitrary original state per mapped state (several originals may
+  // merge into one).
   std::unordered_map<TarelState, TarelState> mapped_to_original;
+  // Every original state's mapped state.
+  std::unordered_map<TarelState, TarelState> original_to_mapped;
 };
 
 TarelStateRemapResult RemapTarelStates(
@@ -437,6 +441,69 @@ std::optional<TspTourResult> ComputeTarelLowerBound(
     std::optional<int> ub = std::nullopt,
     std::ostream* tsp_log = nullptr,
     const SearchEventCallback& on_event = nullptr
+);
+
+// The scheduled arrival times at a tarel edge's origin from which the best
+// onward travel to its destination takes exactly the edge's weight, i.e. the
+// arrival times that determine the weight.
+struct CriticalTimes {
+  // Sorted subset of the origin's scheduled arrival times.
+  std::vector<TimeSinceServiceStart> times;
+  // How many scheduled arrival times the origin state has in total.
+  int num_arrival_times;
+};
+
+// Returns nullopt if the origin's arrival is flex: the tour can then arrive
+// at any time, so no scheduled time determines the weight. Throws if `edge`
+// is not an edge of `data` or its weight is inconsistent with `data`.
+std::optional<CriticalTimes> ComputeCriticalTimes(
+    const TarelEdgeIntermediateData& data, const TarelEdge& edge
+);
+
+// A tarel edge with positive value in the root LP solution.
+struct TarelSupportEdge {
+  // In original (pre-remap) tarel states; one arbitrary original edge among
+  // those that merged into `mapped`.
+  TarelEdge edge;
+  // In group-remapped tarel states, as solved by the LP.
+  TarelEdge mapped;
+  double x;
+};
+
+// Return type for ComputeTarelRootLp.
+struct TarelRootLpResult {
+  // The fractional LP objective, in seconds.
+  double lp_bound;
+
+  // A rigorous integer lower bound on the tarel TSP optimum, in seconds.
+  int lower_bound;
+
+  // Inter-stop tarel edges with positive LP value. Within-stop cycle edges
+  // are omitted.
+  std::vector<TarelSupportEdge> support;
+
+  // See ConcordeRootLp::num_forbidden_support_edges.
+  int num_forbidden_support_edges;
+
+  // Total LP value on within-stop cycle edges, against the number every tour
+  // uses. A mismatch means the LP solution is fractional inside stops.
+  double cycle_edge_mass;
+  int expected_num_cycle_edges;
+
+  // The tarel graph the LP was solved on, so callers can relate support edges
+  // back to the original tarel edges (`tarel_edges`, built from
+  // `intermediate`) via `remap.original_to_mapped`.
+  TarelEdgeIntermediateData intermediate;
+  std::vector<TarelEdge> tarel_edges;
+  TarelStateRemapResult remap;
+};
+
+// Like ComputeTarelLowerBound, but only solves Concorde's root LP relaxation
+// (cutting planes, no branching) instead of finding an integral tour, and
+// returns the LP's support rather than a tour. Returns nullopt if the
+// relaxation is infeasible.
+std::optional<TarelRootLpResult> ComputeTarelRootLp(
+    const ProblemState& state, std::ostream* tsp_log = nullptr
 );
 
 std::vector<TarelEdge> MakeTarelEdges(const StepPathsAdjacencyList& adj);

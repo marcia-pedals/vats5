@@ -50,6 +50,37 @@ int vats5_concorde_solve(
     int* out_tour
 );
 
+// Solves only the root LP relaxation of the symmetric TSP: Concorde's
+// cutting-plane loop at the root of its search tree, with no branching.
+// Inputs are as for vats5_concorde_solve (including the cwd/stdio redirect
+// caveats, so this is NOT thread-safe either).
+//
+// Returns 0 if Concorde ran to completion, nonzero on internal failure. On 0:
+//   *infeasible is 1 if Concorde proved the LP infeasible (no tour exists);
+//     the remaining outputs are then untouched.
+//   *lp_bound is the final LP objective value (a valid lower bound on the
+//     optimal tour, up to floating point).
+//   *exact_bound is Concorde's exactly-priced lower bound (rigorous).
+//   *xcount edges with LP value > CCtsp_INTTOL (the support) are returned as
+//     node pairs (xlist[2i], xlist[2i+1]) in the caller's node numbering with
+//     values x[i]. Both arrays are malloc'd and must be free()d by the caller.
+int vats5_concorde_root_lp(
+    int ncount,
+    int ecount,
+    const int* elist,
+    const int* elen,
+    int default_len,
+    int seed,
+    const char* work_dir,
+    const char* log_path,
+    int* infeasible,
+    double* lp_bound,
+    double* exact_bound,
+    int* xcount,
+    int** xlist,
+    double** x
+);
+
 #ifdef __cplusplus
 }
 #endif

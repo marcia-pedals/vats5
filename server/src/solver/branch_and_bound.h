@@ -25,8 +25,33 @@ struct ConstraintForbidEdge {
   std::string Debug(const ProblemState& state) const;
 };
 
-using ProblemConstraint =
-    std::variant<ConstraintRequireEdge, ConstraintForbidEdge>;
+// Restricts the arrival times the tour may use at `stop`. With `keep`, only
+// the scheduled minimal steps arriving at `stop` at one of `times` survive;
+// every flex step into `stop` (a walk in, or the START->stop step that lets
+// the tour start there) is removed too, since a flex arrival happens at an
+// arbitrary time. Without `keep`, exactly the scheduled steps arriving at one
+// of `times` are removed and flex steps are untouched.
+//
+// The pair is a valid dichotomy: a tour whose visit to `stop` arrives at one
+// of `times` by a scheduled step is in the first branch, and every other tour
+// is in the second, including tours that walk in or start at `stop`, because
+// the second branch deletes no flex step. Dropping the flex arrivals in the
+// first branch is what lets NarrowArrivalTimes pin the tour to the window
+// around `times`. A tour may pass through `stop` more than once, so each
+// branch is a relaxation of the intended child, which keeps the bounds valid.
+struct ConstraintArrivalTimes {
+  StopId stop;
+  // Sorted ascending.
+  std::vector<TimeSinceServiceStart> times;
+  bool keep;
+
+  std::string Debug(const ProblemState& state) const;
+};
+
+using ProblemConstraint = std::variant<
+    ConstraintRequireEdge,
+    ConstraintForbidEdge,
+    ConstraintArrivalTimes>;
 
 std::string Debug(const ProblemConstraint& c, const ProblemState& state);
 
@@ -72,6 +97,44 @@ struct SearchNode {
 
 ProblemState ApplyConstraints(
     const ProblemState& state, const std::vector<ProblemConstraint>& constraints
+);
+
+struct ArrivalWindowNarrowing {
+  ProblemState state;
+
+  // Every step of a tour of duration <= ub departs at or after `earliest` and
+  // arrives at or before `latest`.
+  TimeSinceServiceStart earliest;
+  TimeSinceServiceStart latest;
+
+  int num_steps_removed;
+  int num_rounds;
+};
+
+// Narrows `state` to the steps a tour of duration at most `ub_seconds` can
+// use.
+//
+// A tour visits some stop x of every required group as an endpoint of its
+// completed-graph paths. That visit either arrives at x by a scheduled
+// completed path (possibly one from START, i.e. the tour started elsewhere
+// and rode to x), or (if an all-flex START->x path exists) the tour starts at
+// x and leaves it by a scheduled completed path (a tour that both starts and
+// ends at x uses no scheduled step at all and is unaffected by narrowing). So
+// the tour is at x at a time within the range of x's scheduled completed-path
+// arrival times, widened by its scheduled departure times when the tour can
+// start at x, and hence lies entirely within that range widened by ub on both
+// sides. Intersecting over all groups gives a window outside of which no
+// scheduled minimal step can be used. Removing those steps can shrink the
+// ranges, so this repeats until nothing changes. A stop with a flex completed
+// path in from a stop other than START (or, when the tour can start there,
+// out to a stop other than END) could be visited at any time and does not
+// constrain the window, nor does its group; flex paths longer than ub are
+// ignored since no tour within ub can use them.
+//
+// Returns nullopt if the window becomes empty, i.e. no tour of duration <= ub
+// exists.
+std::optional<ArrivalWindowNarrowing> NarrowArrivalTimes(
+    const ProblemState& state, int ub_seconds
 );
 
 struct BranchAndBoundResult {

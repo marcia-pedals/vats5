@@ -70,4 +70,42 @@ std::optional<ConcordeSolution> SolveTspWithConcorde(
     std::ostream* tsp_log = nullptr
 );
 
+// An edge with positive value in an LP relaxation's solution.
+struct ConcordeSupportEdge {
+  StopId from;
+  StopId to;
+  double x;
+};
+
+// Result of solving only the root LP relaxation (cutting planes, no
+// branching) with Concorde.
+struct ConcordeRootLp {
+  // The final LP objective, in the input's units (construction offsets
+  // removed). Fractional; a lower bound on the optimal tour up to floating
+  // point error.
+  double lp_bound;
+
+  // A rigorous integer lower bound on the optimal tour cost: Concorde's
+  // exactly priced bound, offsets removed, rounded up.
+  int lower_bound;
+
+  // Input-graph edges with positive LP value, in input stop ids.
+  std::vector<ConcordeSupportEdge> support;
+
+  // Number of LP-positive edges that are not edges of the input graph (the
+  // LP paid the forbidden-edge sentinel for them). Usually zero.
+  int num_forbidden_support_edges;
+};
+
+// Solves the root LP relaxation of the TSP on `relaxed` with Concorde: the
+// full root cutting-plane loop, without branching. Returns nullopt if Concorde
+// proves the LP infeasible (no tour exists). Small instances (below the brute
+// force threshold) are solved exactly instead; their support is the optimal
+// tour.
+//
+// Not thread-safe, for the same reasons as SolveTspWithConcorde.
+std::optional<ConcordeRootLp> SolveTspRootLpWithConcorde(
+    const RelaxedAdjacencyList& relaxed, std::ostream* tsp_log = nullptr
+);
+
 }  // namespace vats5
